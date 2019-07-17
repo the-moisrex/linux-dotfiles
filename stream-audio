@@ -1,9 +1,14 @@
 #!/bin/bash
 
+# https://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/Modules/
+
 case "$1" in
   start)
     $0 stop 
-    pactl load-module module-simple-protocol-tcp rate=48000 format=s16le channels=2 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') record=true port=8000
+    # pactl load-module module-simple-protocol-tcp rate=48000 format=s16le channels=2 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') record=true port=8000
+    # pactl load-module module-simple-protocol-tcp format=s16le channels=1 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') record=true port=8000
+    # pactl load-module module-simple-protocol-tcp channels=2 rate=48000 format=s32le source=$(pactl list | grep "Monitor Source" | awk '{print $3}') record=true port=8000
+    pactl load-module module-simple-protocol-tcp channels=2 format=s16 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') port=8000 record=true
     ;;
   stop)
     pactl unload-module `pactl list | grep tcp -B1 | grep M | sed 's/[^0-9]//g'`
