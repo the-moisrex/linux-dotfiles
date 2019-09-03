@@ -11,7 +11,7 @@ tmux send-keys -t ${window}.left "cd ${tmpdir}" C-m
 tmux send-keys -t ${window}.right "cd ${tmpdir}" C-m
 tmux send-keys -t ${window}.right 'touch main.cpp' C-m
 tmux send-keys -t ${window}.right 'echo "#include <iostream>\n\nint main() {\n\tusing namespace std;\n\tcout << \"hello world\" << endl;\n\treturn 0;\n}\n" > main.cpp' C-m
-tmux send-keys -t ${window}.right 'echo "all:\n\tg++ -std=c++2a -O3 main.cpp" > Makefile' C-m
+tmux send-keys -t ${window}.right 'echo "all:\n\tg++ -std=c++2a -g -O3 main.cpp" > Makefile' C-m
 tmux send-keys -t ${window}.right "find . -not -name 'a.out' | entr -cs 'make && ./a.out'" C-m
 tmux send-keys -t ${window}.left 'vim main.cpp' C-m
 tmux select-pane -t ${window}.left
