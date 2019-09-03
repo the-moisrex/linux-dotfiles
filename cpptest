@@ -3,7 +3,7 @@
 tmpdir=$(mktemp -d)
 window="cpp-$((1 + RANDOM % 10))"
 
-tmux new -s ${window} -d
+tmux new -s ${window} -d -c "${tmpdir}"
 tmux split-window -t ${window} -h
 tmux select-pane -t ${window}.right
 tmux resize-pane -t r${window}.ight -R 20
