@@ -7,7 +7,7 @@ else
 fi;
 
 tmpdir=$(realpath ${tmpdir});
-window="cpp-$((1 + RANDOM % 10))"
+window="cpp-$1-$((1 + RANDOM % 10000000))"
 
 tmux new -s ${window} -d -c "${tmpdir}"
 tmux split-window -t ${window} -h
