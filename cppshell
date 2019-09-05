@@ -30,7 +30,7 @@ tmux split-pane -t ${window}.right -v
 tmux send-keys -t ${window}.bottom-right "cd ${tmpdir}" C-m
 tmux send-keys -t ${window}.bottom-right "touch main.s" C-m
 tmux send-keys -t ${window}.bottom-right "find ${tmpdir} -name \"*.s\" | entr -cs \"clear; cat ${tmpdir}/main.s\"" C-m
-tmux send-keys -t ${window}.left "vim ${tmpdir}/main.cpp" C-m
+tmux send-keys -t ${window}.left "${EDITOR} ${tmpdir}/main.cpp" C-m
 tmux select-pane -t ${window}.left
 tmux attach -t ${window}
 
