@@ -12,6 +12,10 @@ fi;
 tmpdir=$(realpath ${tmpdir});
 window="cpp-$(basename $(realpath .))-$((1 + RANDOM % 10000000))"
 
+if [ -z "$EDITOR" ]; then
+	EDITOR="nvim";
+fi;
+
 tmux new -s ${window} -d -c "${tmpdir}"
 #tmux split-window -t ${window} -h
 #tmux select-pane -t ${window}.right
