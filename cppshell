@@ -52,7 +52,7 @@ fi;
 tmux new -s ${window} -d -c "${tmpdir}"
 tmux split-window -t ${window} -h
 tmux select-pane -t ${window}.right
-tmux resize-pane -t ${window}.right -R 20
+tmux resize-pane -t ${window}.right -R 18
 tmux send-keys -t ${window}.left "cd ${tmpdir}" C-m
 tmux send-keys -t ${window}.right "cd ${tmpdir}" C-m
 
