@@ -3,7 +3,7 @@
 using namespace cv;
 
 auto main() -> int {
-	Mat image = imread('img.jpg', 1);
+	Mat image = imread("lenna.png", 1);
 	if (!image.data) {
 		std::cerr << "Cannot load the iamge" << std::endl;
 	}
