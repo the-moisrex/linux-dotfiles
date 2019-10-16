@@ -1,0 +1,5 @@
+#!/bin/zsh
+
+let z=$(gsettings get org.gnome.desktop.a11y.magnifier mag-factor)
+let z=$(bc <<< "$z - 0.1")
+gsettings set org.gnome.desktop.a11y.magnifier mag-factor "$z"
