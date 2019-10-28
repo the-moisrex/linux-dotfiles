@@ -9,10 +9,6 @@ INPUT=$*
 STRINGNUM=0
  
 ary=($INPUT)
-echo "---------------------------"
-echo "Speech Script by Dan Fountain"
-echo "TalkToDanF@gmail.com"
-echo "---------------------------"
 for key in "${!ary[@]}" 
   do
     SHORTTMP[$STRINGNUM]="${SHORTTMP[$STRINGNUM]} ${ary[$key]}"
