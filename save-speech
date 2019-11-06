@@ -1,0 +1,8 @@
+#!/bin/bash
+
+
+while read word; 
+do 
+	wget -q -U Mozilla -O output.mp3 "https://ssl.gstatic.com/dictionary/static/sounds/de/0/$word.mp3";
+	mplayer output.mp3 &> /dev/null;
+done
