@@ -75,6 +75,10 @@ elif [ -f ${template_dir}/main.py ]; then # Python
         chmod +x ${tmpdir}/main.py
 	tmux send-keys -t ${window}.right "find . -name 'main.py' | entr -cs '${tmpdir}/main.py'" C-m
         tmux send-keys -t ${window}.left "${EDITOR} ${tmpdir}/main.py" C-m
+elif [ -f ${template_dir}/main.sh ]; then # Bash
+        chmod +x ${tmpdir}/main.sh
+	tmux send-keys -t ${window}.right "find . -name 'main.sh' | entr -cs '${tmpdir}/main.sh'" C-m
+        tmux send-keys -t ${window}.left "${EDITOR} ${tmpdir}/main.sh" C-m
 fi;
 
 # tmux split-pane -t ${window}.right -v
