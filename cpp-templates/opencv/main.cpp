@@ -12,6 +12,7 @@ auto main() -> int {
 	imshow("Original Image", image);
 
 
-	waitKey(0);
+	while(waitKey(0) != 32);
+	destroyAllWindows();
 	return 0;
 }
