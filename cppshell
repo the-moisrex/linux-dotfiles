@@ -62,23 +62,34 @@ if [ `ls -A ${tmpdir} | wc -m` == "0" ]; then
 	cp -nr $template_dir/* ${tmpdir}/.
 fi;
 
+function open_editor() {
+	local file="$1";
+	local manifest_file="$2";
+	local nonblocking=""
+	if [ "$EDITOR" == "qtcreator" ]; then
+		nonblocking="setsid"
+		file=$manifest_file;
+	fi
+        tmux send-keys -t ${window}.left "${nonblocking} ${EDITOR} ${tmpdir}/${file}" C-m
+}
+
 # run build commands
 if [ -f ${template_dir}/Makefile ]; then # make
 	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs 'make -j8 && ./a.out'" C-m
-        tmux send-keys -t ${window}.left "${EDITOR} ${tmpdir}/main.cpp" C-m
+	open_editor "main.cpp" "main.cpp";
 elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
 	mkdir -p ${tmpdir}/build
 	cmake -G "Unix Makefiles" -B${tmpdir}/build -S${tmpdir}
 	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs 'make -j8 -Cbuild/ && ./build/a.out'" C-m
-        tmux send-keys -t ${window}.left "${EDITOR} ${tmpdir}/main.cpp" C-m
+	open_editor "main.cpp" "CMakeLists.txt";
 elif [ -f ${template_dir}/main.py ]; then # Python
         chmod +x ${tmpdir}/main.py
 	tmux send-keys -t ${window}.right "find . -name 'main.py' | entr -cs '${tmpdir}/main.py'" C-m
-        tmux send-keys -t ${window}.left "${EDITOR} ${tmpdir}/main.py" C-m
+	open_editor "main.py" "main.py";
 elif [ -f ${template_dir}/main.sh ]; then # Bash
         chmod +x ${tmpdir}/main.sh
 	tmux send-keys -t ${window}.right "find . -name 'main.sh' | entr -cs '${tmpdir}/main.sh'" C-m
-        tmux send-keys -t ${window}.left "${EDITOR} ${tmpdir}/main.sh" C-m
+	open_editor "main.sh" "main.sh";
 fi;
 
 # tmux split-pane -t ${window}.right -v
