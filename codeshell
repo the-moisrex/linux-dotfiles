@@ -36,13 +36,13 @@ if [ -z "$tmpdir" ]; then
 fi;
 
 tmpdir=$(realpath ${tmpdir});
-window="cpp-$1-$((1 + RANDOM % 10000000))"
+window="code-$1-$((1 + RANDOM % 10000000))"
 
 if [ -z "$EDITOR" ]; then
 	EDITOR="nvim";
 fi;
 
-template_dir="$(dirname $0)/cpp-templates/${template}"
+template_dir="$(dirname $0)/code-templates/${template}"
 
 if [ ! -d $template_dir ]; then
 	echo "The specified template ($template) does not exists."
