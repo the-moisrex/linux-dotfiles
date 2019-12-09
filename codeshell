@@ -13,8 +13,8 @@ case $i in
 
     -n=*|--name=*)
 	dir="${i#*=}"
-  	mkdir -p ~/cppshells/$dir
-	tmpdir=~/cppshells/$dir
+  	mkdir -p ~/codeshells/$dir
+	tmpdir=~/codeshells/$dir
 	shift
     ;;
 
