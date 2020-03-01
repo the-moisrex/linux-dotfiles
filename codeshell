@@ -40,9 +40,11 @@ done
 if [ -z "${template}" ] && [ ! -z "${tmpdir}" ]; then
   if [ -s "${tmpdir}/.template" ]; then
     template=$(cat "${tmpdir}/.template")
-  else
-    template="simple"
   fi
+fi
+
+if [-z "$template" ]; then
+  template="simple"
 fi
 
 if [ -z "$tmpdir" ]; then
@@ -50,7 +52,6 @@ if [ -z "$tmpdir" ]; then
 fi;
 
 tmpdir=$(realpath ${tmpdir});
-window="code-$1-$((1 + RANDOM % 10000000))"
 
 if [ -z "$EDITOR" ]; then
 	EDITOR="nvim";
@@ -63,7 +64,12 @@ if [ ! -d $template_dir ]; then
 	exit;
 fi;
 
-tmux new -s ${window} -d -c "${tmpdir}"
+if [ -z "$TMUX" ]; then
+  window="code-$((1 + RANDOM % 10000000))"
+  tmux new -s ${window} -d -c "${tmpdir}"
+else
+  window=$(tmux display-message -p "#S")
+fi
 tmux split-window -t ${window} -h
 tmux select-pane -t ${window}.right
 tmux resize-pane -t ${window}.right -R 18
@@ -111,8 +117,8 @@ elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   echo "Build system: ${buildsys}"
   echo "Build system command: ${buildsyscmd}"
 
-	mkdir -p ${tmpdir}/build
-	cmake -G "${buildsys}" -B${tmpdir}/build -S${tmpdir}
+	tmux send-keys -t ${window}.left "mkdir -p \"${tmpdir}/build\"" C-m
+	tmux send-keys -t ${window}.left "cmake -G \"${buildsys}\" -B${tmpdir}/build -S${tmpdir}" C-m
 	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs '${buildsyscmd} -Cbuild/ && ./build/a.out'" C-m
 	open_editor "main.cpp" "CMakeLists.txt";
 elif [ -f ${template_dir}/main.py ]; then # Python
@@ -131,6 +137,9 @@ fi;
 
 
 tmux select-pane -t ${window}.left
-tmux attach -t ${window}
+
+if [ -z "$TMUX" ]; then
+  tmux attach -t ${window}
+fi
 
 
