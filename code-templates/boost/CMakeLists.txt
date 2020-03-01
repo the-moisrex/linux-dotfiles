@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.16)
 
 project(a.out)
 set(exec_name a.out)
@@ -48,6 +48,8 @@ if(Boost_FOUND)
   #add_custom_target(de COMMAND ${CMAKE_COMMAND} -E echo "\'$<$<CONFIG:Release>:${PROJECT_RELEASE_OPTIONS}>\'")
   #target_compile_options(${exec_name} PRIVATE "$<$<CONFIG:Release>:${PROJECT_RELEASE_OPTIONS}>")
   #target_compile_options(${exec_name} PRIVATE "$<$<CONFIG:Debug>:${PROJECT_DEBUG_OPTIONS}>")
+
+  target_precompile_headers(${exec_name} PUBLIC pch.h)
 
   install(TARGETS ${exec_name} DESTINATION bin)
 endif()
