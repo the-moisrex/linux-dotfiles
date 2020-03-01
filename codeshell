@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 tmpdir=""
-template="simple"
+template=""
 buildsys="Ninja"
 
 for i in "$@"
@@ -36,6 +36,15 @@ case $i in
 esac
 done
 
+# if there's no tempalte and no name
+if [ -z "${template}" ] && [ ! -z "${tmpdir}" ]; then
+  if [ -s "${tmpdir}/.template" ]; then
+    template=$(cat "${tmpdir}/.template")
+  else
+    template="simple"
+  fi
+fi
+
 if [ -z "$tmpdir" ]; then
 	tmpdir=$(mktemp -d)
 fi;
@@ -67,6 +76,9 @@ if [ `ls -A ${tmpdir} | wc -m` == "0" ]; then
 	cp -nr $template_dir/* ${tmpdir}/.
 fi;
 
+# write config files:
+echo "${template}" > "${tmpdir}/.template";
+
 function open_editor() {
 	local file="$1";
 	local manifest_file="$2";
@@ -75,9 +87,13 @@ function open_editor() {
 		nonblocking="setsid"
 		file=$manifest_file;
 	fi
-        tmux send-keys -t ${window}.left "${nonblocking} ${EDITOR} ${tmpdir}/${file}" C-m
+  tmux send-keys -t ${window}.left "${nonblocking} ${EDITOR} ${tmpdir}/${file}" C-m
 }
 
+echo "Editor: ${EDITOR}"
+echo "Template: ${template}"
+echo "Template directory: ${template_dir}"
+echo "Code directory: ${tmpdir}"
 
 # run build commands
 if [ -f ${template_dir}/Makefile ]; then # make
@@ -85,11 +101,16 @@ if [ -f ${template_dir}/Makefile ]; then # make
 	open_editor "main.cpp" "main.cpp";
 elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   buildsyscmd="ninja";
-  if [ "${buildsys}" -eq "Ninja" ]; then
+  if [ "${buildsys}" == "Ninja" ]; then
     buildsyscmd="ninja"
-  elif [ "${buildsys}" -eq "Unix Makefiles"]; then
+  elif [ "${buildsys}" == "Unix Makefiles" ]; then
     buildsyscmd="make -j10"
   fi
+  
+  echo "Build system generator: cmake"
+  echo "Build system: ${buildsys}"
+  echo "Build system command: ${buildsyscmd}"
+
 	mkdir -p ${tmpdir}/build
 	cmake -G "${buildsys}" -B${tmpdir}/build -S${tmpdir}
 	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs '${buildsyscmd} -Cbuild/ && ./build/a.out'" C-m
