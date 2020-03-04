@@ -43,7 +43,7 @@ if [ -z "${template}" ] && [ ! -z "${tmpdir}" ]; then
   fi
 fi
 
-if [-z "$template" ]; then
+if [ -z "$template" ]; then
   template="simple"
 fi
 
@@ -93,7 +93,7 @@ function open_editor() {
 		nonblocking="setsid"
 		file=$manifest_file;
 	fi
-  tmux send-keys -t ${window}.left "${nonblocking} ${EDITOR} ${tmpdir}/${file}" C-m
+  tmux send-keys -t ${window}.left "${nonblocking} ${EDITOR} ${file}" C-m
 }
 
 echo "Editor: ${EDITOR}"
