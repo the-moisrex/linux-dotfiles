@@ -143,9 +143,10 @@ function add_skip_vpn_ns {
 }
 
 function run_in_skip_vpn_ns {
-  local _nsn="$1"
-  local _user="$2"
-  local _cmd="$3"
+  local _background="$1"
+  local _nsn="$2"
+  local _user="$3"
+  local _cmd="$4"
 
   if [ -z "$_user" ]; then
     _user="$USER"
@@ -159,7 +160,15 @@ function run_in_skip_vpn_ns {
     _nsn="$nsn"
   fi
 
-  ip netns exec $_nsn su $_user /usr/bin/env $_cmd &
+  if [ -z "$_background" ]; then
+    _background="yes"
+  fi
+
+  if [ $_background == "yes" ]; then 
+    ip netns exec $_nsn su $_user -s /usr/bin/env $_cmd &
+  else
+    ip netns exec $_nsn su $_user -s /usr/bin/env $_cmd
+  fi
 }
 
 
@@ -178,7 +187,7 @@ function run_tor {
 
   cport=$(($port+1))
 
-  run_in_skip_vpn_ns $_nsn tor "tor --SocksPort 0.0.0.0:$_port --ControlPort $cport --DataDirectory $datadir"
+  run_in_skip_vpn_ns yes $_nsn tor "tor --SocksPort 0.0.0.0:$_port --ControlPort $cport --DataDirectory $datadir"
   echo "Running tor on port: $_port"
 }
 

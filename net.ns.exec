@@ -3,4 +3,4 @@
 source ./net
 
 add_skip_vpn_ns
-run_in_skip_vpn_ns
+run_in_skip_vpn_ns no
