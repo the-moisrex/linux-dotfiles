@@ -1,0 +1,201 @@
+#!/bin/bash
+
+
+function netns_exists {
+  local ns="$1"
+
+  while IFS= read -r line; do
+    if [ "$ns" == "$line" ]; then
+      true
+      return
+    fi
+  done <<< "$(ip netns | cut -d" " -f1)"
+
+  false
+}
+
+function link_exists {
+  local link="$1"
+
+  while IFS= read -r line; do
+    if [ "$link" == "$line" ]; then
+      true
+      return
+    fi
+  done <<< "$(ip -oneline link | cut -d" " -f2 | cut -d":" -f1)"
+
+  false
+}
+
+function macvlan_exists {
+  local macvlan="$1"
+  local device="$2"
+
+  link_exists "$macvlan@$device"
+}
+
+for i in "$@"; do
+  case $i in 
+    -ln=*|--linkname=*)
+      linkname="${i#*=}"
+      ;;
+
+    -nsn=*|--nsname|--namespacename)
+      nsname="${i#*=}"
+      ;;
+
+    -d=*|--device=*)
+      device="${i#*=}"
+      ;;
+
+    -mn=*|--mvlan=*|--macvlan=*)
+      mvlan_name="${i#*=}"
+      ;;
+
+  esac
+done
+
+if [ -z "$device" ]; then
+  if link_exists "eth0"; then 
+    device="eth0";
+  elif link_exists "enp2s0"; then
+    device="enp2s0"
+  elif link_exists "wlp3s0"; then 
+    device="wlp3s0"
+  else
+    >&2 echo "Error: please specify the device to be used.";
+  fi
+fi
+
+
+
+if [ -z "$mvlan_name" ]; then
+  mvlan_name="mvlan0"
+  i=0
+  while macvlan_exists $mvlan_name $device; do 
+    ((i++))
+    mvlan_name="mvlan$i"
+  done
+fi
+
+if macvlan_exists $mvlan_name $device; then 
+  >&2 echo "Error: the macvlan name ($mvlan_name) already exists."
+  exit 1
+fi
+
+
+
+if [ -z "$linkname" ]; then
+  linkname="ln0"
+  i=0
+  while link_exists $linkname; do 
+    ((i++))
+    linkname="ln$i"
+  done
+fi
+
+if link_exists "$linkname"; then 
+  >&2 echo "Error: the link name ($linkname) already exists."
+  exit 1
+fi
+
+
+if [ -z "$nsn" ]; then
+  nsn="ns0"
+  i=0
+  while netns_exists $nsn; do 
+    ((i++))
+    nsn="ns$i"
+  done
+fi
+
+if netns_exists "$nsn"; then 
+  >&2 echo "Error: the namespace ($nsn) already exists."
+  exit 1
+fi
+
+
+
+function add_skip_vpn_ns {
+  local _device="$1"
+  local _nsn="$2"
+  local _mvlan_name="$3"
+
+  if [ -z "$_device" ]; then
+    _device="$device"
+  fi
+
+  if [ -z "$_nsn" ]; then
+    _nsn="$nsn"
+  fi
+
+  if [ -z "$_mvlan_name" ]; then
+    _mvlan_name="$mvlan_name"
+  fi
+
+  
+  ip netns add $_nsn
+  ip link add link $_device dev $_mvlan_name type macvlan
+  ip link set up $_mvlan_name netns $_nsn
+  ip netns exec $_nsn ip link set up lo
+  ip netns exec $_nsn ip route add default dev $_mvlan_name metric 50
+  ip netns exec $_nsn dhclient -d $_mvlan_name &
+}
+
+function run_in_skip_vpn_ns {
+  local _nsn="$1"
+  local _user="$2"
+  local _cmd="$3"
+
+  if [ -z "$_user" ]; then
+    _user="$USER"
+  fi
+
+  if [ -z "$_cmd" ]; then
+    _cmd="$SHELL"
+  fi
+
+  if [ -z "$_nsn" ]; then
+    _nsn="$nsn"
+  fi
+
+  ip netns exec $_nsn su $_user /usr/bin/env $_cmd &
+}
+
+
+function run_tor {
+  local _nsn=$1
+  local _port=$2
+  local cport
+  local datadir=$(mktemp -d)
+
+  if [ -z "$_nsn" ]; then
+    _nsn="$nsn"
+  fi
+
+  chmod 700 $datadir -R
+  chown tor:tor $datadir -R
+
+  cport=$(($port+1))
+
+  run_in_skip_vpn_ns $_nsn tor "tor --SocksPort 0.0.0.0:$_port --ControlPort $cport --DataDirectory $datadir"
+  echo "Running tor on port: $_port"
+}
+
+function run_tor_n {
+  local n=$1
+  local port
+
+  if [ -z "$n" ]; then
+    n=3;
+  fi
+  
+  add_skip_vpn_ns $device $nsn $mvlan_name
+
+  for (( i=1; i<=$n; i++ )); do
+    port=$((9250 + (2 * i)))
+    run_tor $nsn $port
+  done
+}
+
+
