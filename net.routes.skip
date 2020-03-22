@@ -51,7 +51,7 @@ done
 
 if [ -z ${countryiso+x} ];
 then
-	read -p 'Country ISO code (example US): ' countryiso
+	read -p 'Country ISO code (example US,IR): ' countryiso
 else
 	echo "Country: $countryiso"
 fi
@@ -59,7 +59,7 @@ fi
 
 if [ -z ${gateway+x} ];
 then
-	read -p "Enter the gateway that you want to use for $countryiso (example 192.168.0.1 OR vpn0): " gateway
+	read -p "Enter the gateway that you want to use for $countryiso (example 192.168.0.1/vpn0/enp2s0): " gateway
 else
 	echo "Gateway: $gateway"
 fi
@@ -68,14 +68,29 @@ countryiso=$(echo "$countryiso" | tr '[:upper:]' '[:lower:]')
 
 input="$(dirname $0)/db-ip/country/$countryiso/ipv4.cidr"
 
-while IFS= read -r line
-do
+function add {
+  while IFS= read -r line
+  do
 
-	if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-		ip route add "$line" via "$gateway"
-	else
-		ip route add "$line" dev "$gateway"
-	fi
-done < "$input"
+    if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      ip route add "$line" via "$gateway"
+    else
+      ip route add "$line" dev "$gateway"
+    fi
+    echo "$line -> $gateway"
+  done < "$input"
+}
+
+function remove {
+  while IFS= read -r line
+  do
+    if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      ip route delete "$line" via "$gateway"
+    else
+      ip route delete "$line" dev "$gateway"
+    fi
+    echo "$line -> $gateway"
+  done < "$input"
+}
 
 
