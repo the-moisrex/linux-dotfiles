@@ -1,9 +1,8 @@
-#include <opencv2/opencv.hpp>
-#include <iostream>
+#include "pch.h"
 using namespace cv;
 
 auto main() -> int {
-	Mat image = imread("lenna.png", 1);
+	Mat image = imread("../lenna.png", 1);
 	if (!image.data) {
 		std::cerr << "Cannot load the iamge" << std::endl;
 	}

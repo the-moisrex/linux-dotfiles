@@ -35,4 +35,4 @@ include_directories( ${OpenCV_INCLUDE_DIRS} )
 add_executable(${exec_name} main.cpp)
 target_link_libraries(${exec_name} ${OpenCV_LIBS})
 
-
+target_precompile_headers(${exec_name} PUBLIC pch.h)
