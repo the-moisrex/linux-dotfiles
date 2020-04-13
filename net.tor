@@ -14,34 +14,35 @@ function run_tor {
     _nsn="$nsn"
   fi
 
+  mkdir -p $datadir
   chmod 700 $datadir -R
   chown tor:tor $datadir -R
 
   local pid_file="${dir}/pid-nsn:${_nsn}-port:${_port}-cport:${cport}"
 
-  run_in_skip_vpn_ns yes $_nsn tor "--SocksPort 0.0.0.0:${port}"\
-    "--ControlPort ${cport}"\
-    "--NewCircuitPeriod 15"\
-    "--MaxCircuitDirtiness 15"\
-    "--UseEntryGuards 0"\
-    "--UseEntryGuardsAsDirGuards 0"\
-    "--CircuitBuildTimeout 5"\
-    "--ExitRelay 0"\
-    "--RefuseUnknownExits 0"\
-    "--ClientOnly 1"\
-    "--AllowSingleHopCircuits 1"\
-    "--DataDirectory ${datadir}"\
-    "--PidFile ${pid_file}"\
-    "--Log \"warn syslog\""\
-    "--RunAsDaemon 1"\
-    "| logger -t 'tor' 2>&1"
+  # `"--UseEntryGuards 0 "`
+  # `"--AllowSingleHopCircuits 1 "`
+  # `"--UseEntryGuardsAsDirGuards 0 "`
+  run_in_skip_vpn_ns yes $_nsn tor "tor --SocksPort 0.0.0.0:${port} "`
+    `"--ControlPort ${cport} "`
+    `"--NewCircuitPeriod 15 "`
+    `"--MaxCircuitDirtiness 15 "`
+    `"--CircuitBuildTimeout 5 "`
+    `"--ExitRelay 0 "`
+    `"--RefuseUnknownExits 0 "`
+    `"--ClientOnly 1 "`
+    `"--DataDirectory ${datadir} "`
+    `"--PidFile ${pid_file} "`
+    `"--Log \"warn syslog\" "`
+    `"--RunAsDaemon 1 "`
+    `"| logger -t 'tor' 2>&1"
   echo "Running tor instance:"
-  echo "\tport               : $_port"
-  echo "\tcport              : $cport"
-  echo "\tNetwork namespace  : $_nsn"
-  echo "\tDirectory          : $dir"
-  echo "\tData directory     : $datadir"
-  echo "\tPID file           : $pid_file"
+  echo "    Port               : $_port"
+  echo "    Control port       : $cport"
+  echo "    Network namespace  : $_nsn"
+  echo "    Directory          : $dir"
+  echo "    Data directory     : $datadir"
+  echo "    PID file           : $pid_file"
   echo
 }
 
@@ -75,6 +76,7 @@ function run_unified_haproxy {
   local server_ports=$5
 
   local config_file="$dir/haproxy.cfg"
+  local pid_file="$dir/pid-haproxy-nsn:$_nsn"
   local config="
 global
   maxconn 1024 
@@ -92,13 +94,13 @@ defaults
   timeout server 60s
 
 
-listen stats *:4444
+listen stats
+  bind *:4444
   mode            http
-  log             global
   maxconn 10
-  clitimeout      100s
-  srvtimeout      100s
-  contimeout      100s
+  timeout client      100s
+  timeout server      100s
+  timeout connect     100s
   timeout queue   100s
   stats enable
   stats hide-version

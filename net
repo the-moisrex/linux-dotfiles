@@ -165,9 +165,9 @@ function run_in_skip_vpn_ns {
   fi
 
   if [ $_background == "yes" ]; then
-    ip netns exec $_nsn su $_user -s /usr/bin/env $_cmd &
+    setsid ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
   else
-    ip netns exec $_nsn su $_user -s /usr/bin/env $_cmd
+    ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
   fi
 }
 
