@@ -1,0 +1,11 @@
+#!/bin/bash
+
+source ./net.tor
+
+function run_ {
+    local root_dir=$(mktemp -d)
+    local instances=3
+
+    run_tor_n $instances "$root_dir"
+    run_unified_haproxy
+}
