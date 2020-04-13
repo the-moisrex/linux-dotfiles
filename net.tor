@@ -48,22 +48,84 @@ function run_tor {
 function run_tor_n {
   local n=$1
   local rootdir=$2
+  local _nsn=$3
   local port
 
   if [ -z "$n" ]; then
     n=3;
   fi
-  
-  add_skip_vpn_ns $device $nsn $mvlan_name
+
+  if [ -z "$_nsn" ]; then
+      _nsn="$nsn"
+  fi
+
 
   for (( i=1; i<=$n; i++ )); do
     port=$((9250 + (2 * i)))
-    run_tor $nsn $port $rootdir
+    run_tor $_nsn $port $rootdir
   done
 }
 
 
 function run_unified_haproxy {
+  local _nsn=$1
+  local _user=$2
+  local port=$3
+  local dir=$4
+  local server_ports=$5
 
-  local config=$()
+  local config_file="$dir/haproxy.cfg"
+  local config="
+global
+  maxconn 1024 
+  daemon
+  pidfile ${pid_file}
+
+defaults
+  mode http
+  maxconn 1024
+  option  httplog
+  option  dontlognull
+  retries 3
+  timeout connect 5s
+  timeout client 60s
+  timeout server 60s
+
+
+listen stats *:4444
+  mode            http
+  log             global
+  maxconn 10
+  clitimeout      100s
+  srvtimeout      100s
+  contimeout      100s
+  timeout queue   100s
+  stats enable
+  stats hide-version
+  stats refresh 30s
+  stats show-node
+  stats uri /haproxy?stats
+
+
+frontend rotating_proxies
+  bind *:${port}
+  default_backend tor
+  option http_proxy
+
+backend tor
+  option http_proxy
+  balance leastconn # http://cbonte.github.io/haproxy-dconv/configuration-1.5.html#balance
+
+  # server <%= b[:name] %><%= b[:port] %> <%= b[:addr] %>:<%= b[:port] %>
+"
+
+  # generating the server options
+  local name="tor"
+  local addr="127.0.0.1"
+  for listen_port in $server_ports; do
+    config="${config}\n  server ${name}${port} ${addr}:$port"
+  done
+
+  echo "$config" > $config_file
+  run_in_skip_vpn_ns "yes" $_nsn $_user "haproxy -f \"${config_file}\" | logger 2>&1"
 }

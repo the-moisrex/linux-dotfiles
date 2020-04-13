@@ -35,7 +35,7 @@ function macvlan_exists {
 }
 
 for i in "$@"; do
-  case $i in 
+  case $i in
     -ln=*|--linkname=*)
       linkname="${i#*=}"
       ;;
@@ -56,11 +56,11 @@ for i in "$@"; do
 done
 
 if [ -z "$device" ]; then
-  if link_exists "eth0"; then 
+  if link_exists "eth0"; then
     device="eth0";
   elif link_exists "enp2s0"; then
     device="enp2s0"
-  elif link_exists "wlp3s0"; then 
+  elif link_exists "wlp3s0"; then
     device="wlp3s0"
   else
     >&2 echo "Error: please specify the device to be used.";
@@ -72,13 +72,13 @@ fi
 if [ -z "$mvlan_name" ]; then
   mvlan_name="mvlan0"
   i=0
-  while macvlan_exists $mvlan_name $device; do 
+  while macvlan_exists $mvlan_name $device; do
     ((i++))
     mvlan_name="mvlan$i"
   done
 fi
 
-if macvlan_exists $mvlan_name $device; then 
+if macvlan_exists $mvlan_name $device; then
   >&2 echo "Error: the macvlan name ($mvlan_name) already exists."
   exit 1
 fi
@@ -88,13 +88,13 @@ fi
 if [ -z "$linkname" ]; then
   linkname="ln0"
   i=0
-  while link_exists $linkname; do 
+  while link_exists $linkname; do
     ((i++))
     linkname="ln$i"
   done
 fi
 
-if link_exists "$linkname"; then 
+if link_exists "$linkname"; then
   >&2 echo "Error: the link name ($linkname) already exists."
   exit 1
 fi
@@ -103,13 +103,13 @@ fi
 if [ -z "$nsn" ]; then
   nsn="ns0"
   i=0
-  while netns_exists $nsn; do 
+  while netns_exists $nsn; do
     ((i++))
     nsn="ns$i"
   done
 fi
 
-if netns_exists "$nsn"; then 
+if netns_exists "$nsn"; then
   >&2 echo "Error: the namespace ($nsn) already exists."
   exit 1
 fi
@@ -133,7 +133,7 @@ function add_skip_vpn_ns {
     _mvlan_name="$mvlan_name"
   fi
 
-  
+
   ip netns add $_nsn
   ip link add link $_device dev $_mvlan_name type macvlan
   ip link set up $_mvlan_name netns $_nsn
@@ -164,7 +164,7 @@ function run_in_skip_vpn_ns {
     _background="yes"
   fi
 
-  if [ $_background == "yes" ]; then 
+  if [ $_background == "yes" ]; then
     ip netns exec $_nsn su $_user -s /usr/bin/env $_cmd &
   else
     ip netns exec $_nsn su $_user -s /usr/bin/env $_cmd

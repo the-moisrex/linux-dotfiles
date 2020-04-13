@@ -2,10 +2,27 @@
 
 source ./net.tor
 
-function run_ {
+function run_tor_proxy {
     local root_dir=$(mktemp -d)
     local instances=3
+    local _nsn=$nsn
+    local _user="$USER"
 
-    run_tor_n $instances "$root_dir"
-    run_unified_haproxy
+
+    # create the network namespace
+    add_skip_vpn_ns $device $_nsn $mvlan_name
+
+    # running the tor and also creating the server_ports var
+    local server_ports
+    for (( i=1; i<=$instances; i++ )); do
+        port=$((9250 + (2 * i)))
+        server_ports[$i]=$port
+        run_tor $_nsn $port $root_dir
+    done
+
+
+    # run the proxy (using HAProxy)
+    run_unified_haproxy $_nsn $_user $user_port $root_dir $server_ports
 }
+
+run_tor_proxy
