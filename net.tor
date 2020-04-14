@@ -177,7 +177,7 @@ backend tor
   timeout connect 5s
   timeout server 30s
   timeout queue 30s
-  balance leastconn # http://cbonte.github.io/haproxy-dconv/configuration-1.5.html#balance
+  balance roundrobin # http://cbonte.github.io/haproxy-dconv/configuration-1.5.html#balance
 
   # server <%= b[:name] %><%= b[:port] %> <%= b[:addr] %>:<%= b[:port] %>
 "
