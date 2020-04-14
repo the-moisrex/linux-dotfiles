@@ -6,13 +6,10 @@ source ./net
 function run_tor {
   local _nsn=$1
   local _port=$2
-  local dir=$3
-  local cport=$(($_port+1))
-  local datadir="$dir/data"
+  local cport=$3
+  local dir=$4
+  local datadir="$dir/tor-data-${_port}"
 
-  if [ -z "$_nsn" ]; then
-    _nsn="$nsn"
-  fi
 
   mkdir -p $datadir
   chmod 700 $datadir -R
@@ -23,7 +20,7 @@ function run_tor {
   # `"--UseEntryGuards 0 "`
   # `"--AllowSingleHopCircuits 1 "`
   # `"--UseEntryGuardsAsDirGuards 0 "`
-  run_in_skip_vpn_ns yes $_nsn tor "tor --SocksPort 0.0.0.0:${port} "`
+  local cmd="tor --SocksPort 127.0.0.1:${_port} "`
     `"--ControlPort ${cport} "`
     `"--NewCircuitPeriod 15 "`
     `"--MaxCircuitDirtiness 15 "`
@@ -34,8 +31,17 @@ function run_tor {
     `"--DataDirectory ${datadir} "`
     `"--PidFile ${pid_file} "`
     `"--Log \"warn syslog\" "`
-    `"--RunAsDaemon 1 "`
-    `"| logger -t 'tor' 2>&1"
+    `"--RunAsDaemon 1 ";
+    #`"| logger -t 'tor' 2>&1"
+
+  if [ -z "$_nsn" ] || [ $_nsn == "-" ]; then
+    # run the command in the background
+    setsid sudo -u tor bash -c "$cmd"
+  else
+    # run the command in the specified network name space
+    run_in_skip_vpn_ns yes $_nsn tor "$cmd"
+  fi
+
   echo "Running tor instance:"
   echo "    Port               : $_port"
   echo "    Control port       : $cport"
@@ -46,26 +52,69 @@ function run_tor {
   echo
 }
 
-function run_tor_n {
-  local n=$1
-  local rootdir=$2
-  local _nsn=$3
-  local port
-
-  if [ -z "$n" ]; then
-    n=3;
-  fi
-
-  if [ -z "$_nsn" ]; then
-      _nsn="$nsn"
-  fi
 
 
-  for (( i=1; i<=$n; i++ )); do
-    port=$((9250 + (2 * i)))
-    run_tor $_nsn $port $rootdir
-  done
+
+
+
+function run_privoxy {
+    local _nsn=$1
+    local listen_port=$2
+    local forward_port=$3
+    local dir=$4
+    local _user=$5
+
+    local config_file="$dir/privoxy-config-nsn:${_nsn}-lport:${listen_port}-fport:${forward_port}"
+    local pid_file="$dir/pid-privoxy-nsn:${_nsn}-lport:${listen_port}-fport:${forward_port}"
+
+    local config="
+user-manual /usr/share/doc/privoxy/user-manual/
+confdir /etc/privoxy
+logdir /var/log/privoxy
+actionsfile match-all.action
+actionsfile default.action
+actionsfile user.action
+filterfile default.filter
+filterfile user.filter
+logfile logfile
+listen-address  127.0.0.1:${listen_port}
+toggle  1
+trust-x-forwarded-for 1
+enable-remote-toggle  0
+enable-remote-http-toggle  0
+enable-edit-actions 0
+enforce-blocks 0
+buffer-limit 4096
+enable-proxy-authentication-forwarding 0
+forward-socks5t    /            127.0.0.1:${forward_port}   .
+forwarded-connect-retries  0
+accept-intercepted-requests 0
+allow-cgi-request-crunching 0
+split-large-forms 0
+keep-alive-timeout 5
+tolerate-pipelining 1
+socket-timeout 300
+"
+
+    echo "$config" > $config_file
+    cmd="privoxy --no-daemon \"${config_file}\""
+
+    if [ -z "$_nsn" ] || [ $_nsn == "-" ]; then
+        # run the command in the background
+        eval setsid "$cmd" &
+    else
+        # run the command in the specified network name space
+        run_in_skip_vpn_ns yes $_nsn $_user "$cmd"
+    fi
+
+    echo "Privoxy is running http proxy on port ${listen_port} as socks5 proxy on port ${forward_port} as forwarding port"
 }
+
+
+
+
+
+
 
 
 function run_unified_haproxy {
@@ -73,7 +122,8 @@ function run_unified_haproxy {
   local _user=$2
   local port=$3
   local dir=$4
-  local server_ports=$5
+  shift 4
+  local server_ports="$@"
 
   local config_file="$dir/haproxy.cfg"
   local pid_file="$dir/pid-haproxy-nsn:$_nsn"
@@ -82,6 +132,9 @@ global
   maxconn 1024 
   daemon
   pidfile ${pid_file}
+  user haproxy
+  chroot /usr/share/haproxy
+  log 127.0.0.1 local0
 
 defaults
   mode http
@@ -95,7 +148,7 @@ defaults
 
 
 listen stats
-  bind *:4444
+  bind :4444
   mode            http
   maxconn 10
   timeout client      100s
@@ -104,30 +157,107 @@ listen stats
   timeout queue   100s
   stats enable
   stats hide-version
-  stats refresh 30s
+  stats refresh 5s
   stats show-node
   stats uri /haproxy?stats
 
 
 frontend rotating_proxies
-  bind *:${port}
+  bind :${port}
   default_backend tor
   option http_proxy
+  option httplog
+  option dontlognull
+  option forwardfor except 127.0.0.0/8
+  timeout client 30s
+  log global
+  mode http
 
 backend tor
-  option http_proxy
+  timeout connect 5s
+  timeout server 30s
+  timeout queue 30s
   balance leastconn # http://cbonte.github.io/haproxy-dconv/configuration-1.5.html#balance
 
   # server <%= b[:name] %><%= b[:port] %> <%= b[:addr] %>:<%= b[:port] %>
 "
 
   # generating the server options
-  local name="tor"
+  local name="privoxy_"
   local addr="127.0.0.1"
   for listen_port in $server_ports; do
-    config="${config}\n  server ${name}${port} ${addr}:$port"
+    config="${config}
+  server ${name}${listen_port} ${addr}:${listen_port} check"
   done
 
   echo "$config" > $config_file
-  run_in_skip_vpn_ns "yes" $_nsn $_user "haproxy -f \"${config_file}\" | logger 2>&1"
+
+  cmd="haproxy -f \"${config_file}\""
+         #| logger -t \"haproxy\" 2>&1"
+
+  if [ -z $_nsn ] || [ $_nsn == "-" ]; then
+    eval setsid $cmd
+  else
+    run_in_skip_vpn_ns "yes" $_nsn $_user "$cmd"
+  fi
+
+  echo
+  echo "Proxy is running on port ${port}."
+  echo "HAProxy is load balancing the traffic through tor proxies on ports: ${server_ports}."
+  echo
+}
+
+
+
+
+
+
+
+
+
+
+function run_tor_proxy {
+    local _nsn=$1
+    local proxy_port=$2
+    local instances=$3
+    local _user="$USER"
+
+    if nc -z -w1 127.0.0.1 $proxy_port 2>/dev/null ; then
+        echo "Proxy port ${proxy_port} is already in use." >&2
+        exit
+    fi
+
+    local root_dir=$(mktemp -d)
+
+    chmod ugo+rwx $root_dir
+
+    # create the network namespace
+    if [ ! -z "$_nsn" ] && [ $_nsn != "-" ]; then
+        add_skip_vpn_ns $device $_nsn $mvlan_name
+    fi
+
+    # running the tor and also creating the server_ports var
+    local server_ports
+    local _shift=0
+    for (( i=1; i<=$instances; i++ )); do
+        tor_port=$((9250 + (3 * (i + $_shift) )))
+        tor_control_port=$(($tor_port + 1))
+        http_port=$(($tor_control_port + 1))
+
+        # try again if the port is already open
+        if nc -z -w1 127.0.0.1 $tor_port 2>/dev/null || nc -z -w1 127.0.0.1 $tor_control_port 2>/dev/null || nc -z -w1 127.0.0.1 $http_port 2>/dev/null ; then
+            _shift=$(($_shift + 1))
+            i=$(($i - 1))
+            continue
+        fi
+
+        server_ports[$i]=$http_port
+        run_tor "$_nsn" $tor_port $tor_control_port "$root_dir"
+        run_privoxy "$_nsn" $http_port $tor_port "$root_dir" $_user
+    done
+
+
+    # run the proxy (using HAProxy)
+    run_unified_haproxy $_nsn $_user $proxy_port $root_dir "${server_ports[@]}"
+
 }
