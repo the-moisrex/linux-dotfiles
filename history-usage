@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cat | sed -E 's/^\s*[0-9]+\s+//' | sed -E 's/^\s*sudo\s*(-E)?\s*(USER=.*)?\s*//' | sed -E 's/^\s*//' | cut -d" " -f1 | sort | uniq -c | sort -nb
+cat | sed -E 's/^[[:space:]]*[0-9]+[[:space:]]+//' | sed -E 's/^[[:space:]]*sudo[[:space:]]*//' | sed -E 's/^([[:space:]]*(\-[^[:space:]]*)*([^[:space:]]+=("[^"]*"|[^[:space:]]*|\$?[(]+[^)]*[)]+)*)*[[:space:]]*)*//g' | sed -E 's/^[[:space:]]*//' | cut -d" " -f1 | sort | uniq -c | sort -nb
