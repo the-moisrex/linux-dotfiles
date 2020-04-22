@@ -1,0 +1,3 @@
+#!/bin/bash
+
+history | sed -E 's/^[0-9]+\s+//' | sed -E 's/^sudo\s+(-E)?\s*(USER=.*)?\s*//' | sed -E 's/^\s*//' | cut -d" " -f1| sort | uniq -c | sort -nb
