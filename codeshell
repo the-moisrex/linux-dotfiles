@@ -102,7 +102,10 @@ echo "Template directory: ${template_dir}"
 echo "Code directory: ${tmpdir}"
 
 # run build commands
-if [ -f ${template_dir}/Makefile ]; then # make
+if [ "$template" == "asm" ]; then # make
+	tmux send-keys -t ${window}.right "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
+	open_editor "main.asm" "main.asm";
+elif [ -f ${template_dir}/Makefile ]; then # make
 	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs 'make -j10 && ./a.out'" C-m
 	open_editor "main.cpp" "main.cpp";
 elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
