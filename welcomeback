@@ -1,0 +1,13 @@
+#!/bin/bash
+
+dir=~/.cache/last_visit
+file=$dir/last_visit
+touch $file
+mkdir -p $dir
+last_visit=$(cat $file)
+days=$(( ($(date -u +%s) - $(date -u --date="${last_visit}" +%s) )/(60*60*24) ))
+if [ $days -gt 2 ]; then
+  cowsay "Oh, there you are! I was getting worried." | lolcat
+fi;
+echo $(date -u +%y%m%d) > $file
+
