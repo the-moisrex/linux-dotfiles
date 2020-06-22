@@ -106,8 +106,13 @@ if [ "$template" == "asm" ]; then # make
 	tmux send-keys -t ${window}.right "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
 	open_editor "main.asm" "main.asm";
 elif [ -f ${template_dir}/Makefile ]; then # make
-	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs 'make -j10 && ./a.out'" C-m
-	open_editor "main.cpp" "main.cpp";
+  if [ "$template" == "c" ]; then
+  	tmux send-keys -t ${window}.right "find . -name '*.c' | entr -cs 'make -j10 && ./a.out'" C-m
+	  open_editor "main.c" "main.c";
+  else
+  	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs 'make -j10 && ./a.out'" C-m
+	  open_editor "main.cpp" "main.cpp";
+  fi;
 elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   buildsyscmd="ninja";
   if [ "${buildsys}" == "Ninja" ]; then
