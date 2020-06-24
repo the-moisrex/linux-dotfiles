@@ -125,10 +125,10 @@ socket-timeout 300
 
 
 function run_unified_haproxy {
-  local _nsn=$1
-  local _user=$2
-  local port=$3
-  local dir=$4
+  local _nsn="$1"
+  local _user="$2"
+  local port="$3"
+  local dir="$4"
   shift 4
   local server_ports="$@"
 
@@ -270,12 +270,12 @@ function run_tor_proxy {
 
         server_ports[$i]=$http_port
         run_tor "$_nsn" $tor_port $tor_control_port "$root_dir" "$termux"
-        run_privoxy "$_nsn" $http_port $tor_port "$root_dir" $_user
+        run_privoxy "$_nsn" $http_port $tor_port "$root_dir" "$_user"
     done
 
 
     # run the proxy (using HAProxy)
-    run_unified_haproxy $_nsn $_user $proxy_port $root_dir "${server_ports[@]}"
+    run_unified_haproxy "$_nsn" "$_user" "$proxy_port" "$root_dir" "${server_ports[@]}"
 
 }
 

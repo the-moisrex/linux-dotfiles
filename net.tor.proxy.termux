@@ -2,4 +2,4 @@
 
 source ./net.tor
 
-run_tor_proxy - 8090 20 true
+run_tor_proxy - 8090 20 "true"
