@@ -75,15 +75,19 @@ function run_privoxy {
     local config_file="$dir/privoxy-config-nsn:${_nsn}-lport:${listen_port}-fport:${forward_port}"
     local pid_file="$dir/pid-privoxy-nsn:${_nsn}-lport:${listen_port}-fport:${forward_port}"
 
-    local root_dir="/"
+    local confdir="/etc/privoxy"
+    local logdir="/var/log/privoxy"
+    local manual="/usr/share/doc/privoxy/user-manual/"
     if [ "$termux" == "true" ]; then
-      root_dir="~/../"
+	confdir="../../usr/etc/privoxy"
+	logdir="../../usr/var/log/privoxy"
+	manual="../../usr/share/doc/privoxy/user-manual/"
     fi;
 
     local config="
-user-manual ${root_dir}usr/share/doc/privoxy/user-manual/
-confdir ${root_dir}etc/privoxy
-logdir ${root_dir}var/log/privoxy
+user-manual ${manual}
+confdir ${confdir}
+logdir ${logdir}
 actionsfile match-all.action
 actionsfile default.action
 actionsfile user.action
@@ -142,17 +146,19 @@ function run_unified_haproxy {
   local config_file="$dir/haproxy.cfg"
   local pid_file="$dir/pid-haproxy-nsn:$_nsn"
   local chroot_dir;
+  local haproxy_user="haproxy"
   if [ "$termux" == "false" ]; then
     chroot_dir="/usr/share/haproxy"
   else
-    chroot_dir="~/../usr/share/haproxy"
+    chroot_dir="../../usr/share/haproxy"
+    haproxy_user="$_user"
   fi;
   local config="
 global
   maxconn 1024 
   daemon
   pidfile ${pid_file}
-  user haproxy
+  user ${haproxy_user}
   chroot ${chroot_dir}
   log 127.0.0.1 local0
 
@@ -245,6 +251,10 @@ function run_tor_proxy {
     local instances=$3
     local _user="$USER"
     local termux="$4"
+
+    if [ -z "$_user" ]; then
+	    _user=$(whoami)
+    fi
 
     if nc -z -w1 127.0.0.1 $proxy_port 2>/dev/null ; then
         echo "Proxy port ${proxy_port} is already in use." >&2
