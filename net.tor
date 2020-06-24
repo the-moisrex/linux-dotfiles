@@ -147,19 +147,21 @@ function run_unified_haproxy {
   local pid_file="$dir/pid-haproxy-nsn:$_nsn"
   local chroot_dir;
   local haproxy_user="haproxy"
+  local opetions="user ${haproxy_user}
+  chroot ${chroot_dir}"
   if [ "$termux" == "false" ]; then
     chroot_dir="/usr/share/haproxy"
   else
 	  chroot_dir=$(realpath "../../usr/share/haproxy")
     haproxy_user="$_user"
+    options="";
   fi;
   local config="
 global
   maxconn 1024 
   daemon
   pidfile ${pid_file}
-  user ${haproxy_user}
-  chroot ${chroot_dir}
+  $options
   log 127.0.0.1 local0
 
 defaults
