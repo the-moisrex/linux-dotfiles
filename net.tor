@@ -79,9 +79,9 @@ function run_privoxy {
     local logdir="/var/log/privoxy"
     local manual="/usr/share/doc/privoxy/user-manual/"
     if [ "$termux" == "true" ]; then
-	confdir="../../usr/etc/privoxy"
-	logdir="../../usr/var/log/privoxy"
-	manual="../../usr/share/doc/privoxy/user-manual/"
+	    confdir=$(realpath "../../usr/etc/privoxy")
+	    logdir=$(realpath "../../usr/var/log/privoxy")
+	    manual=$(realpath "../../usr/share/doc/privoxy/user-manual/")
     fi;
 
     local config="
@@ -150,7 +150,7 @@ function run_unified_haproxy {
   if [ "$termux" == "false" ]; then
     chroot_dir="/usr/share/haproxy"
   else
-    chroot_dir="../../usr/share/haproxy"
+	  chroot_dir=$(realpath "../../usr/share/haproxy")
     haproxy_user="$_user"
   fi;
   local config="
@@ -230,6 +230,7 @@ backend tor
   echo
   echo
   echo
+  echo "haproxy config file: $config_file"
   echo "Proxy is running on port ${port}."
   echo "Stats: http://localhost:4444/haproxy?stats"
   echo "HAProxy is load balancing the traffic through tor proxies on ports: ${server_ports}."

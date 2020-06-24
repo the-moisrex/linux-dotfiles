@@ -60,6 +60,8 @@ if [ -z "$device" ]; then
     device="eth0";
   elif link_exists "enp2s0"; then
     device="enp2s0"
+  elif link_exists "wlan0"; then
+    device="wlan0"
   elif link_exists "wlp3s0"; then
     device="wlp3s0"
   else
