@@ -134,13 +134,19 @@ function run_unified_haproxy {
 
   local config_file="$dir/haproxy.cfg"
   local pid_file="$dir/pid-haproxy-nsn:$_nsn"
+  local chroot_dir;
+  if [ "$termux" == "false" ]; then
+    chroot_dir="/usr/share/haproxy"
+  else
+    chroot_dir="../../usr/share/haproxy"
+  fi;
   local config="
 global
   maxconn 1024 
   daemon
   pidfile ${pid_file}
   user haproxy
-  chroot /usr/share/haproxy
+  chroot ${chroot_dir}
   log 127.0.0.1 local0
 
 defaults
@@ -209,7 +215,10 @@ backend tor
   fi
 
   echo
+  echo
+  echo
   echo "Proxy is running on port ${port}."
+  echo "Stats: http://localhost:4444/haproxy?stats"
   echo "HAProxy is load balancing the traffic through tor proxies on ports: ${server_ports}."
   echo
 }
