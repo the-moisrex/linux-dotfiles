@@ -181,6 +181,7 @@ listen stats
   timeout server      100s
   timeout connect     100s
   timeout queue   100s
+  log global
   stats enable
   stats hide-version
   stats refresh 5s
@@ -188,7 +189,7 @@ listen stats
   stats uri /haproxy?stats
 
 
-frontend rotating_proxies
+frontend main
   bind :${port}
   default_backend tor
   option http_proxy
