@@ -9,11 +9,14 @@ function run_tor {
   local cport=$3
   local dir=$4
   local datadir="$dir/tor-data-${_port}"
+  local termux="$5";
 
 
   mkdir -p $datadir
-  chmod 700 $datadir -R
-  chown tor:tor $datadir -R
+  if [ "$termux" == "false" ]; then
+    chmod 700 $datadir -R
+    chown tor:tor $datadir -R
+  fi;
 
   local pid_file="${dir}/pid-nsn:${_nsn}-port:${_port}-cport:${cport}"
 
@@ -36,7 +39,11 @@ function run_tor {
 
   if [ -z "$_nsn" ] || [ $_nsn == "-" ]; then
     # run the command in the background
-    setsid sudo -u tor bash -c "$cmd"
+    if [ "$termux" == "false" ]; then
+      setsid sudo -u tor bash -c "$cmd";
+    else
+      setsid bash -c "$cmd";
+    fi;
   else
     # run the command in the specified network name space
     run_in_skip_vpn_ns yes $_nsn tor "$cmd"
@@ -221,6 +228,7 @@ function run_tor_proxy {
     local proxy_port=$2
     local instances=$3
     local _user="$USER"
+    local termux="$4"
 
     if nc -z -w1 127.0.0.1 $proxy_port 2>/dev/null ; then
         echo "Proxy port ${proxy_port} is already in use." >&2
@@ -252,7 +260,7 @@ function run_tor_proxy {
         fi
 
         server_ports[$i]=$http_port
-        run_tor "$_nsn" $tor_port $tor_control_port "$root_dir"
+        run_tor "$_nsn" $tor_port $tor_control_port "$root_dir" "$termux"
         run_privoxy "$_nsn" $http_port $tor_port "$root_dir" $_user
     done
 
@@ -261,3 +269,4 @@ function run_tor_proxy {
     run_unified_haproxy $_nsn $_user $proxy_port $root_dir "${server_ports[@]}"
 
 }
+
