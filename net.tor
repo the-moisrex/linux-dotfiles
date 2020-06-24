@@ -65,19 +65,25 @@ function run_tor {
 
 
 function run_privoxy {
-    local _nsn=$1
-    local listen_port=$2
-    local forward_port=$3
-    local dir=$4
-    local _user=$5
+    local _nsn="$1"
+    local listen_port="$2"
+    local forward_port="$3"
+    local dir="$4"
+    local _user="$5"
+    local termux="$6"
 
     local config_file="$dir/privoxy-config-nsn:${_nsn}-lport:${listen_port}-fport:${forward_port}"
     local pid_file="$dir/pid-privoxy-nsn:${_nsn}-lport:${listen_port}-fport:${forward_port}"
 
+    local root_dir="/"
+    if [ "$termux" == "true" ]; then
+      root_dir="~/../"
+    fi;
+
     local config="
-user-manual /usr/share/doc/privoxy/user-manual/
-confdir /etc/privoxy
-logdir /var/log/privoxy
+user-manual ${root_dir}usr/share/doc/privoxy/user-manual/
+confdir ${root_dir}etc/privoxy
+logdir ${root_dir}var/log/privoxy
 actionsfile match-all.action
 actionsfile default.action
 actionsfile user.action
@@ -139,7 +145,7 @@ function run_unified_haproxy {
   if [ "$termux" == "false" ]; then
     chroot_dir="/usr/share/haproxy"
   else
-    chroot_dir="../../usr/share/haproxy"
+    chroot_dir="~/../usr/share/haproxy"
   fi;
   local config="
 global
@@ -271,7 +277,7 @@ function run_tor_proxy {
 
         server_ports[$i]=$http_port
         run_tor "$_nsn" $tor_port $tor_control_port "$root_dir" "$termux"
-        run_privoxy "$_nsn" $http_port $tor_port "$root_dir" "$_user"
+        run_privoxy "$_nsn" $http_port $tor_port "$root_dir" "$_user" "$termux"
     done
 
 
