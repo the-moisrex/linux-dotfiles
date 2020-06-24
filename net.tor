@@ -129,7 +129,8 @@ function run_unified_haproxy {
   local _user="$2"
   local port="$3"
   local dir="$4"
-  shift 4
+  local termux="$5"
+  shift 5
   local server_ports="$@"
 
   local config_file="$dir/haproxy.cfg"
@@ -275,7 +276,7 @@ function run_tor_proxy {
 
 
     # run the proxy (using HAProxy)
-    run_unified_haproxy "$_nsn" "$_user" "$proxy_port" "$root_dir" "${server_ports[@]}"
+    run_unified_haproxy "$_nsn" "$_user" "$proxy_port" "$root_dir" "$termux" "${server_ports[@]}"
 
 }
 
