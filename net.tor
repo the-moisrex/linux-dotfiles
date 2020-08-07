@@ -176,7 +176,7 @@ defaults
 
 
 listen stats
-  bind :4444
+  bind :5555
   mode            http
   maxconn 10
   timeout client      100s
