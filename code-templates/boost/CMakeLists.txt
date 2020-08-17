@@ -34,7 +34,7 @@ set(Boost_USE_DEBUG_LIBS         ON) # ignore debug libs and
 set(Boost_USE_RELEASE_LIBS       ON)  # only find release libs
 set(Boost_USE_MULTITHREADED      ON)
 set(Boost_USE_STATIC_RUNTIME    OFF)
-find_package(Boost 1.66.0 COMPONENTS program_options filesystem regex system log)
+find_package(Boost COMPONENTS program_options filesystem regex system log)
 
 if(Boost_FOUND)
   add_executable(${exec_name}
