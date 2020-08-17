@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.16)
 project(a.out)
 set(exec_name a.out)
 
-add_compile_options("-std=c++2a")
-set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} "-pthread")
+#add_compile_options("-std=c++2a")
+#set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} "-pthread")
 
 if(NOT CMAKE_BUILD_TYPE)
    set(CMAKE_BUILD_TYPE Debug
@@ -34,14 +34,20 @@ set(Boost_USE_DEBUG_LIBS         ON) # ignore debug libs and
 set(Boost_USE_RELEASE_LIBS       ON)  # only find release libs
 set(Boost_USE_MULTITHREADED      ON)
 set(Boost_USE_STATIC_RUNTIME    OFF)
-find_package(Boost 1.66.0 COMPONENTS program_options filesystem regex)
+find_package(Boost 1.66.0 COMPONENTS program_options filesystem regex system log)
 
 if(Boost_FOUND)
-  include_directories(${Boost_INCLUDE_DIRS})
   add_executable(${exec_name}
     main.cpp
+  )
+  target_link_libraries(${exec_name} 
+    PRIVATE Boost::boost
+    PRIVATE Boost::log
+    PRIVATE pthread
+  )
+  target_compile_features(${exec_name}
+    PRIVATE cxx_std_20
     )
-  target_link_libraries(${exec_name} PRIVATE ${Boost_LIBRARIES})
 
   # optimize the file size:
   #target_compile_options(${exec_name} PRIVATE -pthread)
