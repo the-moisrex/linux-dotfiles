@@ -1,5 +1,6 @@
 #!/bin/bash
 
-source ./net.tor
+curdir=$(dirname "$0")
+source $curdir/net.tor
 
 run_tor_proxy - 8090 20 "false"

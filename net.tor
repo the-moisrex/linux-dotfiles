@@ -1,6 +1,8 @@
 #!/bin/bash
 
-source ./net
+curdir=$(dirname "$0")
+
+source $curdir/net
 
 
 function run_tor {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Tor Load Balancer
+
+[Service]
+Type=oneshot
+ExecStart=/home/moisrex/bin/net.tor.proxy
+ExecStop=killall tor haproxy privoxy
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target
