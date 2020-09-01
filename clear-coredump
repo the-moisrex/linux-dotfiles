@@ -1,0 +1,5 @@
+#!/bin/bash
+
+journalctl --rotate
+journalctl -m --vacuum-time=1s
+rm -rf /var/lib/systemd/coredump/*
