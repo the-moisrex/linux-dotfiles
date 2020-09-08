@@ -29,7 +29,7 @@ case $i in
     -g=*|-G=*)
   buildsys="${i#*=}"
     ;;
-      
+
     *)
 	    # nothing to do
     ;;
@@ -120,11 +120,11 @@ elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   elif [ "${buildsys}" == "Unix Makefiles" ]; then
     buildsyscmd="make -j10"
   fi
-  
+
   echo "Build system generator: cmake"
   echo "Build system: ${buildsys}"
   echo "Build system command: ${buildsyscmd}"
- 
+
 	tmux send-keys -t ${window}.right "mkdir -p \"${tmpdir}/build\"" C-m
   tmux send-keys -t ${window}.right "cd build/" C-m;
 	tmux send-keys -t ${window}.left "cmake -G \"${buildsys}\" -B${tmpdir}/build -S${tmpdir}" C-m
