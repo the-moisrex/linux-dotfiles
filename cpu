@@ -1,0 +1,9 @@
+#!/bin/bash
+
+governor="$1"
+
+if [ "$governor" == "" ]; then
+  cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+else
+  echo "$governor" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+fi
