@@ -57,7 +57,7 @@ if [ -z "$EDITOR" ]; then
 	EDITOR="nvim";
 fi;
 
-template_dir="$(dirname $0)/code-templates/${template}"
+template_dir="$(dirname $0)/../code-templates/${template}"
 
 if [ ! -d $template_dir ]; then
 	echo "The specified template ($template) does not exists."
