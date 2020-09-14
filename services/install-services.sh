@@ -38,12 +38,13 @@ for service in $services; do
     echo
 
     if $user_service; then
-        ln -s "$service_file" "$HOME/.config/systemd/user/$service_name.service";
+        mkdir -p "$HOME/.config/systemd/user";
+        ln -f -s "$service_file" "$HOME/.config/systemd/user/$service_name.service";
         systemctl --user daemon-reload;
         systemctl --user enable $service_name.service;
         systemctl --user start $service_name.service;
     else
-        sudo -ln -s "$service_file" "/etc/systemd/system/$service_name.service";
+        sudo ln -f -s "$service_file" "/etc/systemd/system/$service_name.service";
         sudo systemctl daemon-reload;
         sudo systemctl enable $service_name.service;
         sudo systemctl start $service_name.service;

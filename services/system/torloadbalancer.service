@@ -3,7 +3,7 @@ Description=Tor Load Balancer
 
 [Service]
 Type=forking
-ExecStart=/home/moisrex/bin/net.tor.proxy
+ExecStart=/home/moisrex/cmd/bin/net.tor.proxy
 ExecStop=killall tor haproxy privoxy
 
 [Install]
