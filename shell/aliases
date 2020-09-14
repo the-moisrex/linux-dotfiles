@@ -1,9 +1,4 @@
-alias proxychains='http_proxy="" https_proxy="" all_proxy="" proxychains'
-alias c="xclip -selection clipboard"
-alias prox='https_proxy=socks5://127.0.0.1:9050 http_proxy=socks5://127.0.0.1:9050 no_proxy="localhost, 127.0.0.1/8 192.168.0.0/16 *.localhost"'
-alias http_prox='https_proxy=http://127.0.0.1:8123 http_proxy=http://127.0.0.1:8123 no_proxy="localhost, 127.0.0.1/8 192.168.0.0/16 *.localhost"'
-
-
+#!/bin/bash
 
 
 # enable color support of ls and also add handy aliases
@@ -56,6 +51,8 @@ alias .4='cd ../../../../'
 alias .5='cd ../../../../..'
 alias cd..='cd ..'
 alias youtube="youtube-dl"
+alias yt8000="youtube-dl --proxy=http://localhost:8000"
+alias yt8090="youtube-dl --proxy=http://localhost:8090"
 
 
 # Useful Alias
@@ -66,7 +63,18 @@ alias killfirefox="pkill -9 firefox"
 alias killslack="pkill -9 slack"
 alias CD='cd'
 
-# Log into to Server
-
-
 #alias task="/home/moisrex/bin/gtask"
+
+
+no_proxy="localhost, 127.0.0.1/8, 192.168.0.0/16, 10.0.0.0/8, *.localhost"
+
+alias prox9050="https_proxy=socks5://127.0.0.1:9050 http_proxy=socks5://127.0.0.1:9050 no_proxy='$no_proxy'"
+alias prox8090="http_proxy=http://127.0.0.1:8090 https_proxy=http://127.0.0.1:8090 no_proxy='$no_proxy'"
+alias prox8000="http_proxy=http://127.0.0.1:8000 https_proxy=http://127.0.0.1:8000 no_proxy='$no_proxy'"
+alias prox8118="http_proxy=http://localhost:8118 https_proxy=http://localhost:8118 no_proxy='$no_proxy'"
+alias tmp="cd $(mktemp -d)"
+alias open="emacsclient -nc -s initd -a nvim"
+alias edit="emacsclient -nw -s initd -a nvim"
+alias proxychains='http_proxy="" https_proxy="" all_proxy="" proxychains'
+alias c="xclip -selection clipboard"
+

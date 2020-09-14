@@ -107,26 +107,13 @@ source $ZSH/oh-my-zsh.sh
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 
 
-export PATH=$cmddir/bin:~/.gem/ruby/2.7.0/bin:$PATH
-
-
-alias prox="http_proxy=socks5://localhost:9050 https_proxy=socks5://localhost:9050"
-alias prox2="http_proxy=http://127.0.0.1:8090 https_proxy=http://127.0.0.1:8090"
-alias prox3="http_proxy=http://127.0.0.1:8000 https_proxy=http://127.0.0.1:8000"
-alias http_prox="http_proxy=http://localhost:8118 https_proxy=http://localhost:8118"
-alias tmp="cd $(mktemp -d)"
-alias open="emacsclient -nc -s initd -a nvim"
-alias edit="emacsclient -nw -s initd -a nvim"
-
-export EDITOR="emacsclient -nw -s initd -a nvim"
-export JAVA_HOME=/usr/lib/jvm/java-8-openjdk
-#export PATH=/usr/lib/outproc/bin:$PATH:$JAVA_HOME/bin:$HOME/.gem/ruby/2.4.0/bin
-export PATH=$PATH:$JAVA_HOME/bin
-
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 
 
+export EDITOR="emacsclient -nw -s initd -a nvim"
+export JAVA_HOME=/usr/lib/jvm/java-8-openjdk
+export PATH=$cmddir/bin:~/.gem/ruby/2.7.0/bin:$PATH:$JAVA_HOME/bin
 export HISTSIZE=100000
 export SAVEHIST=100000
 
@@ -136,4 +123,6 @@ bindkey -v
 set keymap vi
 set editing-mode vi
 
+source $cmddir/shell/aliases
 source $cmddir/shell/functions
+
