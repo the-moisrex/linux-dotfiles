@@ -1,0 +1,80 @@
+#!/bin/bash
+
+
+# enable color support of ls and also add handy aliases
+if [ -x /usr/bin/dircolors ]; then
+    test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
+    alias ls='ls --color=auto'
+    #alias dir='dir --color=auto'
+    #alias vdir='vdir --color=auto'
+    alias grep='grep --color=auto'
+    alias fgrep='fgrep --color=auto'
+    alias egrep='egrep --color=auto'
+fi
+
+# some more ls aliases
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias lh='ls -lh'
+# Network Start, Stop, and Restart
+#alias light='xbacklight -set'
+
+
+# Apt
+#alias update='sudo apt -y update'
+#alias upgrade='sudo apt-get -y update && sudo apt-get -y --allow-unauthenticated upgrade && sudo apt-get autoclean && sudo apt-get autoremove && exit 0'
+#alias search='sudo apt search'
+#alias links='links2'
+# Install and Remove Packages
+#alias install='sudo apt-get -y install'
+#alias uninstall='sudo apt-get --purge autoremove '
+#alias search-installed='sudo dpkg --get-selections '
+#alias upgrade-pips='sudo pip freeze --local | grep -v '^\-e' | cut -d = -f 1  | xargs -n1 sudo pip install -U
+#alias cleanPC='sudo apt-get -y autoclean && sudo apt-get -y clean && sudo apt-get -y autoremove'
+
+
+alias lsdir='ls -ld */'
+#alias display='eog -w'
+alias emptyDir='find . -empty -type d -delete'
+#alias meng='cd ${HOME}/Dropbox/MEng_Stuff/MEng-Progress'
+#alias media='sshfs -o reconnect media@192.168.1.10:/mnt /home/"${USER}"/mnt/media_srv'
+#alias reboot='sudo shutdown -r now'
+#alias shutdown='sudo shutdown -h now'
+alias paux='ps aux | grep'
+alias cd.='cd ..'
+alias ..='cd ..'
+alias ...='cd ../../../'
+alias ....='cd ../../../../'
+alias .....='cd ../../../../'
+alias .4='cd ../../../../'
+alias .5='cd ../../../../..'
+alias cd..='cd ..'
+alias youtube="youtube-dl"
+alias yt8000="youtube-dl --proxy=http://localhost:8000"
+alias yt8090="youtube-dl --proxy=http://localhost:8090"
+
+
+# Useful Alias
+# Add an "alert" alias for long running commands.  Use like so:
+alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
+
+alias killfirefox="pkill -9 firefox"
+alias killslack="pkill -9 slack"
+alias CD='cd'
+
+#alias task="/home/moisrex/bin/gtask"
+
+
+no_proxy="localhost, 127.0.0.1/8, 192.168.0.0/16, 10.0.0.0/8, *.localhost"
+
+alias prox9050="https_proxy=socks5://127.0.0.1:9050 http_proxy=socks5://127.0.0.1:9050 no_proxy='$no_proxy'"
+alias prox8090="http_proxy=http://127.0.0.1:8090 https_proxy=http://127.0.0.1:8090 no_proxy='$no_proxy'"
+alias prox8000="http_proxy=http://127.0.0.1:8000 https_proxy=http://127.0.0.1:8000 no_proxy='$no_proxy'"
+alias prox8118="http_proxy=http://localhost:8118 https_proxy=http://localhost:8118 no_proxy='$no_proxy'"
+alias tmp="cd $(mktemp -d)"
+alias open="emacsclient -nc -s initd -a nvim"
+alias edit="emacsclient -nw -s initd -a nvim"
+alias proxychains='http_proxy="" https_proxy="" all_proxy="" proxychains'
+alias c="xclip -selection clipboard"
+
