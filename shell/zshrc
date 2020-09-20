@@ -19,7 +19,16 @@ export ZSH="$HOME/.oh-my-zsh"
 #ZSH_THEME="robbyrussell"
 #ZSH_THEME="powerlevel10k/powerlevel10k"
 
-source /usr/share/zsh-theme-powerlevel10k/powerlevel10k.zsh-theme
+powerlevel10k_theme="/usr/share/zsh-theme-powerlevel10k/powerlevel10k.zsh-theme"
+powerlevel9k_theme="/usr/share/powerlevel9k/powerlevel9k.zsh-theme"
+if [ -f "$powerlevel10k_theme" ]; then
+	source "$powerlevel10k_theme";
+elif [ -f "$powerlevel9k_theme" ]; then
+  source "$powerlevel9k_theme";
+else
+	ZSH_THEME="robbyrussell"
+fi;
+
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
