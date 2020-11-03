@@ -138,7 +138,8 @@ source $cmddir/shell/functions
 
 
 # if pywal exists
-if [ -x "$(command -v wal)" ]; then
+use_pywal=false
+if $use_pywal and [ -x "$(command -v wal)" ]; then
   # Import colorscheme from 'wal' asynchronously
   # &   # Run the process in the background.
   # ( ) # Hide shell job control messages.
