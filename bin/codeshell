@@ -48,7 +48,7 @@ if [ -z "$template" ]; then
 fi
 
 if [ -z "$tmpdir" ]; then
-	tmpdir=$(mktemp -d)
+	tmpdir=$(mktemp -d --suffix=-codeshell)
 fi;
 
 tmpdir=$(realpath ${tmpdir});
