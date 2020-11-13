@@ -25,7 +25,7 @@ function run_tor {
   # `"--UseEntryGuards 0 "`
   # `"--AllowSingleHopCircuits 1 "`
   # `"--UseEntryGuardsAsDirGuards 0 "`
-  local cmd="tor --SocksPort 127.0.0.1:${_port} "`
+  local cmd="tor --SocksPort 0.0.0.0:${_port} "`
     `"--ControlPort ${cport} "`
     `"--NewCircuitPeriod 15 "`
     `"--MaxCircuitDirtiness 15 "`
@@ -96,7 +96,7 @@ actionsfile user.action
 filterfile default.filter
 filterfile user.filter
 logfile logfile
-listen-address  127.0.0.1:${listen_port}
+listen-address  0.0.0.0:${listen_port}
 toggle  1
 trust-x-forwarded-for 1
 enable-remote-toggle  0

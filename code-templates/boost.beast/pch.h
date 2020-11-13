@@ -7,6 +7,7 @@
 #include <set>
 #include <deque>
 #include <list>
+#include <thread>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
