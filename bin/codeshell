@@ -107,10 +107,10 @@ if [[ "$template" == asm* ]]; then # make
 	open_editor "main.asm" "main.asm";
 elif [ -f ${template_dir}/Makefile ]; then # make
   if [ -f ${template_dir}/main.c ]; then
-  	tmux send-keys -t ${window}.right "find . -name '*.c' | entr -cs 'make -j10 && ./a.out'" C-m
+  	tmux send-keys -t ${window}.right "find . -name '*.c' -or -name '*.h' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
 	  open_editor "main.c" "main.c";
   else
-  	tmux send-keys -t ${window}.right "find . -name '*.cpp' | entr -cs 'make -j10 && ./a.out'" C-m
+  	tmux send-keys -t ${window}.right "find . -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
 	  open_editor "main.cpp" "main.cpp";
   fi;
 elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
@@ -128,7 +128,7 @@ elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
 	tmux send-keys -t ${window}.right "mkdir -p \"${tmpdir}/build\"" C-m
   tmux send-keys -t ${window}.right "cd build/" C-m;
 	tmux send-keys -t ${window}.left "cmake -G \"${buildsys}\" -B${tmpdir}/build -S${tmpdir}" C-m
-	tmux send-keys -t ${window}.right "find .. -name '*.cpp' | entr -cs '${buildsyscmd} && ./a.out'" C-m
+	tmux send-keys -t ${window}.right "find .. -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'CMakeLists.txt' | entr -cs '${buildsyscmd} && ./a.out'" C-m
 	open_editor "main.cpp" "CMakeLists.txt";
 elif [ -f ${template_dir}/main.py ]; then # Python
         chmod +x ${tmpdir}/main.py
