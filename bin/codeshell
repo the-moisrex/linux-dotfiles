@@ -89,11 +89,18 @@ function open_editor() {
 	local file="$1";
 	local manifest_file="$2";
 	local nonblocking=""
+  local kill_window=0;
 	if [ "$EDITOR" == "qtcreator" ]; then
 		nonblocking="setsid"
 		file=$manifest_file;
-	fi
+  elif [ "$EDITOR" == "clion" ]; then
+    file="${tmpdir}";
+    kill_window=1;
+  fi
   tmux send-keys -t ${window}.left "${nonblocking} ${EDITOR} ${file}" C-m
+  if [ $kill_window == 1 ]; then
+    tmux send-keys -t ${window}.left "tmux kill-window" C-m;
+  fi
 }
 
 echo "Editor: ${EDITOR}"
