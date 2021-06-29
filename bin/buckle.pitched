@@ -6,4 +6,5 @@ for file in /usr/share/bucklespring/*.wav; do
   filename=$(basename $file);
   sox "$file" "$tmpdir/$filename" $@
 done;
-buckle -p "$tmpdir" -g 50 &>/dev/null
+# buckle -p "$tmpdir" -g 75 &>/dev/null
+buckle -p "$tmpdir" &>/dev/null
