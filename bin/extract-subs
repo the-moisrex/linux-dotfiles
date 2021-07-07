@@ -1,0 +1,6 @@
+#!/bin/bash
+
+lang=$1
+for file in *.mkv; do
+  ./extract-sub "$lang" "$file";
+done
