@@ -1,5 +1,38 @@
 #!/usr/bin/bash
 
+
+detect_distro() {
+    if [[ "$OSTYPE" == linux-android* ]]; then
+        distro="termux"
+    fi
+
+    if [ -z "$distro" ]; then
+        distro=$(ls /etc | awk 'match($0, "(.+?)[-_](?:release|version)", groups) {if(groups[1] != "os") {print groups[1]}}')
+    fi
+
+    if [ -z "$distro" ]; then
+        if [ -f "/etc/os-release" ]; then
+            distro="$(source /etc/os-release && echo $ID)"
+        elif [ "$OSTYPE" == "darwin" ]; then
+            distro="darwin"
+        else 
+            distro="invalid"
+        fi
+    fi
+}
+
+
+detect_distro
+
+main="left"
+side="right"
+
+echo Distro: $distro
+if [[ "$distro" == "termux" ]]; then
+  main="top"
+  side="bottom"
+fi
+
 tmpdir=""
 template=""
 buildsys="Ninja"
@@ -70,11 +103,16 @@ if [ -z "$TMUX" ]; then
 else
   window=$(tmux display-message -p "#S")
 fi
-tmux split-window -t ${window} -h
-tmux select-pane -t ${window}.right
-tmux resize-pane -t ${window}.right -R 18
-tmux send-keys -t ${window}.left "cd ${tmpdir}" C-m
-tmux send-keys -t ${window}.right "cd ${tmpdir}" C-m
+
+if [[ "$main" == "left" ]]; then
+  tmux split-window -t ${window} -h
+else
+  tmux split-window -t ${window}
+fi
+tmux select-pane -t ${window}.${side}
+tmux resize-pane -t ${window}.${side} -R 18
+tmux send-keys -t ${window}.${main} "cd ${tmpdir}" C-m
+tmux send-keys -t ${window}.${side} "cd ${tmpdir}" C-m
 
 
 # copy files if the directory does not exists
@@ -97,9 +135,9 @@ function open_editor() {
     file="${tmpdir}";
     kill_window=1;
   fi
-  tmux send-keys -t ${window}.left "${nonblocking} ${EDITOR} ${file}" C-m
+  tmux send-keys -t ${window}.${main} "${nonblocking} ${EDITOR} ${file}" C-m
   if [ $kill_window == 1 ]; then
-    tmux send-keys -t ${window}.left "tmux kill-window" C-m;
+    tmux send-keys -t ${window}.${main} "tmux kill-window" C-m;
   fi
 }
 
@@ -110,14 +148,14 @@ echo "Code directory: ${tmpdir}"
 
 # run build commands
 if [[ "$template" == asm* ]]; then # make
-	tmux send-keys -t ${window}.right "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
+	tmux send-keys -t ${window}.${side} "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
 	open_editor "main.asm" "main.asm";
 elif [ -f ${template_dir}/Makefile ]; then # make
   if [ -f ${template_dir}/main.c ]; then
-  	tmux send-keys -t ${window}.right "find . -name '*.c' -or -name '*.h' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
+  	tmux send-keys -t ${window}.${side} "find . -name '*.c' -or -name '*.h' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
 	  open_editor "main.c" "main.c";
   else
-  	tmux send-keys -t ${window}.right "find . -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
+  	tmux send-keys -t ${window}.${side} "find . -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
 	  open_editor "main.cpp" "main.cpp";
   fi;
 elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
@@ -132,27 +170,27 @@ elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   echo "Build system: ${buildsys}"
   echo "Build system command: ${buildsyscmd}"
 
-	tmux send-keys -t ${window}.right "mkdir -p \"${tmpdir}/build\"" C-m
-  tmux send-keys -t ${window}.right "cd build/" C-m;
-	tmux send-keys -t ${window}.left "cmake -G \"${buildsys}\" -B${tmpdir}/build -S${tmpdir}" C-m
-	tmux send-keys -t ${window}.right "find .. -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'CMakeLists.txt' | entr -cs '${buildsyscmd} && ./a.out'" C-m
+	tmux send-keys -t ${window}.${side} "mkdir -p \"${tmpdir}/build\"" C-m
+  tmux send-keys -t ${window}.${side} "cd build/" C-m;
+	tmux send-keys -t ${window}.${main} "cmake -G \"${buildsys}\" -B${tmpdir}/build -S${tmpdir}" C-m
+	tmux send-keys -t ${window}.${side} "find .. -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'CMakeLists.txt' | entr -cs '${buildsyscmd} && ./a.out'" C-m
 	open_editor "main.cpp" "CMakeLists.txt";
 elif [ -f ${template_dir}/main.py ]; then # Python
         chmod +x ${tmpdir}/main.py
-	tmux send-keys -t ${window}.right "find . -name 'main.py' | entr -cs '${tmpdir}/main.py'" C-m
+	tmux send-keys -t ${window}.${side} "find . -name 'main.py' | entr -cs '${tmpdir}/main.py'" C-m
 	open_editor "main.py" "main.py";
 elif [ -f ${template_dir}/main.sh ]; then # Bash
         chmod +x ${tmpdir}/main.sh
-	tmux send-keys -t ${window}.right "find . -name 'main.sh' | entr -cs '${tmpdir}/main.sh'" C-m
+	tmux send-keys -t ${window}.${side} "find . -name 'main.sh' | entr -cs '${tmpdir}/main.sh'" C-m
 	open_editor "main.sh" "main.sh";
 fi;
 
-# tmux split-pane -t ${window}.right -v
+# tmux split-pane -t ${window}.${side} -v
 # tmux send-keys -t ${window}.bottom-right "cd ${tmpdir}" C-m
 # tmux send-keys -t ${window}.bottom-right "find ${tmpdir} -name \"*.s\" | entr -cs \"clear; cat ${tmpdir}/main.s\"" C-m
 
 
-tmux select-pane -t ${window}.left
+tmux select-pane -t ${window}.${main}
 
 if [ -z "$TMUX" ]; then
   tmux attach -t ${window}
