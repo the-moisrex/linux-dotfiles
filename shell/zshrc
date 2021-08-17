@@ -82,7 +82,8 @@ ZSH_CUSTOM=/usr/share/zsh/
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(git archlinux composer docker gem npm perl pip lxd sudo tmux vscode z web-search systemd screen python node catimg command-not-found common-aliases copyfile encode64 extract git-extras httpie history meteor taskwarrior tmuxinator zsh-autosuggestions)
+plugins=(git archlinux composer docker gem npm perl pip lxd sudo tmux vscode z web-search systemd screen python node catimg command-not-found common-aliases copyfile encode64 extract git-extras httpie history meteor taskwarrior tmuxinator)
+# zsh-autosuggestions
 
 source $ZSH/oh-my-zsh.sh
 
@@ -121,7 +122,7 @@ source $ZSH/oh-my-zsh.sh
 
 
 #export EDITOR="emacsclient -nw -s initd -a nvim"
-export EDITOR="vim"
+export EDITOR="nvim"
 export JAVA_HOME=/usr/lib/jvm/java-8-openjdk
 export PATH=~/.bin:$cmddir/bin:~/.gem/ruby/2.7.0/bin:$PATH:$JAVA_HOME/bin
 export HISTSIZE=100000
@@ -153,3 +154,5 @@ if $use_pywal and [ -x "$(command -v wal)" ]; then
   source ~/.cache/wal/colors-tty.sh
 fi;
 
+
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/data/data/com.termux/files/usr/lib"
