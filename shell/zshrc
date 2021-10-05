@@ -29,6 +29,14 @@ else
 	ZSH_THEME="robbyrussell"
 fi;
 
+# syntax highlighting for zsh
+zsh_highlighting_file="$HOME/.zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+if [ -f "$zsh_highlighting_file" ]; then
+  source "$zsh_highlighting_file"
+else
+  git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$HOME/.zsh-syntax-highlighting" --depth 1 && source "$zsh_highlighting_file"
+fi;
+
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
