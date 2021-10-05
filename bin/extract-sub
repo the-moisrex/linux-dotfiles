@@ -1,0 +1,6 @@
+#!/bin/bash
+
+lang=$1
+file=$2
+index=$(ffmpeg -i "$file" 2>&1 | grep $lang | grep Subtitle | head -1 | grep -Eo '[0-9]+:[0-9]+');
+ffmpeg -i "$file" -map $index "$file.$lang.srt";
