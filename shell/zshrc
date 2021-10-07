@@ -90,7 +90,7 @@ ZSH_CUSTOM=/usr/share/zsh/
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(git archlinux composer docker gem npm perl pip lxd sudo tmux vscode z web-search systemd screen python node catimg command-not-found common-aliases copyfile encode64 extract git-extras httpie history meteor taskwarrior tmuxinator)
+plugins=(git archlinux composer docker gem npm perl pip lxd sudo tmux vscode z web-search systemd screen python node catimg command-not-found common-aliases copyfile encode64 extract git-extras httpie history meteor taskwarrior tmuxinator zsh-autosuggestions)
 # zsh-autosuggestions
 
 source $ZSH/oh-my-zsh.sh
@@ -164,3 +164,8 @@ fi;
 
 
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/data/data/com.termux/files/usr/lib"
+
+
+# CPM.cmake's option for caching
+# link: https://github.com/cpm-cmake/CPM.cmake#cpm_source_cache
+export CPM_SOURCE_CACHE=$HOME/.cache/CPM
