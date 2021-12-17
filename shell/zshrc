@@ -12,6 +12,10 @@ fi
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
 
+# agnoster theme, disable printing the user
+DEFAULT_USER=$(whoami)
+prompt_context(){}
+
 # Set name of the theme to load --- if set to "random", it will
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
@@ -27,6 +31,7 @@ elif [ -f "$powerlevel9k_theme" ]; then
   source "$powerlevel9k_theme";
 else
 	ZSH_THEME="robbyrussell"
+	ZSH_THEME="agnoster"
 fi;
 
 # syntax highlighting for zsh
@@ -130,9 +135,9 @@ source $ZSH/oh-my-zsh.sh
 
 
 #export EDITOR="emacsclient -nw -s initd -a nvim"
-export EDITOR="nvim"
+export EDITOR="vim"
 export JAVA_HOME=/usr/lib/jvm/java-8-openjdk
-export PATH=~/.bin:$cmddir/bin:~/.gem/ruby/2.7.0/bin:$PATH:$JAVA_HOME/bin
+export PATH=.:~/.bin:$cmddir/bin:~/.gem/ruby/2.7.0/bin:$PATH:$JAVA_HOME/bin
 export HISTSIZE=100000
 export SAVEHIST=100000
 
