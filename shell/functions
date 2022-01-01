@@ -19,3 +19,10 @@ function resume-clion() {
   kill -cont `pidof clangd`
 }
 
+
+function run {
+  clear
+  ninja $@
+  ./$@
+}
+
