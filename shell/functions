@@ -34,3 +34,8 @@ function run {
   fi;
 }
 
+
+# git push all
+function gpush {
+  git remote | while read remote; do setsid git push $remote $(git branch --show-current); done
+}
