@@ -21,8 +21,8 @@ function resume-clion() {
 
 
 function run {
-  clear
-  ninja $@
-  ./$@
+  clear;
+  ninja $@ && notify-send -t 800 "Compiled Seccessfully." || notify-send -t 800 "Compilation Failed.";
+  ./$@ && notify-send -t 1000 "Tests Passed" || notify-send -t 1000 "Tests Failed";
 }
 
