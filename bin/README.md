@@ -20,3 +20,9 @@ CodeShell can also be run in Termux (Android).
 Template directories are located in the `code-templates` directory from this repository. You can use the directory names of those templates in the `-t=template_name` argument of this script.
 
 You can see examples of `~/codeshells` directory in [my codeshells repository](https://github.com/the-moisrex/codeshells).
+
+
+## Welcome Back (`welcomeback`)
+![image](https://user-images.githubusercontent.com/12122474/149163086-05ee270d-8820-4d07-a245-ec9f8fd99ab4.png)
+
+It's just a welcome back message when it took you more than 24 hours to come back. You can put it in your `.bashrc` or `.zshrc` file.
