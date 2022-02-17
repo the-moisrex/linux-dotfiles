@@ -1,3 +1,3 @@
 all:
-	g++ -g -std=c++20 main.cpp
+	g++ -g -std=c++23 main.cpp
 

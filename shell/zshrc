@@ -160,8 +160,8 @@ source $ZSH/oh-my-zsh.sh
 export EDITOR="vim"
 export JAVA_HOME=/usr/lib/jvm/java-8-openjdk
 export PATH=.:~/.bin:$cmddir/bin:~/.gem/ruby/2.7.0/bin:$PATH:$JAVA_HOME/bin
-export HISTSIZE=100000
-export SAVEHIST=100000
+export HISTSIZE=100000000
+export SAVEHIST=100000000
 
 # vim keybindings
 set -o vi
