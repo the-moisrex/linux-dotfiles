@@ -1,5 +1,11 @@
 #!/bin/bash
 
-journalctl --rotate
-journalctl -m --vacuum-time=1s
-rm -rf /var/lib/systemd/coredump/*
+if command -v journalctl &> /dev/null;
+then
+  journalctl --rotate
+  journalctl -m --vacuum-time=1s
+  rm -rf /var/lib/systemd/coredump/*
+else
+  echo no journalctl
+  exit 1
+fi
