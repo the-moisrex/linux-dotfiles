@@ -1,0 +1,7 @@
+#!/bin/bash
+
+username=$(date +%s | sha256sum | base64 | head -c 16)
+echo Username: $username
+echo Password: 
+
+pass generate -f $1
