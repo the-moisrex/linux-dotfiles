@@ -1,5 +1,7 @@
 #!/bin/bash
 
+functions_file_path="$0"
+
 function cd {
   builtin cd "$@" && ls -F && echo && echo && pwd;
 }
@@ -19,6 +21,17 @@ function resume-clion() {
   kill -cont `pidof clangd`
 }
 
+function repo_path {
+  repo="."
+  until [ "$(realpath "$repo")" = "/.git" -o \
+          "$(realpath "$repo")" = "/" -o \
+          -d "$repo/.git" \
+        ]; do
+    repo="../${repo}";
+  done;
+  repo=$(dirname "$repo");
+  echo $repo;
+}
 
 function run {
   clear;
@@ -32,6 +45,11 @@ function run {
   else
     notify-send -t 800 "Compilation Failed.";
   fi;
+}
+
+function keep-running {
+  repo=$(repo_path);
+  find "$repo" | entr -cs "source ${functions_file_path}; run ${1}"
 }
 
 
