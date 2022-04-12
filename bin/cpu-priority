@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# https://askubuntu.com/questions/337444/how-to-increase-the-priority-for-a-task-permanently-in-linux-machine
+# Also consider "ionice" which limits io
+
+
+if [ -x "$(command -v cpulimit)" ]; then
+  pids=$(pgrep $1 | xargs echo)
+  limit=$2
+  if [ "$limit" == "" ]; then
+    limit=19
+  fi
+  for id in $pids; do 
+    renice -n $limit -p $id;
+  done
+else
+  echo "Install cpulimit for this to work.";
+fi

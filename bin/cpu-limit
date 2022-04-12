@@ -1,0 +1,17 @@
+#!/bin/bash
+
+if [ -x "$(command -v cpulimit)" ]; then
+  # cpulimit doesn't seem to work with files for some reason
+  # files=$(whereis -b $1 | cut -d" " -f2-)
+  pids=$(pgrep $1 | xargs echo)
+  limit=$2
+  if [ "$limit" == "" ]; then
+    limit=50
+  fi
+  for id in $pids; do 
+    echo "limitting $id"
+    setsid cpulimit --limit=$limit --pid="$id";
+  done
+else
+  echo "Install cpulimit for this to work.";
+fi
