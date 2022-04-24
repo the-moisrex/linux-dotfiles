@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# example usage:
+#  setsid buckle.pitched pitch 2000
+
 tmpdir=$(mktemp -d);
 echo "Files stored at: ${tmpdir}"
 for file in /usr/share/bucklespring/*.wav; do
