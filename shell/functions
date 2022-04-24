@@ -7,18 +7,18 @@ function cd {
 }
 
 function en {
-  if [ "$@" == "" ]; then
-    export LANG=en_US.UTF-8 LANGUAGE=en:en_US
+  if [ -z "$@" ]; then
+    export LANG="en_US.UTF-8" LANGUAGE="en:en_US"
   else
-    LANG=en_US.UTF-8 LANGUAGE=en:en_US $@
+    LANG="en_US.UTF-8" LANGUAGE="en:en_US" $@
   fi
 }
 
 function es {
-  if [ "$@" == "" ]; then
-    export LANG=es_ES.UTF-8 LANGUAGE=es:en_US
+  if [ -z "$@" ]; then
+    export LANG="es_ES.UTF-8" LANGUAGE="es:en_US"
   else
-    LANG=es_ES.UTF-8 LANGUAGE=es:en_US $@
+    LANG="es_ES.UTF-8" LANGUAGE="es:en_US" $@
   fi
 }
 
