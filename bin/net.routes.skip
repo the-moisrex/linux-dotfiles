@@ -66,7 +66,7 @@ fi
 
 countryiso=$(echo "$countryiso" | tr '[:upper:]' '[:lower:]')
 
-input="$(dirname $0)/db-ip/country/$countryiso/ipv4.cidr"
+input="$(dirname $0)/../db-ip/country/$countryiso/ipv4.cidr"
 
 function add {
   while IFS= read -r line
