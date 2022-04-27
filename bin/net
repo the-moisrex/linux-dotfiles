@@ -118,6 +118,15 @@ fi
 
 
 
+echo "Default values:"
+echo "  Device:    $device"
+echo "  netns:     $nsn"
+echo "  link:      $linkname"
+echo "  macvlan:   $mvlan_name"
+echo
+echo
+
+
 function add_skip_vpn_ns {
   local _device="$1"
   local _nsn="$2"
