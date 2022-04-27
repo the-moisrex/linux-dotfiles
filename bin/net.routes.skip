@@ -65,7 +65,9 @@ else
 fi
 
 countryiso=$(echo "$countryiso" | tr '[:upper:]' '[:lower:]')
-storage="~/.cache/country-ips"
+
+# if you decide to change this directory, change it in the "clear-coredump" command as well
+storage="$HOME/.cache/country-ips"
 
 
 function update {
