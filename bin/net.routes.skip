@@ -36,7 +36,7 @@ while [[ $# -gt 0 ]]; do
 	  echo "This command requires superuser privilages! (MUST run as root)"
 	  echo ""
 	  echo "Arguments:"
-	  echo -e "\t--country\tCountry of your choice as 2-letter ISO code. Example: US, IR"
+	  echo -e "\t--country\tCountry of your choice as 2-letter ISO code. Example: us, ir"
 	  echo -e "\t--gateway\tGateway used to route to these ip addresses. Example: 192.168.0.1 OR vpn0"
 	  echo -e "\t--help\t\tShows this help."
 	  exit
@@ -51,7 +51,7 @@ done
 
 if [ -z ${countryiso+x} ];
 then
-	read -p 'Country ISO code (example US,IR): ' countryiso
+	read -p 'Country ISO code (example us, ir): ' countryiso
 else
 	echo "Country: $countryiso"
 fi
@@ -65,10 +65,22 @@ else
 fi
 
 countryiso=$(echo "$countryiso" | tr '[:upper:]' '[:lower:]')
+storage="~/.cache/country-ips"
 
-input="$(dirname $0)/../db-ip/country/$countryiso/ipv4.cidr"
+
+function update {
+  if [ -d "$storage" ]; then
+    git -C "$storage" pull --rebase=true --prune --force --depth=1 --progress --no-ff --no-edit --no-commit
+  else
+    git clone --depth=1 -b master https://github.com/herrbischoff/country-ip-blocks.git ${storage}
+  fi;
+}
+
+input="$storage/ipv4/$countryiso.cidr"
 
 function add {
+  update || (echo failed to update && exit);
+
   while IFS= read -r line
   do
 
