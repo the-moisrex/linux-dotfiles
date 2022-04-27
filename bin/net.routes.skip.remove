@@ -1,5 +1,6 @@
 #!/bin/bash
 
-source ./net.routes.skip
+curdir=$(dirname "$0")
+source $curdir/net.routes.skip
 
 remove
