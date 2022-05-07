@@ -1,0 +1,55 @@
+#!/bin/bash
+
+if ! command -v asciinema &> /dev/null
+then
+    echo "asciinema could not be found"
+    exit
+fi
+
+
+pretext=$1
+
+if [ -z "$pretext" ]; then
+  echo Record shell using asciinema
+  echo "Usage: arec [pretext] [title]"
+  echo "Example: arec webpp Working on database"
+  exit
+fi
+
+cmd="$SHELL"
+if [ "$pretext" == "webpp" ]; then
+  pretext="Webpp live coding"
+  working_dir="$HOME"
+  if [ -d "$HOME/webpp"]; then
+    working_dir="$HOME/webpp"
+  elif [ -d "$HOME/Projects/webpp"]; then
+    working_dir="$HOME/Projects/webpp"
+  fi
+  cmd="tmux new -c $working_dir"
+fi
+
+title="${*:2}"
+
+# splugify from: https://gist.github.com/oneohthree/f528c7ae1e701ad990e6?permalink_comment_id=2047474#gistcomment-2047474
+filename=$(echo "$pretext-$title" | iconv -t ascii//TRANSLIT | sed -r s/[~\^]+//g | sed -r s/[^a-zA-Z0-9]+/-/g | sed -r s/^-+\|-+$//g | tr A-Z a-z)
+file="$HOME/live/$(date +%Y-%m-%d)-$filename.cast"
+
+echo Recording $pretext, $title
+echo File: $file
+echo
+
+append=""
+if [ -f "$file" ]; then
+  while true; do
+    read -p "File $file already exists, do you want to append? (Y/n) " yn
+    case $yn in
+      [Yy]* ) break;;
+      [Nn]* ) exit;;
+      * ) ;;
+    esac
+  done
+
+  append="--append"
+fi
+
+asciinema rec "$file" -i 1 -t "$pretext, $title" -c "$cmd" $append
