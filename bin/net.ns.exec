@@ -1,6 +1,10 @@
 #!/bin/bash
 
-source ./net
+# Example usage:
+#  sudo -E USER=${USER} net.ns.exec
+
+curdir=$(dirname "$0")
+source $curdir/net
 
 add_skip_vpn_ns
 run_in_skip_vpn_ns no
