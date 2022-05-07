@@ -1,0 +1,8 @@
+#!/bin/bash
+
+while true; do
+    for process in $@; do
+        cpu-priority $process;
+    done
+    sleep 5s;
+done

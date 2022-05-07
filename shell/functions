@@ -6,9 +6,25 @@ function cd {
   builtin cd "$@" && ls -F && echo && echo && pwd;
 }
 
+function en {
+  if [ -z "$@" ]; then
+    export LANG="en_US.UTF-8" LANGUAGE="en:en_US"
+  else
+    LANG="en_US.UTF-8" LANGUAGE="en:en_US" $@
+  fi
+}
+
+function es {
+  if [ -z "$@" ]; then
+    export LANG="es_ES.UTF-8" LANGUAGE="es:en_US"
+  else
+    LANG="es_ES.UTF-8" LANGUAGE="es:en_US" $@
+  fi
+}
+
 
 function zsh-stats() {
-    fc -l 1 | awk '{CMD[$2]++;count++;}END { for (a in CMD)print CMD[a] " " CMD[a]/count*100 "% " a;}' | grep -v "./" | column -c3 -s " " -t | sort -nr | nl | head -n25;
+    fc -l 1 | sed -E 's/[[:space:]]sudo[[:space:]]/ /' | awk '{CMD[$2]++;count++;}END { for (a in CMD)print CMD[a] " " CMD[a]/count*100 "% " a;}' | grep -v "./" | column -c3 -s " " -t | sort -nr | nl | head -n25;
 }
 
 function pause-clion() {
