@@ -20,9 +20,9 @@ cmd="$SHELL"
 if [ "$pretext" == "webpp" ]; then
   pretext="Webpp live coding"
   working_dir="$HOME"
-  if [ -d "$HOME/webpp"]; then
+  if [ -d "$HOME/webpp" ]; then
     working_dir="$HOME/webpp"
-  elif [ -d "$HOME/Projects/webpp"]; then
+  elif [ -d "$HOME/Projects/webpp" ]; then
     working_dir="$HOME/Projects/webpp"
   fi
   cmd="tmux new -c $working_dir"
