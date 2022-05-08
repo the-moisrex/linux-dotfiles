@@ -24,8 +24,9 @@ if [ "$pretext" == "webpp" ]; then
     working_dir="$HOME/webpp"
   elif [ -d "$HOME/Projects/webpp" ]; then
     working_dir="$HOME/Projects/webpp"
+    cmd="tmux new -c $working_dir"
   fi
-  cmd="tmux new -c $working_dir"
+  cd "$working_dir"
 fi
 
 title="${*:2}"
