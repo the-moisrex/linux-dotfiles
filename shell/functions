@@ -50,17 +50,42 @@ function repo_path {
 }
 
 function run {
-  clear;
-  if ninja -v $@; then
-    notify-send -t 800 "Compiled Seccessfully.";
-    if ./$@; then
-      notify-send -t 1000 "Tests Passed";
+
+  gitroot=".git";
+
+  until [ "$(realpath "$gitroot")" = "/.git" -o \
+          "$(realpath "$gitroot")" = "/" -o \
+          -d "$gitroot" \
+        ]; do
+    gitroot="../${gitroot}";
+  done;
+
+
+  proj_dir="$(realpath "$gitroot/..")";
+  build_dir="$proj_dir/build";
+  old_dir=$(pwd)
+
+
+  if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
+    builtin cd "$build_dir"
+    clear;
+    echo Project root:    $proj_dir
+    echo Build Directory: $build_dir
+    if ninja -v $@; then
+      notify-send -t 800 "Compiled Seccessfully.";
+      if ./$@; then
+        notify-send -t 1000 "Tests Passed";
+      else
+        notify-send -t 1000 "Tests Failed";
+      fi;
     else
-      notify-send -t 1000 "Tests Failed";
+      notify-send -t 800 "Compilation Failed.";
     fi;
+    builtin cd "$old_dir"
   else
-    notify-send -t 800 "Compilation Failed.";
+    echo Project Root not found.
   fi;
+
 }
 
 function keep-running {
