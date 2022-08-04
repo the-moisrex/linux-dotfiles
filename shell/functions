@@ -64,17 +64,15 @@ function run {
   proj_dir="$(realpath "$gitroot/..")";
   build_dir="$proj_dir/build";
   old_dir=$(pwd)
-
+  execfile="$@"
 
   if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
-    builtin cd "$build_dir"
-    if [ -f "./build.ninja" ]; then
-      build_cmd="ninja -v $@"
+    if [ -f "$build_dir/build.ninja" ]; then
+      build_cmd="ninja -C '$build_dir' -v $execfile"
     elif [ -f "Makefile" ]; then
-      build_cmd="make $@"
+      build_cmd="make -C '$build_dir' $execfile"
     else
       echo wrong build directory.
-      builtin cd "$old_dir"
       return
     fi;
     clear;
@@ -83,7 +81,10 @@ function run {
     echo Build command:   $build_cmd
     if eval "$build_cmd"; then
       notify-send -t 800 "Compiled Seccessfully.";
-      if ./$@; then
+      if [ -f "$build_dir/$execfile" ]; then
+        execfile="$build_dir/$execfile"
+      fi
+      if $execfile; then
         notify-send -t 1000 "Tests Passed";
       else
         notify-send -t 1000 "Tests Failed";
@@ -91,7 +92,6 @@ function run {
     else
       notify-send -t 800 "Compilation Failed.";
     fi;
-    builtin cd "$old_dir"
   else
     echo Project Root not found.
   fi;

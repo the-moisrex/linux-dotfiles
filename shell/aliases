@@ -75,3 +75,6 @@ alias edit="emacsclient -nw -s initd -a nvim"
 alias proxychains='http_proxy="" https_proxy="" all_proxy="" proxychains'
 alias c="xclip -selection clipboard"
 
+
+# git aliases
+alias ggrep="git grep --heading --break -n";
