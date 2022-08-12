@@ -7,7 +7,7 @@ function cd {
 }
 
 function en {
-  if [ -z "$@" ]; then
+  if [ "$#" -eq 0 ]; then
     export LANG="en_US.UTF-8" LANGUAGE="en:en_US"
   else
     LANG="en_US.UTF-8" LANGUAGE="en:en_US" $@
@@ -15,7 +15,7 @@ function en {
 }
 
 function es {
-  if [ -z "$@" ]; then
+  if [ "$#" -eq 0 ]; then
     export LANG="es_ES.UTF-8" LANGUAGE="es:en_US"
   else
     LANG="es_ES.UTF-8" LANGUAGE="es:en_US" $@
