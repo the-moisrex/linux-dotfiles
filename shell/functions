@@ -100,7 +100,7 @@ function run {
 
 function keep-running {
   repo=$(repo_path);
-  find "$repo" | entr -cs "source ${functions_file_path}; run ${1}"
+  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1}"
 }
 
 
