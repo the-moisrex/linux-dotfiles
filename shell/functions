@@ -28,6 +28,7 @@ function zsh-stats() {
 }
 
 function pause-clion() {
+  kill -stop `pidof clang-tidy`
   kill -stop `pidof clangd`
   kill -stop `pidof java`
 }
@@ -35,6 +36,7 @@ function pause-clion() {
 function resume-clion() {
   kill -cont `pidof java`
   kill -cont `pidof clangd`
+  kill -cont `pidof clang-tidy`
 }
 
 function repo_path {
@@ -79,7 +81,7 @@ function run {
     echo Project root:    $proj_dir
     echo Build Directory: $build_dir
     echo Build command:   $build_cmd
-    if eval "$build_cmd"; then
+    if eval "unbuffer $build_cmd"; then
       notify-send -t 800 "Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile"
@@ -101,6 +103,11 @@ function run {
 function keep-running {
   repo=$(repo_path);
   git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1}"
+}
+
+function keep-running-head {
+  repo=$(repo_path);
+  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1} | head -${2}"
 }
 
 
