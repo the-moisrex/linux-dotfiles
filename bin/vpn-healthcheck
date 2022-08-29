@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# This script will let you restart your Mikrotik's IPSec Active Peer connections when the they seem to be stuck
+
+# domain to test against (a censored website):
+domain=facebook.com
+
+function restart_vpn {
+    # I'm duplicating the below line in order to make sure we always get the latest gateway
+    gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
+    ssh $gateway_router /ip/ipsec/active-peers/kill-connections && (echo VPN Restarted from vpn-healthcheck | mail -s "VPN Restart" $USER@$(hostname))
+
+    # sleep 10 seconds before retrying agian
+    sleep 10s
+}
+
+gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
+if ssh $gateway_router nothing; then
+    echo SSH Test passed.
+    echo
+    echo
+else
+    echo "We don't know how to SSH to the Mikrotik router."
+    exit;
+fi
+
+while true; do
+    # double check before restarting
+    ping -c 3 $domain || (sleep 3s; ping -c 3 $domain) || restart_vpn;
+    sleep 1s;
+done
