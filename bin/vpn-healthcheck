@@ -4,6 +4,8 @@
 
 # domain to test against (a censored website):
 domain=facebook.com
+ip=$(dig +short $domain)
+
 
 function restart_vpn {
     # I'm duplicating the below line in order to make sure we always get the latest gateway
@@ -26,6 +28,6 @@ fi
 
 while true; do
     # double check before restarting
-    ping -W 1 -w 3 -c 3 $domain || (sleep 5s; ping -W 1 -w 3 -c 3 $domain) || restart_vpn;
+    ping -W 1 -w 3 -c 3 $ip || (sleep 5s; ping -W 1 -w 3 -c 3 $ip) ||  (sleep 5s; ping -W 1 -w 3 -c 3 $ip)  || restart_vpn;
     sleep 1s;
 done
