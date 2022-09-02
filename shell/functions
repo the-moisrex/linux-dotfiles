@@ -115,3 +115,8 @@ function keep-running-head {
 function gpush {
   git remote | while read remote; do echo "git push $remote $(git branch --show-current)"; setsid git push $remote $(git branch --show-current); done
 }
+
+
+function try {
+  $@ || try $@;
+}
