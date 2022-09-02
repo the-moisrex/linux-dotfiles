@@ -1,5 +1,7 @@
-# zsh/bash
+
 { "name": "bash", "type": "BG_CPUIO" }
 { "name": "sh", "type": "BG_CPUIO" }
+{ "name": "watch", "type": "BG_CPUIO" }
+
 { "name": "zsh", "type": "LowLatency_RT" }
 { "name": "konsole", "type": "LowLatency_RT" }
