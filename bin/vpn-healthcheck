@@ -12,8 +12,8 @@ function restart_vpn {
     gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
     ssh $gateway_router /ip/ipsec/active-peers/kill-connections && (echo VPN Restarted from vpn-healthcheck | mail -s "VPN Restart" $USER@$(hostname))
 
-    # sleep 10 seconds before retrying agian
-    sleep 10s
+    # sleep some seconds before retrying agian
+    sleep 30s
 }
 
 gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
