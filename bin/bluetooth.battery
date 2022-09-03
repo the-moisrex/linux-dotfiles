@@ -1,0 +1,3 @@
+#!/bin/bash
+
+pactl list sinks | grep bluetooth.battery | sed -E 's/.*?"([0-9]+%)".*/\1/'
