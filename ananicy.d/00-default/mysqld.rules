@@ -1,1 +1,1 @@
-{ "name": "mysqld", "type": "Heavy_CPU" } 
+{ "name": "mysqld", "type": "BG_CPUIO" } 
