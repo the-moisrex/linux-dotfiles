@@ -93,7 +93,10 @@ fi;
 template_dir="$(dirname $0)/../code-templates/${template}"
 
 if [ ! -d $template_dir ]; then
-	echo "The specified template ($template) does not exists."
+	echo "The specified template ($template) does not exists. Possible code-templates are:"
+    dir="$(dirname $0)/../code-templates";
+    echo "Directory: $dir"
+    ls "$dir"
 	exit;
 fi;
 
@@ -150,13 +153,16 @@ echo "Code directory: ${tmpdir}"
 if [[ "$template" == asm* ]]; then # make
 	tmux send-keys -t ${window}.${side} "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
 	open_editor "main.asm" "main.asm";
+elif [ -f ${template_dir}/package.json ]; then # make
+  tmux send-keys -t ${window}.${side} "find . -name '*.js' -or -name '*.json' | entr -cs 'make && npm start'" C-m
+  open_editor "index.js" "index.js";
 elif [ -f ${template_dir}/Makefile ]; then # make
   if [ -f ${template_dir}/main.c ]; then
   	tmux send-keys -t ${window}.${side} "find . -name '*.c' -or -name '*.h' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
-	  open_editor "main.c" "main.c";
+	open_editor "main.c" "main.c";
   else
   	tmux send-keys -t ${window}.${side} "find . -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
-	  open_editor "main.cpp" "main.cpp";
+	open_editor "main.cpp" "main.cpp";
   fi;
 elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   buildsyscmd="ninja";
