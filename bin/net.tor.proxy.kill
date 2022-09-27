@@ -1,8 +1,41 @@
 #!/bin/bash
 
-# Getting the tor id that's using port 9150 (tor browser)
-# ss -lptn 'sport = :9150' | grep pid | sed -E 's/.*pid=([0-9]+).*/\1/'
+# Getting the tor id that's using port 9150 (tor browser), and 9050 (tor.service)
+port9150=$(ss -lptn 'sport = :9150' | grep pid | sed -E 's/.*pid=([0-9]+).*/\1/')
+port9050=$(ss -lptn 'sport = :9050' | grep pid | sed -E 's/.*pid=([0-9]+).*/\1/')
+except=($port9050 $port9150) # array
 
-sudo kill `pidof -x net.tor.proxy`
-sudo killall haproxy privoxy
+all=()
+for port in `pidof tor`; do
+    all=(${all[@]} $port)
+done
+
+# Remove the "except" pids from the "all" pids
+our_tors=()
+for (( i = 0 ; i < ${#all[@]} ; i++ )); do
+    port=${all[$i]};
+    for (( exi = 0 ; exi < ${#except[@]}; exi++ )); do
+        ex=${except[$ex]};
+        if [ "$port" == "$ex" ]; then
+            continue 2;
+        fi
+    done
+done
+
+if [ ${#out_tors[@]} != 0 ]; then
+    echo Killing tor nodes: $our_tors
+    kill $our_tors
+else
+    echo "There's no tor node to kill"
+fi
+
+echo Killing haproxy and privoxy
+killall haproxy privoxy # todo: we shouldn't kill them all, should we?
+
+scripts=$(pidof -x net.tor.proxy)
+if [ ! -z "$scipts"]; then
+    echo Killing net.tor.proxy scripts
+    kill $scripts
+fi
+
 
