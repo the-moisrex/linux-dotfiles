@@ -3,7 +3,7 @@
 curdir=$(dirname "$0")
 
 source $curdir/net
-
+USER="tor"
 
 function run_tor {
   local _nsn=$1
@@ -17,7 +17,7 @@ function run_tor {
   mkdir -p $datadir
   if [ "$termux" == "false" ]; then
     chmod 700 $datadir -R
-    chown tor:tor $datadir -R
+    chown $USER:$USER $datadir -R
   fi;
 
   local pid_file="${dir}/pid-nsn:${_nsn}-port:${_port}-cport:${cport}"
@@ -38,17 +38,18 @@ function run_tor {
     `"--Log \"warn syslog\" "`
     `"--RunAsDaemon 1 ";
     #`"| logger -t 'tor' 2>&1"
+    # `"--User $USER "`
 
   if [ -z "$_nsn" ] || [ $_nsn == "-" ]; then
     # run the command in the background
     if [ "$termux" == "false" ]; then
-      setsid sudo -u tor bash -c "$cmd";
+      setsid sudo -u $USER bash -c "$cmd";
     else
       setsid bash -c "$cmd";
     fi;
   else
     # run the command in the specified network name space
-    run_in_skip_vpn_ns yes $_nsn tor "$cmd"
+    run_in_skip_vpn_ns yes $_nsn $USER "$cmd"
   fi
 
   echo "Running tor instance:"
