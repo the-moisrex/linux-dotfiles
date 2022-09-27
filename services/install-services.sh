@@ -3,6 +3,10 @@
 dir=$(dirname "$0")
 services="$@"
 
+echo "Source file directory: $dir";
+echo "Selected services to install: $@";
+echo
+
 for service in $services; do
 
     service_file="$service";
@@ -35,19 +39,25 @@ for service in $services; do
 
     echo service file: $service_file;
     echo service name: $service_name;
-    echo
 
     if $user_service; then
+        echo "linking $HOME/.config/systemd/user/$service_name.service";
         mkdir -p "$HOME/.config/systemd/user";
+        systemctl --user stop $service_name.service; # stop if there's one
         ln -f -s "$service_file" "$HOME/.config/systemd/user/$service_name.service";
         systemctl --user daemon-reload;
         systemctl --user enable $service_name.service;
         systemctl --user start $service_name.service;
+        echo "Service $service_name enabled and started in user space.";
     else
+        echo "linking /etc/systemd/system/$service_name.service";
+        sudo systemctl stop $service_name.service; # stop the current service if it exists
         sudo ln -f -s "$service_file" "/etc/systemd/system/$service_name.service";
         sudo systemctl daemon-reload;
         sudo systemctl enable $service_name.service;
         sudo systemctl start $service_name.service;
+        echo "Service $service_name enabled and started.";
     fi
 
+    echo
 done
