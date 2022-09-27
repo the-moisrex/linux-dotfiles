@@ -17,10 +17,18 @@ fi
 function restart_vpn {
     # I'm duplicating the below line in order to make sure we always get the latest gateway
     gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
-    ssh $gateway_router /ip/ipsec/active-peers/kill-connections && (echo VPN Restarted from vpn-healthcheck | mail -s "VPN Restart" $USER@$(hostname))
+    if ssh $gateway_router /ip/ipsec/active-peers/kill-connections; then
+        echo VPN Restarted from vpn-healthcheck | mail -s "VPN Restart" $USER@$(hostname);
+        echo VPN Restarted from vpn-healthcheck
 
-    # sleep some seconds before retrying agian
-    sleep 30s
+        # sleep some seconds before retrying agian
+        sleep 30s;
+    else
+        echo Attempt to restart vpn failed.
+
+        sleep 10s;
+    fi
+
 }
 
 gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);

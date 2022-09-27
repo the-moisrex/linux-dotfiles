@@ -4,7 +4,7 @@ Description=Tor Load Balancer
 [Service]
 Type=forking
 ExecStart=/home/moisrex/cmd/bin/net.tor.proxy
-ExecStop=killall tor haproxy privoxy
+ExecStop=/home/moisrex/cmd/bin/net.tor.proxy.kill
 
 [Install]
 WantedBy=default.target

@@ -1,3 +1,7 @@
 #!/bin/bash
 
+# Getting the tor id that's using port 9150 (tor browser)
+# ss -lptn 'sport = :9150' | grep pid | sed -E 's/.*pid=([0-9]+).*/\1/'
+
+sudo kill `pidof -x net.tor.proxy`
 
