@@ -3,6 +3,7 @@
 ARGUMENT_LIST=(
     "country:"
     "gateway:"
+    "nordvpn"
     "help"
 )
 
@@ -17,6 +18,7 @@ opts=$(getopt \
 
 eval set --$opts
 
+vpntype="ip"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --country)
@@ -28,16 +30,22 @@ while [[ $# -gt 0 ]]; do
             gateway=$2
             shift 2
             ;;
+        
+        --nordvpn)
+            vpntype="nordvpn"
+            shift 1
+            ;;
 
 	--help)
 	  echo "This script helps you to add routes for a specific country."
 	  echo ""
 	  echo "In order to run interactiveley just call this script without the --help switch."
-	  echo "This command requires superuser privilages! (MUST run as root)"
+	  echo "This command requires superuser privilages if --nordvpn is not specified! (MUST run as root)"
 	  echo ""
 	  echo "Arguments:"
 	  echo -e "\t--country\tCountry of your choice as 2-letter ISO code. Example: us, ir"
 	  echo -e "\t--gateway\tGateway used to route to these ip addresses. Example: 192.168.0.1 OR vpn0"
+	  echo -e "\t--nordvpn\tRun nordvpn whitelist commands instead of standard ip commands"
 	  echo -e "\t--help\t\tShows this help."
 	  exit
 	  ;;
@@ -56,14 +64,14 @@ else
 	echo "Country: $countryiso"
 fi
 
-
-if [ -z ${gateway+x} ];
-then
-	read -p "Enter the gateway that you want to use for $countryiso (example 192.168.0.1/vpn0/enp2s0): " gateway
-else
-	echo "Gateway: $gateway"
+if [ $vpntype == "ip" ]; then
+    if [ -z ${gateway+x} ];
+    then
+        read -p "Enter the gateway that you want to use for $countryiso (example 192.168.0.1/vpn0/enp2s0): " gateway
+    else
+        echo "Gateway: $gateway"
+    fi
 fi
-
 countryiso=$(echo "$countryiso" | tr '[:upper:]' '[:lower:]')
 
 # if you decide to change this directory, change it in the "clear-coredump" command as well
@@ -86,24 +94,34 @@ function add {
   while IFS= read -r line
   do
 
-    if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      ip route add "$line" via "$gateway"
-    else
-      ip route add "$line" dev "$gateway"
+    if [ $vpntype == "ip" ]; then
+        if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          ip route add "$line" via "$gateway"
+        else
+          ip route add "$line" dev "$gateway"
+        fi
+        echo "$line -> $gateway"
+    elif [ $vpntype == "nordvpn" ]; then
+        nordvpn whitelist add subnet $line
+        echo "nordvpn whitelisted $line"
     fi
-    echo "$line -> $gateway"
   done < "$input"
 }
 
 function remove {
   while IFS= read -r line
   do
-    if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      ip route delete "$line" via "$gateway"
-    else
-      ip route delete "$line" dev "$gateway"
+    if [ $vpntype == "ip" ]; then
+        if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          ip route delete "$line" via "$gateway"
+        else
+          ip route delete "$line" dev "$gateway"
+        fi
+        echo "$line -> $gateway"
+    elif [ $vpntype == "nordvpn" ]; then
+        nordvpn whitelist remove subnet $line;
+        echo "nordvpn whitelist removal of $line"
     fi
-    echo "$line -> $gateway"
   done < "$input"
 }
 
