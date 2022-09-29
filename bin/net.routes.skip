@@ -4,6 +4,7 @@ ARGUMENT_LIST=(
     "country:"
     "gateway:"
     "nordvpn"
+    "iptables-filter"
     "help"
 )
 
@@ -36,6 +37,11 @@ while [[ $# -gt 0 ]]; do
             shift 1
             ;;
 
+        --iptables-filter)
+            vpntype="iptables-filter"
+            shift 1
+            ;;
+
 	--help)
 	  echo "This script helps you to add routes for a specific country."
 	  echo ""
@@ -46,6 +52,7 @@ while [[ $# -gt 0 ]]; do
 	  echo -e "\t--country\tCountry of your choice as 2-letter ISO code. Example: us, ir"
 	  echo -e "\t--gateway\tGateway used to route to these ip addresses. Example: 192.168.0.1 OR vpn0"
 	  echo -e "\t--nordvpn\tRun nordvpn whitelist commands instead of standard ip commands"
+      echo -e "\t--iptables-filter\tUse iptables' filter table to enable them; initially I used this because nordvpn is using iptables and their implementation for whitelisting seems buggy."
 	  echo -e "\t--help\t\tShows this help."
 	  exit
 	  ;;
@@ -104,6 +111,10 @@ function add {
     elif [ $vpntype == "nordvpn" ]; then
         nordvpn whitelist add subnet $line
         echo "nordvpn whitelisted $line"
+    elif [ $vpntype = "iptables-filter" ]; then
+        iptables -t filter -I INPUT --destination $line -j ACCEPT
+        iptables -t filter -I OUTPUT --destination $line -j ACCEPT
+        echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
     fi
   done < "$input"
 }
@@ -121,6 +132,10 @@ function remove {
     elif [ $vpntype == "nordvpn" ]; then
         nordvpn whitelist remove subnet $line;
         echo "nordvpn whitelist removal of $line"
+    elif [ $vpntype = "iptables-filter" ]; then
+        iptables -t filter -D INPUT --destination $line -j ACCEPT
+        iptables -t filter -D OUTPUT --destination $line -j ACCEPT
+        echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
     fi
   done < "$input"
 }
