@@ -1,5 +1,56 @@
 #!/bin/bash
 
+port=9550
+instances=20
+iptables=true
+netns="-"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --instances)
+            instances=$2
+            shift 2
+            ;;
+
+        --netns)
+            netns=$2
+            shift 2
+            ;;
+
+        --port)
+            port=$2
+            shift 2
+            ;;
+        
+        --iptables)
+            iptables=true
+            shift 1
+            ;;
+
+        --http-proxy)
+            iptables=false
+            shift 1
+            ;;
+
+	--help)
+	  echo "Run tor instances and loadbalance between them."
+	  echo ""
+	  echo "Arguments:"
+	  # echo -e "\t--instances\tNumber of tor instances; default: $instances"
+      # echo -e "\t--port\t\tThe final port that's load-balanced; default: $port"
+      echo -e "\t--netns\t\tNetwork Namespace to run the proxies in (used to bypass vpns and more); default: $netns"
+	  echo -e "\t--iptables\tUse iptables' rules to load-balance"
+      echo -e "\t--http-proxy\tUse haproxy and privoxy to introduce http-based proxies and loadbalancer."
+	  echo -e "\t--help\t\tShows this help."
+	  exit
+	  ;;
+
+        *)
+            break
+            ;;
+    esac
+done
+
 # Getting the tor id that's using port 9150 (tor browser), and 9050 (tor.service)
 port9150=$(ss -lptn 'sport = :9150' | grep pid | sed -E 's/.*pid=([0-9]+).*/\1/')
 port9050=$(ss -lptn 'sport = :9050' | grep pid | sed -E 's/.*pid=([0-9]+).*/\1/')
@@ -11,26 +62,44 @@ for port in `pidof tor`; do
 done
 
 # Remove the "except" pids from the "all" pids
-our_tors=()
 for (( i = 0 ; i < ${#all[@]} ; i++ )); do
     port=${all[$i]};
     for (( exi = 0 ; exi < ${#except[@]}; exi++ )); do
         ex=${except[$ex]};
         if [ "$port" == "$ex" ]; then
-            continue 2;
+            unset ${all[$i]};
         fi
     done
 done
 
-if [ ${#out_tors[@]} != 0 ]; then
-    echo Killing tor nodes: $our_tors
-    kill $our_tors
+if [ ${#all[@]} != 0 ]; then
+    for (( i = 0 ; i < ${#all[@]} ; i++ )); do
+        echo kill tor node with pid ${all[$i]}
+        kill ${all[$i]}
+    done
 else
-    echo "There's no tor node to kill"
+    echo "There are no tor nodes to kill"
 fi
 
-echo Killing haproxy and privoxy
-killall haproxy privoxy # todo: we shouldn't kill them all, should we?
+if ! $iptables; then
+    echo Killing haproxy and privoxy
+    killall haproxy privoxy # todo: we shouldn't kill them all, should we?
+else
+    # Delete the iptables' rules
+    while true; do
+        # Get the line number of the iptables' rule
+        line=$(iptables -t nat --list --line-numbers | grep Loadbalancing | head -n 1)
+        line_num=$(echo $line | cut -d" " -f 1)
+
+        if [ -z "$line_num" ]; then
+            break;
+        fi
+
+        # Delete the line
+        iptables -t nat --delete OUTPUT $line_num
+        echo "Delete: $line"
+    done
+fi
 
 scripts=$(pidof -x net.tor.proxy)
 if [ ! -z "$scipts"]; then

@@ -3,4 +3,61 @@
 curdir=$(dirname "$0")
 source $curdir/net.tor
 
-run_tor_proxy - 8090 20 "false"
+port=9550
+instances=20
+iptables=true
+netns="-"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --instances)
+            instances=$2
+            shift 2
+            ;;
+
+        --netns)
+            netns=$2
+            shift 2
+            ;;
+
+        --port)
+            port=$2
+            shift 2
+            ;;
+        
+        --iptables)
+            iptables=true
+            shift 1
+            ;;
+
+        --http-proxy)
+            iptables=false
+            shift 1
+            ;;
+
+	--help)
+	  echo "Run tor instances and loadbalance between them."
+	  echo ""
+	  echo "Arguments:"
+	  echo -e "\t--instances\tNumber of tor instances; default: $instances"
+      echo -e "\t--port\t\tThe final port that's load-balanced; default: $port"
+      echo -e "\t--netns\t\tNetwork Namespace to run the proxies in (used to bypass vpns and more); default: $netns"
+	  echo -e "\t--iptables\tUse iptables' rules to load-balance"
+      echo -e "\t--http-proxy\tUse haproxy and privoxy to introduce http-based proxies and loadbalancer."
+	  echo -e "\t--help\t\tShows this help."
+	  exit
+	  ;;
+
+        *)
+            break
+            ;;
+    esac
+done
+
+if $iptables; then
+    run_tor_socks_iptables $netns $port $instances "false"
+else
+    run_tor_proxy $netns $port $instances "false"
+fi
+
+
