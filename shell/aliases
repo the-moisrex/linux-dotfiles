@@ -80,3 +80,5 @@ alias c="xclip -selection clipboard"
 
 # git aliases
 alias ggrep="git grep --heading --break -n";
+alias task-tui="taskwarrior-tui"
+alias tasktui="taskwarrior-tui"
