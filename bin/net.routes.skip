@@ -3,6 +3,7 @@
 ARGUMENT_LIST=(
     "country:"
     "gateway:"
+    "iptables-mark:"
     "nordvpn"
     "iptables-filter"
     "help"
@@ -19,6 +20,8 @@ opts=$(getopt \
 
 eval set --$opts
 
+mark=""
+
 vpntype="ip"
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -32,6 +35,15 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         
+        --iptables-mark)
+            vpntype="iptables-mark"
+            mark="$2"
+            if [ -z "$mark" ]; then
+                echo "You should pass a valid mark; not '$mark'"
+            fi
+            shift 2
+            ;;
+
         --nordvpn)
             vpntype="nordvpn"
             shift 1
@@ -53,6 +65,7 @@ while [[ $# -gt 0 ]]; do
 	  echo -e "\t--gateway\tGateway used to route to these ip addresses. Example: 192.168.0.1 OR vpn0"
 	  echo -e "\t--nordvpn\tRun nordvpn whitelist commands instead of standard ip commands"
       echo -e "\t--iptables-filter\tUse iptables' filter table to enable them; initially I used this because nordvpn is using iptables and their implementation for whitelisting seems buggy."
+      echo -e "\t--iptables-mark\tUse iptables' fwmark; nordvpn mark to skip vpn currently is 0xe1f1"
 	  echo -e "\t--help\t\tShows this help."
 	  exit
 	  ;;
@@ -115,6 +128,9 @@ function add {
         iptables -t filter -I INPUT --destination $line -j ACCEPT
         iptables -t filter -I OUTPUT --destination $line -j ACCEPT
         echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
+    elif [ $vpntype = "iptables-mark" ]; then
+        iptables -t mangle -I PREROUTING --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        echo "iptables -t mangle -I PREROUTING --destination $line -j MARK --set-mark $mark"
     fi
   done < "$input"
 }
@@ -136,6 +152,9 @@ function remove {
         iptables -t filter -D INPUT --destination $line -j ACCEPT
         iptables -t filter -D OUTPUT --destination $line -j ACCEPT
         echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
+    elif [ $vpntype = "iptables-mark" ]; then
+        iptables -t mangle -D PREROUTING --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN"
+        echo "iptables -t mangle -D PREROUTING --destination $line -j MARK --set-mark $mark -m comment --comment \"Skip VPN\""
     fi
   done < "$input"
 }
