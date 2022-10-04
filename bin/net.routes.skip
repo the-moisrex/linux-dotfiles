@@ -129,8 +129,8 @@ function add {
         iptables -t filter -I OUTPUT --destination $line -j ACCEPT
         echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
     elif [ $vpntype = "iptables-mark" ]; then
-        iptables -t mangle -I PREROUTING --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN";
-        echo "iptables -t mangle -I PREROUTING --destination $line -j MARK --set-mark $mark"
+        iptables -t mangle -I OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        echo "iptables -t mangle -I OUTPUT --destination $line -j MARK --set-mark $mark"
     fi
   done < "$input"
 }
@@ -153,8 +153,8 @@ function remove {
         iptables -t filter -D OUTPUT --destination $line -j ACCEPT
         echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
     elif [ $vpntype = "iptables-mark" ]; then
-        iptables -t mangle -D PREROUTING --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN"
-        echo "iptables -t mangle -D PREROUTING --destination $line -j MARK --set-mark $mark -m comment --comment \"Skip VPN\""
+        iptables -t mangle -D OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN"
+        echo "iptables -t mangle -D OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment \"Skip VPN\""
     fi
   done < "$input"
 }
