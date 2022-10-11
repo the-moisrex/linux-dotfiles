@@ -69,15 +69,15 @@
     name="gtags"
     gtagslabel="pygments"
 
-# [[layers]]
-    # name="lsp"
-    # filetypes= [
-        # "cpp",
-        # "c"
-    # ]
-    # enabled_clients = ['clangd']
-    # [layers.override_cmd]
-        # cpp = ["clangd", "-std=c++20"]
+[[layers]]
+    name="lsp"
+    filetypes= [
+        "cpp",
+        "c"
+    ]
+    enabled_clients = ['clangd']
+    [layers.override_cmd]
+        cpp = ["clangd", "-std=c++20", "-fmodules-ts"]
 
 [[layers]]
     name="ui"
