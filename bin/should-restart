@@ -1,0 +1,47 @@
+#!/bin/bash
+
+echo Check if you should reboot the system or restart applications.
+
+get_boot_kernel() {
+    local get_version=0
+    for field in $(file /boot/vmlinuz*); do
+        if [[ $get_version -eq 1 ]]; then
+            echo $field
+            return
+        elif [[ $field == version ]]; then
+            # the next field contains the version
+            get_version=1
+        fi
+    done
+}
+
+rc=1
+libs=$(lsof -n +c 0 2> /dev/null | grep 'DEL.*lib')
+details=$((awk '1 { print $1 ": " $NF }' | sort -u) <<< $libs)
+if [[ -n $libs ]]; then
+    cat <<< $details
+    echo "# LIBS: reboot required"
+    echo
+    apps=$((cut -d" " -f 1 | sort -u | sed 'N;s/\n/, /') <<< $libs);
+    if [[ -n $apps ]]; then
+        echo Software that require rebooting:
+        echo $apps;
+        echo
+    fi
+    clibs=$((awk '1 { print $NF }' | sort -u) <<< $libs);
+    if [[ -n $clibs ]]; then
+        echo Changed Libraries:
+        cat <<< $clibs;
+        echo
+    fi;
+    rc=0
+fi
+
+active_kernel=$(uname -r)
+current_kernel=$(get_boot_kernel)
+if [[ $active_kernel != $current_kernel ]]; then
+    echo "$active_kernel < $current_kernel"
+    echo "# KERNEL: reboot required"
+    rc=0
+fi
+exit $rc
