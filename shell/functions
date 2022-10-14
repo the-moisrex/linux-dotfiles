@@ -2,6 +2,12 @@
 
 functions_file_path="$0"
 
+# check the time that it takes the shell to start
+time-shell() {
+  shell=${1-$SHELL}
+  for i in $(seq 1 10); do time $shell -i -c exit; done
+}
+
 function cd {
   builtin cd "$@" && ls -F && echo && echo && pwd;
 }

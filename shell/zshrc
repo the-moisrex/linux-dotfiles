@@ -117,10 +117,25 @@ ZSH_CUSTOM=/usr/share/zsh/
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(git archlinux composer docker gem npm perl pip lxd sudo tmux vscode z web-search systemd screen python node catimg command-not-found common-aliases copyfile encode64 extract git-extras httpie history meteor taskwarrior tmuxinator zsh-autosuggestions)
+# plugins=(git archlinux composer docker gem npm perl pip lxd sudo tmux vscode z web-search systemd screen python node catimg command-not-found common-aliases copyfile encode64 extract git-extras httpie history meteor taskwarrior tmuxinator zsh-autosuggestions)
+plugins=(git archlinux sudo tmux git-extras history taskwarrior zsh-autosuggestions)
 # zsh-autosuggestions
 
 source $ZSH/oh-my-zsh.sh
+
+# Load all of the plugins that were defined in ~/.zshrc
+# for plugin ($plugins); do
+  # timer=$(($(date +%s%N)/1000000))
+  # if [ -f $ZSH_CUSTOM/plugins/$plugin/$plugin.plugin.zsh ]; then
+    # source $ZSH_CUSTOM/plugins/$plugin/$plugin.plugin.zsh
+  # elif [ -f $ZSH/plugins/$plugin/$plugin.plugin.zsh ]; then
+    # source $ZSH/plugins/$plugin/$plugin.plugin.zsh
+  # fi
+  # now=$(($(date +%s%N)/1000000))
+  # elapsed=$(($now-$timer))
+  # echo $elapsed":" $plugin
+# done
+
 
 # User configuration
 
