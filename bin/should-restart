@@ -1,6 +1,8 @@
 #!/bin/bash
 
-echo Check if you should reboot the system or restart applications.
+echo Checking if you should reboot the system or restart applications...
+echo Other possible usage: "$0 && reboot";
+echo
 
 get_boot_kernel() {
     local get_version=0
@@ -35,7 +37,9 @@ if [[ -n $libs ]]; then
         echo
     fi;
     rc=0
-fi
+else
+    echo "No library changes detected.";
+fi;
 
 active_kernel=$(uname -r)
 current_kernel=$(get_boot_kernel)
@@ -43,5 +47,9 @@ if [[ $active_kernel != $current_kernel ]]; then
     echo "$active_kernel < $current_kernel"
     echo "# KERNEL: reboot required"
     rc=0
+else
+    echo "No kernel changes detected.";
 fi
+
+# return the exit code so the user can use this utility in bash scripts
 exit $rc
