@@ -122,7 +122,13 @@ function gpush {
   git remote | while read remote; do echo "git push $remote $(git branch --show-current)"; setsid git push $remote $(git branch --show-current); done
 }
 
-
+# try a command until it works.
 function try {
   $@ || try $@;
 }
+
+# Get the ip address of the specified domain (only one ip)
+function ipof {
+    dig +short $1 | grep '^[.0-9]*$' | head -n 1
+}
+
