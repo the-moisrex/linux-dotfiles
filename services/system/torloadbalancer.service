@@ -1,4 +1,5 @@
 [Unit]
+After=default.target remote-fs.target
 Description=Tor Load Balancer
 
 [Service]
@@ -7,4 +8,4 @@ ExecStart=/home/moisrex/cmd/bin/net.tor.proxy
 ExecStop=/home/moisrex/cmd/bin/net.tor.proxy.kill
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
