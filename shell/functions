@@ -131,6 +131,12 @@ function try {
   done;
 }
 
+function trynot {
+  while $@; do
+    sleep 1s; # So we can cancel
+  done;
+}
+
 # Get the ip address of the specified domain (only one ip)
 function ipof {
     dig +short $1 | grep '^[.0-9]*$' | head -n 1
