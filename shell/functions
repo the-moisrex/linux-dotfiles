@@ -131,6 +131,7 @@ function try {
   done;
 }
 
+# Usage: trynot isup facebook.com && nordvpn connect
 function trynot {
   while $@; do
     sleep 1s; # So we can cancel
@@ -145,6 +146,6 @@ function ipof {
 # Check if a device is up or not
 # Usage: try isup router && ssh router
 function isup {
-    ping -w1 -c1 $@ >/dev/null
+    ping -w1 -c1 $@ &>/dev/null || ping -w6 -W1 -c3 $@ &>/dev/null
 }
 
