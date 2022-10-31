@@ -136,3 +136,9 @@ function ipof {
     dig +short $1 | grep '^[.0-9]*$' | head -n 1
 }
 
+# Check if a device is up or not
+# Usage: try isup router && ssh router
+function isup {
+    ping -w1 -c1 $@ >/dev/null
+}
+
