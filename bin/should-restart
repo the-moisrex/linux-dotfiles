@@ -3,6 +3,16 @@
 echo Checking if you should reboot the system or restart applications...
 echo Other possible usage: "$0 && reboot";
 echo
+echo "# Debian based distro"
+echo "$ sudo needs-restarting"
+echo "# RHEL based distro"
+echo "$ sudo needrestart"
+echo "# OpenSUSE/SUSE Enterprise Linux"
+echo "$ sudo zypper ps"
+echo "# All other Linux distro"
+echo "$ sudo lsof | grep 'DEL.*lib' | cut -f 1 -d ' ' | sort -u"
+echo
+echo
 
 get_boot_kernel() {
     local get_version=0
