@@ -1,0 +1,31 @@
+#!/bin/bash
+
+action="$1"
+host="$2"
+
+function print_help {
+    echo "Usage: $0 [to/from] [host]"
+}
+
+function syncto {
+    scp -r /var/cache/pacman/pkg $host:/var/cache/pacman/.
+}
+
+function syncfrom {
+    scp -r $host:/var/cache/pacman/pkg /var/cache/pacman/.
+}
+
+case $action in
+    to)
+        syncto
+        ;;
+    from)
+        syncfrom
+        ;;
+    *)
+        echo "$action can only be 'to' or 'from'."
+        print_help
+        ;;
+esac
+
+
