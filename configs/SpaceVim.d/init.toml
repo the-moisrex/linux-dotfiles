@@ -48,9 +48,9 @@
 	clang_executable = "/usr/bin/clang"
 	[layer.clang_std]
 		c = "c18"
-		cpp = "c++20"
+		cpp = "c++23"
 		objc = "c18"
-		objcpp = "c++20"
+		objcpp = "c++23"
 
 [[layers]]
     name="format"
@@ -77,7 +77,7 @@
     ]
     enabled_clients = ['clangd']
     [layers.override_cmd]
-        cpp = ["clangd", "-std=c++20", "-fmodules-ts"]
+        cpp = ["clangd", "-std=c++23", "-fmodules-ts"]
 
 [[layers]]
     name="ui"
