@@ -75,7 +75,9 @@ function run {
   execfile="$@"
 
   if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
-    if [ -f "$build_dir/build.ninja" ]; then
+    if [ -f "$build_dir/CMakeCache.txt" ]; then
+      build_cmd="cmake --build '$build_dir' --target $execfile"
+    elif [ -f "$build_dir/build.ninja" ]; then
       build_cmd="ninja -C '$build_dir' -v $execfile"
     elif [ -f "Makefile" ]; then
       build_cmd="make -C '$build_dir' $execfile"
