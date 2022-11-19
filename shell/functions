@@ -151,3 +151,11 @@ function isup {
     ping -w1 -c1 $@ &>/dev/null || ping -w6 -W1 -c3 $@ &>/dev/null
 }
 
+function ishttpfiltered {
+    curl --no-progress-meter $@ | grep 10.10.34 &>/dev/null
+}
+
+function ishttpup {
+    ! ishttpfiltered $@
+}
+
