@@ -191,8 +191,12 @@ if [ -z "$RUBY_PATH" ]; then
 fi
 
 export PATH=.:$HOME/.bin:$cmddir/bin:$PATH:$JAVA_HOME/bin
+
+# will remove the limits and deduplication of the history file (https://github.com/bamos/zsh-history-analysis/blob/master/README.md)
 export HISTSIZE=100000000
-export SAVEHIST=100000000
+export SAVEHIST=$HISTSIZE
+setopt EXTENDED_HISTORY 
+
 
 # vim keybindings
 set -o vi
