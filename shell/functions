@@ -156,14 +156,26 @@ function ishttpfiltered {
 }
 
 function isempty {
-    test -z "$@"
+    if test -n "$1"; then
+        test -z "$@" && false || true;
+    elif test ! -t 0; then
+        cat | xargs test -z;
+    else
+        echo "No input for to check if it's empty or not.";
+    fi;
 }
 
 function isnotempty {
-    ! isempty $@
+    if test -n "$1"; then
+        test -z "$@" && false || true;
+    elif test ! -t 0; then
+        (cat | xargs test -z) && false || true;
+    else
+        echo "No input for to check if it's empty or not.";
+    fi;
 }
 
 function ishttpup {
-    (ipof $@ | isnotempty) && (! ishttpfiltered $@)
+    (ipof $@ | isnotempty) && (! ishttpfiltered $@) || false && true
 }
 
