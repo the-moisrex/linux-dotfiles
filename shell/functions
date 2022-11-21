@@ -155,7 +155,15 @@ function ishttpfiltered {
     curl --no-progress-meter $@ | grep 10.10.34 &>/dev/null
 }
 
+function isempty {
+    test -z "$@"
+}
+
+function isnotempty {
+    ! isempty $@
+}
+
 function ishttpup {
-    ! ishttpfiltered $@
+    (ipof $@ | isnotempty) && (! ishttpfiltered $@)
 }
 
