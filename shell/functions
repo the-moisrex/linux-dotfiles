@@ -142,7 +142,7 @@ function trynot {
 
 # Get the ip address of the specified domain (only one ip)
 function ipof {
-    dig +short $1 | grep '^[.0-9]*$' | head -n 1
+    dig +short +timeout=3 $1 | grep '^[.0-9]*$' | head -n 1
 }
 
 # Check if a device is up or not
@@ -152,7 +152,9 @@ function isup {
 }
 
 function ishttpfiltered {
-    curl --no-progress-meter $@ | grep 10.10.34 &>/dev/null
+    # timeout:     3  seconds
+    # max timeout: 10 seconds
+    curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>/dev/null | grep 10.10.34 &>/dev/null
 }
 
 function isempty {
