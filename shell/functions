@@ -154,7 +154,7 @@ function isup {
 function ishttpfiltered {
     # timeout:     3  seconds
     # max timeout: 10 seconds
-    curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>/dev/null | grep 10.10.34 &>/dev/null
+    curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>&1 | grep 10.10.34 &>/dev/null
 }
 
 function isempty {
@@ -171,7 +171,10 @@ function isnotempty {
     if test -n "$1"; then
         test -z "$@" && false || true;
     elif test ! -t 0; then
-        (cat | xargs test -z) && false || true;
+        # (cat | xargs test -z) && false || true;
+        read line || return 1
+        test -z "$line" && false || true;
+        # (echo "$line"; cat) | eval "$@"
     else
         echo "No input for to check if it's empty or not.";
     fi;
