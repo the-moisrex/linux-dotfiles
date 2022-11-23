@@ -98,3 +98,40 @@ if (command -v vim &>/dev/null || command -v nvim &>/dev/null) &&
 else
     warning "Either vim/nvim or SpaceVim is not installed.";
 fi
+
+
+
+
+# TV Shortcuts
+if command -v node 2>/dev/null; then
+    # icons_dir="$HOME/.icons/tv-icons";
+    builtin cd "$dir/tv";
+    node generate.js
+    # mkdir -p "$icons_dir";
+
+    echo
+    for img in *.png; do
+        name="${img/.png/}"
+        name="${name/icon-/}"
+        echo -ne "\r\033[KInstalling icon $name";
+        # convert -background transparent "$img" -define icon:auto-resize=16,24,32,48,64,128 "${img/.png/.ico}"
+        convert -background transparent "$img" -resize 128x128 "$name.png"
+        xdg-icon-resource install --size 128 --context apps "$name.png" "irtv-$name"
+        convert -background transparent "$img" -resize 64x64 "$name.png"
+        xdg-icon-resource install --size 64 --context apps "$name.png" "irtv-$name"
+        convert -background transparent "$img" -resize 32x32 "$name.png"
+        xdg-icon-resource install --size 32 --context apps "$name.png" "irtv-$name"
+        convert -background transparent "$img" -resize 16x16 "$name.png"
+        xdg-icon-resource install --size 16 --context apps "$name.png" "irtv-$name"
+    done
+    echo -ne "\r";
+    rm -f *.png;
+    for file in $dir/tv/*.desktop; do
+        desktop-file-install --dir=$HOME/.local/share/applications "$file"
+    done
+    update-desktop-database $HOME/.local/share/applications
+    rm *.desktop
+    builtin cd "$dir";
+else
+    echo "Can't intall TV desktop files. Nodejs is not installed.";
+fi
