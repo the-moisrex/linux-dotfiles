@@ -117,10 +117,12 @@ if command -v node &>/dev/null; then
         name="${name/icon-/}";
         echo -ne "\r\033[KInstalling icon $name";
         for size in 16 24 48 64 96 128 192 256 512; do
-            convert -background transparent "$img" -resize ${size}x${size} "tmp/$name.png"
+            convert -resize $size -extent ${size}x${size} -background none -gravity center "$img" "tmp/$name.png"
             xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
         done
     done
+
+    cp icon-*.png tmp/.
     for img in tmp/icon-*.png; do
         name=$(basename "$img");
         name="${name/.png/}";
@@ -128,7 +130,7 @@ if command -v node &>/dev/null; then
         echo -ne "\r\033[KInstalling icon $name";
         # convert -background transparent "$img" -define icon:auto-resize=16,24,32,48,64,128 "${img/.png/.ico}"
         for size in 16 24 48 64 96 128 192 256 512; do
-            convert -background transparent "$img" -resize ${size}x${size} "tmp/$name.png"
+            convert -resize $size -extent ${size}x${size} -background none -gravity center "$img" "tmp/$name.png"
             xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
         done
     done
