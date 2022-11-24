@@ -39,26 +39,27 @@ async function download_file(url, path) {
 
 
 async function main(channels) {
+    let all_images = [];
     for (let id in channels) {
         const ch = channels[id];
-        console.log("Generating TV Channel desktop icon", ch.name_english);
+        console.log("Generating TV Channel desktop", ch.name_english);
         try {
             const image_url = `https://static.telewebion.com/channelsLogo/${ch.image_name}/default`;
-            const icon_path = `./icon-${ch.descriptor}.png`
-            const file = `${ch.descriptor}.desktop`;
+            const icon_path = `./tmp/icon-${ch.descriptor}.png`
+            const file = `./tmp/${ch.descriptor}.desktop`;
             const name = reformat_name(ch.name_english);
             const content = `[Desktop Entry]
 Version=1.0
 Name=${name}
 Exec=/usr/bin/vlc https://ncdn.telewebion.com/${ch.descriptor}/live/playlist.m3u8
-Icon=irtv-${ch.descriptor}
+Icon=tv-${ch.descriptor}
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video
 Keywords=${ch.name_english};${ch.descriptor};${ch.name};`;
 
             // download the icon
-            await download_file(image_url, icon_path);
+            all_images.push(download_file(image_url, icon_path));
 
             // write the desktop file
             fs.writeFileSync(file, content);
@@ -66,6 +67,7 @@ Keywords=${ch.name_english};${ch.descriptor};${ch.name};`;
             console.error(err);
         }
     }
+    Promise.all(all_images);
 }
 
 
