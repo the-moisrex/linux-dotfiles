@@ -166,19 +166,22 @@ function add {
 
   if [ $vpntype = "iptables-ipset" ]; then
       if [ -z "$mark" ]; then
-        iptables -t filter -I INPUT -m set --match-set $countryiso dst -j ACCEPT
-        iptables -t filter -I OUTPUT -m set --match-set $countryiso dst -j ACCEPT
-        echo "iptables -t filter -I INPUT/OUTPUT -m set --match-set $countryiso dst -j ACCEPT"
+        iptables -t filter -A INPUT -m set --match-set $countryiso dst -j ACCEPT
+        iptables -t filter -A OUTPUT -m set --match-set $countryiso dst -j ACCEPT
+        echo "iptables -t filter -A INPUT/OUTPUT -m set --match-set $countryiso dst -j ACCEPT"
       else
-        iptables -t mangle -I OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
-        echo "iptables -t mangle -I OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark"
+        iptables -t mangle -A OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        echo "iptables -t mangle -A OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark"
       fi;
   fi
 
 }
 
 function remove {
-  update || (echo failed to update && exit);
+
+  if [ $vpntype != "iptables-ipset" ]; then
+    update || (echo failed to update && exit);
+  fi
 
   while IFS= read -r line
   do
@@ -201,6 +204,19 @@ function remove {
         echo "iptables -t mangle -D OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment \"Skip VPN\""
     fi
   done < "$input"
+
+  if [ $vpntype = "iptables-ipset" ]; then
+    if [ -z "$mark" ]; then
+        iptables -t filter -D INPUT -m set --match-set $countryiso dst -j ACCEPT
+        iptables -t filter -D OUTPUT -m set --match-set $countryiso dst -j ACCEPT
+        echo "iptables -t filter -D INPUT/OUTPUT -m set --match-set $countryiso dst -j ACCEPT"
+    else
+        iptables -t mangle -D OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        echo "iptables -t mangle -D OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark"
+    fi;
+    ipset destroy $countryiso;
+    echo "ipset destroy $countryiso"
+  fi;
 }
 
 
