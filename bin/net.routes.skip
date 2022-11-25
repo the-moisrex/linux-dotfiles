@@ -6,6 +6,7 @@ ARGUMENT_LIST=(
     "iptables-mark:"
     "nordvpn"
     "iptables-filter"
+    "iptables-ipset"
     "help"
 )
 
@@ -54,6 +55,18 @@ while [[ $# -gt 0 ]]; do
             shift 1
             ;;
 
+        --iptables-ipset)
+            if ! command -v ipset; then
+                echo You need to install ipset package.
+                echo "Arch linux: "
+                echo
+                echo "  sudo pacman -Syu ipset"
+                exit;
+            fi;
+            vpntype="iptables-ipset"
+            shift 1
+            ;;
+
 	--help)
 	  echo "This script helps you to add routes for a specific country."
 	  echo ""
@@ -65,8 +78,16 @@ while [[ $# -gt 0 ]]; do
 	  echo -e "\t--gateway\tGateway used to route to these ip addresses. Example: 192.168.0.1 OR vpn0"
 	  echo -e "\t--nordvpn\tRun nordvpn whitelist commands instead of standard ip commands"
       echo -e "\t--iptables-filter\tUse iptables' filter table to enable them; initially I used this because nordvpn is using iptables and their implementation for whitelisting seems buggy."
+      echo -e "\t--iptables-ipset\tUse iptables + ipset; it uses fwmark if --iptables-mark is used otherwise it uses iptables's filter table."
       echo -e "\t--iptables-mark\tUse iptables' fwmark; nordvpn mark to skip vpn currently is 0xe1f1"
 	  echo -e "\t--help\t\tShows this help."
+      echo
+      echo "Examples:"
+      echo "  Skip Iran IP addresses by marking and using address list (can be used for nordvpn):"
+      echo "  sudo net.routes.skip.add --country ir --iptables-mark 0xe1f1 --iptables-ipset"
+      echo
+      echo "  Same as above but it uses iptables' mangle table instead of ipset"
+      echo "  sudo net.routes.skip.add --country ir --iptables-mark 0xe1f1"
 	  exit
 	  ;;
 
@@ -111,6 +132,11 @@ input="$storage/ipv4/$countryiso.cidr"
 function add {
   update || (echo failed to update && exit);
 
+  if [ $vpntype = "iptables-ipset" ]; then
+    ipset -exist create $countryiso hash:net counters;
+    echo "ipset -exist create $countryiso hash:net counters"
+  fi
+
   while IFS= read -r line
   do
 
@@ -131,11 +157,29 @@ function add {
     elif [ $vpntype = "iptables-mark" ]; then
         iptables -t mangle -I OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN";
         echo "iptables -t mangle -I OUTPUT --destination $line -j MARK --set-mark $mark"
+    elif [ $vpntype = "iptables-ipset" ]; then
+        ipset -exist add ${countryiso} $line;
+        echo "ipset -exist add ${countryiso} $line"
     fi
   done < "$input"
+
+
+  if [ $vpntype = "iptables-ipset" ]; then
+      if [ -z "$mark" ]; then
+        iptables -t filter -I INPUT -m set --match-set $countryiso dst -j ACCEPT
+        iptables -t filter -I OUTPUT -m set --match-set $countryiso dst -j ACCEPT
+        echo "iptables -t filter -I INPUT/OUTPUT -m set --match-set $countryiso dst -j ACCEPT"
+      else
+        iptables -t mangle -I OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        echo "iptables -t mangle -I OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark"
+      fi;
+  fi
+
 }
 
 function remove {
+  update || (echo failed to update && exit);
+
   while IFS= read -r line
   do
     if [ $vpntype == "ip" ]; then
