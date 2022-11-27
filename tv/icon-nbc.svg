@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   class="peacock"
+   viewBox="578 62 67 39"
+   fill="currentColor"
+   data-darkreader-inline-fill=""
+   style="--darkreader-inline-fill:currentColor;"
+   version="1.1"
+   id="svg18"
+   sodipodi:docname="icon-nbc.svg"
+   inkscape:version="1.2.1 (9c6d41e410, 2022-07-14, custom)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs22" />
+  <sodipodi:namedview
+     id="namedview20"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="16.179487"
+     inkscape:cx="33.499208"
+     inkscape:cy="19.530903"
+     inkscape:window-width="1600"
+     inkscape:window-height="900"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg18" />
+  <g
+     fill-rule="evenodd"
+     id="g16"
+     style="fill:#ffffff">
+    <path
+       d="M579.074 90.58c1.717-4.494 6.472-6.08 10.697-3.37l18.29 12.754h-22.18c-4.62 0-8.252-4.23-6.8-9.385"
+       id="path2"
+       style="fill:#ffffff" />
+    <path
+       class="feather"
+       d="M579.074 90.58c1.717-4.494 6.472-6.08 10.697-3.37l18.29 12.754h-22.18c-4.62 0-8.252-4.23-6.8-9.385"
+       id="path4"
+       style="fill:#ffffff" />
+    <path
+       class="feather"
+       d="M597.563 75.863l9.442 21.613-19.478-13.35c-4.887-3.24-3.896-8.79-1.19-11.237 3.83-3.24 9.245-2.12 11.226 2.97"
+       id="path6"
+       style="fill:#ffffff" />
+    <path
+       class="feather"
+       d="M610.57 70.93l-3.433 24.19-9.772-23c-2.113-5.75 2.64-9.516 5.81-9.583 3.632-.396 8.188 2.38 7.396 8.394"
+       id="path8"
+       style="fill:#ffffff" />
+    <path
+       class="feather"
+       d="M625.494 72.103l-9.707 23.067-3.102-20.82c-.265-3.17 1.716-3.237 2.443-3.832-.133-.463-1.124-.463-1.124-.463h-1.848c-.198-5.42 4.028-7.8 7.462-7.535 3.697.132 7.856 4.428 5.876 9.583"
+       id="path10"
+       style="fill:#ffffff" />
+    <path
+       class="feather"
+       d="M635.338 84.167L615.86 97.584l9.177-21.348c2.775-6.742 9.245-5.42 11.556-2.842 2.51 2.51 3.235 7.6-1.255 10.773"
+       id="path12"
+       style="fill:#ffffff" />
+    <path
+       class="feather"
+       d="M637.448 99.9h-22.515l18.29-12.756c4.49-2.975 9.244-.266 10.498 3.635 1.327 4.36-1.65 9.12-6.27 9.12"
+       id="path14"
+       style="fill:#ffffff" />
+  </g>
+</svg>
