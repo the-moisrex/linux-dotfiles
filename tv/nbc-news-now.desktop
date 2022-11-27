@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Name=NBC News Now
+Exec=/usr/bin/vlc https://nbcnews2.akamaized.net/hls/live/723426/nbc-news0529092111-ua/master.m3u8
+Icon=tv-nbc
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video
+Keywords=NBC;NBC News;NBC News Now;Now;News;us
