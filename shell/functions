@@ -156,7 +156,17 @@ function ishttpfiltered {
     # max timeout: 10 seconds
     res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>&1);
     if [ "$?" != 0 ]; then
-        return $3;
+        return 0;
+    fi
+    echo -n "$res" | grep 10.10.34 &>/dev/null;
+}
+
+function ishttpsfiltered {
+    # timeout:     3  seconds
+    # max timeout: 10 seconds
+    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter https://$@ 2>&1);
+    if [ "$?" != 0 ]; then
+        return 0;
     fi
     echo -n "$res" | grep 10.10.34 &>/dev/null;
 }
@@ -186,5 +196,9 @@ function isnotempty {
 
 function ishttpup {
     (ipof $@ | isnotempty) && (! ishttpfiltered $@) || false && true
+}
+
+function ishttpsup {
+    (ipof $@ | isnotempty) && (! ishttpsfiltered $@) || false && true
 }
 
