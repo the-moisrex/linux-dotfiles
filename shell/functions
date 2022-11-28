@@ -154,7 +154,11 @@ function isup {
 function ishttpfiltered {
     # timeout:     3  seconds
     # max timeout: 10 seconds
-    curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>&1 | grep 10.10.34 &>/dev/null
+    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>&1);
+    if [ "$?" != 0 ]; then
+        return $3;
+    fi
+    echo -n "$res" | grep 10.10.34 &>/dev/null;
 }
 
 function isempty {
