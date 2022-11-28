@@ -1,0 +1,137 @@
+#!/bin/bash
+
+router=$(/sbin/ip route | awk '/default/ { print $3 }')
+action="print_help"
+
+# List of public DNS servers
+dnsips_url="https://public-dns.info/nameservers.txt";
+dnsips_file="$HOME/.cache/DNSIPs.txt";
+
+# Get the ip address of the specified domain (only one ip)
+function ipof {
+    dig +short $1 | grep '^[.0-9]*$' | head -n 1
+}
+
+function print_help {
+    echo "Usage: $0 start/stop [--router=my_router]"
+    echo
+    echo -e "  actions    \t\t start/stop"
+    echo -e "  -r|--router=$router \t Set the router ip address or DNS name"
+    echo -e "  -h|--help|help \t\t Print this message"
+}
+
+for i in "$@"; do
+    case $i in
+        -r=*|--router=*)
+            router="${i#*=}"
+            resolved=$(ipof router)
+            if "$resolved" != ""; then
+                router="$resolved";
+            fi;
+            ;;
+        start)
+            action="start"
+            ;;
+        stop)
+            action="stop"
+            ;;
+        help|--help|-h)
+            print_help;
+            exit;
+            ;;
+    esac
+done
+
+function iptables_skip {
+    action="$1";
+    shift;
+    if [ "$action" == "setup" ]; then
+        iptables -t mangle -A OUTPUT $@ -j MARK --set-mark 0xe1f1
+    elif [ "$action" == "destroy" ]; then
+        iptables -t mangle -D OUTPUT $@ -j MARK --set-mark 0xe1f1
+    else
+        echo "Unknown action $action";
+    fi
+}
+
+function skip_multicast {
+    iptables_skip $1 -m pkttype --pkt-type multicast
+}
+
+function skip_local {
+    iptables_skip $1 --destination 192.168.0.0.16
+}
+
+function setup_gre {
+    ip tunnel add fromrouter mode gre remote $router local any ttl inherit
+    ip addr add 10.11.11.2/24 dev fromrouter 
+    ip link set fromrouter up
+}
+
+function remove_gre {
+    ip link set fromrouter down
+    ip tunnel del fromrouter mode gre remote $router local any ttl inherit
+}
+
+function setup_iptables {
+    iptables -t nat -I POSTROUTING -o enp2s0 -m mark --mark 0xe1f1 -j SNAT --to-source 192.168.88.253
+    iptables -t nat -A POSTROUTING --source 10.11.11.1 -j MASQUERADE
+}
+
+function enable_routing {
+    sysctl net.ipv4.ip_forward=1
+}
+
+function disable_routing {
+    sysctl net.ipv4.ip_forward=0
+}
+
+# This function will download and create an ipset that holds the ip addresses of the DNS Servers
+function create_dnsips_ipset {
+    # rm -f "$dnsips_file"; # might be broken
+    if [ ! -f "$dnsips_file" ]; then
+        wget -O "$dnsips_file" "$dnsips_url";
+    fi
+
+    # Health check
+    if [ ! -f "$dnsips_file" ]; then
+        echo "Could not download $dnsips_file. Retry again.";
+        exit 1;
+    fi
+
+    # Check if ipset is installed
+    if ! command -v ipset &>/dev/null; then
+        echo "'ipset' is not installed. On Arch Linux install it with:"
+        echo "  $ pacman -S ipset"
+        exit 1;
+    fi;
+
+    if ! ipset -exist create dnsips hash:ip counters; then
+        echo "Try running this file with sudo.";
+        exit 1;
+    fi
+
+    ipcount=0
+    echo
+    while read -r ip; do
+        echo -ne "\r\033[KAdding ip address $ip to the 'dnsips' ip set."
+        ipset -exist add dnsips $ip;
+        ipcount=$(( $ipcount + 1 ));
+    done < <(grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" "$dnsips_file");
+    echo -ne "\r\033[KAdded $ipcount ips to the 'dnsips' ip set.";
+}
+
+function remove_dnsips_ipset {
+    ipset destroy dnsips;
+}
+
+
+
+function clean {
+    skip_multicast destroy
+    skip_local destroy
+    remove_gre
+    remove_dnsips_ipset
+    disable_routing
+}
+
