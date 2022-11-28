@@ -243,3 +243,12 @@ fi;
 if [ -d /opt/depot_tools ]; then
     export PATH=$PATH:/opt/depot_tools
 fi
+
+precmd() {
+    if [ "$?" != 0 ]; then
+        setsid paplay --volume=45536 /usr/share/sounds/freedesktop/stereo/dialog-error.oga
+    else
+        setsid paplay --volume=55536 /usr/share/sounds/freedesktop/stereo/dialog-information.oga
+    fi;
+}
+
