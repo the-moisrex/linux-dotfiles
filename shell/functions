@@ -196,10 +196,10 @@ function isnotempty {
 
 function ishttpup {
     # todo: ishttpup IPAddr is not supported
-    (ipof $@ | isnotempty) && (! ishttpfiltered $@) || false && true
+    (ipof $@ | isnotempty) && (! ishttpfiltered $@) || (! ishttpfiltered $@) || false && true
 }
 
 function ishttpsup {
-    (ipof $@ | isnotempty) && (! ishttpsfiltered $@) || false && true
+    (ipof $@ | isnotempty) && (! ishttpsfiltered $@) || (! ishttpsfiltered $@) || false && true
 }
 
