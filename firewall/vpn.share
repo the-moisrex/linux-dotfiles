@@ -1,6 +1,6 @@
 #!/bin/bash
 
-router=$(/sbin/ip route | awk '/default/ { print $3 }')
+gateway=$(ip route | awk '/default/ { print $3 }') # calculate default gateway
 action="print_help"
 
 # List of public DNS servers
@@ -10,6 +10,12 @@ dnsips_file="$HOME/.cache/DNSIPs.txt";
 # skip vpn chain name
 skip_chain_name="Skip-Marker"
 
+countryiso="ir"
+iptables_mark="0xe1f1"
+
+# if you decide to change this directory, change it in the "clear-coredump", and in "net.routes.skip" commands as well
+storage="$HOME/.cache/country-ips"
+
 # Get the ip address of the specified domain (only one ip)
 function ipof {
     dig +short $1 | grep '^[.0-9]*$' | head -n 1
@@ -18,11 +24,12 @@ function ipof {
 local_ip=$(hostname --ip-address | cut -d" " -f 1);
 
 function print_help {
-    echo "Usage: $0 start/stop [--router=my_router]"
+    echo "Usage: $0 start/stop/clear [--router my_router]"
     echo
-    echo -e "  actions    \t\t start/stop"
-    echo -e "  -r|--router=$router \t Set the router ip address or DNS name"
-    echo -e "  -i|--ip=$local_ip \t Set local ip address"
+    echo -e "  actions    \t\t start/stop/clear"
+    echo -e "  -g|--gateway $gateway \t Set the router ip address or DNS name"
+    echo -e "  -i|--ip $local_ip \t Set local ip address"
+    echo -e "  -m|--mark $iptables_mark \t Set fwmark to be used in iptables"
     echo -e "  -h|--help|help \t\t Print this message"
 }
 
@@ -35,24 +42,45 @@ fi;
 
 for i in "$@"; do
     case $i in
-        -r=*|--router=*)
-            router="${i#*=}"
-            resolved=$(ipof $router)
+        -g|--gateway)
+            gateway="$2"
+            resolved=$(ipof $gateway)
             if "$resolved" != ""; then
-                router="$resolved";
+                gateway="$resolved";
             fi;
+            shift 2;
             ;;
-        -i=*|--ip=*)
-            local_ip="${i#*=}"
+        -i|--ip)
+            local_ip="$2"
+            shift 2;
+            ;;
+        -c|--country)
+            countryiso="$2"
+            shift 2
+            ;;
+        -m|--mark)
+            iptables_mark="$2"
+            if [ -z "$mark" ]; then
+                echo "You should pass a valid mark.";
+                exit 1;
+            fi
+            shift 2
             ;;
         start)
             action="start"
+            shift;
             ;;
         stop)
             action="stop"
+            shift;
+            ;;
+        clear)
+            action="clear"
+            shift;
             ;;
         help|--help|-h)
             print_help;
+            shift;
             exit;
             ;;
     esac
@@ -120,6 +148,53 @@ function accept_local_to_local {
     fi
 }
 
+function update_countries {
+    if [ -d "$storage" ]; then
+        echo "Updateing the countries' IPs repository.";
+        git -C "$storage" pull --rebase=true --prune --force --depth=1 --progress --no-ff --no-edit --no-commit
+    else
+        echo "Downloading the countries' IPs repository.";
+        git clone --depth=1 -b master https://github.com/herrbischoff/country-ip-blocks.git ${storage}
+    fi;
+}
+
+function create_country_ipset {
+    update_countries || (echo failed to update && exit);
+
+    iso_code="$1";
+    if [ -z "$iso_code" ]; then
+        iso_code="$countryiso";
+    fi
+
+    sudo ipset -exist create $iso_code hash:net counters;
+    ipcount=0
+    while IFS= read -r ip; do
+        echo -ne "\r\033[KAdding ip address $ip to the '$iso_code' ip set."
+        sudo ipset -exist add ${iso_code} $ip;
+        ipcount=$(( $ipcount + 1 ));
+    done < "$input";
+    echo -ne "\r\033[KAdded $ipcount ips to the '$iso_code' ip set.";
+    echo
+}
+
+function destroy_countries_ipset {
+    iso_code="$1";
+    if [ -z "$iso_code" ]; then
+        iso_code="$countryiso";
+    fi
+
+    echo "Destroying country ipset of $iso_code";
+    sudo ipset destroy $sio_code;
+}
+
+function skip_country {
+    iso_code="$2"
+    if [ -z "$iso_code" ]; then
+        iso_code="$countryiso";
+    fi;
+    iptables_skip $1 -m set --match-set $iso_code dst
+}
+
 function skip_multicast {
     iptables_skip $1 -m pkttype --pkt-type multicast
 }
@@ -129,14 +204,14 @@ function skip_local {
 }
 
 function setup_gre {
-    sudo ip tunnel add fromrouter mode gre remote $router local any ttl inherit
+    sudo ip tunnel add fromrouter mode gre remote $gateway local any ttl inherit
     sudo ip addr add 10.11.11.2/24 dev fromrouter 
     sudo ip link set fromrouter up
 }
 
 function remove_gre {
     sudo ip link set fromrouter down
-    sudo ip tunnel del fromrouter mode gre remote $router local any ttl inherit
+    sudo ip tunnel del fromrouter mode gre remote $gateway local any ttl inherit
 }
 
 function nat {
@@ -217,6 +292,7 @@ function clean {
 
     skip_multicast destroy
     skip_local destroy
+    skip_country destroy
     skip_dnsips destroy
     iptables_skip_init destroy
 
@@ -236,6 +312,7 @@ function start {
 
     skip_multicast destroy
     skip_local destroy
+    skip_country destroy
     skip_dnsips destroy
 
     iptables_skip_init destroy
@@ -245,8 +322,10 @@ function start {
     nat setup
 
     create_dnsips_ipset
+    create_country_ipset
 
     skip_dnsips setup
+    skip_country setup
     skip_multicast setup
     skip_local setup
 }

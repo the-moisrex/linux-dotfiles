@@ -3,4 +3,4 @@
 curdir=$(dirname "$0")
 source $curdir/net.routes.skip
 
-remove
+clear_country_ips
