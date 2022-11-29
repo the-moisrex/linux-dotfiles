@@ -15,7 +15,7 @@ function ipof {
     dig +short $1 | grep '^[.0-9]*$' | head -n 1
 }
 
-local_ip=$(hostname --ip-address);
+local_ip=$(hostname --ip-address | cut -d" " -f 1);
 
 function print_help {
     echo "Usage: $0 start/stop [--router=my_router]"
@@ -64,12 +64,12 @@ function iptables_skip_init {
     if [ "$action" = "setup" ]; then
         echo "Creating '$skip_chain_name' iptables' chain.";
         sudo iptables -t mangle -N $skip_chain_name;
-        sudo iptables -t mangle -A $skip_chain_name -j MARK --set-mark 0xe1f1;
+        # sudo iptables -t mangle -A $skip_chain_name -j MARK --set-mark 0xe1f1;
         sudo iptables -t mangle -A POSTROUTING -j $skip_chain_name;
     elif [ "$action" = "destroy" ]; then
         echo "Deleting '$skip_chain_name' iptables' chain.";
         sudo iptables -t mangle -D POSTROUTING -j $skip_chain_name 2>/dev/null;
-        sudo iptables -t mangle -D $skip_chain_name -j MARK --set-mark 0xe1f1 2>/dev/null;
+        # sudo iptables -t mangle -D $skip_chain_name -j MARK --set-mark 0xe1f1 2>/dev/null;
         sudo iptables -t mangle -X $skip_chain_name 2>/dev/null;
     else
         echo "Unknown action '$action'";
@@ -81,10 +81,10 @@ function iptables_skip {
     shift;
     if [ "$action" = "setup" ]; then
         echo "Add marks in iptables for packets that match '$@'";
-        sudo iptables -t mangle -I $skip_chain_name $@ -j RETURN
+        sudo iptables -t mangle -I $skip_chain_name $@ -j MARK --set-mark 0xe1f1
     elif [ "$action" = "destroy" ]; then
         echo "Remove markings for iptables rule '$@'";
-        sudo iptables -t mangle -D $skip_chain_name $@ -j RETURN 2>/dev/null;
+        sudo iptables -t mangle -D $skip_chain_name $@ -j MARK --set-mark 0xe1f1 2>/dev/null;
     else
         echo "Unknown action $action";
     fi
@@ -206,7 +206,7 @@ function skip_dnsips {
 
 function destroy_dnsips {
     skip_dnsips destroy;
-    sudo ipset destroy dnsips;
+    # sudo ipset destroy dnsips;
 }
 
 
