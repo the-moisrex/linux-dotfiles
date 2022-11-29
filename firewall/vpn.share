@@ -7,6 +7,9 @@ action="print_help"
 dnsips_url="https://public-dns.info/nameservers.txt";
 dnsips_file="$HOME/.cache/DNSIPs.txt";
 
+# skip vpn chain name
+skip_chain_name="Skip-Marker"
+
 # Get the ip address of the specified domain (only one ip)
 function ipof {
     dig +short $1 | grep '^[.0-9]*$' | head -n 1
@@ -59,14 +62,15 @@ function iptables_skip_init {
     action="$1";
     shift;
     if [ "$action" = "setup" ]; then
-        echo "Creating 'marker' iptables' chain.";
-        sudo iptables -t mangle -N marker;
-        sudo iptables -t mangle -A marker -j MARK --set-mark 0xe1f1;
-        sudo iptables -t mangle -A POSTROUTING -j marker;
+        echo "Creating '$skip_chain_name' iptables' chain.";
+        sudo iptables -t mangle -N $skip_chain_name;
+        sudo iptables -t mangle -A $skip_chain_name -j MARK --set-mark 0xe1f1;
+        sudo iptables -t mangle -A POSTROUTING -j $skip_chain_name;
     elif [ "$action" = "destroy" ]; then
-        echo "Deleting 'marker' iptables' chain.";
-        sudo iptables -t mangle -D marker -j MARK --set-mark 0xe1f1;
-        sudo iptables -t mangle -X marker;
+        echo "Deleting '$skip_chain_name' iptables' chain.";
+        sudo iptables -t mangle -D POSTROUTING -j $skip_chain_name 2>/dev/null;
+        sudo iptables -t mangle -D $skip_chain_name -j MARK --set-mark 0xe1f1 2>/dev/null;
+        sudo iptables -t mangle -X $skip_chain_name 2>/dev/null;
     else
         echo "Unknown action '$action'";
     fi
@@ -77,10 +81,10 @@ function iptables_skip {
     shift;
     if [ "$action" = "setup" ]; then
         echo "Add marks in iptables for packets that match '$@'";
-        sudo iptables -t mangle -I marker $@ -j RETURN
+        sudo iptables -t mangle -I $skip_chain_name $@ -j RETURN
     elif [ "$action" = "destroy" ]; then
         echo "Remove markings for iptables rule '$@'";
-        sudo iptables -t mangle -D marker $@ -j RETURN
+        sudo iptables -t mangle -D $skip_chain_name $@ -j RETURN 2>/dev/null;
     else
         echo "Unknown action $action";
     fi
@@ -95,8 +99,8 @@ function accept_loopback {
         sudo iptables -t filter -A OUTPUT -o lo -j ACCEPT;
     elif [ "$action" = "destroy" ]; then
         echo "Remove the rule for accepting everything for loopback.";
-        sudo iptables -t filter -D INPUT  -i lo -j ACCEPT;
-        sudo iptables -t filter -D OUTPUT -o lo -j ACCEPT;
+        sudo iptables -t filter -D INPUT  -i lo -j ACCEPT 2>/dev/null;
+        sudo iptables -t filter -D OUTPUT -o lo -j ACCEPT 2>/dev/null;
     else
         echo "Unknown action $action";
     fi
@@ -110,7 +114,7 @@ function accept_local_to_local {
         sudo iptables -t filter -A FORWARD --source 192.168.0.0/16 --destination 192.168.0.0/16 -j ACCEPT;
     elif [ "$action" = "destroy" ]; then
         echo "Remove the rule for accepting local to local.";
-        sudo iptables -t filter -D FORWARD --source 192.168.0.0/16 --destination 192.168.0.0/16 -j ACCEPT;
+        sudo iptables -t filter -D FORWARD --source 192.168.0.0/16 --destination 192.168.0.0/16 -j ACCEPT 2>/dev/null;
     else
         echo "Unknown action $action";
     fi
@@ -144,8 +148,8 @@ function nat {
         sudo iptables -t nat -A POSTROUTING --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE
     elif [ "$action" = "destroy" ]; then
         echo "Remove iptables rules for NATting."
-        sudo iptables -t nat -D POSTROUTING -m mark --mark 0xe1f1 -j SNAT --to-source $local_ip >/dev/null
-        sudo iptables -t nat -D POSTROUTING --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE >/dev/null
+        sudo iptables -t nat -D POSTROUTING -m mark --mark 0xe1f1 -j SNAT --to-source $local_ip 2>/dev/null
+        sudo iptables -t nat -D POSTROUTING --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE 2>/dev/null
     else
         echo "Unknown action $action";
     fi
@@ -158,7 +162,7 @@ function enable_routing {
 
 function disable_routing {
     echo "Disable IPv4 Routing."
-    sudo sysctl net.ipv4.ip_forward=0
+    sudo sysctl net.ipv4.ip_forward=0 >/dev/null
 }
 
 # This function will download and create an ipset that holds the ip addresses of the DNS Servers
@@ -192,6 +196,7 @@ function create_dnsips_ipset {
         ipcount=$(( $ipcount + 1 ));
     done < <(grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" "$dnsips_file");
     echo -ne "\r\033[KAdded $ipcount ips to the 'dnsips' ip set.";
+    echo
 }
 
 function skip_dnsips {
@@ -207,9 +212,17 @@ function destroy_dnsips {
 
 
 function clean {
+    accept_loopback destroy
+    accept_local_to_local destroy
+
     skip_multicast destroy
     skip_local destroy
+    skip_dnsips destroy
+    iptables_skip_init destroy
+
     destroy_dnsips
+
+    nat destroy
     disable_routing
 }
 
@@ -231,10 +244,11 @@ function start {
     nat destroy
     nat setup
 
-    skip_local setup
-    skip_multicast setup
     create_dnsips_ipset
+
     skip_dnsips setup
+    skip_multicast setup
+    skip_local setup
 }
 
 case $action in
