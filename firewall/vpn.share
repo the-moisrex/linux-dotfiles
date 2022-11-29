@@ -12,22 +12,35 @@ function ipof {
     dig +short $1 | grep '^[.0-9]*$' | head -n 1
 }
 
+local_ip=$(hostname --ip-address);
+
 function print_help {
     echo "Usage: $0 start/stop [--router=my_router]"
     echo
     echo -e "  actions    \t\t start/stop"
     echo -e "  -r|--router=$router \t Set the router ip address or DNS name"
+    echo -e "  -i|--ip=$local_ip \t Set local ip address"
     echo -e "  -h|--help|help \t\t Print this message"
 }
+
+# Check if ipset is installed
+if ! command -v ipset &>/dev/null; then
+    echo "'ipset' is not installed. On Arch Linux install it with:"
+    echo "  $ pacman -S ipset"
+    exit 1;
+fi;
 
 for i in "$@"; do
     case $i in
         -r=*|--router=*)
             router="${i#*=}"
-            resolved=$(ipof router)
+            resolved=$(ipof $router)
             if "$resolved" != ""; then
                 router="$resolved";
             fi;
+            ;;
+        -i=*|--ip=*)
+            local_ip="${i#*=}"
             ;;
         start)
             action="start"
@@ -42,13 +55,62 @@ for i in "$@"; do
     esac
 done
 
+function iptables_skip_init {
+    action="$1";
+    shift;
+    if [ "$action" = "setup" ]; then
+        echo "Creating 'marker' iptables' chain.";
+        sudo iptables -t mangle -N marker;
+        sudo iptables -t mangle -A marker -j MARK --set-mark 0xe1f1;
+        sudo iptables -t mangle -A POSTROUTING -j marker;
+    elif [ "$action" = "destroy" ]; then
+        echo "Deleting 'marker' iptables' chain.";
+        sudo iptables -t mangle -D marker -j MARK --set-mark 0xe1f1;
+        sudo iptables -t mangle -X marker;
+    else
+        echo "Unknown action '$action'";
+    fi
+}
+
 function iptables_skip {
     action="$1";
     shift;
-    if [ "$action" == "setup" ]; then
-        iptables -t mangle -A OUTPUT $@ -j MARK --set-mark 0xe1f1
-    elif [ "$action" == "destroy" ]; then
-        iptables -t mangle -D OUTPUT $@ -j MARK --set-mark 0xe1f1
+    if [ "$action" = "setup" ]; then
+        echo "Add marks in iptables for packets that match '$@'";
+        sudo iptables -t mangle -I marker $@ -j RETURN
+    elif [ "$action" = "destroy" ]; then
+        echo "Remove markings for iptables rule '$@'";
+        sudo iptables -t mangle -D marker $@ -j RETURN
+    else
+        echo "Unknown action $action";
+    fi
+}
+
+function accept_loopback {
+    action="$1";
+    shift;
+    if [ "$action" = "setup" ]; then
+        echo "Accept everything on loopback immediately.";
+        sudo iptables -t filter -A INPUT  -i lo -j ACCEPT;
+        sudo iptables -t filter -A OUTPUT -o lo -j ACCEPT;
+    elif [ "$action" = "destroy" ]; then
+        echo "Remove the rule for accepting everything for loopback.";
+        sudo iptables -t filter -D INPUT  -i lo -j ACCEPT;
+        sudo iptables -t filter -D OUTPUT -o lo -j ACCEPT;
+    else
+        echo "Unknown action $action";
+    fi
+}
+
+function accept_local_to_local {
+    action="$1";
+    shift;
+    if [ "$action" = "setup" ]; then
+        echo "Accept local to local immediately.";
+        sudo iptables -t filter -A FORWARD --source 192.168.0.0/16 --destination 192.168.0.0/16 -j ACCEPT;
+    elif [ "$action" = "destroy" ]; then
+        echo "Remove the rule for accepting local to local.";
+        sudo iptables -t filter -D FORWARD --source 192.168.0.0/16 --destination 192.168.0.0/16 -j ACCEPT;
     else
         echo "Unknown action $action";
     fi
@@ -59,35 +121,53 @@ function skip_multicast {
 }
 
 function skip_local {
-    iptables_skip $1 --destination 192.168.0.0.16
+    iptables_skip $1 --destination 192.168.0.0/16
 }
 
 function setup_gre {
-    ip tunnel add fromrouter mode gre remote $router local any ttl inherit
-    ip addr add 10.11.11.2/24 dev fromrouter 
-    ip link set fromrouter up
+    sudo ip tunnel add fromrouter mode gre remote $router local any ttl inherit
+    sudo ip addr add 10.11.11.2/24 dev fromrouter 
+    sudo ip link set fromrouter up
 }
 
 function remove_gre {
-    ip link set fromrouter down
-    ip tunnel del fromrouter mode gre remote $router local any ttl inherit
+    sudo ip link set fromrouter down
+    sudo ip tunnel del fromrouter mode gre remote $router local any ttl inherit
 }
 
-function setup_iptables {
-    iptables -t nat -I POSTROUTING -o enp2s0 -m mark --mark 0xe1f1 -j SNAT --to-source 192.168.88.253
-    iptables -t nat -A POSTROUTING --source 10.11.11.1 -j MASQUERADE
+function nat {
+    action="$1";
+    shift;
+    if [ "$action" = "setup" ]; then
+        echo "Create iptables rules for NATting."
+        sudo iptables -t nat -A POSTROUTING -m mark --mark 0xe1f1 -j SNAT --to-source $local_ip;
+        sudo iptables -t nat -A POSTROUTING --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE
+    elif [ "$action" = "destroy" ]; then
+        echo "Remove iptables rules for NATting."
+        sudo iptables -t nat -D POSTROUTING -m mark --mark 0xe1f1 -j SNAT --to-source $local_ip >/dev/null
+        sudo iptables -t nat -D POSTROUTING --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE >/dev/null
+    else
+        echo "Unknown action $action";
+    fi
 }
 
 function enable_routing {
-    sysctl net.ipv4.ip_forward=1
+    echo "Enable IPv4 Routing."
+    sudo sysctl net.ipv4.ip_forward=1 >/dev/null
 }
 
 function disable_routing {
-    sysctl net.ipv4.ip_forward=0
+    echo "Disable IPv4 Routing."
+    sudo sysctl net.ipv4.ip_forward=0
 }
 
 # This function will download and create an ipset that holds the ip addresses of the DNS Servers
 function create_dnsips_ipset {
+    if sudo ipset --name list | grep dnsips >/dev/null; then
+        echo "'dnsips' ipset is already created.";
+        return;
+    fi
+
     # rm -f "$dnsips_file"; # might be broken
     if [ ! -f "$dnsips_file" ]; then
         wget -O "$dnsips_file" "$dnsips_url";
@@ -99,14 +179,7 @@ function create_dnsips_ipset {
         exit 1;
     fi
 
-    # Check if ipset is installed
-    if ! command -v ipset &>/dev/null; then
-        echo "'ipset' is not installed. On Arch Linux install it with:"
-        echo "  $ pacman -S ipset"
-        exit 1;
-    fi;
-
-    if ! ipset -exist create dnsips hash:ip counters; then
+    if ! sudo ipset -exist create dnsips hash:ip counters; then
         echo "Try running this file with sudo.";
         exit 1;
     fi
@@ -115,14 +188,20 @@ function create_dnsips_ipset {
     echo
     while read -r ip; do
         echo -ne "\r\033[KAdding ip address $ip to the 'dnsips' ip set."
-        ipset -exist add dnsips $ip;
+        sudo ipset -exist add dnsips $ip;
         ipcount=$(( $ipcount + 1 ));
     done < <(grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}" "$dnsips_file");
     echo -ne "\r\033[KAdded $ipcount ips to the 'dnsips' ip set.";
 }
 
-function remove_dnsips_ipset {
-    ipset destroy dnsips;
+function skip_dnsips {
+    # iptables_skip $1 -p tcp -m multiport --dports http,https ! --destination 192.168.0.0/16 -m set ! --match-set unfilter dst
+    iptables_skip $1 -p udp --dport 53 -m set --match-set dnsips dst
+}
+
+function destroy_dnsips {
+    skip_dnsips destroy;
+    sudo ipset destroy dnsips;
 }
 
 
@@ -130,8 +209,46 @@ function remove_dnsips_ipset {
 function clean {
     skip_multicast destroy
     skip_local destroy
-    remove_gre
-    remove_dnsips_ipset
+    destroy_dnsips
     disable_routing
 }
+
+function start {
+    enable_routing
+
+    accept_loopback destroy
+    accept_loopback setup
+    accept_local_to_local destroy
+    accept_local_to_local setup
+
+    skip_multicast destroy
+    skip_local destroy
+    skip_dnsips destroy
+
+    iptables_skip_init destroy
+    iptables_skip_init setup
+
+    nat destroy
+    nat setup
+
+    skip_local setup
+    skip_multicast setup
+    create_dnsips_ipset
+    skip_dnsips setup
+}
+
+case $action in
+    start)
+        start
+        ;;
+    stop|clean|clear)
+        clean
+        ;;
+    print_help)
+        print_help
+        ;;
+    *)
+        echo "Unknown action '$action'.";
+        ;;
+esac
 
