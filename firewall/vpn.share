@@ -8,7 +8,7 @@ dnsips_url="https://public-dns.info/nameservers.txt";
 dnsips_file="$HOME/.cache/DNSIPs.txt";
 
 # skip vpn chain name
-skip_chain_name="Skip-Marker"
+skip_chain_name="Skipper"
 
 countryiso="ir"
 iptables_mark="0xe1f1"
@@ -91,21 +91,28 @@ function iptables_skip_init {
     shift;
     if [ "$action" = "setup" ]; then
         echo "Creating '$skip_chain_name' iptables' chain.";
-        sudo iptables -t mangle -N $skip_chain_name-caller;
+        sudo iptables -t mangle -N $skip_chain_name-Marker;
         sudo iptables -t mangle -N $skip_chain_name;
-        sudo iptables -t mangle -A $skip_chain_name-caller -g $skip_chain_name;
-        sudo iptables -t mangle -A $skip_chain_name-caller -j MARK --set-mark $iptables_mark;
-        sudo iptables -t mangle -A POSTROUTING -j $skip_chain_name-caller;
+        sudo iptables -t mangle -A $skip_chain_name-Marker -j MARK --set-mark $iptables_mark;
+        sudo iptables -t mangle -A PREROUTING -j $skip_chain_name; # For incomming packets
+        sudo iptables -t mangle -A OUTPUT -j $skip_chain_name;     # For locally generated packets
     elif [ "$action" = "destroy" ]; then
         echo "Deleting '$skip_chain_name' iptables' chain.";
-        sudo iptables -t mangle -D POSTROUTING -j $skip_chain_name-caller 2>/dev/null;
-        sudo iptables -t mangle -D $skip_chain_name-caller -j MARK --set-mark $iptables_mark 2>/dev/null;
-        sudo iptables -t mangle -D $skip_chain_name-caller -g $skip_chain_name 2>/dev/null;
+        sudo iptables -t mangle -D OUTPUT -j $skip_chain_name 2>/dev/null;
+        sudo iptables -t mangle -D PREROUTING -j $skip_chain_name 2>/dev/null;
+        sudo iptables -t mangle -D $skip_chain_name-Marker -j MARK --set-mark $iptables_mark 2>/dev/null;
         sudo iptables -t mangle -X $skip_chain_name 2>/dev/null;
-        sudo iptables -t mangle -X $skip_chain_name-caller 2>/dev/null;
+        sudo iptables -t mangle -X $skip_chain_name-Marker 2>/dev/null;
     else
         echo "Unknown action '$action'";
     fi
+}
+
+
+function iptables_skip_finalize {
+    action="$1";
+    shift;
+    # echo "Adding the last rule in the iptables $skip_chain_name chain.";
 }
 
 function iptables_skip {
@@ -113,10 +120,10 @@ function iptables_skip {
     shift;
     if [ "$action" = "setup" ]; then
         echo "Add marks in iptables for packets that match '$@'";
-        sudo iptables -t mangle -A $skip_chain_name $@ -j RETURN
+        sudo iptables -t mangle -A $skip_chain_name $@ -g $skip_chain_name-Marker
     elif [ "$action" = "destroy" ]; then
         echo "Remove markings for iptables rule '$@'";
-        sudo iptables -t mangle -D $skip_chain_name $@ -j RETURN 2>/dev/null;
+        sudo iptables -t mangle -D $skip_chain_name $@ -g $skip_chain_name-Marker 2>/dev/null;
     else
         echo "Unknown action $action";
     fi
@@ -163,12 +170,17 @@ function update_countries {
 }
 
 function create_country_ipset {
-    update_countries || (echo failed to update countries repo);
-
     iso_code="$1";
     if [ -z "$iso_code" ]; then
         iso_code="$countryiso";
     fi
+
+    if sudo ipset --name list | grep $iso_code >/dev/null; then
+        echo "'$iso_code' ipset is already created.";
+        return;
+    fi
+
+    update_countries || (echo failed to update countries repo);
 
     input="$countries_repo/ipv4/$countryiso.cidr"
 
@@ -225,12 +237,12 @@ function nat {
     shift;
     if [ "$action" = "setup" ]; then
         echo "Create iptables rules for NATting."
-        sudo iptables -t nat -A POSTROUTING -m mark --mark 0xe1f1 -j SNAT --to-source $local_ip;
-        sudo iptables -t nat -A POSTROUTING --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE
+        sudo iptables -t nat -A POSTROUTING -m mark --mark $iptables_mark -j SNAT --to-source $local_ip;
+        sudo iptables -t nat -A POSTROUTING -m mark ! --mark $iptables_mark --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE
     elif [ "$action" = "destroy" ]; then
         echo "Remove iptables rules for NATting."
-        sudo iptables -t nat -D POSTROUTING -m mark --mark 0xe1f1 -j SNAT --to-source $local_ip 2>/dev/null
-        sudo iptables -t nat -D POSTROUTING --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE 2>/dev/null
+        sudo iptables -t nat -D POSTROUGING -m mark --mark $iptables_mark -j SNAT --to-source $local_ip 2>/dev/null
+        sudo iptables -t nat -D POSTROUTING -m mark ! --mark $iptables_mark --source 192.168.0.0/16 ! --destination 192.168.0.0/16 -j MASQUERADE 2>/dev/null
     else
         echo "Unknown action $action";
     fi
@@ -334,6 +346,7 @@ function start {
     skip_country setup
     skip_dnsips setup
     skip_multicast setup
+    iptables_skip_finalize # should be the last of the "skip" calls
 }
 
 case $action in
