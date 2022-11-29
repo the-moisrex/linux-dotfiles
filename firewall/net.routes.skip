@@ -41,6 +41,7 @@ while [[ $# -gt 0 ]]; do
             mark="$2"
             if [ -z "$mark" ]; then
                 echo "You should pass a valid mark; not '$mark'"
+                exit 1;
             fi
             shift 2
             ;;
@@ -115,7 +116,7 @@ if [ $vpntype == "ip" ]; then
 fi
 countryiso=$(echo "$countryiso" | tr '[:upper:]' '[:lower:]')
 
-# if you decide to change this directory, change it in the "clear-coredump" command as well
+# if you decide to change this directory, change it in the "clear-coredump" and in "vpn.share" (or whatever its name is now) commands as well
 storage="$HOME/.cache/country-ips"
 
 
@@ -129,11 +130,11 @@ function update {
 
 input="$storage/ipv4/$countryiso.cidr"
 
-function add {
+function skip_country_ips {
   update || (echo failed to update && exit);
 
   if [ $vpntype = "iptables-ipset" ]; then
-    ipset -exist create $countryiso hash:net counters;
+    sudo ipset -exist create $countryiso hash:net counters;
     echo "ipset -exist create $countryiso hash:net counters"
   fi
 
@@ -142,23 +143,23 @@ function add {
 
     if [ $vpntype == "ip" ]; then
         if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          ip route add "$line" via "$gateway"
+          sudo ip route add "$line" via "$gateway"
         else
-          ip route add "$line" dev "$gateway"
+          sudo ip route add "$line" dev "$gateway"
         fi
         echo "$line -> $gateway"
     elif [ $vpntype == "nordvpn" ]; then
         nordvpn whitelist add subnet $line
         echo "nordvpn whitelisted $line"
     elif [ $vpntype = "iptables-filter" ]; then
-        iptables -t filter -I INPUT --destination $line -j ACCEPT
-        iptables -t filter -I OUTPUT --destination $line -j ACCEPT
+        sudo iptables -t filter -I INPUT --destination $line -j ACCEPT
+        sudo iptables -t filter -I OUTPUT --destination $line -j ACCEPT
         echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
     elif [ $vpntype = "iptables-mark" ]; then
-        iptables -t mangle -I OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        sudo iptables -t mangle -I OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN";
         echo "iptables -t mangle -I OUTPUT --destination $line -j MARK --set-mark $mark"
     elif [ $vpntype = "iptables-ipset" ]; then
-        ipset -exist add ${countryiso} $line;
+        sudo ipset -exist add ${countryiso} $line;
         echo "ipset -exist add ${countryiso} $line"
     fi
   done < "$input"
@@ -166,18 +167,18 @@ function add {
 
   if [ $vpntype = "iptables-ipset" ]; then
       if [ -z "$mark" ]; then
-        iptables -t filter -A INPUT -m set --match-set $countryiso dst -j ACCEPT
-        iptables -t filter -A OUTPUT -m set --match-set $countryiso dst -j ACCEPT
+        sudo iptables -t filter -A INPUT -m set --match-set $countryiso dst -j ACCEPT
+        sudo iptables -t filter -A OUTPUT -m set --match-set $countryiso dst -j ACCEPT
         echo "iptables -t filter -A INPUT/OUTPUT -m set --match-set $countryiso dst -j ACCEPT"
       else
-        iptables -t mangle -A OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        sudo iptables -t mangle -A OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
         echo "iptables -t mangle -A OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark"
       fi;
   fi
 
 }
 
-function remove {
+function clear_country_ips {
 
   if [ $vpntype != "iptables-ipset" ]; then
     update || (echo failed to update && exit);
@@ -187,34 +188,34 @@ function remove {
   do
     if [ $vpntype == "ip" ]; then
         if [[ $gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          ip route delete "$line" via "$gateway"
+          sudo ip route delete "$line" via "$gateway"
         else
-          ip route delete "$line" dev "$gateway"
+          sudo ip route delete "$line" dev "$gateway"
         fi
         echo "$line -> $gateway"
     elif [ $vpntype == "nordvpn" ]; then
         nordvpn whitelist remove subnet $line;
         echo "nordvpn whitelist removal of $line"
     elif [ $vpntype = "iptables-filter" ]; then
-        iptables -t filter -D INPUT --destination $line -j ACCEPT
-        iptables -t filter -D OUTPUT --destination $line -j ACCEPT
+        sudo iptables -t filter -D INPUT --destination $line -j ACCEPT
+        sudo iptables -t filter -D OUTPUT --destination $line -j ACCEPT
         echo "iptables -t filter -I INPUT/OUTPUT --destination $line -j ACCEPT"
     elif [ $vpntype = "iptables-mark" ]; then
-        iptables -t mangle -D OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN"
+        sudo iptables -t mangle -D OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment "Skip VPN"
         echo "iptables -t mangle -D OUTPUT --destination $line -j MARK --set-mark $mark -m comment --comment \"Skip VPN\""
     fi
   done < "$input"
 
   if [ $vpntype = "iptables-ipset" ]; then
     if [ -z "$mark" ]; then
-        iptables -t filter -D INPUT -m set --match-set $countryiso dst -j ACCEPT
-        iptables -t filter -D OUTPUT -m set --match-set $countryiso dst -j ACCEPT
+        sudo iptables -t filter -D INPUT -m set --match-set $countryiso dst -j ACCEPT
+        sudo iptables -t filter -D OUTPUT -m set --match-set $countryiso dst -j ACCEPT
         echo "iptables -t filter -D INPUT/OUTPUT -m set --match-set $countryiso dst -j ACCEPT"
     else
-        iptables -t mangle -D OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
+        sudo iptables -t mangle -D OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark -m comment --comment "Skip VPN";
         echo "iptables -t mangle -D OUTPUT -m set --match-set $countryiso dst -j MARK --set-mark $mark"
     fi;
-    ipset destroy $countryiso;
+    sudo ipset destroy $countryiso;
     echo "ipset destroy $countryiso"
   fi;
 }
