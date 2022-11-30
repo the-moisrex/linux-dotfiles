@@ -1,0 +1,28 @@
+#!/bin/bash
+
+cached_file="/tmp/checked-domains"
+
+sudo ipset -exist create unfilter hash:ip counters timeout 0;
+
+touch $cached_file;
+
+while read -r domain; do
+    domain=$(echo $domain | sed -e 's/[[:space:]]//');
+    if [[ ! $domain =~ ^(([[:alpha:]](-?[[:alnum:]])*)\.)+[[:alpha:]]{2,}$ ]]; then
+        continue;
+    fi
+    if grep $domain $cached_file >/dev/null; then
+        continue;
+    fi
+
+    dig +short +timeout=2 $domain @85.15.1.15 | grep 10.10.34.35 >/dev/null
+    isbanned=$?
+    echo $domain >> $cached_file
+    if [ $isbanned != 0 ]; then
+        continue;
+    fi;
+    while read -r ip; do
+        echo "Added $domain ip $ip";
+        sudo ipset -exist add unfilter $ip;
+    done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+done < <(tail -F -n0 /var/log/dnsmasq.log | unbuffer -p cut -d":" -f4 | unbuffer -p sed -E 's/ (reply|forwarded|cached|query\[[=A-Za-z0-9]+\]) //' | unbuffer -p cut -d" " -f 1 | unbuffer -p awk NF | unbuffer -p uniq)
