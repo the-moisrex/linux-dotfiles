@@ -302,6 +302,10 @@ function destroy_dnsips {
     # sudo ipset destroy dnsips;
 }
 
+function skip_all_except_banned {
+    # iptables_skip $1 -p tcp -m set ! --match-set unfilter dst
+    return;
+}
 
 
 function clean {
@@ -312,6 +316,7 @@ function clean {
     skip_local destroy
     skip_country destroy
     skip_dnsips destroy
+    skip_all_except_banned destroy
     iptables_skip_init destroy
 
     destroy_dnsips
@@ -332,6 +337,7 @@ function start {
     skip_local destroy
     skip_country destroy
     skip_dnsips destroy
+    skip_all_except_banned destroy
 
     iptables_skip_init destroy
     iptables_skip_init setup
@@ -346,6 +352,7 @@ function start {
     skip_country setup
     skip_dnsips setup
     skip_multicast setup
+    skip_all_except_banned setup
     iptables_skip_finalize # should be the last of the "skip" calls
 }
 
