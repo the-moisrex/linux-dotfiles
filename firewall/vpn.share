@@ -177,7 +177,10 @@ function create_ignored_ipset {
         return;
     fi
 
-    sudo ipset -exist create ignored hash:net counters;
+    if ! sudo ipset -exist create ignored hash:net counters; then
+        echo "You need to run this script as root.";
+        return;
+    fi;
     if [ -f "$ignored_domains_file" ]; then
         ipcount=0
         while read -r domain; do
