@@ -1,28 +1,117 @@
 #!/bin/bash
 
-cached_file="/tmp/checked-domains"
+cached_file="/tmp/checked-domains";
+bad_dns_server="85.15.1.15";
+ipset="unfilter"
 
-sudo ipset -exist create unfilter hash:ip counters timeout 0;
+sudo ipset -exist create $ipset hash:ip counters timeout 0;
 
 touch $cached_file;
 
-while read -r domain; do
-    domain=$(echo $domain | sed -e 's/[[:space:]]//');
+function add_ip {
+    ip="$1";
+    case $ip in
+        192.168.*|10.*|0.0.0.0)
+            continue;
+            ;;
+        *)
+            ;;
+    esac;
+    sudo ipset -exist add $ipset $ip;
+    echo "Added $ip to $ipset";
+}
+
+function add_domain {
+    domain="$1"
+    while read -r ip; do
+        add_ip $ip;
+    done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+}
+
+function check_domain {
+    domain="$1";
+    ips="$2";
     if [[ ! $domain =~ ^(([[:alpha:]](-?[[:alnum:]])*)\.)+[[:alpha:]]{2,}$ ]]; then
-        continue;
+        return;
     fi
+    case $domain in
+        mainmo|lapmo|pretty|mophone|*.local)
+            return;
+            ;;
+        *)
+            ;;
+    esac;
     if grep $domain $cached_file >/dev/null; then
-        continue;
+        return;
     fi
 
-    dig +short +timeout=2 $domain @85.15.1.15 | grep 10.10.34.35 >/dev/null
-    isbanned=$?
     echo $domain >> $cached_file
+
+    echo -ne "\r\033[KChecking $domain"
+    dig +short +timeout=2 $domain @${bad_dns_server} | grep 10.10. >/dev/null
+    isbanned=$?
     if [ $isbanned != 0 ]; then
-        continue;
+        return;
     fi;
-    while read -r ip; do
-        echo "Added $domain ip $ip";
-        sudo ipset -exist add unfilter $ip;
-    done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
-done < <(tail -F -n0 /var/log/dnsmasq.log | unbuffer -p cut -d":" -f4 | unbuffer -p sed -E 's/ (reply|forwarded|cached|query\[[=A-Za-z0-9]+\]) //' | unbuffer -p cut -d" " -f 1 | unbuffer -p awk NF | unbuffer -p uniq)
+    echo -ne "\r\033[KFor domain $domain\n";
+    if [ -z "$ips" ]; then
+        add_domain $domain;
+    else
+        for $ip in ${ips//,/ }; do
+            add_ip $ip;
+        done;
+    fi;
+}
+
+if [ "$1" = "check-all" ]; then
+    while read -r domain; do
+        domain=$(echo $domain | sed -e 's/[[:space:]]//');
+        if [ "$domain" = "error" ] || [ "$domain" = "." ] || [ "$domain" = "https" ]; then
+            continue;
+        fi
+        check_domain "$domain"
+    done < <(cat /var/log/dnsmasq.log | cut -d":" -f4 | sed -E 's/ (reply|forwarded|cached|query\[[=A-Za-z0-9]+\]) //' | cut -d" " -f 1 | awk NF | sort -u)
+fi;
+
+if [ "$1" = "check-dnsmasq" ]; then
+    while read -r domain; do
+        domain=$(echo $domain | sed -e 's/[[:space:]]//');
+        if [ "$domain" = "error" ] || [ "$domain" = "." ] || [ "$domain" = "https" ]; then
+            continue;
+        fi
+        check_domain "$domain"
+    done < <(tail -F -n0 /var/log/dnsmasq.log | unbuffer -p cut -d":" -f4 | unbuffer -p sed -E 's/ (reply|forwarded|cached|query\[[=A-Za-z0-9]+\]) //' | unbuffer -p cut -d" " -f 1 | unbuffer -p awk NF | unbuffer -p uniq)
+fi
+
+if [ "$1" = "check-tshark" ]; then
+    while IFS='|' read -r queries responses ips; do
+        for ip in ${ips//,/ }; do
+            if [[ $ip =~ ^10\.10\. ]]; then
+                # We know it's blocked, let's add the domains
+                for query in ${queries//,/ }; do
+                    echo $query >> $cached_file
+                    add_domain $query;
+                done
+                for response in ${responses//, }; do
+                    if [ "$response" = "<Root>" ]; then
+                        continue;
+                    fi;
+                    echo $response >> $cached_file
+                    add_domain $response;
+                done;
+                continue 2;
+            fi;
+        done
+
+        # check the domains
+        for query in ${queries//,/ }; do
+            check_domain $query "$ips";
+        done
+        for response in ${responses//, }; do
+            if [ "$response" = "<Root>" ]; then
+                continue;
+            fi;
+            check_domain $response "$ips";
+        done;
+    done < <(tshark -i any -l -f 'udp and (dst port 53 or src port 53)' -Y 'dns.qry.name' -T fields -E separator='|' -e dns.qry.name -e dns.resp.name -e dns.a 2>/dev/null)
+fi
