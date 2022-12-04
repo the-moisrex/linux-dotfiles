@@ -85,7 +85,14 @@ function update_ignores {
 
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
-            ignore "$domain";
+            echo "Adding $domain to the ignored list."
+            while IFS= read -r ip; do
+                echo  "  Adding ip address $ip to the 'ignored' ip set."
+                sudo ipset -exist add ignored $ip;
+                ipcount=$(( $ipcount + 1 ));
+            done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+            echo "  Added $ipcount IPs to the 'ignored' ipset.";
+            echo
         done < "$ignored_domains_file";
     fi;
 }
