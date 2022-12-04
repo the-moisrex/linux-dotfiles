@@ -190,7 +190,7 @@ if [ -z "$RUBY_PATH" ]; then
     export PATH=$PATH:$RUBY_PATH/bin
 fi
 
-export PATH=.:$HOME/.bin:$cmddir/bin:$PATH:$JAVA_HOME/bin
+export PATH=.:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$PATH:$JAVA_HOME/bin
 
 # will remove the limits and deduplication of the history file (https://github.com/bamos/zsh-history-analysis/blob/master/README.md)
 export HISTSIZE=100000000

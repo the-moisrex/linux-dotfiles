@@ -1,0 +1,126 @@
+#!/bin/bash
+
+
+# Add a domain to the list of domains that don't need to go through VPN
+ignored_domains_file="$HOME/.cache/ignored-domains.txt"
+
+
+function print_help {
+    echo "Usage: ignore help";
+    echo "       ignore add domain.com"
+    echo "       ignore append domain.com"
+    echo "       ignore del domain.com"
+    echo "       ignore remove domain.com"
+    echo "       ignore update"
+    echo "       ignore list domains"
+    echo "       ignore list ips"
+    echo "       ignore list ipset"
+}
+
+
+function list_domains {
+    if [ -f "$ignored_domains_file" ]; then
+        while read -r domain; do
+            echo $domain;
+        done < "$ignored_domains_file";
+    fi;
+}
+
+function list_ipset {
+    sudo ipset list ignored;
+}
+
+function list_ips {
+    if [ -f "$ignored_domains_file" ]; then
+        while read -r domain; do
+            echo $domain;
+            while IFS= read -r ip; do
+                echo  "  $ip"
+            done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+            echo
+        done < "$ignored_domains_file";
+    fi;
+}
+
+function ignore {
+    domain="$1"
+    if [ -z "$domain" ]; then
+        print_help;
+        return;
+    fi;
+    echo "Adding $domain to the ignored list."
+    echo $domain >> $ignored_domains_file;
+    while IFS= read -r ip; do
+        echo  "  Adding ip address $ip to the 'ignored' ip set."
+        sudo ipset -exist add ignored $ip;
+        ipcount=$(( $ipcount + 1 ));
+    done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+    echo "  Added $ipcount IPs to the 'ignored' ipset.";
+    echo
+}
+
+function unignore {
+    domain="$1"
+    if [ -z "$domain" ]; then
+        print_help;
+        return;
+    fi;
+    echo "Removing $domain from ignored list."
+    grep -v "$domain" $ignored_domains_file | sponge $ignored_domains_file
+    while IFS= read -r ip; do
+        echo  "  Removing ip address $ip from the 'ignored' ip set."
+        sudo ipset del ignored $ip;
+        ipcount=$(( $ipcount + 1 ));
+    done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+    echo "  Deleted $ipcount IPs from the 'ignored' ipset.";
+    echo
+}
+
+
+function update_ignores {
+    if ! sudo ipset -exist create ignored hash:net counters; then
+        echo "You need to run this script as root.";
+        return;
+    fi;
+
+    if [ -f "$ignored_domains_file" ]; then
+        while read -r domain; do
+            ignore "$domain";
+        done < "$ignored_domains_file";
+    fi;
+}
+
+
+case "$1" in
+    help)
+        print_help;
+        ;;
+    list)
+        case "$2" in
+            ipset)
+                list_ipset;
+                ;;
+            ips)
+                list_ips;
+                ;;
+            domains)
+                list_domains;
+                ;;
+            *)
+                list_ips;
+                ;;
+        esac;
+        ;;
+    update)
+        update_ignores;
+        ;;
+    add|append)
+        ignore "$2";
+        ;;
+    del|remove)
+        unignore "$2";
+        ;;
+    *)
+        print_help;
+        ;;
+esac;
