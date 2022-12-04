@@ -23,25 +23,56 @@ function add_ip {
 
 function add_domain {
     domain="$1"
+    domain="${domain/http:\/\//}"
+    domain="${domain/https:\/\//}"
     while read -r ip; do
         add_ip $ip;
     done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
 }
 
+function add_domains {
+    domains="$1";
+    first_good_domain=""
+    for domain in ${domains//,/ }; do
+        if [ "$domain" = "<Root>" ]; then
+            continue;
+        fi;
+        domain="${domain/http:\/\//}"
+        domain="${domain/https:\/\//}"
+        if [ -z "$first_good_domain" ]; then
+            echo -n "For domains ";
+            first_good_domain="$domain";
+        fi
+        echo $domain >> $cached_file;
+        echo -n "\t$domain";
+    done;
+    
+    # Domains have the same ip addresses, so one of them is enough
+    if [ ! -z "$first_good_domain" ]; then
+        echo;
+        add_domain $domain;
+    fi;
+}
+
 function check_domain {
     domain="$1";
     ips="$2";
-    if [[ ! $domain =~ ^(([[:alpha:]](-?[[:alnum:]])*)\.)+[[:alpha:]]{2,}$ ]]; then
-        return;
-    fi
+    domain="${domain/http:\/\//}"
+    domain="${domain/https:\/\//}"
+    # if [[ ! $domain =~ ^(([[:alpha:]](-?[[:alnum:]])*)\.)+[[:alpha:]]{2,}$ ]]; then
+    #     echo -ne "\r\033[KNot a domain: $domain"
+    #     return;
+    # fi
     case $domain in
-        mainmo|lapmo|pretty|mophone|*.local)
+        *.local)
+            echo -ne "\r\033[KSkip $domain"
             return;
             ;;
         *)
             ;;
     esac;
     if grep $domain $cached_file >/dev/null; then
+        echo -ne "\r\033[KSkip $domain"
         return;
     fi
 
@@ -51,17 +82,31 @@ function check_domain {
     dig +short +timeout=2 $domain @${bad_dns_server} | grep 10.10. >/dev/null
     isbanned=$?
     if [ $isbanned != 0 ]; then
+        echo -ne "\r\033[KIs not blocked: $domain"
         return;
     fi;
     echo -ne "\r\033[KFor domain $domain\n";
     if [ -z "$ips" ]; then
         add_domain $domain;
     else
-        for $ip in ${ips//,/ }; do
+        for ip in ${ips//,/ }; do
             add_ip $ip;
         done;
     fi;
 }
+
+
+function check_domains {
+    domains="$1";
+    ips="$2"
+    for domain in ${domains//,/ }; do
+        if [ "$domain" = "<Root>" ]; then
+            continue;
+        fi;
+        check_domain "$domain" "$ips";
+    done;
+}
+
 
 if [ "$1" = "check-all" ]; then
     while read -r domain; do
@@ -85,33 +130,20 @@ fi
 
 if [ "$1" = "check-tshark" ]; then
     while IFS='|' read -r queries responses ips; do
+        if [ "$queries" = "<Unknown extended label>" ]; then
+            continue;
+        fi
         for ip in ${ips//,/ }; do
             if [[ $ip =~ ^10\.10\. ]]; then
                 # We know it's blocked, let's add the domains
-                for query in ${queries//,/ }; do
-                    echo $query >> $cached_file
-                    add_domain $query;
-                done
-                for response in ${responses//, }; do
-                    if [ "$response" = "<Root>" ]; then
-                        continue;
-                    fi;
-                    echo $response >> $cached_file
-                    add_domain $response;
-                done;
+                add_domains "$queries";
+                add_domains "$responses";
                 continue 2;
             fi;
         done
 
         # check the domains
-        for query in ${queries//,/ }; do
-            check_domain $query "$ips";
-        done
-        for response in ${responses//, }; do
-            if [ "$response" = "<Root>" ]; then
-                continue;
-            fi;
-            check_domain $response "$ips";
-        done;
+        check_domains "$queries" "$ips";
+        check_domains "$responses" "$ips";
     done < <(tshark -i any -l -f 'udp and (dst port 53 or src port 53)' -Y 'dns.qry.name' -T fields -E separator='|' -e dns.qry.name -e dns.resp.name -e dns.a 2>/dev/null)
 fi
