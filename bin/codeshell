@@ -153,6 +153,9 @@ echo "Code directory: ${tmpdir}"
 if [[ "$template" == asm* ]]; then # make
 	tmux send-keys -t ${window}.${side} "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
 	open_editor "main.asm" "main.asm";
+elif [ -f ${template_dir}/main.lua ]; then # make
+  tmux send-keys -t ${window}.${side} "find . -name '*.lua' | entr -cs 'lua main.lua'" C-m
+  open_editor "main.lua" "main.lua";
 elif [ -f ${template_dir}/package.json ]; then # make
   tmux send-keys -t ${window}.${side} "find . -name '*.js' -or -name '*.json' | entr -cs 'make && npm start'" C-m
   open_editor "index.js" "index.js";
