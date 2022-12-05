@@ -90,17 +90,17 @@ function run {
     echo Build Directory: $build_dir
     echo Build command:   $build_cmd
     if eval "unbuffer $build_cmd"; then
-      notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
+      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile"
       fi
       if $execfile; then
-        notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Passed";
+        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Passed";
       else
-        notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Failed";
+        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Failed";
       fi;
     else
-      notify-send -t 800 -i utilities-terminal -a "Compiler" "Compilation Failed.";
+      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compilation Failed.";
     fi;
   else
     echo Project Root not found.
