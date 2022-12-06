@@ -7,6 +7,40 @@ define multicast_ips = 224.0.0.0-239.255.255.255
 flush ruleset
 
 table inet filter {
+    counter filter.loopback {
+        comment "Loopback"
+    }
+    counter filter.state {
+        comment "Established, Related, Invalid connection states"
+    }
+    counter filter.okayports {
+        comment "All of the Okay Ports"
+    }
+    counter filter.okayprotocols {
+        comment "All of the Okay Protocols"
+    }
+    counter filter.igmp {
+        comment "IGMP"
+    }
+    counter filter.ipv4.icmp {
+        comment "IPv4 ICMP"
+    }
+    counter filter.ipv6.icmp {
+        comment "IPv6 ICMP"
+    }
+    counter filter.drop {
+        comment "Packets that weren't allowed"
+    }
+    counter forward.to.local {
+        comment "Forward To Local Network from anywhere"
+    }
+    counter forward.from.local {
+        comment "Forward From Local Network to anywhere"
+    }
+    counter forward.drop {
+        comment "Forward dropped"
+    }
+
     set okprotos {
         type inet_service
         counter
@@ -36,45 +70,59 @@ table inet filter {
             established: accept,
             related: accept,
             invalid: drop
-        } counter
+        } counter name filter.state
 
-        iifname lo counter accept comment "allow loopback"
-        iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
-        iif != lo ip6 daddr ::1/128 counter drop comment "drop connections to loopback not comming from loopback"
+        iifname lo counter name filter.loopback accept comment "allow loopback"
+        # iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
+        # iif != lo ip6 daddr ::1/128 counter drop comment "drop connections to loopback not comming from loopback"
 
-        ip saddr $local_network meta l4proto . th dport @okports counter accept comment "allow ports"
-        ip saddr $local_network th dport @okprotos counter accept comment "allow protocols"
+        ip saddr $local_network meta l4proto . th dport @okports counter name filter.okayports accept comment "allow ports"
+        ip saddr $local_network th dport @okprotos counter name filter.okayprotocols accept comment "allow protocols"
 
-        ip protocol icmp counter accept comment "allow ICMP"
-        meta l4proto ipv6-icmp counter accept comment "allow ICMPv6"
+        ip protocol icmp counter name filter.ipv4.icmp accept comment "allow ICMP"
+        meta l4proto ipv6-icmp counter name filter.ipv6.icmp accept comment "allow ICMPv6"
 
-        ip protocol igmp accept comment "allow IGMP"
+        ip protocol igmp counter name filter.igmp accept comment "allow IGMP"
         # ip daddr $multicast_ips counter accept comment "allow multicast ips (for winbox)"
 
-        pkttype host limit rate 5/second counter reject with icmpx type admin-prohibited comment "rate limit"
+        # pkttype host limit rate 5/second counter name filter.ratelimit reject with icmpx type admin-prohibited comment "rate limit"
 
-        counter log prefix "nft#in-dropped " group 0 comment "count dropped packets"
+        counter name filter.drop log prefix "nft#in-dropped " group 0 comment "count dropped packets"
     }
 
     chain forward {
         type filter hook forward priority filter
         policy drop
 
-        ip saddr $local_network counter accept comment "to/from local network"
-        ip daddr $local_network counter accept comment "to/from local network"
+        ip saddr $local_network counter name forward.to.local accept comment "to/from local network"
+        ip daddr $local_network counter name forward.from.local accept comment "to/from local network"
 
-        counter comment "count dropped packets"
-    }
-
-    chain output {
-        type filter hook output priority filter
-        policy accept
-
-        counter comment "count accepted packets"
+        counter name forward.drop comment "count dropped packets"
     }
 }
 
 table inet mangle {
+    counter skip.all {
+        comment "All packets that skipped the VPN"
+    }
+    counter skip.manuals {
+        comment "Manually specified IPs that skipped the VPN"
+    }
+    counter skip.ignored {
+        comment "IPs of domain names that got to skip the VPN"
+    }
+    counter skip.country_ips {
+        comment "IPs of countries"
+    }
+    counter skip.multicast {
+        comment "Multicast IPs that marked to skip VPN"
+    }
+    counter wan.in {
+        comment "Input from WAN (not local network)"
+    }
+    counter out {
+        comment "Output from our own system (doesn't include forwards)"
+    }
     
     # Country IPs go here
     set country_ips {
@@ -102,15 +150,15 @@ table inet mangle {
         # supposed to not go through the VPN is going to not go to VPN
         #
         # Currently, we just mark the packet
-        counter mark set $skip_vpn_mark
+        counter name skip.all mark set $skip_vpn_mark
     }
 
     chain skipper {
         # Here we define the packets that should be skip the VPN
-        ip daddr @skipips counter goto marker
-        ip daddr @ignored counter goto marker
-        ip daddr @country_ips counter goto marker
-        meta pkttype multicast counter goto marker
+        ip daddr @skipips counter name skip.manuals goto marker
+        ip daddr @ignored counter name skip.ignored goto marker
+        ip daddr @country_ips counter name skip.country_ips goto marker
+        meta pkttype multicast counter name skip.multicast goto marker
     }
 
     # chain ingress {
@@ -120,16 +168,20 @@ table inet mangle {
 
     chain prerouting {
         type filter hook prerouting priority raw
-        ip daddr != $local_network counter goto skipper
+        ip daddr != $local_network counter name wan.in goto skipper
     }
 
     chain output {
         type route hook output priority raw
-        counter goto skipper
+        counter name out goto skipper
     }
 }
 
 table inet nat {
+    counter nat.masquerade {
+        comment "NAT performed on them"
+    }
+
     chain prerouting {
         type nat hook prerouting priority dstnat
     }
@@ -145,6 +197,6 @@ table inet nat {
     chain postrouting {
         type nat hook postrouting priority srcnat
 
-        ip saddr $local_network counter masquerade comment "nat everything"
+        ip saddr $local_network counter name nat.masquerade masquerade comment "nat everything"
     }
 }
