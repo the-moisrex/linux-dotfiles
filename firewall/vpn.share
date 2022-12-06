@@ -208,7 +208,7 @@ function create_country_ipset {
 
     update_countries || (echo failed to update countries repo);
 
-    input="$countries_repo/ipv4/$countryiso.cidr"
+    input="$countries_repo/ipv4/$iso_code.cidr"
 
     sudo ipset -exist create $iso_code hash:net counters;
     ipcount=0
