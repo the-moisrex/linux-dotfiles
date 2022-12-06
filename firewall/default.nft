@@ -11,7 +11,6 @@ table inet filter {
         type inet_service
         counter
         elements = { # look at /etc/services
-            icmp,
             smtp,          # Mail Server for router
             pop3,          # Mail Server for phone
             sftp,          # Files
@@ -46,7 +45,7 @@ table inet filter {
         ip saddr $local_network meta l4proto . th dport @okports counter accept comment "allow ports"
         ip saddr $local_network th dport @okprotos counter accept comment "allow protocols"
 
-        # ip protocol icmp counter accept comment "allow ICMP"
+        ip protocol icmp counter accept comment "allow ICMP"
         meta l4proto ipv6-icmp counter accept comment "allow ICMPv6"
 
         ip protocol igmp accept comment "allow IGMP"
@@ -76,40 +75,57 @@ table inet filter {
 }
 
 table inet mangle {
-    set ir {
+    
+    # Country IPs go here
+    set country_ips {
         type ipv4_addr
         flags interval # enable CIDR and ranges
     }
 
+    # Ignored set of IPs of domain names
     set ignored {
         type ipv4_addr
         flags interval # enable CIDR and ranges
     }
 
+    # Manual list of IPs/CIDRs to ignore
     set skipips {
         type ipv4_addr
         flags interval # enable CIDR and ranges
         elements = {
-            $local_network,
             $multicast_ips
         }
     }
 
+    chain marker {
+        # This is the chain that defines how the packets that are
+        # supposed to not go through the VPN is going to not go to VPN
+        #
+        # Currently, we just mark the packet
+        counter mark set $skip_vpn_mark
+    }
+
     chain skipper {
-        ip daddr @skipips counter mark set $skip_vpn_mark
-        ip daddr @ir counter mark set $skip_vpn_mark
-        ip daddr @ignored counter mark set $skip_vpn_mark
-        meta pkttype multicast counter mark set $skip_vpn_mark
+        # Here we define the packets that should be skip the VPN
+        ip daddr @skipips counter goto marker
+        ip daddr @ignored counter goto marker
+        ip daddr @country_ips counter goto marker
+        meta pkttype multicast counter goto marker
+    }
+
+    # chain ingress {
+    #     type filter hook ingress device enp2s0 priority raw
+    #     goto skipper
+    # }
+
+    chain prerouting {
+        type filter hook prerouting priority raw
+        ip daddr != $local_network counter goto skipper
     }
 
     chain output {
         type route hook output priority raw
-        goto skipper
-    }
-
-    chain postrouting {
-        type filter hook prerouting priority raw
-        goto skipper
+        counter goto skipper
     }
 }
 

@@ -5,16 +5,28 @@
 ignored_domains_file="$HOME/.cache/ignored-domains.txt"
 
 
+# if you decide to change this directory, change it in the "clear-coredump", and in "net.routes.skip" commands as well
+countries_repo="$HOME/.cache/country-ips"
+
+countryiso="ir"
+
+
 function print_help {
     echo "Usage: ignore help";
     echo "       ignore add domain.com"
     echo "       ignore append domain.com"
+    echo "       ignore add country ir"
     echo "       ignore del domain.com"
     echo "       ignore remove domain.com"
+    echo "       ignore remove country ir"
     echo "       ignore update"
+    echo "       ignore update domains"
+    echo "       ignore update countries"
     echo "       ignore list domains"
     echo "       ignore list ips"
     echo "       ignore list ipset"
+    echo "       ignore list country ir"
+    echo "       ignore list countries"
 }
 
 
@@ -27,7 +39,7 @@ function list_domains {
 }
 
 function list_ipset {
-    sudo ipset list ignored;
+    sudo nft list set inet mangle ignored
 }
 
 function list_ips {
@@ -52,7 +64,7 @@ function ignore {
     echo $domain >> $ignored_domains_file;
     while IFS= read -r ip; do
         echo  "  Adding ip address $ip to the 'ignored' ip set."
-        sudo ipset -exist add ignored $ip;
+        sudo nft add element inet mangle ignored \{ $ip \}
         ipcount=$(( $ipcount + 1 ));
     done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
     echo "  Added $ipcount IPs to the 'ignored' ipset.";
@@ -69,7 +81,7 @@ function unignore {
     grep -v "$domain" $ignored_domains_file | sponge $ignored_domains_file
     while IFS= read -r ip; do
         echo  "  Removing ip address $ip from the 'ignored' ip set."
-        sudo ipset del ignored $ip;
+        sudo nft delete element inet mangle ignored \{ $ip \}
         ipcount=$(( $ipcount + 1 ));
     done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
     echo "  Deleted $ipcount IPs from the 'ignored' ipset.";
@@ -78,17 +90,12 @@ function unignore {
 
 
 function update_ignores {
-    if ! sudo ipset -exist create ignored hash:net counters; then
-        echo "You need to run this script as root.";
-        return;
-    fi;
-
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
             echo "Adding $domain to the ignored list."
             while IFS= read -r ip; do
                 echo  "  Adding ip address $ip to the 'ignored' ip set."
-                sudo ipset -exist add ignored $ip;
+                sudo nft add element inet mangle ignored \{ $ip \}
                 ipcount=$(( $ipcount + 1 ));
             done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
             echo "  Added $ipcount IPs to the 'ignored' ipset.";
@@ -97,6 +104,78 @@ function update_ignores {
     fi;
 }
 
+function update_countries {
+    if [ -d "$countries_repo" ]; then
+        echo "Updateing the countries' IPs repository.";
+        git -C "$countries_repo" pull --rebase=true --prune --force --depth=1 --progress --no-ff --no-edit --no-commit
+    else
+        echo "Downloading the countries' IPs repository.";
+        git clone --depth=1 -b master https://github.com/herrbischoff/country-ip-blocks.git "$countries_repo"
+    fi;
+}
+
+function ignore_country {
+    iso_code="$1";
+    if [ -z "$iso_code" ]; then
+        iso_code="$countryiso";
+    fi
+
+
+    input="$countries_repo/ipv4/$countryiso.cidr"
+
+    ipcount=0
+    while IFS= read -r ip; do
+        echo -ne "\r\033[KAdding ip address $ip to the '$iso_code' ip set."
+        sudo nft add element inet mangle country_ips \{ $ip \};
+        ipcount=$(( $ipcount + 1 ));
+    done < "$input";
+    echo -ne "\r\033[KAdded $ipcount ips for country code '$iso_code'.";
+    echo
+}
+
+function unignore_country {
+    iso_code="$1";
+    if [ -z "$iso_code" ]; then
+        iso_code="$countryiso";
+    fi
+
+    input="$countries_repo/ipv4/$iso_code.cidr"
+
+    ipcount=0
+    while IFS= read -r ip; do
+        echo  "  Removing ip address $ip from the 'country_ips' ip set."
+        sudo nft delete element inet mangle country_ips \{ $ip \}
+        ipcount=$(( $ipcount + 1 ));
+    done < "$input";
+    echo "  Deleted $ipcount IPs from the 'country_ips' ipset.";
+    echo
+}
+
+function list_country {
+    iso_code="$1";
+    if [ -z "$iso_code" ]; then
+        iso_code="$countryiso";
+    fi
+
+    input="$countries_repo/ipv4/$iso_code.cidr"
+
+    ipcount=0
+    while IFS= read -r ip; do
+        echo "$ip";
+        ipcount=$(( $ipcount + 1 ));
+    done < "$input";
+    echo "Found $ipcount ips for country code '$iso_code'.";
+}
+
+function list_countries_ipset {
+    sudo nft list set inet mangle country_ips
+}
+
+function update_all {
+    update_ignores
+    update_countries
+    # todo: update individual countries as well
+}
 
 case "$1" in
     help)
@@ -113,19 +192,49 @@ case "$1" in
             domains)
                 list_domains;
                 ;;
+            country)
+                list_country "$3";
+                ;;
+            countries)
+                list_countries_ipset;
+                ;;
             *)
                 list_ips;
                 ;;
         esac;
         ;;
     update)
-        update_ignores;
+        case "$2" in
+            countries)
+                update_countries;
+                ;;
+            ignores|domains)
+                update_ignores;
+                ;;
+            all|*)
+                update_all;
+                ;;
+        esac
         ;;
     add|append)
-        ignore "$2";
+        case "$2" in
+            country)
+                ignore_country "$3";
+                ;;
+            *)
+                ignore "$2";
+                ;;
+        esac
         ;;
     del|remove)
-        unignore "$2";
+        case "$2" in
+            country)
+                unignore_country "$3";
+                ;;
+            *)
+                unignore "$2";
+                ;;
+        esac
         ;;
     *)
         print_help;
