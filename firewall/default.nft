@@ -1,0 +1,134 @@
+#!/sbin/nft -f
+
+define local_network = { 192.168.88.0/16, 10.1.1.0/24 }
+define skip_vpn_mark = 0xe1f1 # NordVPN default vpn mark used in iproute2
+define multicast_ips = 224.0.0.0-239.255.255.255
+
+flush ruleset
+
+table inet filter {
+    set okprotos {
+        type inet_service
+        counter
+        elements = { # look at /etc/services
+            icmp,
+            smtp,          # Mail Server for router
+            pop3,          # Mail Server for phone
+            sftp,          # Files
+            domain,        # DNS
+            ssh,
+            rfb,           # VNC
+            ms-wbt-server  # RDP
+        }
+    }
+    set okports {
+        type inet_proto . inet_service
+        counter
+        elements = {
+            tcp . 4713      # PULSE_SERVER=tcp:machine:4713 allow input audio
+        }
+    }
+
+    chain input {
+        type filter hook input priority filter
+        policy drop
+        
+        ct state vmap {
+            established: accept,
+            related: accept,
+            invalid: drop
+        } counter
+
+        iifname lo counter accept comment "allow loopback"
+        iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
+        iif != lo ip6 daddr ::1/128 counter drop comment "drop connections to loopback not comming from loopback"
+
+        ip saddr $local_network meta l4proto . th dport @okports counter accept comment "allow ports"
+        ip saddr $local_network th dport @okprotos counter accept comment "allow protocols"
+
+        # ip protocol icmp counter accept comment "allow ICMP"
+        meta l4proto ipv6-icmp counter accept comment "allow ICMPv6"
+
+        ip protocol igmp accept comment "allow IGMP"
+        # ip daddr $multicast_ips counter accept comment "allow multicast ips (for winbox)"
+
+        pkttype host limit rate 5/second counter reject with icmpx type admin-prohibited comment "rate limit"
+
+        counter log prefix "nft#in-dropped " group 0 comment "count dropped packets"
+    }
+
+    chain forward {
+        type filter hook forward priority filter
+        policy drop
+
+        ip saddr $local_network counter accept comment "to/from local network"
+        ip daddr $local_network counter accept comment "to/from local network"
+
+        counter comment "count dropped packets"
+    }
+
+    chain output {
+        type filter hook output priority filter
+        policy accept
+
+        counter comment "count accepted packets"
+    }
+}
+
+table inet mangle {
+    set ir {
+        type ipv4_addr
+        flags interval # enable CIDR and ranges
+    }
+
+    set ignored {
+        type ipv4_addr
+        flags interval # enable CIDR and ranges
+    }
+
+    set skipips {
+        type ipv4_addr
+        flags interval # enable CIDR and ranges
+        elements = {
+            $local_network,
+            $multicast_ips
+        }
+    }
+
+    chain skipper {
+        ip daddr @skipips counter mark set $skip_vpn_mark
+        ip daddr @ir counter mark set $skip_vpn_mark
+        ip daddr @ignored counter mark set $skip_vpn_mark
+        meta pkttype multicast counter mark set $skip_vpn_mark
+    }
+
+    chain output {
+        type route hook output priority raw
+        goto skipper
+    }
+
+    chain postrouting {
+        type filter hook prerouting priority raw
+        goto skipper
+    }
+}
+
+table inet nat {
+    chain prerouting {
+        type nat hook prerouting priority dstnat
+    }
+
+    chain input {
+        type nat hook input priority filter
+    }
+
+    chain output {
+        type nat hook output priority filter
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority srcnat
+
+        ip saddr $local_network counter masquerade comment "nat everything"
+    }
+}
