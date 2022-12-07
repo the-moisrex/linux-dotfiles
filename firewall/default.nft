@@ -114,21 +114,20 @@ table inet mangle {
     counter skip.all { comment "All packets that skipped the VPN" }
     counter skip.manuals { comment "Manually specified IPs that skipped the VPN" }
     counter skip.ignored { comment "IPs of domain names that got to skip the VPN" }
-    counter skip.country_ips { comment "IPs of countries" }
+    counter skip.geoips4 { comment "IPs of countries" }
     counter skip.multicast { comment "Multicast IPs that marked to skip VPN" }
-    counter wan.in { comment "Input from WAN (not local network)" }
-    counter out { comment "Output from our own system (doesn't include forwards)" }
-    
+    counter skip.prerouting { comment "Input from WAN (not local network)" }
+    counter skip.output { comment "Output from our own system (doesn't include forwards)" }
+
     # Country IPs go here
-    set country_ips {
+    set geoips4 {
         type ipv4_addr
         flags interval # enable CIDR and ranges
     }
 
     # Ignored set of IPs of domain names
     set ignored {
-        type ipv4_addr
-        flags interval # enable CIDR and ranges
+        typeof ip daddr
     }
 
     # Manual list of IPs/CIDRs to ignore
@@ -152,7 +151,7 @@ table inet mangle {
         # Here we define the packets that should be skip the VPN
         ip daddr @skipips counter name skip.manuals goto marker
         ip daddr @ignored counter name skip.ignored goto marker
-        ip daddr @country_ips counter name skip.country_ips goto marker
+        ip daddr @geoips4 counter name skip.geoips4 goto marker
         meta pkttype multicast counter name skip.multicast goto marker
     }
 
@@ -163,18 +162,22 @@ table inet mangle {
 
     chain prerouting {
         type filter hook prerouting priority raw
-        ip daddr != $local_network counter name wan.in jump skipper
+        policy accept
+        ip daddr $local_network accept
+        counter name skip.prerouting jump skipper
     }
 
     chain output {
         type route hook output priority raw
         policy accept;
-        counter name out jump skipper
+        ip daddr $local_network accept
+        counter name skip.output jump skipper
     }
 }
 
 table inet nat {
     counter nat.masquerade { comment "NAT performed on them" }
+    counter nat.skip { comment "NAT performed marked packets" }
 
     chain prerouting {
         type nat hook prerouting priority dstnat
@@ -191,6 +194,7 @@ table inet nat {
     chain postrouting {
         type nat hook postrouting priority srcnat
 
+        meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
         ip saddr $local_network counter name nat.masquerade masquerade comment "nat everything"
     }
 }
