@@ -34,8 +34,8 @@ def get_table():
     j = json.loads(output)
 
     res = (f"{'Counter Name':>25}  {'Size':>10}"
-           f"  {'in Bytes':>14}  {'Packets':>10}\n"
-           f" {'':->24}  {'':->10}  {'':->14}  {'':->10}\n")
+           f"  {'in Bytes':>17}  {'Packets':>10}\n"
+           f" {'':->24}  {'':->10}  {'':->17}  {'':->10}\n")
     for i in range(len(j['nftables'])):
         if i == 0:
             continue
@@ -45,7 +45,7 @@ def get_table():
         counter_bytes = counter["bytes"]
         count, count_name = convert_size(counter_bytes)
         res = (res + f"{name:>25}  {count:>6.1f} {count_name:<3}  "
-                     f"{counter_bytes:>14,}  {packets:>10,}\n")
+                     f"{counter_bytes:>17,}  {packets:>10,}\n")
     return res
 
 
