@@ -5,7 +5,10 @@ main:
     calling the main function
 """
 
+import sys
+import getopt
 import math
+import curses
 from nftables import Nftables
 from nftables import json
 
@@ -21,19 +24,18 @@ def convert_size(size_bytes):
     return size, size_name[i]
 
 
-def main():
-    """Main function"""
+def get_table():
+    """Print Table"""
     nft = Nftables()
     nft.set_json_output(True)
     _, output, _ = nft.cmd("list counters")
     if output == "":
-        print("Please run as root.")
-        return
+        return "Please run as root."
     j = json.loads(output)
 
-    print(f"{'Counter Name':>25}  {'Size':>10}"
-          f"  {'Bytes':>10}  {'Packets':>10}")
-    print(f"{'':->25}  {'':->10}  {'':->10}  {'':->10}")
+    res = (f"{'Counter Name':>25}  {'Size':>10}"
+           f"  {'in Bytes':>14}  {'Packets':>10}\n"
+           f" {'':->24}  {'':->10}  {'':->14}  {'':->10}\n")
     for i in range(len(j['nftables'])):
         if i == 0:
             continue
@@ -42,9 +44,33 @@ def main():
         name = counter["name"]
         counter_bytes = counter["bytes"]
         count, count_name = convert_size(counter_bytes)
-        print(f"{name:>25}  {count:>6.1f} {count_name:<3}  "
-              f"{counter_bytes:>10}  {packets:>10,}")
+        res = (res + f"{name:>25}  {count:>6.1f} {count_name:<3}  "
+                     f"{counter_bytes:>14,}  {packets:>10,}\n")
+    return res
+
+
+def printer(stdscr):
+    """Keep Printing"""
+    # Clear screen
+    stdscr.clear()
+    curses.use_default_colors()
+    stdscr.nodelay(True)
+    stdscr.timeout(500)
+    while True:
+        stdscr.addstr(1, 0, get_table())
+        if stdscr.getch() >= 0:
+            break
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "f")
+    except getopt.GetoptError:
+        print("nftop -f")
+        sys.exit(1)
+    for opt, arg in opts:
+        if opt == '-f':
+            curses.wrapper(printer)
+            break
+    else:
+        print(get_table())
