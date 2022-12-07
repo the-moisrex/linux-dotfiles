@@ -7,6 +7,12 @@ define multicast_ips = 224.0.0.0-239.255.255.255
 flush ruleset
 
 table inet filter {
+    counter all.in {
+        comment "All IN"
+    }
+    counter all.out {
+        comment "All OUT"
+    }
     counter filter.loopback {
         comment "Loopback"
     }
@@ -60,6 +66,18 @@ table inet filter {
         elements = {
             tcp . 4713      # PULSE_SERVER=tcp:machine:4713 allow input audio
         }
+    }
+
+    chain inbound {
+        type filter hook prerouting priority raw
+        policy accept
+        counter name all.in
+    }
+
+    chain outbound {
+        type filter hook postrouting priority 300
+        policy accept
+        counter name all.out
     }
 
     chain input {
@@ -168,12 +186,13 @@ table inet mangle {
 
     chain prerouting {
         type filter hook prerouting priority raw
-        ip daddr != $local_network counter name wan.in goto skipper
+        ip daddr != $local_network counter name wan.in jump skipper
     }
 
     chain output {
         type route hook output priority raw
-        counter name out goto skipper
+        policy accept;
+        counter name out jump skipper
     }
 }
 
