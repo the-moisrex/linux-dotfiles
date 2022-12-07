@@ -7,45 +7,26 @@ define multicast_ips = 224.0.0.0-239.255.255.255
 flush ruleset
 
 table inet filter {
-    counter all.in {
-        comment "All IN"
-    }
-    counter all.out {
-        comment "All OUT"
-    }
-    counter filter.loopback {
-        comment "Loopback"
-    }
-    counter filter.state {
-        comment "Established, Related, Invalid connection states"
-    }
-    counter filter.okayports {
-        comment "All of the Okay Ports"
-    }
-    counter filter.okayprotocols {
-        comment "All of the Okay Protocols"
-    }
-    counter filter.igmp {
-        comment "IGMP"
-    }
-    counter filter.ipv4.icmp {
-        comment "IPv4 ICMP"
-    }
-    counter filter.ipv6.icmp {
-        comment "IPv6 ICMP"
-    }
-    counter filter.drop {
-        comment "Packets that weren't allowed"
-    }
-    counter forward.to.local {
-        comment "Forward To Local Network from anywhere"
-    }
-    counter forward.from.local {
-        comment "Forward From Local Network to anywhere"
-    }
-    counter forward.drop {
-        comment "Forward dropped"
-    }
+    counter everything { comment "All IN/OUT" }
+    counter all.in { comment "All IN" }
+    counter all.out { comment "All OUT" }
+    counter local { comment "All Local IN/OUT" }
+    counter local.in { comment "All Local IN" }
+    counter local.out { comment "All Local Out"}
+    counter internet { comment "All Non-Local IN/OUT" }
+    counter internet.in { comment "All Non-Local IN" }
+    counter internet.out { comment "All Non-Local Out"}
+    counter filter.loopback { comment "Loopback" }
+    counter filter.state { comment "Established, Related, Invalid connection states" }
+    counter filter.okayports { comment "All of the Okay Ports" }
+    counter filter.okayprotocols { comment "All of the Okay Protocols" }
+    counter filter.igmp { comment "IGMP" }
+    counter filter.ipv4.icmp { comment "IPv4 ICMP" }
+    counter filter.ipv6.icmp { comment "IPv6 ICMP" }
+    counter filter.drop { comment "Packets that weren't allowed" }
+    counter forward.to.local { comment "Forward To Local Network from anywhere" }
+    counter forward.from.local { comment "Forward From Local Network to anywhere" }
+    counter forward.drop { comment "Forward dropped" }
 
     set okprotos {
         type inet_service
@@ -71,13 +52,23 @@ table inet filter {
     chain inbound {
         type filter hook prerouting priority raw
         policy accept
+        counter name everything
         counter name all.in
+        ip saddr $local_network counter name local
+        ip saddr $local_network counter name local.in
+        ip saddr != $local_network counter name internet
+        ip saddr != $local_network counter name internet.in
     }
 
     chain outbound {
         type filter hook postrouting priority 300
         policy accept
+        counter name everything
         counter name all.out
+        ip daddr $local_network counter name local
+        ip daddr $local_network counter name local.out
+        ip daddr != $local_network counter name internet.out
+        ip daddr != $local_network counter name internet
     }
 
     chain input {
@@ -120,27 +111,13 @@ table inet filter {
 }
 
 table inet mangle {
-    counter skip.all {
-        comment "All packets that skipped the VPN"
-    }
-    counter skip.manuals {
-        comment "Manually specified IPs that skipped the VPN"
-    }
-    counter skip.ignored {
-        comment "IPs of domain names that got to skip the VPN"
-    }
-    counter skip.country_ips {
-        comment "IPs of countries"
-    }
-    counter skip.multicast {
-        comment "Multicast IPs that marked to skip VPN"
-    }
-    counter wan.in {
-        comment "Input from WAN (not local network)"
-    }
-    counter out {
-        comment "Output from our own system (doesn't include forwards)"
-    }
+    counter skip.all { comment "All packets that skipped the VPN" }
+    counter skip.manuals { comment "Manually specified IPs that skipped the VPN" }
+    counter skip.ignored { comment "IPs of domain names that got to skip the VPN" }
+    counter skip.country_ips { comment "IPs of countries" }
+    counter skip.multicast { comment "Multicast IPs that marked to skip VPN" }
+    counter wan.in { comment "Input from WAN (not local network)" }
+    counter out { comment "Output from our own system (doesn't include forwards)" }
     
     # Country IPs go here
     set country_ips {
@@ -197,9 +174,7 @@ table inet mangle {
 }
 
 table inet nat {
-    counter nat.masquerade {
-        comment "NAT performed on them"
-    }
+    counter nat.masquerade { comment "NAT performed on them" }
 
     chain prerouting {
         type nat hook prerouting priority dstnat
