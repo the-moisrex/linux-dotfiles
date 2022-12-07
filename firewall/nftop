@@ -24,29 +24,39 @@ def convert_size(size_bytes):
     return size, size_name[i]
 
 
-def get_table():
-    """Print Table"""
-    nft = Nftables()
-    nft.set_json_output(True)
-    _, output, _ = nft.cmd("list counters")
-    if output == "":
-        return "Please run as root."
-    j = json.loads(output)
+class MyNFTable:
+    """NFTable class"""
+    def __init__(self):
+        """NFTable ctor"""
+        self.nft = Nftables()
+        self.nft.set_json_output(True)
 
-    res = (f"{'Counter Name':>25}  {'Size':>10}"
-           f"  {'in Bytes':>17}  {'Packets':>10}\n"
-           f" {'':->24}  {'':->10}  {'':->17}  {'':->10}\n")
-    for i in range(len(j['nftables'])):
-        if i == 0:
-            continue
-        counter = j['nftables'][i]["counter"]
-        packets = counter["packets"]
-        name = counter["name"]
-        counter_bytes = counter["bytes"]
-        count, count_name = convert_size(counter_bytes)
-        res = (res + f"{name:>25}  {count:>6.1f} {count_name:<3}  "
-                     f"{counter_bytes:>17,}  {packets:>10,}\n")
-    return res
+    def get_header(self):
+        """Get the header in 2 lines"""
+        return (f"{'Counter Name':>25}  {'Size':>10}"
+                f"  {'in Bytes':>17}  {'Packets':>10}\n"
+                f" {'':->24}  {'':->10}  {'':->17}  {'':->10}\n")
+
+    def get_body(self, res=""):
+        """Get table body"""
+        _, output, _ = self.nft.cmd("list counters")
+        if output == "":
+            return "Please run as root."
+        j = json.loads(output)
+        for i in range(1, len(j['nftables'])):
+            counter = j['nftables'][i]["counter"]
+            packets = counter["packets"]
+            name = counter["name"]
+            counter_bytes = counter["bytes"]
+            count, count_name = convert_size(counter_bytes)
+            res = (res + f"{name:>25}  {count:>6.1f} {count_name:<3}  "
+                         f"{counter_bytes:>17,}  {packets:>10,}\n")
+        return res
+
+    def get_table(self):
+        """Get table"""
+        res = self.get_header()
+        return self.get_body(res)
 
 
 def printer(stdscr):
@@ -56,8 +66,11 @@ def printer(stdscr):
     curses.use_default_colors()
     stdscr.nodelay(True)
     stdscr.timeout(100)
+    nft = MyNFTable()
+    stdscr.addstr(0, 1, "nftop author: Mohammad Bahoosh")
+    stdscr.addstr(1, 0, nft.get_header())
     while True:
-        stdscr.addstr(1, 0, get_table())
+        stdscr.addstr(3, 0, nft.get_body())
         if stdscr.getch() >= 0:
             break
 
@@ -73,4 +86,4 @@ if __name__ == "__main__":
             curses.wrapper(printer)
             break
     else:
-        print(get_table())
+        print(MyNFTable().get_table())
