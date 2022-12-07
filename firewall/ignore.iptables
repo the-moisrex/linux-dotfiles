@@ -2,7 +2,7 @@
 
 
 # Add a domain to the list of domains that don't need to go through VPN
-ignored_domains_file="$HOME/.cache/ignored-domains.txt"
+ignored_domains_file="$HOME/.cache/firewall/ignored-domains.txt"
 
 
 function print_help {

@@ -2,11 +2,14 @@
 
 
 # Add a domain to the list of domains that don't need to go through VPN
-ignored_domains_file="$HOME/.cache/ignored-domains.txt"
+ignored_domains_file="$HOME/.cache/firewall/ignored-domains.txt"
 
 
 # if you decide to change this directory, change it in the "clear-coredump", and in "net.routes.skip" commands as well
-countries_repo="$HOME/.cache/country-ips"
+countries_repo="$HOME/.cache/firewall/country-ips"
+
+nft_include_dir="$HOME/.cache/firewall/nft/"
+mkdir -p "$nft_include_dir";
 
 countryiso="ir"
 
@@ -22,11 +25,72 @@ function print_help {
     echo "       ignore update"
     echo "       ignore update domains"
     echo "       ignore update countries"
+    echo
     echo "       ignore list domains"
     echo "       ignore list ips"
     echo "       ignore list ipset"
     echo "       ignore list country ir"
     echo "       ignore list countries"
+    echo 
+    echo "       ignore nft create country ir"
+    # echo "       ignore nft clear country ir"
+    # echo "       ignore nft list"
+    echo "       ignore nft add country ir"
+    # echo "       ignore nft add ignored"
+    # echo "       ignore nft remove ignored"
+    # echo "       ignore nft remove country ir"
+}
+
+
+function nft_save {
+    name="$1"
+    ipset="$2"
+    file="$nft_include_dir/$name.nft"
+    cat > $file <<-END
+    set $name {
+        type ipv4_addr
+        flags interval # enable CIDR and ranges
+        elements = {
+            $ipset
+        }
+    }
+END
+    echo "Saved $name to $file";
+}
+
+function nft_create_country {
+    name="$1";
+    file="$nft_include_dir/$name.nft"
+    iso_code="$name";
+    if [ -z "$iso_code" ]; then
+        iso_code="$countryiso";
+    fi
+    input="$countries_repo/ipv4/$countryiso.cidr"
+    ipset=$(tr '\n' ',' < "$input");
+    ipset="${ipset::-1}"
+    nft_save $name "$ipset";
+}
+
+function nft_add_country {
+    name="$1"
+    file="$nft_include_dir/$name.nft"
+    if [ ! -f "$file" ]; then
+        echo no such file: $file
+        return;
+    fi
+    if sudo nft -t list set inet mangle $name &>/dev/null; then
+        echo "Already added";
+        return;
+    fi
+    set_source=$(cat "$file");
+    sudo nft -f - <<-END
+table inet mangle {
+    $set_source
+}
+END
+
+    sudo nft add counter inet mangle skip.$name \{ comment \"Skip GeoIPs for $name country\" \};
+    sudo nft add rule inet mangle skipper ip daddr @$name counter name skip.$name goto marker comment \"ignored country with code $name\";
 }
 
 
@@ -126,7 +190,7 @@ function ignore_country {
     ipcount=0
     while IFS= read -r ip; do
         echo -ne "\r\033[KAdding ip address $ip to the '$iso_code' ip set."
-        sudo nft add element inet mangle country_ips \{ $ip \};
+        sudo nft add element inet mangle geoips4 \{ $ip \};
         ipcount=$(( $ipcount + 1 ));
     done < "$input";
     echo -ne "\r\033[KAdded $ipcount ips for country code '$iso_code'.";
@@ -143,11 +207,11 @@ function unignore_country {
 
     ipcount=0
     while IFS= read -r ip; do
-        echo  "  Removing ip address $ip from the 'country_ips' ip set."
-        sudo nft delete element inet mangle country_ips \{ $ip \}
+        echo  "  Removing ip address $ip from the 'geoips4' ip set."
+        sudo nft delete element inet mangle geoips4 \{ $ip \}
         ipcount=$(( $ipcount + 1 ));
     done < "$input";
-    echo "  Deleted $ipcount IPs from the 'country_ips' ipset.";
+    echo "  Deleted $ipcount IPs from the 'geoips4' ipset.";
     echo
 }
 
@@ -168,7 +232,7 @@ function list_country {
 }
 
 function list_countries_ipset {
-    sudo nft list set inet mangle country_ips
+    sudo nft list set inet mangle geoips4
 }
 
 function update_all {
@@ -233,6 +297,37 @@ case "$1" in
                 ;;
             *)
                 unignore "$2";
+                ;;
+        esac
+        ;;
+    nft)
+        case "$2" in
+            create)
+                case "$3" in
+                    ignored)
+                        ;;
+                    country)
+                        nft_create_country "$4";
+                        ;;
+                    *)
+                        echo "Create what?";
+                        ;;
+                esac
+                ;;
+            add)
+                case "$3" in
+                    ignored)
+                        ;;
+                    country)
+                        nft_add_country "$4";
+                        ;;
+                    *)
+                        echo "Add what?";
+                        ;;
+                esac
+                ;;
+            *)
+                echo "nft file what?";
                 ;;
         esac
         ;;

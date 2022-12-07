@@ -117,7 +117,7 @@ fi
 countryiso=$(echo "$countryiso" | tr '[:upper:]' '[:lower:]')
 
 # if you decide to change this directory, change it in the "clear-coredump" and in "vpn.share" (or whatever its name is now) commands as well
-storage="$HOME/.cache/country-ips"
+storage="$HOME/.cache/firewall/country-ips"
 
 
 function update {

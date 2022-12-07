@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # cleanup the country ips created by the "net.routes.skip" command
-rm -rf "$HOME/.cache/country-ips"
+# rm -rf "$HOME/.cache/firewall/country-ips"
 
 if command -v journalctl &> /dev/null;
 then

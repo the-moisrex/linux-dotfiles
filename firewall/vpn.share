@@ -7,7 +7,7 @@ action="print_help"
 dnsips_url="https://public-dns.info/nameservers.txt";
 dnsips_file="$HOME/.cache/DNSIPs.txt";
 
-ignored_domains_file="$HOME/.cache/ignored-domains.txt"
+ignored_domains_file="$HOME/.cache/firewall/ignored-domains.txt"
 
 # skip vpn chain name
 skip_chain_name="Skipper"
@@ -16,7 +16,7 @@ countryiso="ir"
 iptables_mark="0xe1f1"
 
 # if you decide to change this directory, change it in the "clear-coredump", and in "net.routes.skip" commands as well
-countries_repo="$HOME/.cache/country-ips"
+countries_repo="$HOME/.cache/firewall/country-ips"
 
 # Get the ip address of the specified domain (only one ip)
 function ipof {
