@@ -55,7 +55,7 @@ def printer(stdscr):
     stdscr.clear()
     curses.use_default_colors()
     stdscr.nodelay(True)
-    stdscr.timeout(500)
+    stdscr.timeout(100)
     while True:
         stdscr.addstr(1, 0, get_table())
         if stdscr.getch() >= 0:
