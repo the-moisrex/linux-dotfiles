@@ -18,8 +18,7 @@ table inet filter {
     counter internet.out { comment "All Non-Local Out"}
     counter filter.loopback { comment "Loopback" }
     counter filter.state { comment "Established, Related, Invalid connection states" }
-    counter filter.okayports { comment "All of the Okay Ports" }
-    counter filter.okayprotocols { comment "All of the Okay Protocols" }
+    counter filter.protocols { comment "Allowed protocols" }
     counter filter.igmp { comment "IGMP" }
     counter filter.ipv4.icmp { comment "IPv4 ICMP" }
     counter filter.ipv6.icmp { comment "IPv6 ICMP" }
@@ -28,31 +27,37 @@ table inet filter {
     counter forward.from.local { comment "Forward From Local Network to anywhere" }
     counter forward.drop { comment "Forward dropped" }
 
-    set okprotos {
-        type inet_service
-        counter
-        elements = { # look at /etc/services
-            smtp,          # Mail Server for router
-            pop3,          # Mail Server for phone
-            imap,          # email
-            imaps,         # email
-            pop3s,         # email
-            rsync,         # rsync command
-            sftp,          # Files
-            domain,        # DNS
-            ssh,
-            rfb,           # VNC
-            ms-wbt-server  # RDP
-        }
-    }
-    set okports {
+    set protocols {
         type inet_proto . inet_service
         flags interval
         counter
         elements = {
-            tcp . 4713,      # PULSE_SERVER=tcp:machine:4713 allow input audio
-            udp . 1714-1764, # kdeconnect
-            tcp . 1714-1764  # kdeconnect
+            udp . smtp counter,          # Mail Server for router
+            udp . pop3 counter,          # Mail Server for phone
+            udp . imap3 counter,         # email
+            udp . pop3s counter,         # email
+            udp . rsync counter,         # rsync command
+            udp . sftp counter,          # Files
+            udp . domain counter,        # DNS
+            udp . ssh counter,
+            udp . rfb counter,           # VNC
+            udp . ms-wbt-server counter, # RDP
+            udp . 1714-1764 counter,     # kdeconnect
+            tcp . 4713 counter,          # PULSE_SERVER=tcp:machine:4713 allow input audio
+            tcp . 1714-1764 counter,     # kdeconnect
+            tcp . imap counter,          # email
+            tcp . imaps counter,         # email
+            tcp . smtp counter,          # Mail Server for router
+            tcp . pop3 counter,          # Mail Server for phone
+            tcp . imap3 counter,         # email
+            tcp . pop3s counter,         # email
+            tcp . rsync counter,         # rsync command
+            tcp . sftp counter,          # Files
+            tcp . domain counter,        # DNS
+            tcp . ssh counter,
+            tcp . rfb counter,           # VNC
+            tcp . ms-wbt-server counter, # RDP
+            sctp . ssh counter
         }
     }
 
@@ -92,8 +97,7 @@ table inet filter {
         # iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
         # iif != lo ip6 daddr ::1/128 counter drop comment "drop connections to loopback not comming from loopback"
 
-        ip saddr $local_network meta l4proto . th dport @okports counter name filter.okayports accept comment "allow ports"
-        ip saddr $local_network th dport @okprotos counter name filter.okayprotocols accept comment "allow protocols"
+        ip saddr $local_network meta l4proto . th dport @protocols counter name filter.protocols accept comment "allow ports"
 
         ip protocol icmp counter name filter.ipv4.icmp accept comment "allow ICMP"
         meta l4proto ipv6-icmp counter name filter.ipv6.icmp accept comment "allow ICMPv6"
@@ -202,6 +206,6 @@ table inet nat {
         type nat hook postrouting priority srcnat
 
         meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
-        ip saddr $local_network counter name nat.masquerade masquerade comment "nat everything"
+        ip saddr == $local_network ip daddr != $local_network counter name nat.masquerade masquerade comment "nat everything"
     }
 }
