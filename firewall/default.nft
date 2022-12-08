@@ -34,6 +34,10 @@ table inet filter {
         elements = { # look at /etc/services
             smtp,          # Mail Server for router
             pop3,          # Mail Server for phone
+            imap,          # email
+            imaps,         # email
+            pop3s,         # email
+            rsync,         # rsync command
             sftp,          # Files
             domain,        # DNS
             ssh,
@@ -43,9 +47,12 @@ table inet filter {
     }
     set okports {
         type inet_proto . inet_service
+        flags interval
         counter
         elements = {
-            tcp . 4713      # PULSE_SERVER=tcp:machine:4713 allow input audio
+            tcp . 4713,      # PULSE_SERVER=tcp:machine:4713 allow input audio
+            udp . 1714-1764, # kdeconnect
+            tcp . 1714-1764  # kdeconnect
         }
     }
 
