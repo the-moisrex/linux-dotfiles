@@ -6,6 +6,7 @@ main:
 """
 
 import sys
+import time
 import getopt
 import math
 import curses
@@ -24,15 +25,51 @@ def convert_size(size_bytes):
     return size, size_name[i]
 
 
+class PerSecond:
+    """Calculate Time per second"""
+    def __init__(self):
+        self.counters = {}
+
+    def tick(self, counter_name, new_bytes_count):
+        """Set a new tick and get the bytes/sec value"""
+        new_time = int(time.time() * 1000)  # in milliseconds
+        if counter_name not in self.counters:
+            self.counters[counter_name] = [(new_time, new_bytes_count)]
+            return 0
+        self.counters[counter_name].append((new_time, new_bytes_count))
+        while True:
+            old_time, bytes_count = self.counters[counter_name][0]
+            tdiff = new_time - old_time
+            if tdiff >= 1000:
+                self.counters[counter_name].pop(0)
+            else:
+                break
+        return new_bytes_count - bytes_count
+
+    def clear(self):
+        """clear"""
+        self.counters = []
+
+
 class MyNFTable:
     """NFTable class"""
     def __init__(self):
         """NFTable ctor"""
         self.nft = Nftables()
         self.nft.set_json_output(True)
+        self.bpsec = None
+
+    def enable_bpsec(self):
+        """Enable the column"""
+        self.bpsec = PerSecond()
 
     def get_header(self):
         """Get the header in 2 lines"""
+        if self.bpsec is not None:
+            return (f"{'Counter Name':>25}  {'Size':>10}"
+                    f"  {'in Bytes':>17}  {'Packets':>10}  {'b/sec':>10}\n"
+                    f" {'':->24}  {'':->10}  {'':->17}  "
+                    f"{'':->10}  {'':->10}\n")
         return (f"{'Counter Name':>25}  {'Size':>10}"
                 f"  {'in Bytes':>17}  {'Packets':>10}\n"
                 f" {'':->24}  {'':->10}  {'':->17}  {'':->10}\n")
@@ -47,10 +84,16 @@ class MyNFTable:
             counter = j['nftables'][i]["counter"]
             packets = counter["packets"]
             name = counter["name"]
-            counter_bytes = counter["bytes"]
-            count, count_name = convert_size(counter_bytes)
-            res = (res + f"{name:>25}  {count:>6.1f} {count_name:<3}  "
-                         f"{counter_bytes:>17,}  {packets:>10,}\n")
+            bsize = counter["bytes"]
+            count, count_unit = convert_size(bsize)
+            if self.bpsec is not None:
+                bsec, best_unit = convert_size(self.bpsec.tick(name, bsize))
+                res = (res + f"{name:>25}  {count:>6.1f} {count_unit:<3}  "
+                             f"{bsize:>17,}  {packets:>10,}  "
+                             f"{bsec:>6.1f} {best_unit:<3}\n")
+            else:
+                res = (res + f"{name:>25}  {count:>6.1f} {count_unit:<3}  "
+                             f"{bsize:>17,}  {packets:>10,}\n")
         return res
 
     def get_table(self):
@@ -61,18 +104,52 @@ class MyNFTable:
 
 def printer(stdscr):
     """Keep Printing"""
-    # Clear screen
-    stdscr.clear()
-    curses.use_default_colors()
-    stdscr.nodelay(True)
-    stdscr.timeout(100)
-    nft = MyNFTable()
-    stdscr.addstr(0, 1, "nftop author: Mohammad Bahoosh")
-    stdscr.addstr(1, 0, nft.get_header())
-    while True:
-        stdscr.addstr(3, 0, nft.get_body())
-        if stdscr.getch() >= 0:
-            break
+    timeout = 100
+    step = 50
+
+    try:
+        curses.use_default_colors()
+        stdscr.nodelay(True)
+        stdscr.timeout(timeout)
+        nft = MyNFTable()
+        nft.enable_bpsec()
+        while True:
+            try:
+                stdscr.clear()
+                stdscr.addstr(0, 1, "nftop author: Mohammad Bahoosh")
+                stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
+                stdscr.addstr(1, 0, nft.get_header())
+                stdscr.addstr(3, 0, nft.get_body())
+                while True:
+                    ich = stdscr.getch()
+                    # stdscr.addstr(0, 40, str(ich))
+                    if ich == 113:  # char: q
+                        return
+                    if ich == 43:   # char: +
+                        timeout = min(timeout + step, 10000 - step)
+                        stdscr.timeout(timeout)
+                        stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
+                    elif ich == 45:   # char: -
+                        timeout = max(timeout - step, 0)
+                        stdscr.timeout(timeout)
+                        stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
+                    elif ich == 32:   # char: space
+                        continue
+                    elif ich == 99:   # char: c
+                        stdscr.clear()
+                        stdscr.addstr(0, 1, "nftop author: Mohammad Bahoosh")
+                        stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
+                        stdscr.addstr(1, 0, nft.get_header())
+                    stdscr.addstr(3, 0, nft.get_body())
+            except curses.error:
+                stdscr.clear()
+                try:
+                    stdscr.addstr(0, 0, "Terminal too small")
+                    stdscr.getch()
+                except curses.error:
+                    return
+    except KeyboardInterrupt:
+        pass  # nothing to do
 
 
 if __name__ == "__main__":
