@@ -148,6 +148,13 @@ def printer(stdscr):
                     stdscr.getch()
                 except curses.error:
                     return
+            except ValueError:
+                stdscr.clear()
+                try:
+                    stdscr.addstr(0, 0, "Paused!")
+                    stdscr.getch()
+                except curses.error:
+                    return
     except KeyboardInterrupt:
         pass  # nothing to do
 
