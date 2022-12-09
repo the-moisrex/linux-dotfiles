@@ -272,7 +272,7 @@ case "$1" in
             countries)
                 update_countries;
                 ;;
-            ignores|domains)
+            ignored|ignore|ignores|domains|domain)
                 update_ignores;
                 ;;
             all|*)
