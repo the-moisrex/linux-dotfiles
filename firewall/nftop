@@ -66,13 +66,13 @@ class MyNFTable:
     def get_header(self):
         """Get the header in 2 lines"""
         if self.bpsec is not None:
-            return (f"{'Counter Name':>25}  {'Size':>10}"
-                    f"  {'in Bytes':>17}  {'Packets':>10}  {'b/sec':>10}\n"
-                    f" {'':->24}  {'':->10}  {'':->17}  "
-                    f"{'':->10}  {'':->10}\n")
-        return (f"{'Counter Name':>25}  {'Size':>10}"
-                f"  {'in Bytes':>17}  {'Packets':>10}\n"
-                f" {'':->24}  {'':->10}  {'':->17}  {'':->10}\n")
+            return (f"{'Counter Name':>21}  {'Size':>10}"
+                    f"  {'in Bytes':>17}  {'Packets':>12}  {'B/Sec':>10}\n"
+                    f" {'':->20}  {'':->10}  {'':->17}  "
+                    f"{'':->12}  {'':->10}\n")
+        return (f"{'Counter Name':>21}  {'Size':>10}"
+                f"  {'in Bytes':>17}  {'Packets':>12}\n"
+                f" {'':->20}  {'':->10}  {'':->17}  {'':->12}\n")
 
     def get_body(self, res=""):
         """Get table body"""
@@ -88,12 +88,12 @@ class MyNFTable:
             count, count_unit = convert_size(bsize)
             if self.bpsec is not None:
                 bsec, best_unit = convert_size(self.bpsec.tick(name, bsize))
-                res = (res + f"{name:>25}  {count:>6.1f} {count_unit:<3}  "
-                             f"{bsize:>17,}  {packets:>10,}  "
+                res = (res + f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
+                             f"{bsize:>17,}  {packets:>12,}  "
                              f"{bsec:>6.1f} {best_unit:<3}\n")
             else:
-                res = (res + f"{name:>25}  {count:>6.1f} {count_unit:<3}  "
-                             f"{bsize:>17,}  {packets:>10,}\n")
+                res = (res + f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
+                             f"{bsize:>17,}  {packets:>12,}\n")
         return res
 
     def get_table(self):
@@ -102,61 +102,93 @@ class MyNFTable:
         return self.get_body(res)
 
 
+class ScreenWriter:
+    """Keeps Writing to the screen"""
+
+    def __init__(self, stdscr):
+        self.stdscr = stdscr
+        self.timeout = 100
+        self.step = 50
+        curses.use_default_colors()
+        self.stdscr.nodelay(True)
+        self.stdscr.timeout(self.timeout)
+        self.nft = MyNFTable()
+        self.nft.enable_bpsec()
+
+    def set_refresh_time(self, sign):
+        """Change the refresh time; sign = +/-1"""
+        if self.timeout < 100:
+            self.step = 10
+        elif self.timeout < 1000:
+            self.step = 50
+        else:
+            self.step = 200
+        self.step = self.step * sign
+        new_timeout = self.timeout + self.step
+        self.timeout = max(10, min(new_timeout, 10000 - self.step))
+        self.stdscr.timeout(self.timeout)
+        self.stdscr.addstr(0, 58, f"Refresh time:{str(self.timeout):>4} ms")
+
+    def tick(self):
+        """Draw the body and wait for the user inputs"""
+        ich = self.stdscr.getch()
+        # self.stdscr.addstr(0, 40, str(ich))
+        if ich == 113:  # char: q
+            return False  # Exit
+        if ich == 43:   # char: +
+            self.set_refresh_time(1)
+        elif ich == 45:   # char: -
+            self.set_refresh_time(-1)
+        elif ich == 32:   # char: space
+            return True
+        elif ich == 99:   # char: c
+            self.print_header()
+        self.print_body()
+        return True
+
+    def print_header(self):
+        """Print the header"""
+        self.stdscr.clear()
+        self.stdscr.addstr(0, 1, "NFTop Author: Mohammad Bahoosh")
+        self.stdscr.addstr(2, 0, self.nft.get_header())
+        self.set_refresh_time(0)
+
+    def print_body(self):
+        """Print the body"""
+        self.stdscr.addstr(4, 0, self.nft.get_body())
+
+    def run(self):
+        """Run the loop"""
+        try:
+            while True:
+                try:
+                    self.print_header()
+                    self.print_body()
+                    while True:
+                        if not self.tick():
+                            return
+                except curses.error:
+                    self.stdscr.clear()
+                    try:
+                        self.stdscr.addstr(0, 0, "Terminal too small")
+                        self.stdscr.getch()
+                    except curses.error:
+                        return  # exit
+                except ValueError:
+                    self.stdscr.clear()
+                    try:
+                        self.stdscr.addstr(0, 0, "Paused!")
+                        self.stdscr.getch()
+                    except curses.error:
+                        return  # exit
+        except KeyboardInterrupt:
+            pass  # nothing to do, exit
+
+
 def printer(stdscr):
     """Keep Printing"""
-    timeout = 100
-    step = 50
-
-    try:
-        curses.use_default_colors()
-        stdscr.nodelay(True)
-        stdscr.timeout(timeout)
-        nft = MyNFTable()
-        nft.enable_bpsec()
-        while True:
-            try:
-                stdscr.clear()
-                stdscr.addstr(0, 1, "nftop author: Mohammad Bahoosh")
-                stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
-                stdscr.addstr(1, 0, nft.get_header())
-                stdscr.addstr(3, 0, nft.get_body())
-                while True:
-                    ich = stdscr.getch()
-                    # stdscr.addstr(0, 40, str(ich))
-                    if ich == 113:  # char: q
-                        return
-                    if ich == 43:   # char: +
-                        timeout = min(timeout + step, 10000 - step)
-                        stdscr.timeout(timeout)
-                        stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
-                    elif ich == 45:   # char: -
-                        timeout = max(timeout - step, 0)
-                        stdscr.timeout(timeout)
-                        stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
-                    elif ich == 32:   # char: space
-                        continue
-                    elif ich == 99:   # char: c
-                        stdscr.clear()
-                        stdscr.addstr(0, 1, "nftop author: Mohammad Bahoosh")
-                        stdscr.addstr(0, 60, f"refresh time:{str(timeout):>4} ms")
-                        stdscr.addstr(1, 0, nft.get_header())
-                    stdscr.addstr(3, 0, nft.get_body())
-            except curses.error:
-                stdscr.clear()
-                try:
-                    stdscr.addstr(0, 0, "Terminal too small")
-                    stdscr.getch()
-                except curses.error:
-                    return
-            except ValueError:
-                stdscr.clear()
-                try:
-                    stdscr.addstr(0, 0, "Paused!")
-                    stdscr.getch()
-                except curses.error:
-                    return
-    except KeyboardInterrupt:
-        pass  # nothing to do
+    writer = ScreenWriter(stdscr)
+    writer.run()
 
 
 if __name__ == "__main__":
