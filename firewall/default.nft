@@ -1,6 +1,6 @@
 #!/sbin/nft -f
 
-define local_network = { 192.168.88.0/24, 10.1.1.0/24 }
+define local_network = { 192.168.88.0/24, 127.0.0.0/8 , 10.1.1.0/24 }
 define skip_vpn_mark = 0xe1f1 # NordVPN default vpn mark used in iproute2
 define multicast_ips = 224.0.0.0-239.255.255.255
 define public_ipv4 = {
@@ -35,11 +35,11 @@ table inet filter {
     counter filter.state { comment "Established, Related, Invalid connection states" }
     counter filter.protocols { comment "Allowed protocols" }
     counter filter.igmp { comment "IGMP" }
-    counter filter.ipv4.icmp { comment "IPv4 ICMP" }
-    counter filter.ipv6.icmp { comment "IPv6 ICMP" }
+    counter filter.icmp { comment "IP ICMP" }
     counter filter.drop { comment "Packets that weren't allowed" }
-    counter forward.to.local { comment "Forward To Local Network from anywhere" }
-    counter forward.from.local { comment "Forward From Local Network to anywhere" }
+    counter forward { comment "Forward To/From Local Network from anywhere" }
+    counter forward.download { comment "Forward To Local Network from anywhere" }
+    counter forward.upload { comment "Forward From Local Network to anywhere" }
     counter forward.drop { comment "Forward dropped" }
 
     set protocols {
@@ -47,6 +47,7 @@ table inet filter {
         flags interval
         counter
         elements = {
+            udp . 67 counter,            # DHCP
             udp . smtp counter,          # Mail Server for router
             udp . pop3 counter,          # Mail Server for phone
             udp . imap3 counter,         # email
@@ -106,14 +107,14 @@ table inet filter {
             invalid: drop
         } counter name filter.state
 
-        iifname lo counter name filter.loopback accept comment "allow loopback"
+        iif lo counter name filter.loopback accept comment "allow loopback"
         # iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
         # iif != lo ip6 daddr ::1/128 counter drop comment "drop connections to loopback not comming from loopback"
 
         ip saddr $local_network meta l4proto . th dport @protocols counter name filter.protocols accept comment "allow ports"
 
-        ip protocol icmp counter name filter.ipv4.icmp accept comment "allow ICMP"
-        meta l4proto ipv6-icmp counter name filter.ipv6.icmp accept comment "allow ICMPv6"
+        ip protocol icmp counter name filter.icmp accept comment "allow ICMP"
+        ip6 nexthdr icmpv6 counter name filter.icmp accept comment "allow ICMPv6"
 
         ip protocol igmp counter name filter.igmp accept comment "allow IGMP"
         # ip daddr $multicast_ips counter accept comment "allow multicast ips (for winbox)"
@@ -127,8 +128,8 @@ table inet filter {
         type filter hook forward priority filter
         policy drop
 
-        ip saddr $local_network counter name forward.to.local accept comment "to/from local network"
-        ip daddr $local_network counter name forward.from.local accept comment "to/from local network"
+        ip saddr $local_network counter name forward.upload counter name forward accept comment "from local network"
+        ip daddr $local_network counter name forward.download counter name forward accept comment "to local network"
 
         counter name forward.drop comment "count dropped packets"
     }
