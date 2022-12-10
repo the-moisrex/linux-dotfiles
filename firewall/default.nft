@@ -74,8 +74,13 @@ table inet filter {
             tcp . rfb counter,           # VNC
             tcp . ms-wbt-server counter, # RDP
             sctp . ssh counter,
-            tcp . 10240 counter          # compiler-explorer
+            tcp . 10240 counter,         # compiler-explorer
+            udp . 5678,                  # (MNDP) Mikrotik Neighbor Discovery Protocol
+            tcp . 8291                   # Winbox
         }
+        # udp . 5246,                   CAPsMAN
+        # udp . 5247,                   CAPsMAN
+        # udp . 20561,                  MAC Winbox
     }
 
     chain inbound {
