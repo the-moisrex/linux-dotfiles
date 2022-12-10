@@ -73,7 +73,7 @@ table inet filter {
             tcp . ssh counter,
             tcp . rfb counter,           # VNC
             tcp . ms-wbt-server counter, # RDP
-            sctp . ssh counter
+            sctp . ssh counter,
             tcp . 10240 counter          # compiler-explorer
         }
     }
