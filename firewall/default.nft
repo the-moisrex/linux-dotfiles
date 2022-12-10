@@ -136,7 +136,7 @@ table inet filter {
 }
 
 table inet mangle {
-    counter skip.all { comment "All packets that skipped the VPN" }
+    counter skip.marked { comment "All packets that skipped the VPN" }
     counter skip.manuals { comment "Manually specified IPs that skipped the VPN" }
     counter skip.ignored { comment "IPs of domain names that got to skip the VPN" }
     counter skip.geoips4 { comment "IPs of countries" }
@@ -169,7 +169,7 @@ table inet mangle {
         # supposed to not go through the VPN is going to not go to VPN
         #
         # Currently, we just mark the packet
-        counter name skip.all mark set $skip_vpn_mark
+        counter name skip.marked mark set $skip_vpn_mark
     }
 
     chain skipper {
@@ -188,6 +188,7 @@ table inet mangle {
     chain prerouting {
         type filter hook prerouting priority raw
         policy accept
+
         ip daddr $local_network accept
         counter name skip.prerouting jump skipper
     }
@@ -203,9 +204,14 @@ table inet mangle {
 table inet nat {
     counter nat.masquerade { comment "NAT performed on them" }
     counter nat.skip { comment "NAT performed marked packets" }
+    counter nat.dns.hijack { comment "Hijack DNS to localhost" }
 
     chain prerouting {
         type nat hook prerouting priority dstnat
+        policy accept
+
+        # Hijack the DNS Queries
+        ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to 192.168.88.253 comment "Hijack DNS"
     }
 
     chain input {
@@ -220,6 +226,6 @@ table inet nat {
         type nat hook postrouting priority srcnat
 
         meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
-        ip saddr == $local_network ip daddr != $local_network counter name nat.masquerade masquerade comment "nat everything"
+        ip daddr != $local_network counter name nat.masquerade masquerade comment "nat everything"
     }
 }
