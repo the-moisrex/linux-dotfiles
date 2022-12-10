@@ -66,7 +66,7 @@ class MyNFTable:
     def get_header(self):
         """Get the header in 2 lines"""
         if self.bpsec is not None:
-            return (f"{'Counter Name':>21}  {'B/Sec':>10}  {'Size':>10}"
+            return (f"{'Counter Name':>21}  {'Size':>10}  {'B/Sec':>10}"
                     f"  {'in Bytes':>17}  {'Packets':>12}\n"
                     f" {'':->20}  {'':->10}  {'':->10}  {'':->17}  "
                     f"{'':->12}\n")
