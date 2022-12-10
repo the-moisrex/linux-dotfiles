@@ -66,12 +66,12 @@ class MyNFTable:
     def get_header(self):
         """Get the header in 2 lines"""
         if self.bpsec is not None:
-            return (f"{'Counter Name':>21}  {'Size':>10}"
-                    f"  {'in Bytes':>17}  {'Packets':>12}  {'B/Sec':>10}\n"
-                    f" {'':->20}  {'':->10}  {'':->17}  "
-                    f"{'':->12}  {'':->10}\n")
-        return (f"{'Counter Name':>21}  {'Size':>10}"
-                f"  {'in Bytes':>17}  {'Packets':>12}\n"
+            return (f"{'Counter Name':>21}  {'B/Sec':>10}  {'Size':>10}"
+                    f"  {'in Bytes':>17}  {'Packets':>12}\n"
+                    f" {'':->20}  {'':->10}  {'':->10}  {'':->17}  "
+                    f"{'':->12}\n")
+        return (f"{'Counter Name':>21}  {'Packets':>12}  {'Size':>10}"
+                f"  {'in Bytes':>17}\n"
                 f" {'':->20}  {'':->10}  {'':->17}  {'':->12}\n")
 
     def get_body(self, res=""):
@@ -89,8 +89,9 @@ class MyNFTable:
             if self.bpsec is not None:
                 bsec, best_unit = convert_size(self.bpsec.tick(name, bsize))
                 res = (res + f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
-                             f"{bsize:>17,}  {packets:>12,}  "
-                             f"{bsec:>6.1f} {best_unit:<3}\n")
+                             f"{bsec:>6.1f} {best_unit:<3}  "
+                             f"{bsize:>17,}  {packets:>12,}"
+                             f"\n")
             else:
                 res = (res + f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
                              f"{bsize:>17,}  {packets:>12,}\n")
