@@ -32,9 +32,10 @@ table inet filter {
     counter internet.in { comment "All Non-Local IN" }
     counter internet.out { comment "All Non-Local Out"}
     counter filter.loopback { comment "Loopback" }
-    counter filter.state { comment "Established, Related, Invalid connection states" }
+    counter filter.established { comment "Established, Related connection states" }
+    counter filter.invalid { comment "Invalid connection states" }
     counter filter.protocols { comment "Allowed protocols" }
-    counter filter.igmp { comment "IGMP" }
+    # counter filter.igmp { comment "IGMP" }
     counter filter.icmp { comment "IP ICMP" }
     counter filter.drop { comment "Packets that weren't allowed" }
     counter forward { comment "Forward To/From Local Network from anywhere" }
@@ -107,11 +108,11 @@ table inet filter {
         type filter hook input priority filter
         policy drop
         
-        ct state vmap {
-            established: accept,
-            related: accept,
-            invalid: drop
-        } counter name filter.state
+        ct state {
+            established,
+            related
+        } counter name filter.established
+        ct state invalid counter name filter.invalid drop
 
         iif lo counter name filter.loopback accept comment "allow loopback"
         # iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
@@ -122,7 +123,7 @@ table inet filter {
         ip protocol icmp counter name filter.icmp accept comment "allow ICMP"
         ip6 nexthdr icmpv6 counter name filter.icmp accept comment "allow ICMPv6"
 
-        ip protocol igmp counter name filter.igmp accept comment "allow IGMP"
+        # ip protocol igmp counter name filter.igmp accept comment "allow IGMP"
         # ip daddr $multicast_ips counter accept comment "allow multicast ips (for winbox)"
 
         # pkttype host limit rate 5/second counter name filter.ratelimit reject with icmpx type admin-prohibited comment "rate limit"
