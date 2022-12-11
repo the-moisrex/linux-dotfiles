@@ -2,6 +2,12 @@
 
 functions_file_path="$0"
 
+# time the shell startup
+timezsh() {
+  shell=${1-$SHELL}
+  for i in $(seq 1 10); do time $shell -i -c exit; done
+}
+
 # check the time that it takes the shell to start
 time-shell() {
   shell=${1-$SHELL}
