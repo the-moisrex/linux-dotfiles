@@ -36,6 +36,7 @@ table inet filter {
     counter filter.invalid { comment "Invalid connection states" }
     counter filter.protocols { comment "Allowed protocols" }
     # counter filter.igmp { comment "IGMP" }
+    counter filter.dhcp { comment "DHCP/bootp" }
     counter filter.icmp { comment "IP ICMP" }
     counter filter.drop { comment "Packets that weren't allowed" }
     counter forward { comment "Forward To/From Local Network from anywhere" }
@@ -123,6 +124,11 @@ table inet filter {
         ip protocol icmp counter name filter.icmp accept comment "allow ICMP"
         ip6 nexthdr icmpv6 counter name filter.icmp accept comment "allow ICMPv6"
 
+        # DHCP
+        ip saddr 0.0.0.0 ip daddr 255.255.255.255 udp dport bootps counter name filter.dhcp accept
+        ip6 saddr fe80::/64 counter name filter.dhcp accept
+
+
         # ip protocol igmp counter name filter.igmp accept comment "allow IGMP"
         # ip daddr $multicast_ips counter accept comment "allow multicast ips (for winbox)"
 
@@ -135,6 +141,10 @@ table inet filter {
         type filter hook forward priority filter
         policy drop
 
+        # DHCP
+        ip saddr 0.0.0.0 ip daddr 255.255.255.255 udp dport bootps counter name filter.dhcp accept
+        ip6 saddr fe80::/64 counter name filter.dhcp accept
+        
         ip saddr $local_network counter name forward.upload counter name forward accept comment "from local network"
         ip daddr $local_network counter name forward.download counter name forward accept comment "to local network"
 
