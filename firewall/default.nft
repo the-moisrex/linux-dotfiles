@@ -111,7 +111,7 @@ table inet filter {
         ct state {
             established,
             related
-        } counter name filter.established
+        } counter name filter.established accept
         ct state invalid counter name filter.invalid drop
 
         iif lo counter name filter.loopback accept comment "allow loopback"
