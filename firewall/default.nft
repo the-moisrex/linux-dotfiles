@@ -100,7 +100,7 @@ table inet filter {
         policy accept
         counter name everything
         counter name all.out
-        oif lo accept
+        iif lo oif lo accept
         ip daddr $local_network counter name local counter name local.out accept
         ip daddr $public_ipv4 counter name internet.out counter name internet
     }
