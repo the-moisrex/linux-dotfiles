@@ -78,7 +78,15 @@ table inet filter {
             sctp . ssh,
             tcp . 10240,         # compiler-explorer
             udp . 5678,          # (MNDP) Mikrotik Neighbor Discovery Protocol
-            tcp . 8291           # Winbox
+            tcp . 8291,          # Winbox
+            tcp . netbios-ns,    # netbios name service
+            udp . netbios-ns,    # netbios name service
+            tcp . netbios-dgm,   # netbios datagram service
+            udp . netbios-dgm,   # netbios datagram service
+            tcp . netbios-ssn,   # netbios session service
+            udp . netbios-ssn,   # netbios session service
+            tcp . microsoft-ds,  # SMB
+            udp . microsoft-ds   # SMB
         }
         # udp . 5246,                   CAPsMAN
         # udp . 5247,                   CAPsMAN
