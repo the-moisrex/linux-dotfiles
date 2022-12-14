@@ -1,23 +1,38 @@
 #!/bin/bash
 
+if command -v exa >/dev/null; then
+    ls_exec="exa"
+
+    # some more ls aliases
+    alias ll="$ls_exec -alFh"
+    alias la="$ls_exec -a"
+    alias l="$ls_exec -CF"
+    alias lh="$ls_exec -lh"
+else
+    ls_exec="ls"
+
+    # some more ls aliases
+    alias ll="$ls_exec -alFh --hyperlink=auto"
+    alias la="$ls_exec -A --hyperlink=auto"
+    alias l="$ls_exec -CF --hyperlink=auto"
+    alias lh="$ls_exec -lh --hyperlink=auto"
+fi
 
 # enable color support of ls and also add handy aliases
 if [ -x /usr/bin/dircolors ]; then
     test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
-    alias ls='ls --color=auto --hyperlink=auto'
-    #alias dir='dir --color=auto'
-    #alias vdir='vdir --color=auto'
-    alias grep='grep --color=auto'
-    alias fgrep='fgrep --color=auto'
-    alias egrep='egrep --color=auto'
+    if [ "$ls_exec" = "ls" ]; then
+        alias ls="$ls_exec --color=auto --hyperlink=auto"
+    fi
+    alias dir="dir --color=auto"
+    alias vdir="vdir --color=auto"
+    alias grep="grep --color=auto"
+    alias fgrep="fgrep --color=auto"
+    alias egrep="egrep --color=auto"
 fi
 
-# some more ls aliases
-alias ll='ls -alFh --hyperlink=auto'
-alias la='ls -A --hyperlink=auto'
-alias l='ls -CF --hyperlink=auto'
-alias lh='ls -lh --hyperlink=auto'
 # Network Start, Stop, and Restart
+
 #alias light='xbacklight -set'
 
 
@@ -34,9 +49,9 @@ alias lh='ls -lh --hyperlink=auto'
 #alias cleanPC='sudo apt-get -y autoclean && sudo apt-get -y clean && sudo apt-get -y autoremove'
 
 
-alias lsdir='ls -ld */'
+alias lsdir="$ls_exec -ld */"
 #alias display='eog -w'
-alias emptyDir='find . -empty -type d -delete'
+#alias emptyDir='find . -empty -type d -delete'
 #alias meng='cd ${HOME}/Dropbox/MEng_Stuff/MEng-Progress'
 #alias media='sshfs -o reconnect media@192.168.1.10:/mnt /home/"${USER}"/mnt/media_srv'
 #alias reboot='sudo shutdown -r now'
@@ -50,9 +65,10 @@ alias .....='cd ../../../../'
 alias .4='cd ../../../../'
 alias .5='cd ../../../../..'
 alias cd..='cd ..'
-alias youtube="youtube-dl"
-alias yt8000="youtube-dl --proxy=http://localhost:8000"
-alias yt8090="youtube-dl --proxy=http://localhost:8090"
+
+alias youtube="yt-dlp"
+alias yt8000="yt-dlp --proxy=http://localhost:8000"
+alias yt8090="yt-dlp --proxy=http://localhost:8090"
 
 
 # Useful Alias
@@ -62,6 +78,7 @@ alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo
 alias killfirefox="pkill -9 firefox"
 alias killslack="pkill -9 slack"
 alias CD='cd'
+alias Cd='cd'
 
 no_proxy="localhost, 127.0.0.1/8, 192.168.0.0/16, 10.0.0.0/8, *.localhost"
 
