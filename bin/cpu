@@ -6,4 +6,7 @@ if [ "$governor" == "" ]; then
   cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 else
   echo "$governor" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+  if command cpupower --version >/dev/null; then
+      sudo cpupower frequency-set -g $governor
+  fi
 fi

@@ -10,4 +10,4 @@ for file in /usr/share/bucklespring/*.wav; do
   sox "$file" "$tmpdir/$filename" $@
 done;
 # buckle -p "$tmpdir" -g 75 &>/dev/null
-buckle -p "$tmpdir" &>/dev/null
+buckle --fallback-sound -p "$tmpdir" &>/dev/null
