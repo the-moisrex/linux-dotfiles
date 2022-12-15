@@ -6,7 +6,7 @@ if command -v exa >/dev/null; then
     # some more ls aliases
     alias ll="$ls_exec -alFh"
     alias la="$ls_exec -a"
-    alias l="$ls_exec -CF"
+    alias l="$ls_exec -F"
     alias lh="$ls_exec -lh"
 else
     ls_exec="ls"
