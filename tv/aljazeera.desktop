@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Name=Aljazeera English (Youtube)
+Exec=/usr/bin/vlc https://www.youtube.com/c/aljazeeraenglish/live
+Icon=tv-aljazeera
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video
+Keywords=Aljazeera;Aljazeera News;News;aljazira;aljazirah;aljazire
