@@ -80,8 +80,9 @@ function replace_file {
         closing 1;
     else
         echo "Encrypting '$file'..." >&2;
+        file_name=$(basename "$file");
         $gpg $enc_key_arg --encrypt "$file";
-        mv "$file.gpg" "$enc_dir/$file";
+        mv "$file.gpg" "$enc_dir/$file_name";
         rm -f "$file.gpg";
     fi
 }
