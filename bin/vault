@@ -6,7 +6,7 @@ enc_key=""
 enc_key_arg="--default-recipient-self"
 file=""
 curdir=$(dirname "$0")
-tmp_dir="$(mktemp -d --suffix=-crypt)"
+tmp_dir="$(mktemp -d --suffix=-$USER-vault)"
 enc_dir="${curdir}/../encrypted"
 
 function closing {
@@ -24,9 +24,18 @@ else
 fi
 
 function print_help {
+    echo "Read/Write/Execute encrypted file right here in this git repo"
+    echo
     echo "Usage: $name sync"
     echo "             help"
-    echo "             edit"
+    echo "             edit file"
+    echo "             ls/list"
+    echo "             print/cat/read file"
+    echo "             add file"
+    echo "             get file"
+    echo "             rm|remove|delete file"
+    echo
+    echo "Edit ~/.gnupg/gpg.conf and set 'default-key 123ABC' for the default key to use"
 }
 
 function sync {
@@ -37,34 +46,62 @@ function list_files {
     ls "$enc_dir/$file";
 }
 
+function remove {
+    rm -f "$enc_dir/$file";
+}
+
 function decrypt_file {
     if [ ! -f "$enc_dir/$file" ]; then
-        echo "The file '$enc_dir/$file' doesn't exist; creating it...";
+        echo "The file '$enc_dir/$file' doesn't exist; creating it..." >&2;
         touch "$tmp_dir/$file";
     else
-        echo "Decrypting '$enc_dir/$file'...";
+        echo "Decrypting '$enc_dir/$file'..." >&2;
         $gpg $enc_key_arg --output "$tmp_dir/$file" --decrypt "$enc_dir/$file";
     fi
 }
 
 function encrypt_file {
     if [ ! -f "$tmp_dir/$file" ]; then
-        echo "The file '$tmp_dir/$file' doesn't exist; ignoring it.";
+        echo "The file '$tmp_dir/$file' doesn't exist; ignoring it." >&2;
     else
-        echo "Encrypting '$tmp_dir/$file'...";
+        echo "Encrypting '$tmp_dir/$file'..." >&2;
         file_dir=$(dirname "$file");
         mkdir -p "$enc_dir/$file_dir";
         $gpg $enc_key_arg --encrypt "$tmp_dir/$file";
-        mv "$tmp_dir/$file.gpg" "$enc_dir/$file"
+        mv "$tmp_dir/$file.gpg" "$enc_dir/$file";
         rm -f "$tmp_dir/$file"
     fi
 }
 
+function replace_file {
+    if [ ! -f "$file" ]; then
+        echo "File doesn't exist: $file" >&2;
+        echo "We can't encrypt something that don't exist." >&2;
+        closing 1;
+    else
+        echo "Encrypting '$file'..." >&2;
+        $gpg $enc_key_arg --encrypt "$file";
+        mv "$file.gpg" "$enc_dir/$file";
+        rm -f "$file.gpg";
+    fi
+}
+
+function get_file {
+    if [ ! -f "$enc_dir/$file" ]; then
+        echo "File doesn't exist: $enc_dir/$file" >&2;
+        echo "We can't decrypt something that don't exist." >&2;
+        closing 1;
+    else
+        echo "Decrypting '$enc_dir/$file'..." >&2;
+        file_name=$(basename "$file")
+        $gpg $enc_key_arg --output "$file_name" --decrypt "$enc_dir/$file";
+    fi
+}
 
 function edit {
     if [ -z "$EDITOR" ]; then
         EDITOR="vim";
-        echo "Using '$EDITOR' as the default editor.";
+        echo "Using '$EDITOR' as the default editor." >&2;
     fi
 
     decrypt_file;
@@ -96,6 +133,18 @@ for i in "$@"; do
             ;;
         edit)
             action="edit";
+            file="$2";
+            ;;
+        rm|remove|delete)
+            action="remove";
+            file="$2";
+            ;;
+        add)
+            action="add";
+            file="$2";
+            ;;
+        get)
+            action="get";
             file="$2";
             ;;
         print|cat)
@@ -161,6 +210,15 @@ case $action in
         ;;
     print)
         print_file;
+        ;;
+    remove)
+        remove;
+        ;;
+    add)
+        replace_file;
+        ;;
+    get)
+        get_file;
         ;;
     edit)
         edit;
