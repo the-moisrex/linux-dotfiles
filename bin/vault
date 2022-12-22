@@ -7,7 +7,7 @@ enc_key_arg="--default-recipient-self"
 file=""
 curdir=$(dirname "$0")
 tmp_dir="$(mktemp -d --suffix=-$USER-vault)"
-enc_dir="${curdir}/../encrypted"
+enc_dir="${curdir}/../vault"
 
 function closing {
     rm -rf "$tmp_dir";
