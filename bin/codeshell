@@ -37,36 +37,35 @@ tmpdir=""
 template=""
 buildsys="Ninja"
 
-for i in "$@"
-do
-case $i in
-    -t=*|--template=*)
- 	template="${i#*=}"
-	shift # past argument=value
-    ;;
+for i in "$@"; do
+  case $i in
+      -t=*|--template=*)
+        template="${i#*=}"
+        shift # past argument=value
+        ;;
 
-    -n=*|--name=*)
-	dir="${i#*=}"
- 	mkdir -p ~/codeshells/$dir
-	tmpdir=~/codeshells/$dir
-	shift
-    ;;
+      -n=*|--name=*)
+        dir="${i#*=}"
+        mkdir -p ~/codeshells/$dir
+        tmpdir=~/codeshells/$dir
+        shift
+        ;;
 
-    -h|--help)
-	echo "-n=*|--name=* \t\t the name of the project"
-	echo "-t=*|--template \t\t the template to use"
-	echo "-g=*|-G=* \t\t the build system to use in cmake"
-	exit;
-    ;;
+      -h|--help)
+        echo "-n=*|--name=* \t\t the name of the project"
+        echo "-t=*|--template \t\t the template to use"
+        echo "-g=*|-G=* \t\t the build system to use in cmake"
+        exit;
+        ;;
 
-    -g=*|-G=*)
-  buildsys="${i#*=}"
-    ;;
+      -g=*|-G=*)
+        buildsys="${i#*=}"
+        ;;
 
-    *)
-	    # nothing to do
-    ;;
-esac
+      *)
+        # nothing to do
+        ;;
+  esac
 done
 
 # if there's no tempalte and no name

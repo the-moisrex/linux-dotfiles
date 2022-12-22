@@ -1,0 +1,169 @@
+#!/bin/bash
+
+exec_name="$0"
+name=$(basename "$exec_name")
+enc_key=""
+enc_key_arg="--default-recipient-self"
+file=""
+curdir=$(dirname "$0")
+tmp_dir="$(mktemp -d --suffix=-crypt)"
+enc_dir="${curdir}/../encrypted"
+
+function closing {
+    rm -rf "$tmp_dir";
+    exit $1;
+}
+
+if command -v gpg2 --version >/dev/null; then
+    gpg="gpg2"
+elif command -v gpg --version >/dev/null; then
+    gpg="gpg"
+else
+    echo "We're not able to find the gpg/gpg2 binaries.";
+    closing 1;
+fi
+
+function print_help {
+    echo "Usage: $name sync"
+    echo "             help"
+    echo "             edit"
+}
+
+function sync {
+    echo "sync"
+}
+
+function list_files {
+    ls "$enc_dir/$file";
+}
+
+function decrypt_file {
+    if [ ! -f "$enc_dir/$file" ]; then
+        echo "The file '$enc_dir/$file' doesn't exist; creating it...";
+        touch "$tmp_dir/$file";
+    else
+        echo "Decrypting '$enc_dir/$file'...";
+        $gpg $enc_key_arg --output "$tmp_dir/$file" --decrypt "$enc_dir/$file";
+    fi
+}
+
+function encrypt_file {
+    if [ ! -f "$tmp_dir/$file" ]; then
+        echo "The file '$tmp_dir/$file' doesn't exist; ignoring it.";
+    else
+        echo "Encrypting '$tmp_dir/$file'...";
+        file_dir=$(dirname "$file");
+        mkdir -p "$enc_dir/$file_dir";
+        $gpg $enc_key_arg --encrypt "$tmp_dir/$file";
+        mv "$tmp_dir/$file.gpg" "$enc_dir/$file"
+        rm -f "$tmp_dir/$file"
+    fi
+}
+
+
+function edit {
+    if [ -z "$EDITOR" ]; then
+        EDITOR="vim";
+        echo "Using '$EDITOR' as the default editor.";
+    fi
+
+    decrypt_file;
+    $EDITOR "$tmp_dir/$file";
+    encrypt_file;
+}
+
+function print_file {
+    decrypt_file;
+    cat "$tmp_dir/$file";
+}
+
+
+############################## Options ###############################
+
+action="help"
+params="$@"
+for i in "$@"; do
+    case "$1" in
+        help)
+            action="help";
+            ;;
+        list|ls)
+            action="list";
+            file="$2";
+            ;;
+        sync)
+            action="sync";
+            ;;
+        edit)
+            action="edit";
+            file="$2";
+            ;;
+        print|cat)
+            action="print";
+            file="$2";
+            ;;
+    esac
+    shift;
+done
+eval set -- "$params"
+
+options=$(getopt -n "$name" -l "help,sync,edit,list,print,recipient:" -o "hselpr:" -a -- "$@")
+if [ $? != 0 ]; then
+    echo "Failed to parse options...exiting." >&2;
+    closing 1;
+fi
+eval set -- "$options"
+
+while true; do
+    case "$1" in
+        -h|--help|help)
+            action="help"
+            ;;
+        -s|--sync|sync)
+            action="sync"
+            ;;
+        -e|--edit|edit)
+            action="edit"
+            ;;
+        -r|--recipient)
+            enc_key="$2";
+            enc_key_arg="--recipient $enc_key";
+            shift;
+            ;;
+        -f|--file)
+            file="$2";
+            shift;
+            ;;
+        -l|--list)
+            action="list";
+            ;;
+        -p|--print)
+            action="print";
+            ;;
+        --)
+            shift;
+            break;
+            ;;
+    esac
+    shift;
+done
+
+
+case $action in
+    help)
+        print_help;
+        ;;
+    sync)
+        sync;
+        ;;
+    list)
+        list_files;
+        ;;
+    print)
+        print_file;
+        ;;
+    edit)
+        edit;
+        ;;
+esac
+closing 0;
