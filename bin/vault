@@ -34,6 +34,8 @@ function print_help {
     echo "             add file"
     echo "             get file"
     echo "             rm|remove|delete file"
+    echo "             get dir/directory dirname --output=dir"
+    echo "             add dir/directory dirname"
     echo
     echo "Edit ~/.gnupg/gpg.conf and set 'default-key 123ABC' for the default key to use"
 }
@@ -71,6 +73,41 @@ function encrypt_file {
         mv "$tmp_dir/$file.gpg" "$enc_dir/$file";
         rm -f "$tmp_dir/$file"
     fi
+}
+
+function encrypt_tar_dir {
+    dir="$1"
+    if [ ! -d "$dir" ]; then
+        echo "The directory '$dir' doesn't exist.";
+        return;
+    fi
+    dir=$(realpath "$dir")
+    dir_name=$(basename "$dir");
+    dir=$(realpath --relative-to="$PWD" "$dir")
+    tar --overwrite -czvf "$tmp_dir/$dir_name.tar.gz" "$dir";
+    file="$dir_name.tar.gz"
+    encrypt_file
+    rm -f "$dir_name.tar.gz"
+}
+
+function decrypt_tar_dir {
+    tar="$1"
+    dir="$2"
+    tar=$(readlink -f "$tar")
+    if [ ! -d "$tar" ]; then
+        echo "The tarball file '$tar' doesn't exist.";
+        return;
+    fi
+    if [ -z "$dir" ]; then
+        dir=".";
+    fi
+    dir=$(realpath "$dir");
+    dir_name=$(basename "$tar");
+    dir_name="${dir_name/.tar.gz$/}"
+    file="$dir_name.tar.gz"
+    decrypt_file
+    tar --overwrite -xzvf "$tmp_dir/$file" --directory "$dir";
+    rm -f "$tmp_dir/$dir_name.tar.gz"
 }
 
 function replace_file {
@@ -141,12 +178,28 @@ for i in "$@"; do
             file="$2";
             ;;
         add)
-            action="add";
-            file="$2";
+            case "$2" in
+                dir|directory)
+                    action="add.dir"
+                    file="$3"
+                    ;;
+                *)
+                    action="add";
+                    file="$3";
+                    ;;
+            esac
             ;;
         get)
-            action="get";
-            file="$2";
+            case "$2" in
+                dir|directory)
+                    action="get.dir"
+                    file="$3"
+                    ;;
+                *)
+                    action="get";
+                    file="$2";
+                    ;;
+            esac
             ;;
         print|cat)
             action="print";
@@ -157,7 +210,7 @@ for i in "$@"; do
 done
 eval set -- "$params"
 
-options=$(getopt -n "$name" -l "help,sync,edit,list,print,recipient:" -o "hselpr:" -a -- "$@")
+options=$(getopt -n "$name" -l "help,sync,edit,list,print,recipient:,output:" -o "hselpr:o:" -a -- "$@")
 if [ $? != 0 ]; then
     echo "Failed to parse options...exiting." >&2;
     closing 1;
@@ -182,6 +235,10 @@ while true; do
             ;;
         -f|--file)
             file="$2";
+            shift;
+            ;;
+        -o|--output)
+            output_dir="$2";
             shift;
             ;;
         -l|--list)
@@ -220,6 +277,12 @@ case $action in
         ;;
     get)
         get_file;
+        ;;
+    add.dir)
+        encrypt_tar_dir "$file"
+        ;;
+    get.dir)
+        decrypt_tar_dir "$file" "$output_dir"
         ;;
     edit)
         edit;
