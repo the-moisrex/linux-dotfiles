@@ -99,3 +99,9 @@ alias c="xclip -selection clipboard"
 alias ggrep="git grep --heading --break -n";
 alias task-tui="taskwarrior-tui"
 alias tasktui="taskwarrior-tui"
+
+
+alias ctl="sudo systemctl"
+alias status="sudo systemctl status"
+alias restart="sudo systemctl restart"
+
