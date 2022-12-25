@@ -63,68 +63,6 @@ function repo_path {
   echo $repo;
 }
 
-function run {
-
-  gitroot=".git";
-
-  until [ "$(realpath "$gitroot")" = "/.git" -o \
-          "$(realpath "$gitroot")" = "/" -o \
-          -d "$gitroot" \
-        ]; do
-    gitroot="../${gitroot}";
-  done;
-
-
-  proj_dir="$(realpath "$gitroot/..")";
-  build_dir="$proj_dir/build";
-  old_dir=$(pwd)
-  execfile="$@"
-
-  if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
-    if [ -f "$build_dir/CMakeCache.txt" ]; then
-      build_cmd="cmake --build '$build_dir' --target $execfile"
-    elif [ -f "$build_dir/build.ninja" ]; then
-      build_cmd="ninja -C '$build_dir' -v $execfile"
-    elif [ -f "Makefile" ]; then
-      build_cmd="make -C '$build_dir' $execfile"
-    else
-      echo wrong build directory.
-      return
-    fi;
-    clear;
-    echo Project root:    $proj_dir
-    echo Build Directory: $build_dir
-    echo Build command:   $build_cmd
-    if eval "unbuffer $build_cmd"; then
-      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
-      if [ -f "$build_dir/$execfile" ]; then
-        execfile="$build_dir/$execfile"
-      fi
-      if $execfile; then
-        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Passed";
-      else
-        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Failed";
-      fi;
-    else
-      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compilation Failed.";
-    fi;
-  else
-    echo Project Root not found.
-  fi;
-
-}
-
-function keep-running {
-  repo=$(repo_path);
-  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1}"
-}
-
-function keep-running-head {
-  repo=$(repo_path);
-  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1} | head -${2}"
-}
-
-
 # git push all
 function gpush {
   git remote | while read remote; do echo "git push $remote $(git branch --show-current)"; setsid git push $remote $(git branch --show-current); done
