@@ -1,0 +1,109 @@
+#!/bin/bash
+
+RED="\033[0;31m"
+GRAY="\033[0;37m"
+NC="\033[0m" # No Color
+
+function run {
+  gitroot=".git";
+  scan_build="";
+  if [ "$1" == "analyze" ]; then
+      scan_build="scan-build"
+      shift;
+  fi
+
+  until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" -o \
+          "$(realpath "$gitroot" 2>/dev/null)" = "/" -o \
+          -d "$gitroot" \
+        ]; do
+    gitroot="../${gitroot}";
+  done;
+
+
+  proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
+  build_dir="$proj_dir/build";
+  old_dir=$(pwd);
+  execfile="$@";
+
+  if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
+    if [ -f "$build_dir/CMakeCache.txt" ]; then
+      build_cmd="cmake --build '$build_dir' --target $execfile";
+    elif [ -f "$build_dir/build.ninja" ]; then
+      build_cmd="ninja -C '$build_dir' -v $execfile";
+    elif [ -f "Makefile" ]; then
+      build_cmd="make -C '$build_dir' $execfile";
+    else
+      echo -e "${RED}Wrong build directory.${NC}";
+      return;
+    fi;
+    clear;
+    echo -e "${GRAY}Project root:${NC}    $proj_dir"
+    echo -e "${GRAY}Build Directory:${NC} $build_dir"
+    echo -e "${GRAY}Build command:${NC}   $build_cmd"
+    if eval "unbuffer $scan_build $build_cmd"; then
+      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
+      if [ -f "$build_dir/$execfile" ]; then
+        execfile="$build_dir/$execfile";
+      fi
+      if $execfile; then
+        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Passed";
+      else
+        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Failed";
+      fi;
+    else
+      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compilation Failed.";
+    fi;
+  else
+    echo -e "${RED}Project Root not found.${NC}"
+  fi;
+}
+
+
+function keep-running {
+  repo=$(repo_path);
+  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1}"
+}
+
+
+function keep-running-head {
+  repo=$(repo_path);
+  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1} | head -${2}"
+}
+
+
+exec_name=$(realpath "$0");
+function print_help {
+    echo "$exec_name help"
+    echo "           [target]"
+    echo "           keep [target]"
+    echo "           keep head [target]"
+    echo "           analyze/scan-build [target]"
+}
+
+
+case "$1" in
+    help)
+        print_help;
+        ;;
+    keep)
+        shift;
+        case "$2" in
+            head)
+                shift;
+                keep-running-head $@;
+                ;;
+            *)
+                keep-running $@;
+                ;;
+        esac
+        ;;
+    analyze|scan-build)
+        shift;
+        run analyze $@;
+        ;;
+    *)
+        run $@;
+        ;;
+esac
+
+
