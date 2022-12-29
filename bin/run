@@ -7,8 +7,15 @@ NC="\033[0m" # No Color
 function run {
   gitroot=".git";
   scan_build="";
+  debug_cmd=""
   if [ "$1" == "analyze" ]; then
       scan_build="scan-build"
+      shift;
+  elif [ "$1" == "lldb" ]; then
+      debug_cmd="lldb";
+      shift;
+  elif [ "$1" == "gdb" ]; then
+      debug_cmd="gdb";
       shift;
   fi
 
@@ -39,13 +46,14 @@ function run {
     clear;
     echo -e "${GRAY}Project root:${NC}    $proj_dir"
     echo -e "${GRAY}Build Directory:${NC} $build_dir"
-    echo -e "${GRAY}Build command:${NC}   $build_cmd"
+    echo -e "${GRAY}Build command:${NC}   $scan_build $build_cmd"
+    echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
     if eval "unbuffer $scan_build $build_cmd"; then
       timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile";
       fi
-      if $execfile; then
+      if eval "$scan_build $debug_cmd $execfile"; then
         timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Passed";
       else
         timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Failed";
@@ -78,6 +86,7 @@ function print_help {
     echo "           keep [target]"
     echo "           keep head [target]"
     echo "           analyze/scan-build [target]"
+    echo "           lldb/gdb [target]"
 }
 
 
@@ -100,6 +109,14 @@ case "$1" in
     analyze|scan-build)
         shift;
         run analyze $@;
+        ;;
+    lldb)
+        shift;
+        run lldb $@;
+        ;;
+    gdb)
+        shift;
+        run gdb $@;
         ;;
     *)
         run $@;
