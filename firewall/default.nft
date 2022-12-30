@@ -117,13 +117,13 @@ table inet filter {
         type filter hook input priority filter
         policy drop
         
+        iif lo counter name filter.loopback accept comment "allow loopback"
         ct state {
             established,
             related
         } counter name filter.established accept
         ct state invalid counter name filter.invalid drop
 
-        iif lo counter name filter.loopback accept comment "allow loopback"
         # iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
         # iif != lo ip6 daddr ::1/128 counter drop comment "drop connections to loopback not comming from loopback"
 
