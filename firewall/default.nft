@@ -21,6 +21,34 @@ define public_ipv4 = {
 
 flush ruleset
 
+table netdev filter {
+    counter ingress.drop { comment "Ingress dropped" }
+
+    # Source: https://wiki.gentoo.org/wiki/Nftables
+    # Broken packets should be rejected early which requires an ingress hook for family netdev.
+    # This sets up a chain that acts for a dedicated network device before packets enter further processing – improved performance.
+    chain ingress {
+
+        # Drop all fragments.
+        ip frag-off & 0x1fff != 0 counter name ingress.drop drop;
+
+        # Drop XMAS packets.
+        tcp flags & (fin|syn|rst|psh|ack|urg) == (fin|syn|rst|psh|ack|urg) counter name ingress.drop drop
+
+        # Drop NULL packets.
+        tcp flags & (fin|syn|rst|psh|ack|urg) == 0x0 counter name ingress.drop drop;
+
+        # Drop uncommon MSS values.
+        tcp flags syn tcp option maxseg size 1-535 counter name ingress.drop drop;
+    }
+
+    chain ingress.enp {
+        type filter hook ingress device enp2s0 priority -500;
+        goto ingress;
+    }
+}
+
+
 table inet filter {
     counter everything { comment "All IN/OUT" }
     counter all.in { comment "All IN" }
@@ -172,6 +200,7 @@ table inet mangle {
     # Country IPs go here
     set geoips4 {
         type ipv4_addr
+        auto-merge
         flags interval # enable CIDR and ranges
     }
 
@@ -183,6 +212,7 @@ table inet mangle {
     # Manual list of IPs/CIDRs to ignore
     set skipips {
         type ipv4_addr
+        auto-merge
         flags interval # enable CIDR and ranges
         elements = {
             $multicast_ips
