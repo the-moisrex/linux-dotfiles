@@ -1,5 +1,6 @@
 [Unit]
-After=default.target remote-fs.target
+After=network-online.target
+Wants=network-online.target
 Description=Tor Load Balancer
 
 [Service]

@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if $iptables; then
-    run_tor_socks_iptables $netns $port $instances "false"
+    run_tor_socks_nftables $netns $port $instances "false"
 else
     run_tor_proxy $netns $port $instances "false"
 fi

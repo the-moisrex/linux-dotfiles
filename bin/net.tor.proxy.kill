@@ -3,6 +3,7 @@
 port=9550
 instances=20
 iptables=true
+nftables=true
 netns="-"
 
 while [[ $# -gt 0 ]]; do
@@ -27,6 +28,11 @@ while [[ $# -gt 0 ]]; do
             shift 1
             ;;
 
+        --nftables)
+            nftables=true
+            shift 1
+            ;;
+
         --http-proxy)
             iptables=false
             shift 1
@@ -40,6 +46,7 @@ while [[ $# -gt 0 ]]; do
       # echo -e "\t--port\t\tThe final port that's load-balanced; default: $port"
       echo -e "\t--netns\t\tNetwork Namespace to run the proxies in (used to bypass vpns and more); default: $netns"
 	  echo -e "\t--iptables\tUse iptables' rules to load-balance"
+	  echo -e "\t--nftables\tUse nftables' rules to load-balance"
       echo -e "\t--http-proxy\tUse haproxy and privoxy to introduce http-based proxies and loadbalancer."
 	  echo -e "\t--help\t\tShows this help."
 	  exit
@@ -81,10 +88,9 @@ else
     echo "There are no tor nodes to kill"
 fi
 
-if ! $iptables; then
-    echo Killing haproxy and privoxy
-    killall haproxy privoxy # todo: we shouldn't kill them all, should we?
-else
+if $nftables; then
+    nft delete table inet tor.nat;
+elif $iptables; then
     # Delete the iptables' rules
     while true; do
         # Get the line number of the iptables' rule
@@ -99,6 +105,9 @@ else
         iptables -t nat --delete OUTPUT $line_num
         echo "Delete: $line"
     done
+else
+    echo Killing haproxy and privoxy
+    killall haproxy privoxy # todo: we shouldn't kill them all, should we?
 fi
 
 scripts=$(pidof -x net.tor.proxy)

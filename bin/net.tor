@@ -356,3 +356,82 @@ function run_tor_socks_iptables {
 
 }
 
+
+
+
+
+
+function run_tor_socks_nftables {
+    local _nsn=$1
+    local proxy_port=$2
+    local instances=$3
+    local _user="$USER"
+    local termux="$4"
+
+    if [ -z "$_user" ]; then
+	    _user=$(whoami)
+    fi
+
+    if nc -z -w1 127.0.0.1 $proxy_port 2>/dev/null ; then
+        echo "Proxy port ${proxy_port} is already in use." >&2
+        exit
+    fi
+
+    local root_dir=$(mktemp -d)
+
+    chmod ugo+rwx $root_dir
+
+    # create the network namespace
+    if [ ! -z "$_nsn" ] && [ $_nsn != "-" ]; then
+        add_skip_vpn_ns $device $_nsn $mvlan_name
+    fi
+
+    local nft_config="
+table inet tor.nat {
+    counter tor.nat { comment \"NAT Ports\" }
+
+    map tor.ports {
+        typeof numgen inc mod ${instances} : tcp dport;
+    }
+
+    chain port.natter {
+        ct state new tcp dport ${proxy_port} counter name tor.nat redirect to : numgen inc mod ${instances} offset 1 map @tor.ports;
+    }
+
+    chain output {
+        type nat hook output priority filter
+
+        goto port.natter;
+    }
+
+    chain prerouting {
+        type nat hook prerouting priority dstnat
+
+        goto port.natter;
+    }
+}
+"
+
+    echo -e "$nft_config" | nft -f -;
+
+    # running the tor and also creating the server_ports var
+    local server_ports
+    local _shift=0
+    for (( i=1; i<=$instances; i++ )); do
+        tor_port=$((9250 + (2 * (i + $_shift) )))
+        tor_control_port=$(($tor_port + 1))
+
+        # try again if the port is already open
+        if [ $tor_port == $proxy_port ] || nc -z -w1 127.0.0.1 $tor_port 2>/dev/null || nc -z -w1 127.0.0.1 $tor_control_port 2>/dev/null ; then
+            _shift=$(($_shift + 1))
+            i=$(($i - 1))
+            continue
+        fi
+
+        server_ports[$i]=$tor_port
+        run_tor "$_nsn" $tor_port $tor_control_port "$root_dir" "$termux"
+        nft add element inet tor.nat tor.ports { $i : $tor_port };
+    done
+
+}
+
