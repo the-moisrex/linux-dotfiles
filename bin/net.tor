@@ -388,7 +388,7 @@ function run_tor_socks_nftables {
 
     local nft_config="
 table inet tor.nat {
-    counter tor.nat { comment \"NAT Ports\" }
+    counter tor.nat.new { comment \"NAT Ports\" }
 
     map tor.ports {
         typeof numgen inc mod ${instances} : tcp dport;
@@ -396,6 +396,16 @@ table inet tor.nat {
 
     chain port.natter {
         ct state new tcp dport ${proxy_port} counter name tor.nat redirect to : numgen inc mod ${instances} offset 1 map @tor.ports;
+    }
+
+    chain input {
+        type filter hook input priority filter
+
+        ct state {
+            new,
+            established,
+            related
+        } tcp dport ${proxy_port} accept;
     }
 
     chain output {

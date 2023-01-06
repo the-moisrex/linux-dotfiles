@@ -114,7 +114,8 @@ table inet filter {
             tcp . netbios-ssn,   # netbios session service
             udp . netbios-ssn,   # netbios session service
             tcp . microsoft-ds,  # SMB
-            udp . microsoft-ds   # SMB
+            udp . microsoft-ds,  # SMB
+            tcp . 9550           # Tor Load Balancer script (net.tor)
         }
         # udp . 5246,                   CAPsMAN
         # udp . 5247,                   CAPsMAN
