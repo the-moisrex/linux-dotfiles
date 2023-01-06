@@ -388,10 +388,11 @@ function run_tor_socks_nftables {
 
     local nft_config="
 table inet tor.nat {
-    counter tor.nat.new { comment \"NAT Ports\" }
+    counter tor.nat { comment \"NAT Ports\" }
 
     map tor.ports {
         typeof numgen inc mod ${instances} : tcp dport;
+        counter
     }
 
     chain port.natter {
