@@ -396,7 +396,7 @@ table inet tor.nat {
     }
 
     chain port.natter {
-        ct state new tcp dport ${proxy_port} counter name tor.nat redirect to : numgen inc mod ${instances} offset 1 map @tor.ports;
+        ct state new tcp dport ${proxy_port} counter name tor.nat ip protocol tcp dnat to 127.0.0.1 : numgen inc mod ${instances} offset 1 map @tor.ports;
     }
 
     chain input {
@@ -423,7 +423,10 @@ table inet tor.nat {
 }
 "
 
-    echo -e "$nft_config" | nft -f -;
+    if ! (echo -e "$nft_config" | nft -f -); then
+        echo "Error with NFTables."
+        return;
+    fi;
 
     # running the tor and also creating the server_ports var
     local server_ports
