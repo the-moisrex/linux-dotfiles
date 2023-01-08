@@ -1,8 +1,5 @@
 #!/usr/bin/env -S nft.sed.devices
 
-define iface_devices = {
-    ## Replace Devices ##
-}
 define local_network = { 192.168.88.0/24, 127.0.0.0/8 , 10.1.1.0/24 }
 define skip_vpn_mark = 0xe1f1 # NordVPN default vpn mark used in iproute2
 define multicast_ips = 224.0.0.0-239.255.255.255
