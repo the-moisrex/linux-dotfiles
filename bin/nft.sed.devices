@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+
+nft_file="$1"
+
+if [ ! "$nft_file" ]; then
+    echo "nft file $nft_file doesn't exists.";
+    exit 1;
+fi
+
+devices=$(ip -br link | cut -f1 -d" " | grep -v lo | grep -E "(enp|wlp).*" | sed -e 'H;${x;s/\n/, /g;s/^,//;p;};d')
+content=$(cat "$nft_file" | sed "s/## Replace Devices ##/$devices/")
+
+echo -e "$content" | nft -f -
