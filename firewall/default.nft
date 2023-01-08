@@ -1,5 +1,8 @@
-#!/sbin/nft -f
+#!/usr/bin/env -S nft.sed.devices
 
+define iface_devices = {
+    ## Replace Devices ##
+}
 define local_network = { 192.168.88.0/24, 127.0.0.0/8 , 10.1.1.0/24 }
 define skip_vpn_mark = 0xe1f1 # NordVPN default vpn mark used in iproute2
 define multicast_ips = 224.0.0.0-239.255.255.255
@@ -43,7 +46,7 @@ table netdev filter {
     }
 
     chain ingress.enp {
-        type filter hook ingress device enp2s0 priority -500;
+        type filter hook ingress devices = $iface_devices priority -500;
         goto ingress;
     }
 }
@@ -67,10 +70,12 @@ table inet filter {
     counter filter.dhcp { comment "DHCP/bootp" }
     counter filter.icmp { comment "IP ICMP" }
     counter filter.drop { comment "Packets that weren't allowed" }
-    counter forward { comment "Forward To/From Local Network from anywhere" }
+    counter forward.all { comment "Forward To/From Local Network from anywhere" }
     counter forward.download { comment "Forward To Local Network from anywhere" }
     counter forward.upload { comment "Forward From Local Network to anywhere" }
     counter forward.drop { comment "Forward dropped" }
+    counter forward.established { comment "Established connections" }
+    counter forward.offload { comment "Established connections" }
 
     set protocols {
         type inet_proto . inet_service
@@ -120,6 +125,11 @@ table inet filter {
         # udp . 5246,                   CAPsMAN
         # udp . 5247,                   CAPsMAN
         # udp . 20561,                  MAC Winbox
+    }
+
+    flowtable fast {
+        hook ingress priority 0;
+        devices = $iface_devices;
     }
 
     chain inbound {
@@ -178,12 +188,17 @@ table inet filter {
         type filter hook forward priority filter
         policy drop
 
+        ip saddr $local_network ip daddr $local_network counter name forward.offload counter name forward.all flow offload @fast;
+
+        ct state { established, related } counter name forward.established counter name forward.all accept;
+        ct state invalid counter name forward.drop;
+
         # DHCP
-        ip saddr 0.0.0.0 ip daddr 255.255.255.255 udp dport bootps counter name filter.dhcp accept
-        ip6 saddr fe80::/64 counter name filter.dhcp accept
+        ip saddr 0.0.0.0 ip daddr 255.255.255.255 udp dport bootps counter name filter.dhcp counter name forward.all accept
+        ip6 saddr fe80::/64 counter name filter.dhcp counter name forward.all accept
         
-        ip saddr $local_network counter name forward.upload counter name forward accept comment "from local network"
-        ip daddr $local_network counter name forward.download counter name forward accept comment "to local network"
+        ip saddr $local_network counter name forward.upload counter name forward.all accept comment "from local network"
+        ip daddr $local_network counter name forward.download counter name forward.all accept comment "to local network"
 
         counter name forward.drop comment "count dropped packets"
     }
