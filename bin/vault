@@ -185,7 +185,7 @@ for i in "$@"; do
                     ;;
                 *)
                     action="add";
-                    file="$3";
+                    file="$2";
                     ;;
             esac
             ;;
