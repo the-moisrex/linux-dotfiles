@@ -165,11 +165,11 @@ class ScreenWriter:
         colors = (
                 255, 254, 253, 252, 251, 250,  # white
                 231, 195, 159, 123, 87,  51,   # cyan
-                228, 227, 226, 162, 161, 190,  # yellow
                 156, 155, 154, 120, 119, 118,  # green-ish
                 84,  83,  82,  48,  47,  46,   # green
-                215, 214, 209, 208, 203, 202,  # orange
-                197, 196, 161, 160,            # red
+                228, 227, 226, 162, 161, 190,  # yellow
+                220, 184, 214, 208, 202, 166,  # orange
+                196, 160                       # red
                 )
         for _, color in enumerate(colors):
             curses.init_pair(index, color, bg_color)
