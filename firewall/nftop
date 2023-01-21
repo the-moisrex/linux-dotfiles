@@ -163,7 +163,7 @@ class ScreenWriter:
 
         # shades of yellow
         colors = (
-                255, 254, 253, 252, 251, 250,  # white
+                250, 251, 252, 253, 254, 255,  # white
                 231, 195, 159, 123, 87,  51,   # cyan
                 156, 155, 154, 120, 119, 118,  # green-ish
                 84,  83,  82,  48,  47,  46,   # green
