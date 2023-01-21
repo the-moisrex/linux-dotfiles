@@ -14,11 +14,13 @@ from nftables import Nftables
 from nftables import json
 
 
+size_name = ("B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB")
+
+
 def convert_size(size_bytes):
     """Convert the sizes"""
     if size_bytes == 0:
         return 0, "B"
-    size_name = ("B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB")
     i = int(math.floor(math.log(size_bytes, 1024)))
     powered = math.pow(1024, i)
     size = round(size_bytes / powered, 2)
@@ -30,7 +32,7 @@ class PerSecond:
     def __init__(self):
         self.counters = {}
 
-    def tick(self, counter_name, new_bytes_count):
+    def tick(self, counter_name, new_bytes_count, refresh_time):
         """Set a new tick and get the bytes/sec value"""
         new_time = int(time.time() * 1000)  # in milliseconds
         if counter_name not in self.counters:
@@ -40,11 +42,12 @@ class PerSecond:
         while True:
             old_time, bytes_count = self.counters[counter_name][0]
             tdiff = new_time - old_time
-            if tdiff >= 1000:
+            if tdiff >= max(1000, refresh_time) * 2:
                 self.counters[counter_name].pop(0)
             else:
                 break
-        return new_bytes_count - bytes_count
+        time_period = new_time - old_time
+        return ((new_bytes_count - bytes_count) * 1000) / time_period
 
     def clear(self):
         """clear"""
@@ -58,6 +61,9 @@ class MyNFTable:
         self.nft = Nftables()
         self.nft.set_json_output(True)
         self.bpsec = None
+        self.refresh_time = 0
+        self.max_counter = 0
+        self.color_count = 0
 
     def enable_bpsec(self):
         """Enable the column"""
@@ -70,37 +76,66 @@ class MyNFTable:
                     f"  {'in Bytes':>17}  {'Packets':>12}\n"
                     f" {'':->20}  {'':->10}  {'':->10}  {'':->17}  "
                     f"{'':->12}\n")
-        return (f"{'Counter Name':>21}  {'Packets':>12}  {'Size':>10}"
-                f"  {'in Bytes':>17}\n"
+        return (f"{'Counter Name':>21}  {'Size':>10}  {'in Bytes':>17}"
+                f"  {'Packets':>12}\n"
                 f" {'':->20}  {'':->10}  {'':->17}  {'':->12}\n")
 
-    def get_body(self, res=""):
+    def get_line(self, j, i=0):
+        """Get one line of the body"""
+        counter = j['nftables'][i]["counter"]
+        packets = counter["packets"]
+        name = counter["name"]
+        bsize = counter["bytes"]
+        count, count_unit = convert_size(bsize)
+        if self.bpsec is not None:
+            speed = self.bpsec.tick(name, bsize, self.refresh_time)
+            bsec, best_unit = convert_size(speed)
+            res = (f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
+                   f"{bsec:>6.1f} {best_unit:<3}  "
+                   f"{bsize:>17,}  {packets:>12,}"
+                   f"\n")
+        else:
+            res = (f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
+                   f"{bsize:>17,}  {packets:>12,}\n")
+        if speed > self.max_counter:
+            self.max_counter = speed
+        no_counter = self.max_counter == 0
+        update_percent = 0 if no_counter else speed / self.max_counter
+        return res, update_percent
+
+    def get_body(self):
         """Get table body"""
         _, output, _ = self.nft.cmd("list counters")
         if output == "":
             return "Please run as root."
         j = json.loads(output)
+        res = ""
         for i in range(1, len(j['nftables'])):
-            counter = j['nftables'][i]["counter"]
-            packets = counter["packets"]
-            name = counter["name"]
-            bsize = counter["bytes"]
-            count, count_unit = convert_size(bsize)
-            if self.bpsec is not None:
-                bsec, best_unit = convert_size(self.bpsec.tick(name, bsize))
-                res = (res + f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
-                             f"{bsec:>6.1f} {best_unit:<3}  "
-                             f"{bsize:>17,}  {packets:>12,}"
-                             f"\n")
-            else:
-                res = (res + f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
-                             f"{bsize:>17,}  {packets:>12,}\n")
+            line, _ = self.get_line(j, i)
+            res = res + line
         return res
+
+    def print_body(self, stdscr, pos_x=0, pos_y=0):
+        """Print table body"""
+        _, output, _ = self.nft.cmd("list counters")
+        if output == "":
+            stdscr.addstr(0, 0, "Please run as root.")
+        j = json.loads(output)
+        for i in range(1, len(j['nftables'])):
+            line, update_bar = self.get_line(j, i)
+            color = curses.color_pair(self.color_percent(update_bar))
+            stdscr.addstr(pos_x + i - 1, pos_y, line, color)
+        self.max_counter = 0
+
+    def color_percent(self, percent):
+        """Get the color based on the percent"""
+        return math.floor(percent * (self.color_count - 1)) + 1
 
     def get_table(self):
         """Get table"""
         res = self.get_header()
-        return self.get_body(res)
+        res = res + self.get_body()
+        return res
 
 
 class ScreenWriter:
@@ -115,6 +150,31 @@ class ScreenWriter:
         self.stdscr.timeout(self.timeout)
         self.nft = MyNFTable()
         self.nft.enable_bpsec()
+        self.nft.refresh_time = self.timeout
+        self.init_color_pairs()
+
+    def init_color_pairs(self):
+        """Initialize color pairs"""
+        bg_color = -1
+        index = 1
+        curses.init_pair(index, curses.COLOR_WHITE, bg_color)
+        index = index + 1
+
+        # shades of yellow
+        colors = (
+                255, 254, 253, 252, 251, 250,  # white
+                231, 195, 159, 123, 87,  51,   # cyan
+                228, 227, 226, 162, 161, 190,  # yellow
+                156, 155, 154, 120, 119, 118,  # green-ish
+                84,  83,  82,  48,  47,  46,   # green
+                215, 214, 209, 208, 203, 202,  # orange
+                197, 196, 161, 160, 125, 124   # red
+                )
+        for _, color in enumerate(colors):
+            curses.init_pair(index, color, bg_color)
+            index = index + 1
+
+        self.nft.color_count = index - 1
 
     def set_refresh_time(self, sign):
         """Change the refresh time; sign = +/-1"""
@@ -128,7 +188,9 @@ class ScreenWriter:
         new_timeout = self.timeout + self.step
         self.timeout = max(10, min(new_timeout, 10000 - self.step))
         self.stdscr.timeout(self.timeout)
-        self.stdscr.addstr(0, 58, f"Refresh time:{str(self.timeout):>4} ms")
+        refresh_time_text = f"Refresh time:{str(self.timeout):>4} ms"
+        self.stdscr.addstr(0, 58, refresh_time_text, curses.A_DIM)
+        self.nft.refresh_time = self.timeout
 
     def tick(self):
         """Draw the body and wait for the user inputs"""
@@ -149,14 +211,16 @@ class ScreenWriter:
 
     def print_header(self):
         """Print the header"""
+        banner = "NFTop Author: Mohammad Bahoosh"
         self.stdscr.clear()
-        self.stdscr.addstr(0, 1, "NFTop Author: Mohammad Bahoosh")
-        self.stdscr.addstr(2, 0, self.nft.get_header())
+        self.stdscr.addstr(0, 1, banner, curses.A_DIM)
+        self.stdscr.addstr(2, 0, self.nft.get_header(), curses.A_DIM)
         self.set_refresh_time(0)
 
     def print_body(self):
         """Print the body"""
-        self.stdscr.addstr(4, 0, self.nft.get_body())
+        # self.stdscr.addstr(4, 0, self.nft.get_body())
+        self.nft.print_body(self.stdscr, 4, 0)
 
     def run(self):
         """Run the loop"""
