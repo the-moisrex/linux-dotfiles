@@ -97,6 +97,7 @@ class MyNFTable:
         else:
             res = (f"{name:>21}  {count:>6.1f} {count_unit:<3}  "
                    f"{bsize:>17,}  {packets:>12,}\n")
+            return res, 0
         if speed > self.max_counter:
             self.max_counter = speed
         no_counter = self.max_counter == 0
@@ -168,7 +169,7 @@ class ScreenWriter:
                 156, 155, 154, 120, 119, 118,  # green-ish
                 84,  83,  82,  48,  47,  46,   # green
                 215, 214, 209, 208, 203, 202,  # orange
-                197, 196, 161, 160, 125, 124   # red
+                197, 196, 161, 160,            # red
                 )
         for _, color in enumerate(colors):
             curses.init_pair(index, color, bg_color)
