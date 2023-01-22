@@ -1,0 +1,103 @@
+#!/bin/bash
+
+server=""
+timeout=""
+
+function print_help {
+    name="iptun"
+    echo "Usage: $name help                     # show this help"
+    echo "       $name enable  remote-machine   # enable tunnel"
+    echo "       $name disable remote-machine   # disable tunnel"
+    echo "       $name flash N remote-machine   # establish a tunnel for N mins"
+}
+
+function enable_tunnel {
+    ssh_cmd="ssh $server"
+    local_name=$(uname -n);
+    remote_name=$(eval $ssh_cmd -- uname -n 2>/dev/null)
+    remote_link_name="ip2${local_name}"
+    local_link_name="ip2${remote_name}"
+    local_ip=$(ip -br -oneline -4 addr | grep UP | sed -r 's/ +/ /g' | cut -sd" " -f3 | cut -d"/" -f1 | head -n 1)
+    remote_ip=$(eval $ssh_cmd -- "ip -br -oneline -4 addr | grep UP | sed -r 's/ +/ /g' | cut -sd' ' -f3 | cut -d'/' -f1 | head -n 1" 2>/dev/null)
+    local_tun_ip="162.168.167.165/30"
+    remote_tun_ip="162.168.167.166/30"
+    eval $ssh_cmd /bin/bash -- << EOF
+        sudo ip link add name $remote_link_name type ipip local $remote_ip remote $local_ip;
+        sudo ip link set $remote_link_name up;
+        sudo ip addr add $remote_tun_ip dev $remote_link_name;
+        sudo ip route add $local_tun_ip dev $remote_link_name;
+EOF
+    sudo ip link add name $local_link_name type ipip local $local_ip remote $remote_ip
+    sudo ip link set $local_link_name up
+    sudo ip addr add $local_tun_ip dev $local_link_name
+    sudo ip route add $remote_tun_ip dev $local_link_name
+
+    echo "Local: "
+    echo "       Name:         $local_name"
+    echo "       Link name:    $local_link_name"
+    echo "       Public IP:    $local_ip"
+    echo "       Tunnel IP:    $local_tun_ip"
+    echo
+    echo "Remote: "
+    echo "       Name:         $remote_name"
+    echo "       Link name:    $remote_link_name"
+    echo "       Public IP:    $remote_ip"
+    echo "       Tunnel IP:    $remote_tun_ip"
+    echo "       SSH command:  $ssh_cmd"
+}
+
+function disable_tunnel {
+    ssh_cmd="ssh $server"
+    local_name=$(uname -n);
+    remote_name=$(eval $ssh_cmd -- uname -n 2>/dev/null)
+    remote_link_name="ip2${local_name}"
+    local_link_name="ip2${remote_name}"
+    local_tun_ip="162.168.167.165/30"
+    remote_tun_ip="162.168.167.166/30"
+    eval $ssh_cmd /bin/bash -- << EOF
+        sudo ip link set $remote_link_name down;
+        sudo ip route delete $local_tun_ip dev $remote_link_name;
+        sudo ip link delete $remote_link_name;
+EOF
+    sudo ip link set $local_link_name down;
+    sudo ip addr delete $local_tun_ip dev $local_link_name
+    sudo ip link delete $local_link_name;
+
+    echo "Local: "
+    echo "       Name:         $local_name"
+    echo "       Link name:    $local_link_name"
+    echo "       Tunnel IP:    $local_tun_ip"
+    echo
+    echo "Remote: "
+    echo "       Name:         $remote_name"
+    echo "       Link name:    $remote_link_name"
+    echo "       Tunnel IP:    $remote_tun_ip"
+    echo "       SSH command:  $ssh_cmd"
+}
+
+case "$1" in
+    help)
+        print_help;
+        ;;
+
+    enable)
+        server="$2"
+        enable_tunnel
+        ;;
+
+    disable)
+        server="$2"
+        disable_tunnel
+        ;;
+
+    flash)
+        action="flash"
+        timeout="$2"
+        server="$3"
+        ;;
+
+    *)
+        print_help;
+        ;;
+esac
+
