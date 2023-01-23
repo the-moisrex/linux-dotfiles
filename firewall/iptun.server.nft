@@ -1,6 +1,6 @@
-#!/usr/bin/env -S nft.sed.devices
+#!/usr/bin/env nft
 
-define local_network  = { 192.168.88.0/24, 127.0.0.0/8 , 10.1.1.0/24 }
+define local_network  = { 192.168.88.0/24, 192.168.167.164/30, 127.0.0.0/8, 10.1.1.0/24 }
 define skip_vpn_mark  = 0xe1f1 # NordVPN default vpn mark used in iproute2
 define iptun_mark     = 0xe2f2 # IPIP Tunnel
 define public_ipv4    = {
