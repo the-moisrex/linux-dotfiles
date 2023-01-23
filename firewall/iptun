@@ -20,25 +20,27 @@ function enable_tunnel {
     local_link_name="ip2${remote_name}"
     local_ip=$(ip -br -oneline -4 addr | grep UP | sed -r 's/ +/ /g' | cut -sd" " -f3 | cut -d"/" -f1 | head -n 1)
     remote_ip=$(eval $ssh_cmd -- "ip -br -oneline -4 addr | grep UP | sed -r 's/ +/ /g' | cut -sd' ' -f3 | cut -d'/' -f1 | head -n 1" 2>/dev/null)
-    local_tun_ip="192.168.167.165/30"
-    remote_tun_ip="192.168.167.166/30"
-    local_route="$(echo $local_tun_ip | cut -d'/' -f1)/32"
-    remote_route="$(echo $remote_tun_ip | cut -d'/' -f1)/32"
-    table_id=$(echo $remote_route | cut -d'/' -f1 | cut -d'.' -f4)
+    local_tun_sub="192.168.167.165/30"
+    remote_tun_sub="192.168.167.166/30"
+    local_tun_ip=$(echo $local_tun_sub | cut -d'/' -f1)
+    remote_tun_ip=$(echo $remote_tun_sub | cut -d'/' -f1)
+    local_route="$local_tun_ip/32"
+    remote_route="$remote_tun_ip/32"
+    table_id=$(echo $remote_tun_ip | cut -d'.' -f4)
     routing_mark="0xe2f2"
     eval $ssh_cmd /bin/bash -- << EOF
         sudo ip link add name $remote_link_name type ipip local any remote $local_ip;
         sudo ip link set $remote_link_name up;
-        sudo ip addr add $remote_tun_ip dev $remote_link_name;
+        sudo ip addr add $remote_tun_sub dev $remote_link_name;
         sudo ip route add $local_route dev $remote_link_name proto static metric 50;
 EOF
     sudo ip link add name $local_link_name type ipip local any remote $remote_ip;
     sudo ip link set $local_link_name up;
-    sudo ip addr add $local_tun_ip dev $local_link_name;
+    sudo ip addr add $local_tun_sub dev $local_link_name;
     sudo ip route add $remote_route dev $local_link_name proto static metric 50;
 
     # setup routing table
-    sudo ip route add to 0.0.0.0 dev $local_link_name table $table_id;
+    sudo ip route add default via $remote_tun_ip dev $local_link_name proto static src $local_tun_ip metric 50 table $table_id;
     sudo ip rule add from all fwmark $routing_mark table $table_id;
     sudo nft -f $curdir/iptun.client.nft;
 
@@ -46,7 +48,7 @@ EOF
     echo "       Name:         $local_name"
     echo "       Link name:    $local_link_name"
     echo "       Public IP:    $local_ip"
-    echo "       Tunnel IP:    $local_tun_ip"
+    echo "       Tunnel IP:    $local_tun_sub"
     echo "       Route:        $local_route"
     echo "       Table ID:     $table_id"
     echo "       Routing mark: $routing_mark"
@@ -55,7 +57,7 @@ EOF
     echo "       Name:         $remote_name"
     echo "       Link name:    $remote_link_name"
     echo "       Public IP:    $remote_ip"
-    echo "       Tunnel IP:    $remote_tun_ip"
+    echo "       Tunnel IP:    $remote_tun_sub"
     echo "       Route:        $remote_route"
     echo "       SSH command:  $ssh_cmd"
 }
@@ -66,10 +68,12 @@ function disable_tunnel {
     remote_name=$(eval $ssh_cmd -- uname -n 2>/dev/null)
     remote_link_name="ip2${local_name}"
     local_link_name="ip2${remote_name}"
-    local_tun_ip="192.168.167.165/30"
-    remote_tun_ip="192.168.167.166/30"
-    local_route="$(echo $local_tun_ip | cut -d'/' -f1)/32"
-    remote_route="$(echo $remote_tun_ip | cut -d'/' -f1)/32"
+    local_tun_sub="192.168.167.165/30"
+    remote_tun_sub="192.168.167.166/30"
+    local_tun_ip=$(echo $local_tun_sub | cut -d'/' -f1)
+    remote_tun_ip=$(echo $remote_tun_sub | cut -d'/' -f1)
+    local_route="$local_tun_ip/32"
+    remote_route="$remote_tun_ip/32"
     table_id=$(echo $remote_route | cut -d'/' -f1 | cut -d'.' -f4)
     routing_mark="0xe2f2"
     eval $ssh_cmd /bin/bash -- << EOF
@@ -78,7 +82,7 @@ function disable_tunnel {
         sudo ip link delete $remote_link_name;
 EOF
     sudo nft delete table inet iptun;
-    sudo ip route del to 0.0.0.0 dev $local_link_name table $table_id;
+    sudo ip route delete default via $remote_tun_ip dev $local_link_name proto static src $local_tun_ip metric 50 table $table_id;
     sudo ip rule del from all fwmark $routing_mark table $table_id;
     sudo ip route delete $remote_route dev $local_link_name proto static metric 50;
     sudo ip link set $local_link_name down;
@@ -87,7 +91,7 @@ EOF
     echo "Local: "
     echo "       Name:         $local_name"
     echo "       Link name:    $local_link_name"
-    echo "       Tunnel IP:    $local_tun_ip"
+    echo "       Tunnel IP:    $local_tun_sub"
     echo "       Route:        $local_route"
     echo "       Table ID:     $table_id"
     echo "       Routing mark: $routing_mark"
@@ -95,7 +99,7 @@ EOF
     echo "Remote: "
     echo "       Name:         $remote_name"
     echo "       Link name:    $remote_link_name"
-    echo "       Tunnel IP:    $remote_tun_ip"
+    echo "       Tunnel IP:    $remote_tun_sub"
     echo "       Route:        $remote_route"
     echo "       SSH command:  $ssh_cmd"
 }
