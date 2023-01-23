@@ -22,6 +22,7 @@ define public_ipv4    = {
 
 table inet iptun {
     counter iptun.marked { comment "All packets that marked to be routed to the tunnel" }
+    counter iptun.nat { comment "NATed packets" }
 
     chain marker {
         meta mark $skip_vpn_mark accept
@@ -47,6 +48,6 @@ table inet iptun {
     chain postrouting {
         type nat hook postrouting priority srcnat
 
-        meta mark $iptun_mark masquerade comment "nat marked packets"
+        meta mark $iptun_mark counter name iptun.nat masquerade comment "nat marked packets"
     }
 }
