@@ -1,5 +1,6 @@
 #!/bin/bash
 
+curdir=$(dirname "$0")
 server=""
 timeout=""
 
@@ -23,6 +24,8 @@ function enable_tunnel {
     remote_tun_ip="192.168.167.166/30"
     local_route="$(echo $local_tun_ip | cut -d'/' -f1)/32"
     remote_route="$(echo $remote_tun_ip | cut -d'/' -f1)/32"
+    table_id=$(echo $remote_route | cut -d'/' -f1 | cut -d'.' -f4)
+    routing_mark="0xe2f2"
     eval $ssh_cmd /bin/bash -- << EOF
         sudo ip link add name $remote_link_name type ipip local any remote $local_ip;
         sudo ip link set $remote_link_name up;
@@ -34,12 +37,19 @@ EOF
     sudo ip addr add $local_tun_ip dev $local_link_name;
     sudo ip route add $remote_route dev $local_link_name proto static metric 50;
 
+    # setup routing table
+    sudo ip route add to 0.0.0.0 dev $local_link_name table $table_id;
+    sudo ip rule add from all fwmark $routing_mark table $table_id;
+    sudo nft -f $curdir/iptun.client.nft;
+
     echo "Local: "
     echo "       Name:         $local_name"
     echo "       Link name:    $local_link_name"
     echo "       Public IP:    $local_ip"
     echo "       Tunnel IP:    $local_tun_ip"
     echo "       Route:        $local_route"
+    echo "       Table ID:     $table_id"
+    echo "       Routing mark: $routing_mark"
     echo
     echo "Remote: "
     echo "       Name:         $remote_name"
@@ -60,11 +70,16 @@ function disable_tunnel {
     remote_tun_ip="192.168.167.166/30"
     local_route="$(echo $local_tun_ip | cut -d'/' -f1)/32"
     remote_route="$(echo $remote_tun_ip | cut -d'/' -f1)/32"
+    table_id=$(echo $remote_route | cut -d'/' -f1 | cut -d'.' -f4)
+    routing_mark="0xe2f2"
     eval $ssh_cmd /bin/bash -- << EOF
         sudo ip route delete $local_route dev $remote_link_name proto static metric 50;
         sudo ip link set $remote_link_name down;
         sudo ip link delete $remote_link_name;
 EOF
+    sudo nft delete table inet iptun;
+    sudo ip route del to 0.0.0.0 dev $local_link_name table $table_id;
+    sudo ip rule del from all fwmark $routing_mark table $table_id;
     sudo ip route delete $remote_route dev $local_link_name proto static metric 50;
     sudo ip link set $local_link_name down;
     sudo ip link delete $local_link_name;
@@ -74,6 +89,8 @@ EOF
     echo "       Link name:    $local_link_name"
     echo "       Tunnel IP:    $local_tun_ip"
     echo "       Route:        $local_route"
+    echo "       Table ID:     $table_id"
+    echo "       Routing mark: $routing_mark"
     echo
     echo "Remote: "
     echo "       Name:         $remote_name"
