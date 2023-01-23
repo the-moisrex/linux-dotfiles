@@ -6,10 +6,18 @@ timeout=""
 
 function print_help {
     name="iptun"
-    echo "Usage: $name help                     # show this help"
-    echo "       $name enable  remote-machine   # enable tunnel"
-    echo "       $name disable remote-machine   # disable tunnel"
-    echo "       $name flash N remote-machine   # establish a tunnel for N mins"
+    echo "Description:"
+    echo "       This script will let you create a tunnel between two systems,"
+    echo "       and route (almost) all the traffic here to that macine."
+    echo "       This can be useful when two machine are separated by a router,"
+    echo "       and you want to route your traffic to that machine so it can"
+    echo "       re-route them through a VPN for example."
+    echo
+    echo "Usage: $name help                      # show this help"
+    echo "       $name enable   remote-machine   # enable tunnel"
+    echo "       $name disable  remote-machine   # disable tunnel"
+    echo "       $name reenable remote-machine   # re-enable tunnel"
+    echo "       $name flash N remote-machine    # establish a tunnel for N mins"
 }
 
 function enable_tunnel {
@@ -29,6 +37,7 @@ function enable_tunnel {
     table_id=$(echo $remote_tun_ip | cut -d'.' -f4)
     routing_mark="0xe2f2"
     eval $ssh_cmd /bin/bash -- << EOF
+        sudo sysctl net/ipv4/ip_forward=1;
         sudo ip link add name $remote_link_name type ipip local any remote $local_ip;
         sudo ip link set $remote_link_name up;
         sudo ip addr add $remote_tun_sub dev $remote_link_name;
@@ -117,6 +126,12 @@ case "$1" in
     disable)
         server="$2"
         disable_tunnel
+        ;;
+
+    reenable)
+        server="$2"
+        disable_tunnel
+        enable_tunnel
         ;;
 
     flash)
