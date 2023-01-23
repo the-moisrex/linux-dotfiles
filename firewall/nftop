@@ -47,6 +47,8 @@ class PerSecond:
             else:
                 break
         time_period = new_time - old_time
+        if time_period is 0:
+            return 0
         return ((new_bytes_count - bytes_count) * 1000) / time_period
 
     def clear(self):
