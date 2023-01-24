@@ -119,7 +119,7 @@ tmux send-keys -t ${window}.${side} "cd ${tmpdir}" C-m
 
 # copy files if the directory does not exists
 if [ `ls -A ${tmpdir} | wc -m` == "0" ]; then
-	cp -nr $template_dir/* ${tmpdir}/.
+	cp -nTr "$template_dir" "${tmpdir}"
 fi;
 
 # write config files:
@@ -152,7 +152,7 @@ echo "Code directory: ${tmpdir}"
 if [ -f "${template_dir}/.start" ]; then
   main_file=$(cat "${template_dir}/.start")
   if [ -f "${template_dir}/.watch" ]; then
-    tmux send-keys -t ${window}.${side} "/bin/bash ${template_dir}/.watch" C-m
+    tmux send-keys -t ${window}.${side} "/bin/bash ${tmpdir}/.watch" C-m
   fi
   open_editor "$main_file" "$main_file";
 elif [[ "$template" == asm* ]]; then # make
