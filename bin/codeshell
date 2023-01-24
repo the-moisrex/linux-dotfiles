@@ -149,7 +149,13 @@ echo "Template directory: ${template_dir}"
 echo "Code directory: ${tmpdir}"
 
 # run build commands
-if [[ "$template" == asm* ]]; then # make
+if [ -f "${template_dir}/.start" ]; then
+  main_file=$(cat "${template_dir}/.start")
+  if [ -f "${template_dir}/.watch" ]; then
+    tmux send-keys -t ${window}.${side} "/bin/bash ${template_dir}/.watch" C-m
+  fi
+  open_editor "$main_file" "$main_file";
+elif [[ "$template" == asm* ]]; then # make
 	tmux send-keys -t ${window}.${side} "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
 	open_editor "main.asm" "main.asm";
 elif [ -f ${template_dir}/main.lua ]; then # make
