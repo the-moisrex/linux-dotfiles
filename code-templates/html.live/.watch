@@ -1,0 +1,14 @@
+#!/bin/bash
+
+curdir=$(dirname "$0")
+
+page_title=$(basename "${curdir}")
+file="$curdir/index.html"
+sed -i "s/\{PageTitle\}/$page_title/gi" "$file"
+
+if ! command -v live-server; then
+    echo "Please install `live-server` like this:"
+    echo " $ sudo npm install -g live-server"
+else
+    live-server
+fi
