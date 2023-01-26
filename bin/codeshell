@@ -39,7 +39,7 @@ tmpdir=""
 template=""
 buildsys="Ninja"
 codeshells_dir="$HOME/codeshells"
-template_root="$(dirname $0)/../code-templates"
+template_root=$(realpath "$(dirname $0)/../code-templates")
 
 function move_and_restart {
     name="$1"
@@ -112,6 +112,30 @@ for i in "$@"; do
         echo "                 -n=*|--name=*       the name of the project"
         echo "                 -t=*|--template=*   the template to use"
         echo "                 -g=*|-G=*           the build system to use in cmake"
+        echo
+        echo
+        echo "Flow of usage:"
+        echo "   Imagine you wanna try something real quick; you type:"
+        echo "     $ codeshell c.linux"
+        echo
+        echo "   Now you do all your testings..."
+        echo "   Now you liked the tests and want to save it, you type:"
+        echo "     $ codeshell save"
+        echo
+        echo "   Or maybe the tests weren't good, so you want to remove it:"
+        echo "     $ codeshell trash"
+        echo
+        echo "   Or you if you know the name of your tests already from the get go you type:"
+        echo "     $ codeshell c.linux my.pretty.test"
+        echo "   Or:"
+        echo "     $ codeshell my.pretty.test c.linux"
+        echo "   as long as 'c.linux' is a known template in the '$template_root' directory."
+        echo
+        echo "   If you're using 'trash' instead of 'remove' then you can use trash-cli to manage them:"
+        echo "     $ trash-list"
+        echo "     $ trash-rm       /tmp/..."
+        echo "     $ trash-restore  /tmp/..."
+        echo "     $ trash-put      /tmp/..."
         exit;
         ;;
 
