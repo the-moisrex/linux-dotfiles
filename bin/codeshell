@@ -1,5 +1,7 @@
 #!/usr/bin/bash
 
+curfile="$0"
+curdir=$(realpath "$(dirname $curfile)");
 
 detect_distro() {
     if [[ "$OSTYPE" == linux-android* ]]; then
@@ -36,7 +38,57 @@ fi
 tmpdir=""
 template=""
 buildsys="Ninja"
+codeshells_dir="$HOME/codeshells"
 template_root="$(dirname $0)/../code-templates"
+
+function move_and_restart {
+    name="$1"
+    if [ -d "$codeshells_dir/$name" ]; then
+        echo "The directory ($codeshells_dir/$name) already exists; use another name.";
+        exit 1;
+    fi
+    echo "Creating  $codeshells_dir/$name";
+    mkdir -p "$codeshells_dir/$name";
+    echo "Movint to $codeshells_dir/$name";
+    this_dir=$(realpath .);
+    mv -T "$this_dir" "$codeshells_dir/$name";
+    tmux kill-pane -a; # kill all the panes
+    bash "$curfile" "$name"; # re-run the codeshell
+}
+
+function remove_codeshell {
+    cmd="$1"
+    name="$2"
+    if [ "$cmd" = "trash" ]; then
+        if command -v trash-put >/dev/null; then
+            cmd="trash-put";
+        else
+            echo "Trash is not supported; please install trash-cli package.";
+            echo "  $ sudo pacman -Syu trash-cli";
+            exit 1;
+        fi
+    elif [ "$cmd" = "remove" ]; then
+        cmd="rm -rf";
+    else
+        echo "Unknown command $cmd";
+        exit 1;
+    fi
+    if [ -z "$name" -o "$name" = "." ]; then
+        directory=$(realpath .);
+        eval $cmd "$directory";
+        echo "Removed/Trashed $directory";
+        tmux kill-pane -a; # kill all the panes
+        return;
+    elif [ -d "$codeshells_dir/$name" ]; then
+        directory="$codeshells_dir/$name";
+        eval $cmd "$directory";
+        echo "Removed/Trashed $directory";
+        tmux kill-pane -a; # kill all the pane
+    else
+        echo "The name $name doesn't name a codeshell directory."
+        exit 1;
+    fi
+}
 
 for i in "$@"; do
   case $i in
@@ -50,16 +102,39 @@ for i in "$@"; do
         shift
         ;;
 
-      -h|--help)
+      -h|--help|help)
         echo "Usage: codeshell [template=simple] [name=...]"
-        echo "-n=*|--name=* \t\t the name of the project"
-        echo "-t=*|--template \t\t the template to use"
-        echo "-g=*|-G=* \t\t the build system to use in cmake"
+        echo "       codeshell help"
+        echo "       codeshell save   NAME         # Save the temp codeshell you're in"
+        echo "       codeshell remove [NAME]       # Remove the codeshell you're in or the codeshell you named"
+        echo "       codeshell trash  [NAME]       # Move to trash the codeshell you're in or the codeshell you named"
+        echo
+        echo "                 -n=*|--name=*       the name of the project"
+        echo "                 -t=*|--template=*   the template to use"
+        echo "                 -g=*|-G=*           the build system to use in cmake"
         exit;
         ;;
 
       -g=*|-G=*)
         buildsys="${i#*=}"
+        ;;
+
+    save)
+        shift;
+        move_and_restart $1;
+        exit;
+        ;;
+
+    remove)
+        shift;
+        remove_codeshell remove $1;
+        exit;
+        ;;
+        
+    trash)
+        shift;
+        remove_codeshell trash $1;
+        exit;
         ;;
 
       *)
@@ -74,7 +149,7 @@ for i in "$@"; do
 done
 
 if [ ! -z "$dir" ]; then
-  tmpdir="$HOME/codeshells/$dir"
+  tmpdir="$codeshells_dir/$dir"
   mkdir -p "$tmpdir"
 fi
 
