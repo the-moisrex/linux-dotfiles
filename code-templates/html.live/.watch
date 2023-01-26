@@ -4,7 +4,7 @@ curdir=$(dirname "$0")
 
 page_title=$(basename "${curdir}")
 file="$curdir/index.html"
-sed -i "s/\{PageTitle\}/$page_title/gi" "$file"
+replace "{PageTitle}" "$page_title" -- "$file"
 
 if ! command -v live-server; then
     echo "Please install `live-server` like this:"
