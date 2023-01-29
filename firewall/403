@@ -54,24 +54,24 @@ function print_help {
 
 function is_403 {
     domain="$1"
-    res=$(dig @10.202.10.102 +nocmd +noall +answer +timeout=1 "$domain");
+    res=$(dig @$dns1 +noidnin +noidnout +nocmd +noall +answer +timeout=3 "$domain");
     if [[ $? -eq 0 ]]; then
         if [ -z "$res" ]; then
-            return 0;
+            return 1;
         fi
         if echo "$res" | grep -sq "10.10.34.35"; then
-            return 0;
+            return 2;
         fi
-        if echo "$res" | grep -sq "10\\.10\\.34\\.36"; then
-            return 0;
+        if echo "$res" | grep -sq "10.10.34.36"; then
+            return 2;
         fi
         if echo "$res" | grep -sqE "10\\.[0-9]{,3}\\.[0-9]{,3}\\.[0-9]{,3}"; then # check if it's a 10.0.0.0/8
-            return 1;
-        else
             return 0;
+        else
+            return 3;
         fi
     else
-        return 0;
+        return 4;
     fi
 }
 
@@ -82,15 +82,26 @@ function recheck_domain {
         return;
     fi
     is_403 "$domain";
-    if [[ $? == 1 ]]; then
+    code=$?
+    if [[ $code -eq 0 ]]; then
         echo "403 $domain";
         grep -sv "$domain" "$forbidden_domains_file" | sponge "$forbidden_domains_file"
         echo "$domain" >> "$forbidden_domains_file";
+    elif [[ $code -eq 2 ]]; then
+        echo "201 $domain Blobked by Gov."
+    elif [[ $code -eq 3 ]]; then
+        echo "200 $domain Normal domain."
+    elif [[ $code -eq 4 ]]; then
+        echo "500 $domain Network issue."
+        return;
+    elif [[ $code -eq 1 ]]; then
+        echo "404 $domain Not found."
     else
         echo "200 $domain";
     fi
-    grep -sv "$domain" "$checked_domains_file" | sponge "$checked_domains_file"
-    echo "$domain" >> "$checked_domains_file";
+    if ! grep -sq "$domain" "$checked_domains_file"; then
+        echo "$domain" >> "$checked_domains_file"
+    fi
 }
 
 function check_domain {
