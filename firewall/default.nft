@@ -215,8 +215,6 @@ table inet mangle {
     counter skip.ignored { comment "IPs of domain names that got to skip the VPN" }
     counter skip.geoips4 { comment "IPs of countries" }
     counter skip.multicast { comment "Multicast IPs that marked to skip VPN" }
-    counter skip.prerouting { comment "Input from WAN (not local network)" }
-    counter skip.output { comment "Output from our own system (doesn't include forwards)" }
 
     # Country IPs go here
     set geoips4 {
@@ -250,6 +248,7 @@ table inet mangle {
 
     chain skipper {
         # Here we define the packets that should be skip the VPN
+        ip daddr $local_network accept
         ip daddr @skipips counter name skip.manuals goto marker
         ip daddr @ignored counter name skip.ignored goto marker
         ip daddr @geoips4 counter name skip.geoips4 goto marker
@@ -265,15 +264,14 @@ table inet mangle {
         type filter hook prerouting priority raw
         policy accept
 
-        ip daddr $local_network accept
-        counter name skip.prerouting jump skipper
+        jump skipper
     }
 
     chain output {
         type route hook output priority raw
         policy accept;
-        ip daddr $local_network accept
-        counter name skip.output jump skipper
+
+        jump skipper
     }
 }
 
