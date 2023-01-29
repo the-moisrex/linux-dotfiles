@@ -248,7 +248,7 @@ table inet mangle {
 
     chain skipper {
         # Here we define the packets that should be skip the VPN
-        ip daddr $local_network accept
+        ip daddr $local_network return
         ip daddr @skipips counter name skip.manuals goto marker
         ip daddr @ignored counter name skip.ignored goto marker
         ip daddr @geoips4 counter name skip.geoips4 goto marker
