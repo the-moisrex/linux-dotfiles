@@ -368,6 +368,8 @@ function run_tor_socks_nftables {
     local _user="$USER"
     local termux="$4"
 
+    accepted_fwmark="0xe5ff"
+
     if [ -z "$_user" ]; then
 	    _user=$(whoami)
     fi
@@ -388,25 +390,31 @@ function run_tor_socks_nftables {
 
     local nft_config="
 table inet tor.nat {
-    counter tor.nat { comment \"NAT Ports\" }
+    counter tor.new { comment \"NAT Ports\" }
+    counter tor.established { comment \"Established tor connections\" }
 
     map tor.ports {
         typeof numgen inc mod ${instances} : tcp dport;
         counter
     }
 
+    set tor.ports.all {
+        typeof tcp dport;
+    }
+
     chain port.natter {
-        ct state new tcp dport ${proxy_port} counter name tor.nat ip protocol tcp dnat to 127.0.0.1 : numgen inc mod ${instances} offset 1 map @tor.ports;
+        ct state new tcp dport ${proxy_port} counter name tor.new ip protocol tcp dnat to : numgen inc mod ${instances} offset 1 map @tor.ports;
     }
 
     chain input {
-        type filter hook input priority filter
+        type filter hook input priority -25 # filter is 0, but we want to this to happen before other input chains
 
+        ct state new tcp dport ${proxy_port} mark set $accepted_fwmark accept;
         ct state {
-            new,
             established,
-            related
-        } tcp dport ${proxy_port} accept;
+            related,
+            new
+        } tcp dport @tor.ports.all counter name tor.established mark set $accepted_fwmark accept;
     }
 
     chain output {
@@ -445,6 +453,7 @@ table inet tor.nat {
         server_ports[$i]=$tor_port
         run_tor "$_nsn" $tor_port $tor_control_port "$root_dir" "$termux"
         nft add element inet tor.nat tor.ports { $i : $tor_port };
+        nft add element inet tor.nat tor.ports.all { $tor_port };
     done
 
 }
