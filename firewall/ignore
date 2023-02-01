@@ -2,13 +2,13 @@
 
 
 # Add a domain to the list of domains that don't need to go through VPN
-ignored_domains_file="$HOME/.cache/firewall/ignored-domains.txt"
+ignored_domains_file="$HOME/.config/firewall/ignored-domains.txt"
 
 
 # if you decide to change this directory, change it in the "clear-coredump", and in "net.routes.skip" commands as well
-countries_repo="$HOME/.cache/firewall/country-ips"
+countries_repo="$HOME/.config/firewall/country-ips"
 
-nft_include_dir="$HOME/.cache/firewall/nft/"
+nft_include_dir="$HOME/.config/firewall/nft"
 mkdir -p "$nft_include_dir";
 
 dnsmasq_conf_dir="/etc/dnsmasq.d"

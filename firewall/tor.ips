@@ -1,7 +1,5 @@
 #!/bin/bash
 
 for i in $(seq 1 20); do 
-    printf "Req %2d: " "$i";
-    curl -l --location --proxy socks5://127.0.0.1:9550 http://ipinfo.io/ip;
-    echo
+    curl --silent -l --location --proxy socks5://127.0.0.1:9550 http://ipinfo.io/ip | xargs echo request $i &
 done 
