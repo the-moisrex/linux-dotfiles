@@ -53,6 +53,10 @@ EOF
     sudo ip rule add from all fwmark $routing_mark table $table_id;
     sudo nft -f $curdir/iptun.client.nft;
 
+    # Ping to enable the connection
+    ping -c 3 $remote_tun_ip;
+    eval $ssh_cmd -- ping -c 3 $local_tun_ip;
+
     echo "Local: "
     echo "       Name:         $local_name"
     echo "       Link name:    $local_link_name"
