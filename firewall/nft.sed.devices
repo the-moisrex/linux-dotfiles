@@ -6,10 +6,10 @@ if [ ! "$nft_file" ]; then
     echo "nft file $nft_file doesn't exists.";
     exit 1;
 fi
-
+gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
 devices=$(ip -br link | cut -f1 -d" " | grep -v lo | grep -E "(enp|wlp).*" | sed -e 'H;${x;s/\n/, /g;s/^,//;p;};d')
 
-content=$(cat "$nft_file" | sed "s/\$iface_devices/{$devices }/")
+content=$(cat "$nft_file" | sed "s/\$iface_devices/{$devices }/" | sed "s/\$gateway_router/$gateway_router/")
 echo "Replaced \$iface_devices with {$devices } in $nft_file";
 
 echo -e "$content" | nft -f -

@@ -287,7 +287,7 @@ table inet nat {
         policy accept
 
         # Hijack the DNS Queries
-        ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to 192.168.88.253 comment "Hijack DNS"
+        ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to $gateway_router comment "Hijack DNS"
     }
 
     chain input {
