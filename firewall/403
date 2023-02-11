@@ -2,6 +2,7 @@
 
 checked_domains_file="$HOME/.config/firewall/403-checked-domains.txt"
 forbidden_domains_file="$HOME/.config/firewall/403-forbidden-domains.txt"
+excluded_domains_file="$HOME/.config/firewall/403-excluded-domains.txt"
 
 dnsmasq_config_file="/etc/dnsmasq.d/403.conf"
 
@@ -33,14 +34,17 @@ function print_help {
     echo "Usage:"
     echo "403 help"
     echo "    start"
-    echo "    list                  # Forbidden"
+    echo "    list forbidden        # Forbidden"
     echo "    list checked          # Checked domains"
+    echo "    list excluded         # Excluded domains"
     echo "    follow                # Forbidden"
     echo "    follow checked        # Checked domains"
+    echo "    follow excluded       # Excluded domains"
     echo "    dnsmasq update        # Update dnsmasq configs at $dnsmasq_config_file"
     echo "    dnsmasq reset         # Reset dnsmasq configs at $dnsmasq_config_file"
     echo "    add [domain]          # Add a domain"
     echo "    remove [domain]       # Remove a domain"
+    echo "    exclude [domain]      # Exclude a domain from being re-checked + remove it"
     echo "    clear-checked         # Clear checked list of domains"
     echo "    clear-forbidden       # Clear forbidden list of domain"
     echo "    check [domain]        # Check the domain"
@@ -73,6 +77,10 @@ function is_403 {
 
 function recheck_domain {
     domain="$1"
+    if grep -sq "$domain" "$excluded_domains_file"; then
+        echo "400 $domain is marked to be excluded."
+        return;
+    fi
     is_403 "$domain";
     if [[ $? == 1 ]]; then
         echo "403 $domain";
@@ -116,6 +124,10 @@ function list_checked_domains {
     cat "$checked_domains_file";
 }
 
+function list_excluded_domains {
+    cat "$excluded_domains_file";
+}
+
 function follow_forbidden_domains {
     tail -f "$forbidden_domains_file";
 }
@@ -124,27 +136,42 @@ function follow_checked_domains {
     tail -f "$checked_domains_file";
 }
 
+function follow_excluded_domains {
+    tail -f "$excluded_domains_file";
+}
+
 function add_domain {
     domain="$1";
     if ! grep -sq "$domain" "$forbidden_domains_file"; then
         echo "$domain" >> "$forbidden_domains_file"
     fi
-    grep -sv "$domain" "$checked_domains_file" | sponge "$checked_domains_file"
-    echo "$domain" >> "$checked_domains_file";
+    if ! grep -sq "$domain" "$checked_domains_file"; then
+        echo "$domain" >> "$checked_domains_file"
+    fi
 }
 
 function remove_domain {
     domain="$1";
     grep -sv "$domain" "$forbidden_domains_file" | sponge "$forbidden_domains_file"
     grep -sv "$domain" "$checked_domains_file" | sponge "$checked_domains_file"
-    echo "$domain" >> "$checked_domains_file";
+}
+
+function exclude_domain {
+    domain="$1";
+    remove_domain "$1";
+    grep -sv "$domain" "$excluded_domains_file" | sponge "$excluded_domains_file"
+    echo "$domain" >> "$excluded_domains_file";
 }
 
 function recheck_all_domains {
     domains=$(cat "$checked_domains_file" "$forbidden_domains_file" | sort -u);
+    mv "$checked_domains_file" "$checked_domains_file.old"
+    mv "$forbidden_domains_file" "$forbidden_domains_file.old"
     while read -r domain; do
         recheck_domain "$domain";
     done < <(echo -n "$domains");
+    rm -f "$checked_domains_file.old"
+    rm -f "$forbidden_domains_file.old"
 }
 
 case $1 in
@@ -175,6 +202,9 @@ case $1 in
             checked)
                 list_checked_domains;
                 ;;
+            excluded)
+                list_excluded_domains;
+                ;;
             *)
                 list_forbidden_domains;
                 ;;
@@ -188,6 +218,9 @@ case $1 in
             checked)
                 follow_checked_domains;
                 ;;
+            excluded)
+                follow_excluded_domains;
+                ;;
             *)
                 follow_forbidden_domains;
                 ;;
@@ -198,6 +231,9 @@ case $1 in
         ;;
     remove)
         remove_domain "$2";
+        ;;
+    exclude)
+        exclude_domain "$2";
         ;;
     clear-checked)
         rm -f "$checked_domains_file";
