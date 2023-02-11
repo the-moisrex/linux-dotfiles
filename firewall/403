@@ -1,0 +1,205 @@
+#!/bin/bash
+
+checked_domains_file="$HOME/.config/firewall/403-checked-domains.txt"
+forbidden_domains_file="$HOME/.config/firewall/403-forbidden-domains.txt"
+
+dnsmasq_config_file="/etc/dnsmasq.d/403.conf"
+
+dns1="10.202.10.202"
+dns2="10.202.10.102"
+
+if ! command -v dig >/dev/null; then
+    echo "The command 'dig' is not installed.";
+    exit 1;
+fi
+
+if ! command -v tshark >/dev/null; then
+    echo "The command 'tshark' is not installed; install Wireshark to fix this.";
+    exit 1;
+fi
+
+if ! command -v sponge >/dev/null; then
+    echo "The command 'sponge' is not installed; it should be included in the 'moreutils' package.";
+    exit 1;
+fi
+
+function print_help {
+    echo "This script will let you keep a list of domains that are forbidden to use in your reigon, and"
+    echo " lets you use the specified DNS Server to be used for those specific domains."
+    echo
+    echo "Usage:"
+    echo "403 help"
+    echo "    start"
+    echo "    list                  # Forbidden"
+    echo "    list checked          # Checked domains"
+    echo "    follow                # Forbidden"
+    echo "    follow checked        # Checked domains"
+    echo "    dnsmasq update        # Update dnsmasq configs at $dnsmasq_config_file"
+    echo "    dnsmasq reset         # Reset dnsmasq configs at $dnsmasq_config_file"
+    echo "    add [domain]          # Add a domain"
+    echo "    remove [domain]       # Remove a domain"
+    echo "    clear-checked         # Clear checked list of domains"
+    echo "    clear-forbidden       # Clear forbidden list of domain"
+    echo "    check [domain]        # Check the domain"
+    echo "    re-check [[domain]]   # Re-Check the domain (or all checked domains)"
+}
+
+
+function is_403 {
+    domain="$1"
+    res=$(dig @10.202.10.102 +nocmd +noall +answer +timeout=1 CNAME "$domain");
+    if [[ $? -eq 0 ]]; then
+        if [ -z "$res" ]; then
+            return 0;
+        fi
+        return 1;
+    else
+        return 0;
+    fi
+}
+
+function recheck_domain {
+    domain="$1"
+    is_403 "$domain";
+    if [[ $? == 1 ]]; then
+        echo "403 $domain";
+        grep -sv "$domain" "$forbidden_domains_file" | sponge "$forbidden_domains_file"
+        echo "$domain" >> "$forbidden_domains_file";
+    else
+        echo "200 $domain";
+    fi
+    grep -sv "$domain" "$checked_domains_file" | sponge "$checked_domains_file"
+    echo "$domain" >> "$checked_domains_file";
+}
+
+function check_domain {
+    domain="$1"
+    if grep -sq "$domain" "$checked_domains_file"; then
+        echo "100 $domain Already Checked."
+    else
+        recheck_domain "$domain"
+    fi
+}
+
+function capture_domains {
+    while read -r domain; do
+        check_domain "$domain";
+    done < <(tshark -i any -n -f "port 53 and !(host $dns1) and !(host $dns2)" -Y 'dns.qry.name or dns.flags.response eq 0' -T fields -e dns.qry.name -l 2>/dev/null)
+}
+
+function update_dnsmasq_configs {
+    sudo rm -f "$dnsmasq_config_file";
+    while read -r domain; do
+        echo "server=/$domain/$dns1" | sudo tee -a "$dnsmasq_config_file";
+    done < <(cat "$forbidden_domains_file");
+    sudo systemctl restart dnsmasq.service;
+}
+
+function list_forbidden_domains {
+    cat "$forbidden_domains_file";
+}
+
+function list_checked_domains {
+    cat "$checked_domains_file";
+}
+
+function follow_forbidden_domains {
+    tail -f "$forbidden_domains_file";
+}
+
+function follow_checked_domains {
+    tail -f "$checked_domains_file";
+}
+
+function add_domain {
+    domain="$1";
+    if ! grep -sq "$domain" "$forbidden_domains_file"; then
+        echo "$domain" >> "$forbidden_domains_file"
+    fi
+    grep -sv "$domain" "$checked_domains_file" | sponge "$checked_domains_file"
+    echo "$domain" >> "$checked_domains_file";
+}
+
+function remove_domain {
+    domain="$1";
+    grep -sv "$domain" "$forbidden_domains_file" | sponge "$forbidden_domains_file"
+    grep -sv "$domain" "$checked_domains_file" | sponge "$checked_domains_file"
+    echo "$domain" >> "$checked_domains_file";
+}
+
+function recheck_all_domains {
+    domains=$(cat "$checked_domains_file");
+    while read -r domain; do
+        recheck_domain "$domain";
+    done < <(echo -n "$domains");
+}
+
+case $1 in
+    start)
+        capture_domains;
+        ;;
+    help)
+        print_help;
+        ;;
+    dnsmasq)
+        case $2 in
+            update)
+                update_dnsmasq_configs;
+                ;;
+            reset)
+                sudo rm -f "$dnsmasq_config_file";
+                ;;
+        esac
+        ;;
+    check)
+        check_domain "$2";
+        ;;
+    list)
+        case $2 in
+            forbidden)
+                list_forbidden_domains;
+                ;;
+            checked)
+                list_checked_domains;
+                ;;
+            *)
+                list_forbidden_domains;
+                ;;
+        esac
+        ;;
+    follow)
+        case $2 in
+            forbidden)
+                follow_forbidden_domains;
+                ;;
+            checked)
+                follow_checked_domains;
+                ;;
+            *)
+                follow_forbidden_domains;
+                ;;
+        esac
+        ;;
+    add)
+        add_domain "$2";
+        ;;
+    remove)
+        remove_domain "$2";
+        ;;
+    clear-checked)
+        rm -f "$checked_domains_file";
+        ;;
+    clear-forbidden)
+        rm -f "$forbidden_domains_file";
+        ;;
+    recheck|re-check)
+        if [ ! -z "$2" ]; then
+            recheck_domain "$2";
+        else
+            recheck_all_domains;
+        fi
+        ;;
+    *)
+        print_help;
+        ;;
+esac
