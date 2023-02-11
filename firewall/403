@@ -27,6 +27,9 @@ function print_help {
     echo "This script will let you keep a list of domains that are forbidden to use in your reigon, and"
     echo " lets you use the specified DNS Server to be used for those specific domains."
     echo
+    echo "Attention: this script doesn't mean we support 'Categorization of the Internet'"
+    echo " (it's okay if you don't know what I'm talking about!)."
+    echo
     echo "Usage:"
     echo "403 help"
     echo "    start"
