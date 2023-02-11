@@ -50,12 +50,22 @@ function print_help {
 
 function is_403 {
     domain="$1"
-    res=$(dig @10.202.10.102 +nocmd +noall +answer +timeout=1 CNAME "$domain");
+    res=$(dig @10.202.10.102 +nocmd +noall +answer +timeout=1 "$domain");
     if [[ $? -eq 0 ]]; then
         if [ -z "$res" ]; then
             return 0;
         fi
-        return 1;
+        if echo "$res" | grep -sq "10.10.34.35"; then
+            return 0;
+        fi
+        if echo "$res" | grep -sq "10\\.10\\.34\\.36"; then
+            return 0;
+        fi
+        if echo "$res" | grep -sqE "10\\.[0-9]{,3}\\.[0-9]{,3}\\.[0-9]{,3}"; then # check if it's a 10.0.0.0/8
+            return 1;
+        else
+            return 0;
+        fi
     else
         return 0;
     fi
@@ -131,7 +141,7 @@ function remove_domain {
 }
 
 function recheck_all_domains {
-    domains=$(cat "$checked_domains_file");
+    domains=$(cat "$checked_domains_file" "$forbidden_domains_file" | sort -u);
     while read -r domain; do
         recheck_domain "$domain";
     done < <(echo -n "$domains");
