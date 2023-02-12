@@ -49,6 +49,8 @@ function print_help {
     echo "    clear-forbidden       # Clear forbidden list of domain"
     echo "    check [domain]        # Check the domain"
     echo "    re-check [[domain]]   # Re-Check the domain (or all checked domains)"
+    echo "    re-check forbidden    # Re-Check the forbidden domain"
+    echo "    re-check checked      # Re-Check the checked domain"
 }
 
 
@@ -64,6 +66,9 @@ function is_403 {
         fi
         if echo "$res" | grep -sq "10.10.34.36"; then
             return 2;
+        fi
+        if ! echo "$res" | grep -sq "CNAME"; then
+            return 5;
         fi
         if echo "$res" | grep -sqE "10\\.[0-9]{,3}\\.[0-9]{,3}\\.[0-9]{,3}"; then # check if it's a 10.0.0.0/8
             return 0;
@@ -96,8 +101,10 @@ function recheck_domain {
         return;
     elif [[ $code -eq 1 ]]; then
         echo "404 $domain Not found."
+    elif [[ $code -eq 5 ]]; then
+        echo "200 $domain No CNAME."
     else
-        echo "200 $domain";
+        echo "200 $domain Uknown!!!";
     fi
     if ! grep -sq "$domain" "$checked_domains_file"; then
         echo "$domain" >> "$checked_domains_file"
@@ -185,6 +192,26 @@ function recheck_all_domains {
     rm -f "$forbidden_domains_file.old"
 }
 
+function recheck_forbidden_domains {
+    domains=$(cat "$forbidden_domains_file" | sort -u);
+    mv "$forbidden_domains_file" "$forbidden_domains_file.old"
+    while read -r domain; do
+        recheck_domain "$domain";
+    done < <(echo -n "$domains");
+    rm -f "$forbidden_domains_file.old"
+}
+
+
+function recheck_checked_domains {
+    domains=$(cat "$checked_domains_file" | sort -u);
+    mv "$checked_domains_file" "$checked_domains_file.old"
+    while read -r domain; do
+        recheck_domain "$domain";
+    done < <(echo -n "$domains");
+    rm -f "$checked_domains_file.old"
+}
+
+
 case $1 in
     start)
         capture_domains;
@@ -253,11 +280,21 @@ case $1 in
         rm -f "$forbidden_domains_file";
         ;;
     recheck|re-check)
-        if [ ! -z "$2" ]; then
-            recheck_domain "$2";
-        else
-            recheck_all_domains;
-        fi
+        case $2 in
+            forbidden)
+                recheck_forbidden_domains;
+                ;;
+            checked)
+                recheck_checked_domains;
+                ;;
+            *)
+                if [ ! -z "$2" ]; then
+                    recheck_domain "$2";
+                else
+                    recheck_all_domains;
+                fi
+                ;;
+        esac
         ;;
     *)
         print_help;
