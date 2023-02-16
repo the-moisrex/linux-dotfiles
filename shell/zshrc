@@ -197,6 +197,9 @@ export HISTSIZE=100000000
 export SAVEHIST=$HISTSIZE
 setopt EXTENDED_HISTORY 
 
+# For npm packages
+# Use `npm set prefix="$HOME/.local"` for setting local npm
+PATH="$HOME/.local/bin:$PATH"
 
 # vim keybindings
 set -o vi
