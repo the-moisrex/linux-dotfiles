@@ -1,0 +1,54 @@
+#!/usr/bin/nft -f
+
+define tproxy_port     = 8999
+define local_network   = { 192.168.88.0/24, 192.168.167.164/30, 127.0.0.0/8, 10.1.1.0/24 }
+define skip_vpn_mark   = 0xe1f1 # NordVPN default vpn mark used in iproute2
+define accepted_fwmark = 0xe5ff # Accepted packets' mark; used for tor load balancing scripts
+define v2ray_fwmark    = 0xfd   # Outbound mark specified in v2ray
+define multicast_ips   = 224.0.0.0-239.255.255.255
+define public_ipv4     = {
+    1.0.0.0-9.255.255.255,
+    11.0.0.0-100.63.255.255,
+    100.128.0.0-126.255.255.255,
+    128.0.0.0-169.253.255.255,
+    169.255.0.0-172.15.255.255,
+    172.32.0.0-191.255.255.255,
+    192.0.1.0/24,
+    192.0.3.0-192.88.98.255,
+    192.88.100.0-192.167.255.255,
+    192.169.0.0-198.17.255.255,
+    198.20.0.0-198.51.99.255,
+    198.51.101.0-203.0.112.255,
+    203.0.114.0-223.255.255.255
+}
+
+table inet v2ray {
+    counter v2ray { comment "Transparent Proxy to v2ray" }
+
+    chain transparentproxy {
+        meta mark $accepted_fwmark return;
+        meta mark $skip_vpn_mark return;
+        ip daddr $local_network return;
+        ip daddr $multicast_ips return;
+        ip daddr != $public_ipv4 return;
+
+        mark set $v2ray_fwmark;
+        meta l4proto tcp tcp dport 80 counter name v2ray redirect to :$tproxy_port;
+        meta l4proto tcp tcp dport 443 counter name v2ray redirect to :$tproxy_port;
+    }
+
+    chain prerouting {
+        type nat hook prerouting priority dstnat;
+        policy accept;
+        
+        jump transparentproxy;
+    }
+
+    chain output {
+        type nat hook output priority filter;
+        policy accept;
+        
+        jump transparentproxy;
+    }
+}
+
