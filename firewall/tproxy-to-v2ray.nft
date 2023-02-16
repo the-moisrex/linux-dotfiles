@@ -32,7 +32,8 @@ table inet v2ray {
         meta l4proto tcp redirect to :$tproxy_port;
     }
 
-    chain transparentproxy {
+    chain tproxyfilter {
+        # filter out what you want to go through the transparent proxy here
         meta mark $accepted_fwmark return;
         meta mark $skip_vpn_mark return;
         ip daddr $local_network return;
@@ -47,14 +48,14 @@ table inet v2ray {
         type nat hook prerouting priority dstnat;
         policy accept;
         
-        jump transparentproxy;
+        jump tproxyfilter;
     }
 
     chain output {
         type nat hook output priority filter;
         policy accept;
         
-        jump transparentproxy;
+        jump tproxyfilter;
     }
 }
 
