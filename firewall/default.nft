@@ -5,7 +5,7 @@
 
 define local_network   = { 192.168.88.0/24, 192.168.167.164/30, 127.0.0.0/8, 10.1.1.0/24 }
 define skip_vpn_mark   = 0xe1f1 # NordVPN default vpn mark used in iproute2
-define accepted_fwmark = 0xe5ff # NordVPN default vpn mark used in iproute2
+define accepted_fwmark = 0xe5ff # Accepted packets' mark; used for tor load balancing scripts
 define multicast_ips   = 224.0.0.0-239.255.255.255
 define public_ipv4     = {
     1.0.0.0-9.255.255.255,
@@ -125,7 +125,9 @@ table inet filter {
             tcp . 9550,          # Tor Load Balancer script (net.tor)
             tcp . 1089,          # v2ray Socks5
             tcp . 8889,          # v2ray HTTP
-            tcp . 8088           # v2ray Browser Forwarder
+            tcp . 8088,          # v2ray Browser Forwarder
+            udp . 8999,          # v2ray tproxying custom port
+            tcp . 8999           # v2ray tproxying custom port
         }
         # udp . 5246,                   CAPsMAN
         # udp . 5247,                   CAPsMAN

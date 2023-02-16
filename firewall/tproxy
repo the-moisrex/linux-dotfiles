@@ -1,0 +1,18 @@
+#!/bin/bash
+
+case $1 in
+    enable)
+        sudo ip rule add fwmark 0xfd table 253
+        sudo ip route add local 0.0.0.0/0 dev lo table 253
+        sudo tproxy-to-v2ray.nft
+        ;;
+    disable)
+        sudo nft delete table inet v2ray;
+        sudo ip route delete local 0.0.0.0/0 dev lo table 253
+        sudo ip rule delete fwmark 0xfd table 253
+        ;;
+    *)
+        echo "tproxy enable # enables the tproxy"
+        echo "tproxy disable # disables the transparent proxy"
+        ;;
+esac;
