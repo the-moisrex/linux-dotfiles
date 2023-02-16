@@ -25,6 +25,13 @@ define public_ipv4     = {
 table inet v2ray {
     counter v2ray { comment "Transparent Proxy to v2ray" }
 
+    chain tproxit {
+        # do the transparent proxying here
+        mark set $v2ray_fwmark;
+        counter name v2ray;
+        meta l4proto tcp redirect to :$tproxy_port;
+    }
+
     chain transparentproxy {
         meta mark $accepted_fwmark return;
         meta mark $skip_vpn_mark return;
@@ -32,9 +39,8 @@ table inet v2ray {
         ip daddr $multicast_ips return;
         ip daddr != $public_ipv4 return;
 
-        mark set $v2ray_fwmark;
-        meta l4proto tcp tcp dport 80 counter name v2ray redirect to :$tproxy_port;
-        meta l4proto tcp tcp dport 443 counter name v2ray redirect to :$tproxy_port;
+        tcp dport 80 goto tproxit;
+        tcp dport 443 goto tproxit;
     }
 
     chain prerouting {
