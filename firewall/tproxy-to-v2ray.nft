@@ -27,7 +27,7 @@ table inet v2ray {
 
     chain tproxit {
         # do the transparent proxying here
-        mark set $v2ray_fwmark;
+        # mark set $v2ray_fwmark;
         counter name v2ray;
         meta l4proto tcp redirect to :$tproxy_port;
     }
