@@ -248,10 +248,12 @@ if [ -d /opt/depot_tools ]; then
 fi
 
 function precmd {
+  if [[ "$distro" != "termux" ]]; then
     if [ "$?" != 0 ]; then
         setsid paplay --volume=65536 /usr/share/sounds/freedesktop/stereo/dialog-error.oga
     else
         setsid paplay --volume=55536 /usr/share/sounds/freedesktop/stereo/dialog-information.oga
     fi;
+  fi;
 }
 
