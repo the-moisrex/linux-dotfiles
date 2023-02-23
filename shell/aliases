@@ -66,9 +66,10 @@ alias .4='cd ../../../../'
 alias .5='cd ../../../../..'
 alias cd..='cd ..'
 
-alias youtube="yt-dlp"
-alias yt8000="yt-dlp --proxy=http://localhost:8000"
-alias yt8090="yt-dlp --proxy=http://localhost:8090"
+alias yt="try yt-dlp --continue --embed-thumbnail --embed-subs --embed-metadata --embed-chapters"
+alias youtube="yt"
+alias yt8000="yt --proxy=http://localhost:8000"
+alias yt8090="yt --proxy=http://localhost:8090"
 
 
 # Useful Alias
