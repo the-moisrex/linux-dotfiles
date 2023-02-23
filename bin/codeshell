@@ -248,7 +248,7 @@ function open_editor() {
   elif [ "$EDITOR" == "code" ]; then
     file="${tmpdir}";
   fi
-  if [ ! -z "$file" || "$file" != "nothing" ]; then
+  if [ "$file" != "nothing" ]; then
     tmux send-keys -t ${window}.${main} "${nonblocking} ${EDITOR} ${file}" C-m
   fi
   if [ $kill_window == 1 ]; then

@@ -82,6 +82,19 @@ function is_403 {
 
 function recheck_domain {
     domain="$1"
+    if [ -z "${domain// }" ]; then
+        echo "405 Empty Domain."
+        return;
+    fi
+
+    if ! echo "$domain" | grep -sqP '(?=^.{4,253}$)(^(?:[a-zA-Z0-9_\-](?:(?:[a-zA-Z0-9\-_]){0,61}[a-zA-Z0-9\-_])?\.)*([a-zA-Z0-9\-_]{2,}|xn--[a-zA-Z0-9_\-][a-zA-Z0-9\-_]*[a-zA-Z0-9\-_])$)'; then
+        echo "405 $domain Not a valid domain";
+        return;
+    fi
+
+    # Original FQDN
+    # '(?=^.{4,253}$)(^(?:[a-zA-Z0-9](?:(?:[a-zA-Z0-9\-]){0,61}[a-zA-Z0-9])?\.)+([a-zA-Z]{2,}|xn--[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])$)'
+
     if grep -sq "$domain" "$excluded_domains_file"; then
         echo "400 $domain is marked to be excluded."
         return;
@@ -111,8 +124,23 @@ function recheck_domain {
     fi
 }
 
+last_domain=""
 function check_domain {
     domain="$1"
+    if [ "$domain" == "$last_domain" ]; then
+        return;
+    fi
+    if [ -z "${domain// }" ]; then
+        # echo "405 Empty Domain."
+        return;
+    fi
+    last_domain="$domain"
+
+    if ! echo "$domain" | grep -sqP '(?=^.{4,253}$)(^(?:[a-zA-Z0-9_\-](?:(?:[a-zA-Z0-9\-_]){0,61}[a-zA-Z0-9\-_])?\.)*([a-zA-Z0-9\-_]{2,}|xn--[a-zA-Z0-9_\-][a-zA-Z0-9\-_]*[a-zA-Z0-9\-_])$)'; then
+        echo "405 $domain Not a valid domain";
+        return;
+    fi
+
     if grep -sq "$domain" "$checked_domains_file"; then
         echo "100 $domain Already Checked."
     else
@@ -123,7 +151,7 @@ function check_domain {
 function capture_domains {
     while read -r domain; do
         check_domain "$domain";
-    done < <(tshark -i any -n -f "port 53 and !(host $dns1) and !(host $dns2)" -Y 'dns.qry.name or dns.flags.response eq 0' -T fields -e dns.qry.name -l 2>/dev/null)
+    done < <(tshark -i any -n -f "port 53 and !(host $dns1) and !(host $dns2)" -Y '(dns.qry.name or dns.flags.response eq 0) and !_ws.malformed' -T fields -e dns.qry.name -l 2>/dev/null)
 }
 
 function update_dnsmasq_configs {
