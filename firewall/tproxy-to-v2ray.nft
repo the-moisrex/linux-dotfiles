@@ -41,8 +41,6 @@ table inet v2ray {
         meta mark $skip_vpn_mark return; # marked to be skiped already
         meta mark $outbound_v2ray_fwmark return; # v2ray itself generated this packet
         meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
-        ip daddr $local_network return;
-        ip daddr $multicast_ips return;
         ip daddr != $public_ipv4 return;
 
         tcp dport { 80, 443 } counter name v2ray redirect to :$tproxy_port;
@@ -61,14 +59,13 @@ table inet v2ray {
         meta mark $skip_vpn_mark return; # marked to be skiped already
         meta mark $outbound_v2ray_fwmark return; # v2ray itself generated this packet
         meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
-        ip daddr $local_network return;
-        ip daddr $multicast_ips return;
         ip daddr != $public_ipv4 return;
 
         tcp dport { 80, 443 } counter name v2ray redirect to :$tproxy_port;
         
         # QUIC Protocol; no t-proxying here; because our source address is already local
-        udp dport { 443 } counter name v2ray mark set $lo_v2ray_fwmark accept;
+        udp dport { 80, 443 } counter name v2ray mark set $lo_v2ray_fwmark accept;
+        # udp dport { 443 } counter name v2ray mark set $lo_v2ray_fwmark redirect to :$tproxy_port;
     }
 }
 
