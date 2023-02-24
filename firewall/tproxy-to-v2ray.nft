@@ -31,66 +31,44 @@ define public_ipv4              = {
 table inet v2ray {
     counter v2ray { comment "Transparent Proxy to v2ray" }
 
-    chain tproxit {
-        # do the transparent proxying here
-        counter name v2ray;
-
-        # we set the packet mark so it can be delivered to localhost without changing the IP
-        meta mark set $lo_v2ray_fwmark;
-        meta l4proto tcp tproxy to :$tproxy_port;
-    }
-
-    chain redirecit {
-        # do the transparent proxying here
-        counter name v2ray;
-
-        # we set the packet mark so it can be delivered to localhost without changing the IP
-        meta mark set $lo_v2ray_fwmark;
-        meta l4proto tcp redirect to :$tproxy_port;
-    }
-
-    chain tproxyfilter {
-        # filter out what you want to go through the transparent proxy here
-        # socket transparent 0 return; # accept only those with "socket transparent 1"
-        meta mark $accepted_fwmark return;
-        meta mark $skip_vpn_mark return; # marked to be skiped already
-        meta mark $outbound_v2ray_fwmark return; # v2ray itself generated this packet
-        meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
-        ip daddr $local_network return;
-        ip daddr $multicast_ips return;
-        ip daddr != $public_ipv4 return;
-
-        tcp dport != { 80, 443 } return;
-        goto tproxit;
-    }
-
-    chain redirectfilter {
-        # filter out what you want to go through the transparent proxy here
-        # socket transparent 0 return; # accept only those with "socket transparent 1"
-        meta mark $accepted_fwmark return;
-        meta mark $skip_vpn_mark return; # marked to be skiped already
-        meta mark $outbound_v2ray_fwmark return; # v2ray itself generated this packet
-        meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
-        ip daddr $local_network return;
-        ip daddr $multicast_ips return;
-        ip daddr != $public_ipv4 return;
-
-        tcp dport != { 80, 443 } return;
-        goto redirecit;
-    }
-
     chain prerouting {
         type nat hook prerouting priority dstnat;
         policy accept;
         
-        jump redirectfilter;
+        # filter out what you want to go through the transparent proxy here
+        # socket transparent 0 return; # accept only those with "socket transparent 1"
+        meta mark $accepted_fwmark return;
+        meta mark $skip_vpn_mark return; # marked to be skiped already
+        meta mark $outbound_v2ray_fwmark return; # v2ray itself generated this packet
+        meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
+        ip daddr $local_network return;
+        ip daddr $multicast_ips return;
+        ip daddr != $public_ipv4 return;
+
+        tcp dport { 80, 443 } counter name v2ray redirect to :$tproxy_port;
+
+        # QUIC protocol; we t-proxy UDP here because we don't want to change the packet
+        udp dport { 443 } counter name v2ray tproxy to :$tproxy_port mark set $lo_v2ray_fwmark accept;
     }
 
     chain output {
         type nat hook output priority filter;
         policy accept;
+
+        # filter out what you want to go through the transparent proxy here
+        # socket transparent 0 return; # accept only those with "socket transparent 1"
+        meta mark $accepted_fwmark return;
+        meta mark $skip_vpn_mark return; # marked to be skiped already
+        meta mark $outbound_v2ray_fwmark return; # v2ray itself generated this packet
+        meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
+        ip daddr $local_network return;
+        ip daddr $multicast_ips return;
+        ip daddr != $public_ipv4 return;
+
+        tcp dport { 80, 443 } counter name v2ray redirect to :$tproxy_port;
         
-        jump redirectfilter;
+        # QUIC Protocol; no t-proxying here; because our source address is already local
+        udp dport { 443 } counter name v2ray mark set $lo_v2ray_fwmark accept;
     }
 }
 
