@@ -58,6 +58,9 @@ function install_redsocks {
     make DISABLE_SHADOWSOCKS=true
     cp ./redsocks2 "$redsocks_bin"
     builtin cd "$cwd"
+    if command -v strip >/dev/null; then 
+        strip "$redsocks_bin";
+    fi
 }
 
 case $1 in
@@ -72,11 +75,12 @@ case $1 in
         enable_proxy
         ;;
     install)
-        install_redsocks
+        install_redsocks $2
         ;;
     *)
         echo "tproxy2socks enable # enables the tproxy"
         echo "tproxy2socks disable # disables the transparent proxy"
         echo "tproxy2socks reload/reset/restart # disables and then enable the transparent proxy"
+        echo "tproxy2socks install [dir] # install redsocks"
         ;;
 esac;
