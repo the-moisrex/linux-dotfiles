@@ -1,0 +1,82 @@
+#!/bin/bash
+
+curdir=$(dirname "$0")
+
+lo_socks_fwmark=0xff
+table_id=153
+redsocks_bin="$HOME/bin/redsocks2"
+redsocks_config="$curdir/tproxy2socks-redsocks.conf"
+
+# rp_filer = https://sysctl-explorer.net/net/ipv4/rp_filter/
+
+function enable_proxy {
+    if [ ! -f "$redsocks_bin" ]; then
+        install_redsocks;
+    fi
+
+    for dir in /proc/sys/net/ipv4/conf/*; do
+        if [ -d "$dir" ]; then
+            dirname=$(basename $dir)
+            sudo sysctl net/ipv4/conf/$dirname/rp_filter=0
+        fi
+    done
+
+    sudo ip rule add fwmark $lo_socks_fwmark table $table_id
+    sudo ip route add local default dev lo table $table_id
+    sudo tproxy2socks.nft
+
+    echo
+    echo "Redsocks executable:  $redsocks_bin"
+    echo "Redsocks Config file: $redsocks_config"
+    echo
+    $redsocks_bin -c "$redsocks_config"
+    disable_proxy;
+}
+
+function disable_proxy {
+    sudo nft delete table inet socks;
+    sudo ip route delete local default dev lo table $table_id
+    sudo ip rule delete fwmark $lo_socks_fwmark table $table_id
+
+
+    for dir in /proc/sys/net/ipv4/conf/*; do
+        if [ -d "$dir" ]; then
+            dirname=$(basename $dir)
+            sudo sysctl net/ipv4/conf/$dirname/rp_filter=2
+        fi
+    done
+}
+
+function install_redsocks {
+    destination="$1"
+    if [ -z "$destination" ]; then
+        destination=$(mktemp -d);
+    fi
+    git clone https://github.com/semigodking/redsocks.git --recursive --depth=1 "$destination"
+    cwd="$PWD"
+    builtin cd "$destination"
+    make DISABLE_SHADOWSOCKS=true
+    cp ./redsocks2 "$redsocks_bin"
+    builtin cd "$cwd"
+}
+
+case $1 in
+    enable)
+        enable_proxy
+        ;;
+    disable)
+        disable_proxy
+        ;;
+    reload|restart|reset)
+        disable_proxy
+        enable_proxy
+        ;;
+    install)
+        install_redsocks
+        ;;
+    *)
+        echo "tproxy2socks enable # enables the tproxy"
+        echo "tproxy2socks disable # disables the transparent proxy"
+        echo "tproxy2socks reload/reset/restart # disables and then enable the transparent proxy"
+        ;;
+esac;
