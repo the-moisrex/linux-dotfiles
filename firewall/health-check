@@ -1,0 +1,29 @@
+#!/bin/bash
+
+file="$1"
+timezone="$TZ"
+site="$2"
+
+curdir=$(dirname "$0")
+source "$curdir/../shell/functions" # for ishttpsup
+
+if [ -z "$timezone" ]; then
+    timezone="Asia/Tehran";
+fi
+
+if [ -z "$file" ]; then
+    file="$HOME/network-status.log"
+fi
+
+while true; do
+
+    if ishttpsup $site; then
+        datetime=$(TZ="$timezone" date)
+        echo $datetime: Network Connected. | tee -a "$file";
+    else
+        datetime=$(TZ="$timezone" date)
+        echo $datetime: Network Not connected. | tee -a "$file";
+    fi;
+
+    sleep 5s;
+done
