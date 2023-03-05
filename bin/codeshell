@@ -149,6 +149,12 @@ for i in "$@"; do
         exit;
         ;;
 
+    ls|list|--list)
+        shift;
+        ls "$codeshells_dir" --color=auto --hyperlink=auto $@
+        exit;
+        ;;
+        
     remove)
         shift;
         remove_codeshell remove $1;
