@@ -4,7 +4,7 @@ curdir=$(dirname "$0")
 source $curdir/net.tor
 
 port=9550
-instances=20
+instances=10
 iptables=true
 netns="-"
 
