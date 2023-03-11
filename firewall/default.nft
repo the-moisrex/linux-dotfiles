@@ -124,6 +124,7 @@ table inet filter {
             tcp . microsoft-ds,  # SMB
             udp . microsoft-ds,  # SMB
             tcp . 9550,          # Tor Load Balancer script (net.tor)
+            tcp . 9555,          # Tor Load Balancer script (tproxy2socks)
             tcp . 1089,          # v2ray Socks5
             tcp . 8889,          # v2ray HTTP
             tcp . 8088,          # v2ray Browser Forwarder
