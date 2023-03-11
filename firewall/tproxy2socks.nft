@@ -39,9 +39,11 @@ table inet socks {
         ip daddr != $public_ipv4 return;
 
         tcp dport { 80, 443 } counter name socks redirect to :$tproxy_port;
+        # tcp dport { 80, 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
 
         # QUIC protocol; we t-proxy UDP here because we don't want to change the packet
-        udp dport { 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
+        # udp dport { 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
+        udp dport { 80, 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
     }
 
     chain output {
