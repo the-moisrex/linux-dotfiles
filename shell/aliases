@@ -109,3 +109,9 @@ alias restart="sudo systemctl restart"
 
 
 alias ip="ip -c"
+
+if command -v firefox-developer-edition >/dev/null; then
+    if ! command -v firefox >/dev/null; then
+        alias firefox="firefox-developer-edition"
+    fi
+fi
