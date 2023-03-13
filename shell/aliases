@@ -67,6 +67,7 @@ alias .5='cd ../../../../..'
 alias cd..='cd ..'
 
 alias yt="try yt-dlp --continue --embed-thumbnail --embed-subs --embed-metadata --embed-chapters"
+alias yt-list="yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'"
 alias youtube="yt"
 alias yt8000="yt --proxy=http://localhost:8000"
 alias yt8090="yt --proxy=http://localhost:8090"
