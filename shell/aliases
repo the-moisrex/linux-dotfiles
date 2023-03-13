@@ -116,3 +116,15 @@ if command -v firefox-developer-edition >/dev/null; then
         alias firefox="firefox-developer-edition"
     fi
 fi
+
+
+# DBUS
+
+alias clipboard.paste='qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents'
+alias clipboard.copy='xargs -0 qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}'
+alias clipboard.history='qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardHistoryMenu'
+
+alias cb.paste='clipboard.paste'
+alias cb.cp='clipboard.copy'
+alias cb.hist='clipboard.history'
+
