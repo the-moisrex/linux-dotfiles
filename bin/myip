@@ -1,4 +1,5 @@
 #!/bin/bash
 
+# dig -4 @1.1.1.1 +short ch txt whoami.cloudflare
 dig +short myip.opendns.com @resolver1.opendns.com
 
