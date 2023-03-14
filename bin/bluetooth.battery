@@ -7,7 +7,11 @@ function battery {
 function follow_battery {
     while true; do
         b=$(battery)
-        echo -ne "\r$b";
+        if [ -z "$b" ]; then
+            echo -ne "\rNaN";
+        else
+            echo -ne "\r$b";
+        fi
         sleep 3s;
     done
 }

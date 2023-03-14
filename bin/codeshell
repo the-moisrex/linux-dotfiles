@@ -309,11 +309,11 @@ elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   tmux send-keys -t ${window}.${side} "find .. -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'CMakeLists.txt' | entr -cs '${buildsyscmd} && ./a.out'" C-m
   open_editor "main.cpp" "CMakeLists.txt";
 elif [ -f ${template_dir}/main.py ]; then # Python
-        chmod +x ${tmpdir}/main.py
+  chmod +x ${tmpdir}/main.py
   tmux send-keys -t ${window}.${side} "find . -name 'main.py' | entr -cs '${tmpdir}/main.py'" C-m
   open_editor "main.py" "main.py";
 elif [ -f ${template_dir}/main.sh ]; then # Bash
-        chmod +x ${tmpdir}/main.sh
+  chmod +x ${tmpdir}/main.sh
   tmux send-keys -t ${window}.${side} "find . -name 'main.sh' | entr -cs '${tmpdir}/main.sh'" C-m
   open_editor "main.sh" "main.sh";
 elif [ -f ${template_dir}/Cargo.toml ]; then # Rust
