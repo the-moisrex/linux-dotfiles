@@ -96,6 +96,10 @@ case $1 in
     disable-background)
         disable_background_proxy
         ;;
+    restart|reset|restart-background)
+        disable_background_proxy
+        enable_background_proxy
+        ;;
     is-running-in-background)
         if [ -f "$redsocks_pid" ]; then
             exit 0;
