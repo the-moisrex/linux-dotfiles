@@ -1,6 +1,33 @@
 #!/bin/bash
 
-if ! dig +short myip.opendns.com @resolver1.opendns.com; then
-    dig -4 @1.1.1.1 +short ch txt whoami.cloudflare
-fi
+domain="myadd.ir"
 
+function get_ip {
+    if ! dig +short myip.opendns.com @resolver1.opendns.com; then
+        dig -4 @1.1.1.1 +short ch txt whoami.cloudflare
+    fi
+}
+
+case $1 in
+    all)
+        curl $domain
+        ;;
+    ip)
+        curl $domain/ip
+        ;;
+    asn)
+        curl $domain/asn
+        ;;
+    country)
+        curl $domain/country
+        ;;
+    city)
+        curl $domain/city
+        ;;
+    timezone|time-zone)
+        curl $domain/timezone
+        ;;
+    *)
+        get_ip;
+        ;;
+esac
