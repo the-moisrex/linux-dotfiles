@@ -2,6 +2,10 @@
 
 domain="myadd.ir"
 
+function get {
+    curl -s $domain$@
+}
+
 function get_ip {
     if ! dig +short myip.opendns.com @resolver1.opendns.com; then
         dig -4 @1.1.1.1 +short ch txt whoami.cloudflare
@@ -10,22 +14,22 @@ function get_ip {
 
 case $1 in
     all)
-        curl $domain
+        get 
         ;;
     ip)
-        curl $domain/ip
+        get /ip
         ;;
     asn)
-        curl $domain/asn
+        get /asn
         ;;
     country)
-        curl $domain/country
+        get /country
         ;;
     city)
-        curl $domain/city
+        get /city
         ;;
     timezone|time-zone)
-        curl $domain/timezone
+        get /timezone
         ;;
     *)
         get_ip;
