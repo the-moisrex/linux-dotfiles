@@ -19,7 +19,8 @@ while true; do
 
     if ishttpsup $site; then
         datetime=$(TZ="$timezone" date)
-        echo $datetime: Network Connected. | tee -a "$file";
+        country=$(env myip country)
+        echo $datetime: Network Connected \($country\) | tee -a "$file";
     else
         datetime=$(TZ="$timezone" date)
         echo $datetime: Network Not connected. | tee -a "$file";
