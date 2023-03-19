@@ -158,4 +158,9 @@ function reset_proxies {
     export all_proxy=""
     export ftp_proxy=""
     export no_proxy=""
+    export HTTP_PROXY=""
+    export HTTPS_PROXY=""
+    export ALL_PROXY=""
+    export FTP_PROXY=""
+    export NO_PROXY=""
 }
