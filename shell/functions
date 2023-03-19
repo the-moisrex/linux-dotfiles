@@ -151,3 +151,11 @@ function ishttpsup {
     (ipof $domain | isnotempty) && (! ishttpsfiltered $domain) || (! ishttpsfiltered $domain) || false && true
 }
 
+
+function reset_proxies {
+    export http_proxy=""
+    export https_proxy=""
+    export all_proxy=""
+    export ftp_proxy=""
+    export no_proxy=""
+}
