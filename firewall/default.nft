@@ -222,6 +222,7 @@ table inet mangle {
     counter skip.ignored { comment "IPs of domain names that got to skip the VPN" }
     counter skip.geoips4 { comment "IPs of countries" }
     counter skip.multicast { comment "Multicast IPs that marked to skip VPN" }
+    counter skip.dns { comment "DNSCrypt skipped" }
 
     # Country IPs go here
     set geoips4 {
@@ -259,6 +260,10 @@ table inet mangle {
         ip daddr @skipips counter name skip.manuals goto marker
         ip daddr @ignored counter name skip.ignored goto marker
         ip daddr @geoips4 counter name skip.geoips4 goto marker
+        skuid { dnscrypt-proxy, dnsmasq } counter name skip.dns goto marker
+        skuid avahi goto marker
+        skuid dovecot goto marker
+        skuid tor goto marker
         meta pkttype multicast counter name skip.multicast goto marker
     }
 
