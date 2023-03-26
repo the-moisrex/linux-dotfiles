@@ -34,23 +34,24 @@ function print_help {
     echo "Usage:"
     echo "403 help"
     echo "    start"
-    echo "    list forbidden        # Forbidden"
-    echo "    list checked          # Checked domains"
-    echo "    list excluded         # Excluded domains"
-    echo "    follow                # Forbidden"
-    echo "    follow checked        # Checked domains"
-    echo "    follow excluded       # Excluded domains"
-    echo "    dnsmasq update        # Update dnsmasq configs at $dnsmasq_config_file"
-    echo "    dnsmasq reset         # Reset dnsmasq configs at $dnsmasq_config_file"
-    echo "    add [domain]          # Add a domain"
-    echo "    remove [domain]       # Remove a domain"
-    echo "    exclude [domain]      # Exclude a domain from being re-checked + remove it"
-    echo "    clear-checked         # Clear checked list of domains"
-    echo "    clear-forbidden       # Clear forbidden list of domain"
-    echo "    check [domain]        # Check the domain"
-    echo "    re-check [[domain]]   # Re-Check the domain (or all checked domains)"
-    echo "    re-check forbidden    # Re-Check the forbidden domain"
-    echo "    re-check checked      # Re-Check the checked domain"
+    echo "    list forbidden              # Forbidden"
+    echo "    list checked                # Checked domains"
+    echo "    list excluded               # Excluded domains"
+    echo "    follow                      # Forbidden"
+    echo "    follow checked              # Checked domains"
+    echo "    follow excluded             # Excluded domains"
+    echo "    dnsmasq update              # Update dnsmasq configs at $dnsmasq_config_file"
+    echo "    dnsmasq reset               # Reset dnsmasq configs at $dnsmasq_config_file"
+    echo "    add [domain]                # Add a domain"
+    echo "    remove [domain]             # Remove a domain"
+    echo "    remove excluded [domain]    # Remove an excluded domain"
+    echo "    exclude [domain]            # Exclude a domain from being re-checked + remove it"
+    echo "    clear-checked               # Clear checked list of domains"
+    echo "    clear-forbidden             # Clear forbidden list of domain"
+    echo "    check [domain]              # Check the domain"
+    echo "    re-check [[domain]]         # Re-Check the domain (or all checked domains)"
+    echo "    re-check forbidden          # Re-Check the forbidden domain"
+    echo "    re-check checked            # Re-Check the checked domain"
 }
 
 
@@ -202,6 +203,11 @@ function remove_domain {
     grep -sv "$domain" "$checked_domains_file" | sponge "$checked_domains_file"
 }
 
+function remove_excluded_domain {
+    domain="$1";
+    grep -sv "$domain" "$excluded_domains_file" | sponge "$excluded_domains_file"
+}
+
 function exclude_domain {
     domain="$1";
     remove_domain "$1";
@@ -296,7 +302,14 @@ case $1 in
         add_domain "$2";
         ;;
     remove)
-        remove_domain "$2";
+        case $2 in
+            excluded|ex|exclude)
+                remove_excluded_domain "$3";
+                ;;
+            *)
+                remove_domain "$2";
+                ;;
+        esac
         ;;
     exclude)
         exclude_domain "$2";
