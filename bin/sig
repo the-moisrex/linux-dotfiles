@@ -53,7 +53,13 @@ killtree() {
 }
 
 while [ -n "$1" ]; do
-    killtree $(pidof $1)
+    pid=$(pidof $1)
+    if [ -z "$pid" ]; then
+        echo "Process '$1' not found; ignored."
+        shift;
+        continue;
+    fi
+    killtree $pid
     shift;
 done
 
