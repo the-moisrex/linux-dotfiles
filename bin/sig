@@ -1,10 +1,14 @@
 #!/bin/bash
 
 function print_help {
-    echo "sigall -stop java   # pauses the app"
-    echo "       -cont java   # resume the app"
-    echo "       cont java    # works without any - in front of it as well"
-    echo "       --help|-h"
+    echo "Send signals to a list of processes and all of their sub-processes"
+    echo
+    echo "Usage: "
+    echo "  sig -stop firefox       # pauses the app"
+    echo "      -cont java          # resume the app"
+    echo "      cont java           # works without any - in front of it as well"
+    echo "      -cont proc1 proc2   # multiple processes"
+    echo "      --help|-h"
 }
 
 sig="$1"
