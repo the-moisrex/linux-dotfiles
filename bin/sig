@@ -25,9 +25,10 @@ case $sig in
         ;;
 esac
 
-if ! kill -l | grep -qsi $sig; then
+if ! killall -l | grep -wqsi $sig; then
+    echo "'$sig' is not a valid signal;"
     echo "Use one of these signals: "
-    kill -l;
+    killall -l | xargs echo;
     exit;
 fi
 
