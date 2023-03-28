@@ -39,18 +39,6 @@ function zsh-stats() {
     fc -l 1 | sed -E 's/[[:space:]]sudo[[:space:]]/ /' | awk '{CMD[$2]++;count++;}END { for (a in CMD)print CMD[a] " " CMD[a]/count*100 "% " a;}' | grep -v "./" | column -c3 -s " " -t | sort -nr | nl | head -n25;
 }
 
-function pause-clion() {
-  kill -stop `pidof clang-tidy`
-  kill -stop `pidof clangd`
-  kill -stop `pidof java`
-}
-
-function resume-clion() {
-  kill -cont `pidof java`
-  kill -cont `pidof clangd`
-  kill -cont `pidof clang-tidy`
-}
-
 function repo_path {
   repo="."
   until [ "$(realpath "$repo")" = "/.git" -o \
