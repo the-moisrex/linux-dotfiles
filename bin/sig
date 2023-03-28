@@ -41,26 +41,28 @@ fi
 
 space=""
 killtree() {
-    local _pid=$1
+    local pid=$1
+    local name=$(ps -p $pid -o comm=)
     # kill -stop ${_pid} # needed to stop quickly forking parent from producing children between child killing and parent killing
-    for _child in $(ps -o pid --no-headers --ppid ${_pid}); do
+    for child in $(ps -o pid --no-headers --ppid ${pid}); do
         space="${space}  "
-        killtree ${_child} ${_sig}
+        killtree ${child}
         space="${space:2}"
     done
-    echo "${space}Sending '$sig' to $_pid"
-    kill -s $sig ${_pid}
+    echo "${space}Sending '$sig' to $pid ($name)"
+    kill -s $sig ${pid}
 }
 
 while [ -n "$1" ]; do
-    pidlist=$(pidof $1)
+    name="$1"
+    pidlist=$(pidof $name)
     if [ -z "$pidlist" ]; then
-        echo "Process '$1' not found; ignored."
+        echo "Process '$name' not found; ignored."
         shift;
         continue;
     fi
     for pid in $pidlist; do
-        killtree $pid
+        killtree $pid "$name"
     done
     shift;
 done
