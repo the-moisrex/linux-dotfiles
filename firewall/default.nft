@@ -264,6 +264,7 @@ table inet mangle {
         skuid avahi goto marker
         skuid dovecot goto marker
         skuid tor goto marker
+        skgid v2ray goto marker
         meta pkttype multicast counter name skip.multicast goto marker
     }
 
