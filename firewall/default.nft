@@ -223,6 +223,7 @@ table inet mangle {
     counter skip.geoips4 { comment "IPs of countries" }
     counter skip.multicast { comment "Multicast IPs that marked to skip VPN" }
     counter skip.dns { comment "DNSCrypt skipped" }
+    counter skip.never { comment "Never Skip these IPs" }
 
     # Country IPs go here
     set geoips4 {
@@ -231,8 +232,20 @@ table inet mangle {
         flags interval # enable CIDR and ranges
     }
 
+    # Country IPs go here, but they're never ignored
+    set nevergeoips4 {
+        type ipv4_addr
+        auto-merge
+        flags interval # enable CIDR and ranges
+    }
+
     # Ignored set of IPs of domain names
     set ignored {
+        typeof ip daddr
+    }
+
+    # Never ignore these IPs of domain names
+    set neverignored {
         typeof ip daddr
     }
 
@@ -257,6 +270,8 @@ table inet mangle {
     chain skipper {
         # Here we define the packets that should be skip the VPN
         ip daddr $local_network return
+        ip daddr @neverignored counter name skip.never return
+        ip daddr @nevergeoips4 counter name skip.never return
         ip daddr @skipips counter name skip.manuals goto marker
         ip daddr @ignored counter name skip.ignored goto marker
         ip daddr @geoips4 counter name skip.geoips4 goto marker

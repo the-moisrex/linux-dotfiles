@@ -43,10 +43,10 @@ table inet v2ray {
         meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
         ip daddr != $public_ipv4 return;
 
-        tcp dport { 80, 443 } counter name v2ray redirect to :$tproxy_port;
+        meta l4proto tcp counter name v2ray redirect to :$tproxy_port;
 
         # QUIC protocol; we t-proxy UDP here because we don't want to change the packet
-        udp dport { 443 } counter name v2ray tproxy to :$tproxy_port mark set $lo_v2ray_fwmark accept;
+        meta l4proto udp counter name v2ray tproxy to :$tproxy_port mark set $lo_v2ray_fwmark accept;
     }
 
     chain output {
@@ -61,10 +61,10 @@ table inet v2ray {
         meta mark $lo_v2ray_fwmark return; # for some reason already marked; it shouldn't happen
         ip daddr != $public_ipv4 return;
 
-        tcp dport { 80, 443 } counter name v2ray redirect to :$tproxy_port;
+        meta l4proto tcp counter name v2ray redirect to :$tproxy_port;
         
         # QUIC Protocol; no t-proxying here; because our source address is already local
-        udp dport { 80, 443 } counter name v2ray mark set $lo_v2ray_fwmark accept;
+        meta l4proto udp counter name v2ray mark set $lo_v2ray_fwmark accept;
         # udp dport { 443 } counter name v2ray mark set $lo_v2ray_fwmark redirect to :$tproxy_port;
     }
 }
