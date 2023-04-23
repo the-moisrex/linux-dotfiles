@@ -3,6 +3,11 @@
 
 # Add a domain to the list of domains that don't need to go through VPN
 ignored_domains_file="$HOME/.config/firewall/ignored-domains.txt"
+never_ignored_domains_file="$HOME/.config/firewall/never-ignored-domains.txt"
+ignored_nftables_set_name="ignored"
+never_ignored_nftables_set_name="neverignored"
+ignored_nftables_geoips4_set_name="geoips4"
+never_ignored_nftables_geoips4_set_name="nevergeoips4"
 
 
 # if you decide to change this directory, change it in the "clear-coredump", and in "net.routes.skip" commands as well
@@ -13,6 +18,7 @@ mkdir -p "$nft_include_dir";
 
 dnsmasq_conf_dir="/etc/dnsmasq.d"
 dnsmasq_file="$dnsmasq_conf_dir/ignored.conf"
+never_dnsmasq_file="$dnsmasq_conf_dir/never-ignored.conf"
 
 countryiso="ir"
 
@@ -75,6 +81,8 @@ function print_help {
     # echo "       ignore nft add ignored"
     # echo "       ignore nft remove ignored"
     # echo "       ignore nft remove country ir"
+    echo
+    echo "       ignore never [same commands as others]  # control never-ignored domains/ips/countries/..."
 }
 
 function save_dnsmasq_file {
@@ -82,7 +90,7 @@ function save_dnsmasq_file {
     echo | sudo tee "$dnsmasq_file"; # reset file
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
-            echo "nftset=/$domain/inet#mangle#ignored" | sudo tee -a "$dnsmasq_file";
+            echo "nftset=/$domain/inet#mangle#$ignored_nftables_set_name" | sudo tee -a "$dnsmasq_file";
         done < "$ignored_domains_file";
     fi;
     echo "Saved the domain's configs for dnsmasq in: $dnsmasq_file";
@@ -136,8 +144,13 @@ table inet mangle {
 }
 END
 
-    sudo nft add counter inet mangle skip.$name \{ comment \"Skip GeoIPs for $name country\" \};
-    sudo nft add rule inet mangle skipper ip daddr @$name counter name skip.$name goto marker comment \"ignored country with code $name\";
+    if [ "$ignored_nftables_set_name" == "$never_ignored_nftables_set_name" ]; then
+        sudo nft add counter inet mangle skip.never.$name \{ comment \"Never Skip GeoIPs for $name country\" \};
+        sudo nft insert rule inet mangle skipper ip daddr @$name counter name skip.never.$name return;
+    else
+        sudo nft add counter inet mangle skip.$name \{ comment \"Skip GeoIPs for $name country\" \};
+        sudo nft add rule inet mangle skipper ip daddr @$name counter name skip.$name goto marker comment \"ignored country with code $name\";
+    fi
 }
 
 
@@ -177,13 +190,13 @@ function ignore {
     if [[ $? -eq 0 ]]; then 
         # It's an ip address
         ip="$domain"
-        sudo nft add element inet mangle ignored \{ $ip \}
+        sudo nft add element inet mangle $ignored_nftables_set_name \{ $ip \}
         ipcount=$(( $ipcount + 1 ));
     else
         # It's a domain
         while IFS= read -r ip; do
             echo  "  Adding ip address $ip to the 'ignored' ip set."
-            sudo nft add element inet mangle ignored \{ $ip \}
+            sudo nft add element inet mangle $ignored_nftables_set_name \{ $ip \}
             ipcount=$(( $ipcount + 1 ));
         done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
     fi
@@ -201,7 +214,7 @@ function unignore {
     grep -v "$domain" $ignored_domains_file | sponge $ignored_domains_file
     while IFS= read -r ip; do
         echo  "  Removing ip address $ip from the 'ignored' ip set."
-        sudo nft delete element inet mangle ignored \{ $ip \}
+        sudo nft delete element inet mangle $ignored_nftables_set_name \{ $ip \}
         ipcount=$(( $ipcount + 1 ));
     done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
     echo "  Deleted $ipcount IPs from the 'ignored' ipset.";
@@ -217,13 +230,13 @@ function update_ignores {
             if [[ $? -eq 0 ]]; then 
                 # It's an ip address
                 ip="$domain"
-                sudo nft add element inet mangle ignored \{ $ip \}
+                sudo nft add element inet mangle $ignored_nftables_set_name \{ $ip \}
                 ipcount=$(( $ipcount + 1 ));
             else
                 # It's a domain
                 while IFS= read -r ip; do
                     echo  "  Adding ip address $ip to the 'ignored' ip set."
-                    sudo nft add element inet mangle ignored \{ $ip \}
+                    sudo nft add element inet mangle $ignored_nftables_set_name \{ $ip \}
                     ipcount=$(( $ipcount + 1 ));
                 done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
             fi
@@ -255,7 +268,7 @@ function ignore_country {
     ipcount=0
     while IFS= read -r ip; do
         echo -ne "\r\033[KAdding ip address $ip to the '$iso_code' ip set."
-        sudo nft add element inet mangle geoips4 \{ $ip \};
+        sudo nft add element inet mangle $ignored_nftables_geoips4_set_name \{ $ip \};
         ipcount=$(( $ipcount + 1 ));
     done < "$input";
     echo -ne "\r\033[KAdded $ipcount ips for country code '$iso_code'.";
@@ -273,7 +286,7 @@ function unignore_country {
     ipcount=0
     while IFS= read -r ip; do
         echo  "  Removing ip address $ip from the 'geoips4' ip set."
-        sudo nft delete element inet mangle geoips4 \{ $ip \}
+        sudo nft delete element inet mangle $ignored_nftables_geoips4_set_name \{ $ip \}
         ipcount=$(( $ipcount + 1 ));
     done < "$input";
     echo "  Deleted $ipcount IPs from the 'geoips4' ipset.";
@@ -289,6 +302,7 @@ function list_country {
     input="$countries_repo/ipv4/$iso_code.cidr"
 
     ipcount=0
+    echo "Listing IPs of country $iso_code:";
     while IFS= read -r ip; do
         echo "$ip";
         ipcount=$(( $ipcount + 1 ));
@@ -297,7 +311,7 @@ function list_country {
 }
 
 function list_countries_ipset {
-    sudo nft list set inet mangle geoips4
+    sudo nft list set inet mangle $ignored_nftables_geoips4_set_name
 }
 
 function update_all {
@@ -306,100 +320,108 @@ function update_all {
     # todo: update individual countries as well
 }
 
-case "$1" in
-    help)
-        print_help;
-        ;;
-    list)
-        case "$2" in
-            ipset)
-                list_ipset;
-                ;;
-            ips)
-                list_ips;
-                ;;
-            domains)
-                list_domains;
-                ;;
-            country)
-                list_country "$3";
-                ;;
-            countries)
-                list_countries_ipset;
-                ;;
-            *)
-                list_ips;
-                ;;
-        esac;
-        ;;
-    update)
-        case "$2" in
-            countries)
-                update_countries;
-                ;;
-            ignored|ignore|ignores|domains|domain)
-                update_ignores;
-                ;;
-            dnsmasq)
-                save_dnsmasq_file;
-                ;;
-            all|*)
-                update_all;
-                ;;
-        esac
-        ;;
-    add|append)
-        case "$2" in
-            country)
-                ignore_country "$3";
-                ;;
-            *)
-                ignore "$2";
-                ;;
-        esac
-        ;;
-    del|remove)
-        case "$2" in
-            country)
-                unignore_country "$3";
-                ;;
-            *)
-                unignore "$2";
-                ;;
-        esac
-        ;;
-    nft)
-        case "$2" in
-            create)
-                case "$3" in
-                    ignored)
-                        ;;
-                    country)
-                        nft_create_country "$4";
-                        ;;
-                    *)
-                        echo "Create what?";
-                        ;;
-                esac
-                ;;
-            add)
-                case "$3" in
-                    ignored)
-                        ;;
-                    country)
-                        nft_add_country "$4";
-                        ;;
-                    *)
-                        echo "Add what?";
-                        ;;
-                esac
-                ;;
-            *)
-                echo "nft file what?";
-                ;;
-        esac
-        ;;
-    *)
-        print_help;
-        ;;
-esac;
+function run {
+    case "$1" in
+        help)
+            print_help;
+            ;;
+        never)
+            shift 1;
+            ignored_domains_file="$never_ignored_domains_file"
+            ignored_nftables_set_name="$never_ignored_nftables_set_name"
+            ignored_nftables_geoips4_set_name="$never_ignored_nftables_geoips4_set_name"
+            dnsmasq_file="$never_dnsmasq_file"
+            run $@;
+            ;;
+        list)
+            case "$2" in
+                ipset)
+                    list_ipset;
+                    ;;
+                ips)
+                    list_ips;
+                    ;;
+                domains)
+                    list_domains;
+                    ;;
+                country)
+                    list_country "$3";
+                    ;;
+                countries)
+                    list_countries_ipset;
+                    ;;
+                *)
+                    list_ips;
+                    ;;
+            esac;
+            ;;
+        update)
+            case "$2" in
+                countries)
+                    update_countries;
+                    ;;
+                ignored|ignore|ignores|domains|domain)
+                    update_ignores;
+                    ;;
+                dnsmasq)
+                    save_dnsmasq_file;
+                    ;;
+                all|*)
+                    update_all;
+                    ;;
+            esac
+            ;;
+        add|append)
+            case "$2" in
+                country)
+                    ignore_country "$3";
+                    ;;
+                *)
+                    ignore "$2";
+                    ;;
+            esac
+            ;;
+        del|delete|remove)
+            case "$2" in
+                country)
+                    unignore_country "$3";
+                    ;;
+                *)
+                    unignore "$2";
+                    ;;
+            esac
+            ;;
+        nft)
+            case "$2" in
+                create)
+                    case "$3" in
+                        country)
+                            nft_create_country "$4";
+                            ;;
+                        *)
+                            echo "Create what?";
+                            ;;
+                    esac
+                    ;;
+                add)
+                    case "$3" in
+                        country)
+                            nft_add_country "$4";
+                            ;;
+                        *)
+                            echo "Add what?";
+                            ;;
+                    esac
+                    ;;
+                *)
+                    echo "nft file what?";
+                    ;;
+            esac
+            ;;
+        *)
+            print_help;
+            ;;
+    esac;
+}
+
+run $@
