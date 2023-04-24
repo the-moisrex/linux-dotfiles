@@ -1,4 +1,4 @@
-#!/usr/bin/env -S nft.sed.devices
+#!/usr/bin/env -S nft.prepare.script
 
 # to monitor logs use this command:
 #   $ journalctl -k -t kernel -g 'nft#' --follow
@@ -275,11 +275,12 @@ table inet mangle {
         ip daddr @skipips counter name skip.manuals goto marker
         ip daddr @ignored counter name skip.ignored goto marker
         ip daddr @geoips4 counter name skip.geoips4 goto marker
-        skuid { dnscrypt-proxy, dnsmasq } counter name skip.dns goto marker
-        skuid avahi goto marker
-        skuid dovecot goto marker
-        skuid tor goto marker
-        skgid v2ray goto marker
+        @if-user(dnsmasq) skuid dnsmasq counter name skip.dns goto marker
+        @if-user(dnscrypt-proxy) skuid dnscrypt-proxy counter name skip.dns goto marker
+        @if-user(avahi) skuid avahi goto marker
+        @if-user(dovecot) skuid dovecot goto marker
+        @if-user(tor) skuid tor goto marker
+        @if-group(v2ray) skgid v2ray goto marker
         meta pkttype multicast counter name skip.multicast goto marker
     }
 

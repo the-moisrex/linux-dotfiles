@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+nft_file="$1"
+
+function if_user {
+    user="$2"
+    before="$1"
+    after="$3"
+    if id "$user" &>/dev/null; then
+        echo -n "$before$after";
+    else
+        echo -n "$before# { user '$user' doesn't exist }; $after";
+    fi;
+}
+
+function if_group {
+    group="$2"
+    before="$1"
+    after="$3"
+    if getent group "$group" &>/dev/null; then
+        echo -n "$before$after";
+    else
+        echo -n "$before# { group '$group' doesn't exist }; $after";
+    fi;
+}
+
+if [ ! "$nft_file" ]; then
+    echo "nft file $nft_file doesn't exists.";
+    exit 1;
+fi
+gateway_router=$(ip route show 0.0.0.0/0 | awk '{print $NF " " $3}' | sort --numeric-sort | cut -d' ' -f 2 | head -n1);
+devices=$(ip -br link | cut -f1 -d" " | grep -v lo | grep -E "(enp|wlp).*" | sed -E 'H;${x;s/\n/, /g;s/^,//;p;};d')
+
+content=$(cat "$nft_file" | sed "s/\$iface_devices/{$devices }/" | sed "s/\$gateway_router/$gateway_router/")
+echo "Replaced \$iface_devices with {$devices } in $nft_file";
+echo "Replaced \$gateway_router with $gateway_router in $nft_file";
+
+export -f if_user; # make if_user available to sed
+content=$(echo -e "$content" | sed -re 's/([^\n]*)\s*@if-user[(]([^)]+)[)]\s*([^\n]*)/if_user "\1" "\2" "\3"/e')
+echo "Replaced @if-user(...) conditions"
+
+export -f if_group; # make if_group available to sed
+content=$(echo -e "$content" | sed -re 's/([^\n]*)\s*@if-group[(]([^)]+)[)]\s*([^\n]*)/if_group "\1" "\2" "\3"/e')
+echo "Replaced @if-group(...) conditions"
+
+echo -e "$content" | nft -f -
