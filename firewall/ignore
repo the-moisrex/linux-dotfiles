@@ -86,6 +86,10 @@ function print_help {
 }
 
 function save_dnsmasq_file {
+    if [ ! -d "$dnsmasq_conf_dir" ]; then
+        echo "You don't have DNSMasq Server.";
+        return;
+    fi
     sudo mkdir -p "$nft_include_dir";
     echo | sudo tee "$dnsmasq_file"; # reset file
     if [ -f "$ignored_domains_file" ]; then
