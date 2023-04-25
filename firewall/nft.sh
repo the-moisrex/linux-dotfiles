@@ -17,9 +17,10 @@ function create_bash {
 
     export -f bashify; # make run_bash available to sed
     cat "$nft_file" | 
-        sed -re '/#\$/! s/"/\\"/g' | 
-        sed -re '/#\$/! s/^[^\n]*$/echo "&";/' | 
-        sed -re 's/(^(.*?))#\$([^\n]*)/echo "\1"\n\3/';
+        sed -re '/#\$/! s/"/\\"/g' |                    # replace " with \"
+        sed -re '/#\$/! s/\$(\w)/\\$\1/g' |             # replace $variables with \$vaiables
+        sed -re '/#\$/! s/^[^\n]*$/echo "&";/' |        # wrap simple lines with 'echo "..."'
+        sed -re 's/(^(.*?))#\$([^\n]*)/echo "\1"\n\3/'; # handle '$#' lines
 }
 
 function print_help {
@@ -41,11 +42,28 @@ function print_help {
     echo "  The lines that start with '#$' will be executed as a bash script, "
     echo "  the rest of the lines are just 'echo'ed."
     echo
+    echo "  You also can use \${var} to get the bash variables, but the \$variables are"
+    echo "  reserved for nftables' variables since."
+    echo
     echo "Example (Check if a user exists):"
     echo "  chain test {"
     echo "    #$ if id $USER &>/dev/null; then"
     echo "        skuid $USER counter;"
     echo "    #$ fi;"
+    echo "  }"
+    echo
+    echo "Example (For loop with Vriable support):"
+    echo "  chain test {"
+    echo "    #$ for i in {1..3}; do"
+    echo "        meta mark \$mark-\${i} accept;"
+    echo "    #$ done;"
+    echo "  }"
+    echo
+    echo "  The above example will print:"
+    echo "  chain test {"
+    echo "     meta mark \$mark-1 accept;"
+    echo "     meta mark \$mark-2 accept;"
+    echo "     meta mark \$mark-3 accept;"
     echo "  }"
     echo
     echo "Usage:"
