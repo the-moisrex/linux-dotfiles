@@ -15,7 +15,7 @@ function create_bash {
         exit 1;
     fi
 
-    export -f bashify; # make run_bash available to sed
+    export -f bashify; # make 'bashify' available to sed
     cat "$nft_file" | 
         sed -re '/#\$/! s/"/\\"/g' |                    # replace " with \"
         sed -re '/#\$/! s/\$(\w)/\\$\1/g' |             # replace $variables with \$vaiables
