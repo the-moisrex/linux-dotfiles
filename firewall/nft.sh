@@ -52,7 +52,7 @@ function print_help {
     echo "    #$ fi;"
     echo "  }"
     echo
-    echo "Example (For loop with Vriable support):"
+    echo "Example (For loop with Variable Support):"
     echo "  chain test {"
     echo "    #$ for i in {1..3}; do"
     echo "        meta mark \$mark-\${i} accept;"
