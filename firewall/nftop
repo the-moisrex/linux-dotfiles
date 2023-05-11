@@ -146,7 +146,7 @@ class ScreenWriter:
 
     def __init__(self, stdscr):
         self.stdscr = stdscr
-        self.timeout = 100
+        self.timeout = 300
         self.step = 50
         curses.use_default_colors()
         self.stdscr.nodelay(True)
