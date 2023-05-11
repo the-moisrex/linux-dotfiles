@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# Example usage:
+#  sudo -E USER=${USER} net.ns.exec
+
+curdir=$(dirname "$0")
+source $curdir/net
+
+function print_help {
+    echo "net.ns run [cmd]       # run cmd in namespace"
+    echo "       exec [cmd]      # same as above command"
+    echo "       help            # print help"
+    echo "       add             # add a new VPN Skipper Network Namespace"
+    echo "       clean [all]     # remove [all] namespaces"
+    echo
+    echo "if empty [cmd] is given, the default shell is used."
+}
+
+function add_ns {
+    add_skip_vpn_ns
+}
+
+function run_in_ns {
+    cmd="$@"
+    if [ -z "$cmd" ]; then
+        cmd="$SHELL";
+    fi
+    add_ns
+    run_in_skip_vpn_ns no "$nsn" "$USER" "$cmd"
+}
+
+function clean_ns {
+    nsn="$@"
+
+    # Clean all
+    if [ "$nsn" == "all" ]; then
+        while read -r ns; do
+            if [ -z "$ns" ]; then
+                echo "Nothing to clean."
+                continue;
+            fi
+            sudo ip netns delete "$ns";
+            echo "Removed namespace '$ns'";
+        done <<<$(ip netns | cut -d" " -f 1)
+        return
+    fi
+
+    # Clean the specified names
+    if [ ! -z "$nsn" ]; then
+        while [ ! -z "$1" ]; do
+            if netns_exists $1; then
+                sudo ip netns delete "$1"
+                echo "Removed namespace $1"
+            else
+                echo "Namespace $1 doesn't exist"
+            fi
+            shift;
+        done
+        return
+    fi
+
+    # Clean the default names only
+    nsn="ns0"
+    i=0
+    while netns_exists $nsn; do
+        sudo ip netns delete "$nsn"
+        echo "Removed namespace $nsn"
+        ((i++))
+        nsn="ns$i"
+    done
+}
+
+case $1 in
+    help|--help|-h)
+        print_help;
+        ;;
+    exec|run)
+        shift;
+        run_in_ns $@
+        ;;
+    add)
+        shift;
+        add_ns $@
+        ;;
+    clean|clear|rm|remove)
+        shift;
+        clean_ns $@
+        ;;
+    *)
+        run_in_ns $@
+        ;;
+esac

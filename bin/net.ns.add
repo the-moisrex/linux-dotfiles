@@ -1,6 +1,0 @@
-#!/bin/bash
-
-curdir=$(dirname "$0")
-source $curdir/net
-
-add_skip_vpn_ns

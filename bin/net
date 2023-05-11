@@ -145,12 +145,12 @@ function add_skip_vpn_ns {
   fi
 
 
-  ip netns add $_nsn
-  ip link add link $_device dev $_mvlan_name type macvlan
-  ip link set up $_mvlan_name netns $_nsn
-  ip netns exec $_nsn ip link set up lo
-  ip netns exec $_nsn ip route add default dev $_mvlan_name metric 50
-  ip netns exec $_nsn dhclient -d $_mvlan_name &
+  sudo ip netns add $_nsn
+  sudo ip link add link $_device dev $_mvlan_name type macvlan
+  sudo ip link set up $_mvlan_name netns $_nsn
+  sudo ip netns exec $_nsn ip link set up lo
+  sudo ip netns exec $_nsn ip route add default dev $_mvlan_name metric 50
+  sudo ip netns exec $_nsn dhclient -d $_mvlan_name &
 }
 
 function run_in_skip_vpn_ns {
@@ -176,9 +176,9 @@ function run_in_skip_vpn_ns {
   fi
 
   if [ $_background == "yes" ]; then
-    setsid ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
+    setsid sudo -E ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
   else
-    ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
+    sudo -E ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
   fi
 }
 
