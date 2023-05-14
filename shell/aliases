@@ -68,6 +68,8 @@ alias cd..='cd ..'
 
 alias yt="try yt-dlp --continue --embed-thumbnail --embed-subs --embed-metadata --embed-chapters  --sub-langs all,-live_chat"
 alias yt-list="yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'"
+alias yt-audio="yt -x"
+alias yt-audio-list="yt-list -x"
 alias youtube="yt"
 alias yt8000="yt --proxy=http://localhost:8000"
 alias yt8090="yt --proxy=http://localhost:8090"
@@ -131,4 +133,4 @@ alias cb.cp='clipboard.copy'
 alias cb.hist='clipboard.history'
 
 
-
+alias ping='ping -DO' #  timeout
