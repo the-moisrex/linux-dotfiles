@@ -56,6 +56,87 @@ function install {
     fi;
 }
 
+
+# chromium config files
+function chromium {
+    if command -v chromium &>/dev/null; then
+        cmd_config="$configs_dir/chromium-flags.conf";
+        chromium_config="$HOME/.config/chromium-flags.conf";
+        install "$cmd_config" "$chromium_config";
+    else
+        warning "Chromium is not installed.";
+    fi
+}
+
+# SpaceVim
+function spacevim {
+    if (command -v vim &>/dev/null || command -v nvim &>/dev/null) &&
+        [ -d "$HOME/.SpaceVim" ]; then
+        cmd_config="$configs_dir/SpaceVim.d/init.toml";
+        sp_config="$HOME/.SpaceVim.d/init.toml";
+        install "$cmd_config" "$sp_config";
+    else
+        warning "Either vim/nvim or SpaceVim is not installed.";
+    fi
+}
+
+
+
+# TV Shortcuts
+function tv_shortcuts {
+    if command -v node &>/dev/null; then
+        # icons_dir="$HOME/.icons/tv-icons";
+        builtin cd "$dir/tv";
+        rm -rf tmp;
+        mkdir -p tmp;
+        node generate-telewebion.js
+
+        echo
+        for img in *.svg; do
+            name=$(basename "$img");
+            name="${name/.svg/}";
+            name="${name/icon-/}";
+            echo -ne "\r\033[KInstalling icon $name";
+            for size in 16 24 48 64 96 128 192 256 512; do
+                convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
+                xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
+            done
+        done
+
+        cp icon-*.png tmp/.
+        for img in tmp/icon-*.png; do
+            name=$(basename "$img");
+            name="${name/.png/}";
+            name="${name/icon-/}";
+            echo -ne "\r\033[KInstalling icon $name";
+            # convert -background transparent "$img" -define icon:auto-resize=16,24,32,48,64,128 "${img/.png/.ico}"
+            for size in 16 24 48 64 96 128 192 256 512; do
+                convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
+                xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
+            done
+        done
+        echo -ne "\r";
+        rm -f tmp/*.png;
+        cp *.desktop tmp/.
+        for file in tmp/*.desktop; do
+            desktop-file-install --dir=$HOME/.local/share/applications "$file"
+        done
+        update-desktop-database $HOME/.local/share/applications
+        rm -f tmp/*.desktop
+        rm -rf tmp
+        builtin cd "$dir";
+    else
+        echo "Can't intall TV desktop files. Nodejs/imagemagic(convert) is not installed.";
+    fi
+}
+
+function codeshell_shortcut {
+    export ProjectRoot="$dir"
+    "$dir/bin/bashify" "$dir/applications/codeshell.desktop" > "$HOME/.local/share/applications/codeshell.desktop";
+    echo "Installed Codeshell Desktop Shortcut.";
+    update-desktop-database $HOME/.local/share/applications
+}
+
 # default values;
 forced=false
 for i in "$@"; do
@@ -65,85 +146,44 @@ for i in "$@"; do
             shift;
             ;;
 
-        -h|--help)
+        -h|--help|help)
             echo "install.sh [--forced]"
-            echo "install.sh --helped"
+            echo "install.sh --help"
             shift;
             ;;
 
+        chrome|chromium)
+            chromium;
+            shift;
+            ;;
+
+        spacevim|vim)
+            spacevim;
+            shift;
+            ;;
+
+        tv|television|tv-shortcuts)
+            tv_shortcuts;
+            shift;
+            ;;
+
+        codeshell)
+            codeshell_shortcut;
+            shift;
+            ;;
+
+        all|--all|-a)
+            chromium;
+            spacevim;
+            codeshell_shortcut;
+            tv_shortcuts;
+            exit;
+            ;;
+
         *)
-            echo "Unknown flags.";
+            echo "Unknown flags/application.";
             exit;
             ;;
     esac
 done
 
-
-# chromium config files
-if command -v chromium &>/dev/null; then
-    cmd_config="$configs_dir/chromium-flags.conf";
-    chromium_config="$HOME/.config/chromium-flags.conf";
-    install "$cmd_config" "$chromium_config";
-else
-    warning "Chromium is not installed.";
-fi
-
-
-# SpaceVim
-if (command -v vim &>/dev/null || command -v nvim &>/dev/null) &&
-    [ -d "$HOME/.SpaceVim" ]; then
-    cmd_config="$configs_dir/SpaceVim.d/init.toml";
-    sp_config="$HOME/.SpaceVim.d/init.toml";
-    install "$cmd_config" "$sp_config";
-else
-    warning "Either vim/nvim or SpaceVim is not installed.";
-fi
-
-
-
-
-# TV Shortcuts
-if command -v node &>/dev/null; then
-    # icons_dir="$HOME/.icons/tv-icons";
-    builtin cd "$dir/tv";
-    rm -rf tmp;
-    mkdir -p tmp;
-    node generate-telewebion.js
-
-    echo
-    for img in *.svg; do
-        name=$(basename "$img");
-        name="${name/.svg/}";
-        name="${name/icon-/}";
-        echo -ne "\r\033[KInstalling icon $name";
-        for size in 16 24 48 64 96 128 192 256 512; do
-            convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
-            xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
-        done
-    done
-
-    cp icon-*.png tmp/.
-    for img in tmp/icon-*.png; do
-        name=$(basename "$img");
-        name="${name/.png/}";
-        name="${name/icon-/}";
-        echo -ne "\r\033[KInstalling icon $name";
-        # convert -background transparent "$img" -define icon:auto-resize=16,24,32,48,64,128 "${img/.png/.ico}"
-        for size in 16 24 48 64 96 128 192 256 512; do
-            convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
-            xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
-        done
-    done
-    echo -ne "\r";
-    rm -f tmp/*.png;
-    cp *.desktop tmp/.
-    for file in tmp/*.desktop; do
-        desktop-file-install --dir=$HOME/.local/share/applications "$file"
-    done
-    update-desktop-database $HOME/.local/share/applications
-    rm -f tmp/*.desktop
-    rm -rf tmp
-    builtin cd "$dir";
-else
-    echo "Can't intall TV desktop files. Nodejs/imagemagic(convert) is not installed.";
-fi

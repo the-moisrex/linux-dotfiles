@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=CodeShell
+Icon=${ProjectRoot}/applications/codeshell.svg
+Comment=CodeShells
+Exec="${ProjectRoot}/bin/codeshell" %u
+Version=1.0
+Type=Application
+Categories=Development;IDE;
+Terminal=true
+StartupNotify=true
+Keywords=code;shell;codeshell;codes;quick code
