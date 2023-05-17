@@ -9,14 +9,14 @@ function bashify {
 }
 
 function create_bash {
-    nft_file="$1"
-    if [ ! "$nft_file" ]; then
-        echo "nft file $nft_file doesn't exists.";
+    file="$1"
+    if [ ! "$file" ]; then
+        echo "The file '$file' doesn't exists.";
         exit 1;
     fi
 
     export -f bashify; # make 'bashify' available to sed
-    cat "$nft_file" | 
+    cat "$file" | 
         sed -re '/#\$/! s/"/\\"/g' |                    # replace " with \"
         sed -re '/#\$/! s/\$(\w)/\\$\1/g' |             # replace $variables with \$vaiables
         sed -re '/#\$/! s/^[^\n]*$/echo "&";/' |        # wrap simple lines with 'echo "..."'
@@ -25,7 +25,7 @@ function create_bash {
 
 function print_help {
     echo "What is this?"
-    echo "  This script lets you preprocess a nftables script with bash script."
+    echo "  This script lets you preprocess a nftables-script (or any type of files) with bash script."
     echo
     echo "Shebang usage:"
     echo "  Add this to your nftables' script and make your script executable for ease of use:"
