@@ -91,12 +91,12 @@ function tv_shortcuts {
         mkdir -p tmp;
         node generate-telewebion.js
 
-        echo
+        log
         for img in *.svg; do
             name=$(basename "$img");
             name="${name/.svg/}";
             name="${name/icon-/}";
-            echo -ne "\r\033[KInstalling icon $name";
+            log -ne "\r\033[KInstalling icon $name";
             for size in 16 24 48 64 96 128 192 256 512; do
                 convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
                 xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
@@ -108,14 +108,14 @@ function tv_shortcuts {
             name=$(basename "$img");
             name="${name/.png/}";
             name="${name/icon-/}";
-            echo -ne "\r\033[KInstalling icon $name";
+            log -ne "\r\033[KInstalling icon $name";
             # convert -background transparent "$img" -define icon:auto-resize=16,24,32,48,64,128 "${img/.png/.ico}"
             for size in 16 24 48 64 96 128 192 256 512; do
                 convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
                 xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
             done
         done
-        echo -ne "\r";
+        log -ne "\r";
         rm -f tmp/*.png;
         cp *.desktop tmp/.
         for file in tmp/*.desktop; do
@@ -126,15 +126,22 @@ function tv_shortcuts {
         rm -rf tmp
         builtin cd "$dir";
     else
-        echo "Can't intall TV desktop files. Nodejs/imagemagic(convert) is not installed.";
+        log "Can't intall TV desktop files. Nodejs/imagemagic(convert) is not installed.";
     fi
 }
 
 function codeshell_shortcut {
     export ProjectRoot="$dir"
     "$dir/bin/bashify" "$dir/applications/codeshell.desktop" > "$HOME/.local/share/applications/codeshell.desktop";
-    echo "Installed Codeshell Desktop Shortcut.";
+    log "Installed Codeshell Desktop Shortcut.";
     update-desktop-database $HOME/.local/share/applications
+}
+
+function setup_fish {
+    fish_dir="$HOME/.config/fish"
+    shell_dir="$dir/shell"
+    install "$shell_dir/aliases.fish" "$fish_dir/aliases.fish"
+    install "$shell_dir/config.fish" "$fish_dir/config.fish"
 }
 
 # default values;
@@ -147,8 +154,14 @@ for i in "$@"; do
             ;;
 
         -h|--help|help)
-            echo "install.sh [--forced]"
-            echo "install.sh --help"
+            log "install.sh [--forced]"
+            log "install.sh --help"
+            log "install.sh fish"
+            log "install.sh spacevim"
+            log "install.sh tv"
+            log "install.sh chromium"
+            log "install.sh codeshell"
+            log "install.sh --all"
             shift;
             ;;
 
@@ -172,7 +185,13 @@ for i in "$@"; do
             shift;
             ;;
 
+        fish)
+            setup_fish;
+            shift;
+            ;;
+
         all|--all|-a)
+            setup_fish;
             chromium;
             spacevim;
             codeshell_shortcut;
@@ -181,7 +200,7 @@ for i in "$@"; do
             ;;
 
         *)
-            echo "Unknown flags/application.";
+            log "Unknown flags/application.";
             exit;
             ;;
     esac
