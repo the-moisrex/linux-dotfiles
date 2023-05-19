@@ -4,8 +4,24 @@ RED="\033[0;31m"
 GRAY="\033[0;37m"
 NC="\033[0m" # No Color
 
+
+gitroot=".git";
+until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" -o \
+      "$(realpath "$gitroot" 2>/dev/null)" = "/" -o \
+      -d "$gitroot" \
+    ]; do
+gitroot="../${gitroot}";
+done;
+
+proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
+build_dir="$proj_dir/build";
+
+
+function print_cmake_targets {
+    cmake --build "$build_dir" --target help | grep -v phony | cut -d: -f1 | tail -n +2
+}
+
 function run {
-  gitroot=".git";
   scan_build="";
   debug_cmd=""
   if [ "$1" == "analyze" ]; then
@@ -19,16 +35,6 @@ function run {
       shift;
   fi
 
-  until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" -o \
-          "$(realpath "$gitroot" 2>/dev/null)" = "/" -o \
-          -d "$gitroot" \
-        ]; do
-    gitroot="../${gitroot}";
-  done;
-
-
-  proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
-  build_dir="$proj_dir/build";
   old_dir=$(pwd);
   execfile="$@";
 
@@ -117,6 +123,11 @@ case "$1" in
     gdb)
         shift;
         run gdb $@;
+        ;;
+    print-targets)
+        shift;
+        print_cmake_targets;
+        exit;
         ;;
     *)
         run $@;

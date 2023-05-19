@@ -142,6 +142,7 @@ function setup_fish {
     shell_dir="$dir/shell"
     install "$shell_dir/aliases.fish" "$fish_dir/aliases.fish"
     install "$shell_dir/config.fish" "$fish_dir/config.fish"
+    install "$shell_dir/completions.fish" "$fish_dir/completions/completions.fish"
 }
 
 # default values;
