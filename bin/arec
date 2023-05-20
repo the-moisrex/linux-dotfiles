@@ -6,14 +6,29 @@ then
     exit
 fi
 
+function print_help {
+  echo Record shell using asciinema
+  echo
+  echo "Usage: arec [pretext] [title]"
+  echo "Example: arec webpp Working on database"
+  echo
+  echo "Pretext: the name of the project you're working on so we can write custom configurations for them."
+  echo "Title:   the title of this session that you're working on."
+  exit
+}
 
 pretext=$1
 
+case $1 in
+    --help|-h|help)
+        print_help;
+        ;;
+    *)
+        shift;
+esac
+
 if [ -z "$pretext" ]; then
-  echo Record shell using asciinema
-  echo "Usage: arec [pretext] [title]"
-  echo "Example: arec webpp Working on database"
-  exit
+    print_help;
 fi
 
 cmd="$SHELL"
