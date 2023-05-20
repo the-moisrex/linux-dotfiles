@@ -2,7 +2,7 @@
 Version=1.0
 Name=Press TV
 Exec=/usr/bin/vlc https://cdnlive.presstv.ir/cdnlive/smil:cdnlive.smil/playlist.m3u8
-Icon=tv-press-tv
+Icon=tv.press.tv
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video
