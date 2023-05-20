@@ -2,7 +2,7 @@
 Version=1.0
 Name=euronews (Youtube)
 Exec=/usr/bin/vlc https://www.youtube.com/@euronews/live
-Icon=tv-euronews
+Icon=tv.euronews
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video

@@ -2,7 +2,7 @@
 Version=1.0
 Name=Arirang
 Exec=/usr/bin/vlc https://amdlive-ch01-ctnd-com.akamaized.net/arirang_1ch/smil:arirang_1ch.smil/playlist.m3u8
-Icon=tv-arirang
+Icon=tv.arirang
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video

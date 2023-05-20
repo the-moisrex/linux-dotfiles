@@ -2,7 +2,7 @@
 Version=1.0
 Name=Sky News (Pluto)
 Exec=/usr/bin/vlc https://siloh.pluto.tv/lilo/production/SkyNews/master.m3u8
-Icon=tv-sky-news
+Icon=tv.sky.news
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video

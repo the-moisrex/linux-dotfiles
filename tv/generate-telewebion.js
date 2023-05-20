@@ -52,7 +52,7 @@ async function main(channels) {
 Version=1.0
 Name=${name}
 Exec=/usr/bin/vlc https://ncdn.telewebion.com/${ch.descriptor}/live/playlist.m3u8
-Icon=tv-${ch.descriptor}
+Icon=tv.${ch.descriptor}
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video

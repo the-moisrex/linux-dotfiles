@@ -2,7 +2,7 @@
 Version=1.0
 Name=CGTN America
 Exec=/usr/bin/vlc https://player-api.new.livestream.com/accounts/7082210/events/9331199/broadcasts/233886188.secure.m3u8
-Icon=tv-cgtn
+Icon=tv.cgtn
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video

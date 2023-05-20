@@ -95,12 +95,12 @@ function tv_shortcuts {
         for img in *.svg; do
             name=$(basename "$img");
             name="${name/.svg/}";
-            name="${name/icon-/}";
             log -ne "\r\033[KInstalling icon $name";
-            for size in 16 24 48 64 96 128 192 256 512; do
-                convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
-                xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
+            for size in 16 24 32 48 64 96 128 192 256 512; do
+                convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name-${size}.png"
+                xdg-icon-resource install --novendor --size $size --context apps "tmp/$name-${size}.png" "tv.$name"
             done
+            cp -f "$img" "$HOME/.local/share/icons/hicolor/scalable/apps/tv.$name.svg"
         done
 
         cp icon-*.png tmp/.
@@ -110,13 +110,12 @@ function tv_shortcuts {
             name="${name/icon-/}";
             log -ne "\r\033[KInstalling icon $name";
             # convert -background transparent "$img" -define icon:auto-resize=16,24,32,48,64,128 "${img/.png/.ico}"
-            for size in 16 24 48 64 96 128 192 256 512; do
-                convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name.png"
-                xdg-icon-resource install --size $size --context apps "tmp/$name.png" "tv-$name"
+            for size in 16 24 32 48 64 96 128 192 256 512; do
+                convert -background transparent -resize $size -extent ${size}x${size} -gravity center "$img" "tmp/$name-${size}.png"
+                xdg-icon-resource install --novendor --size $size --context apps "tmp/$name-${size}.png" "tv.$name"
             done
         done
         log -ne "\r";
-        rm -f tmp/*.png;
         cp *.desktop tmp/.
         for file in tmp/*.desktop; do
             desktop-file-install --dir=$HOME/.local/share/applications "$file"
