@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Name=SNN (خبرگزاری دانشجو)
+Exec=/usr/bin/vlc https://live2.snn.ir/hls/snn.m3u8
+Icon=tv.snn
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video
+Keywords=SNN;SNN News;News;خبرگزاری;دانشجو
