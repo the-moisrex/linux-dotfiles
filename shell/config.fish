@@ -28,9 +28,14 @@ function conda -d 'lazy initialize conda'
 end
 
 
-
 if status is-interactive
     # Commands to run in interactive sessions can go here
+
+    # Play a sound on indicating the status of the last command
+    function precmd --on-event fish_postexec;
+        play_pipe_sound $pipestatus &
+    end
+
 
     source $HOME/.config/fish/aliases.fish;
     source $HOME/.config/fish/completions/completions.fish;
