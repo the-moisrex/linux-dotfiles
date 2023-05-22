@@ -12,9 +12,9 @@ end
 
 for pipe_status in $argv;
     if [ "$pipe_status" != 0 ];
-        paplay --volume=65536 "$err_sound"
+        paplay --volume=65536 "$err_sound" &>/dev/null
     else
-        paplay --volume=55536 "$ok_sound"
+        paplay --volume=55536 "$ok_sound" &>/dev/null
     end
 end
 
