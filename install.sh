@@ -34,12 +34,24 @@ function link_item {
             fi;
         else
             error "Link Failed: $cmd_path -> $install_path";
+            log "We're gonna try to copy the file."
+            if cp "$cmd_path" "$install_path"; then
+                log "Copied $cmd_path -> $install_path";
+            else
+                error "Copying failed too for $install_path."
+            fi
         fi;
     else
         if ln "$cmd_path" "$install_path"; then
             log "Linked: $cmd_path -> $install_path";
         else
             error "Link Failed: $cmd_path -> $install_path";
+            log "We're gonna try to copy the file."
+            if cp "$cmd_path" "$install_path"; then
+                log "Copied $cmd_path -> $install_path";
+            else
+                error "Copying failed too for $install_path."
+            fi
         fi;
     fi;
 }
