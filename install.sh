@@ -23,8 +23,10 @@ function link_item {
     install_inode=$(stat -c %i -- "$install_path" 2>/dev/null);
     if [ "$cmd_inode" = "$install_inode" ] && [ ! -z "$install_inode" ]; then
         log "Already Linked: $install_inode $cmd_path -> $install_path";
+        log
         return;
     fi;
+    mkdir -p "$(dirname $install_path)";
     if $forced; then
         if ln -f "$cmd_path" "$install_path"; then
             if [ -z "$install_node" ]; then
@@ -54,6 +56,7 @@ function link_item {
             fi
         fi;
     fi;
+    log
 }
 
 function install {
@@ -154,6 +157,8 @@ function setup_fish {
     install "$shell_dir/aliases.fish" "$fish_dir/aliases.fish"
     install "$shell_dir/config.fish" "$fish_dir/config.fish"
     install "$shell_dir/completions.fish" "$fish_dir/completions/completions.fish"
+    install "$dir/assets/ok.oga" "$fish_dir/assets/ok.oga"
+    install "$dir/assets/error.oga" "$fish_dir/assets/error.oga"
 }
 
 # default values;
