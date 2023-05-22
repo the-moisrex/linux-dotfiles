@@ -4,7 +4,7 @@
 set err_sound $HOME/.config/fish/assets/error.oga
 set ok_sound $HOME/.config/fish/assets/ok.oga
 
-switch $argv
+switch "$argv"
     case --is-possible
         test -f $err_sound && test -f $ok_sound && command -v paplay >/dev/null || exit 1
         exit $status
