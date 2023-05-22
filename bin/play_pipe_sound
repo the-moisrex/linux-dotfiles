@@ -4,6 +4,12 @@
 set err_sound /usr/share/sounds/freedesktop/stereo/dialog-error.oga
 set ok_sound /usr/share/sounds/freedesktop/stereo/dialog-information.oga
 
+switch $argv
+    case --is-possible
+        test -f $err_sound && test -f $ok_sound
+        exit $status
+end
+
 for pipe_status in $argv;
     if [ "$pipe_status" != 0 ];
         paplay --volume=65536 "$err_sound"
