@@ -152,3 +152,15 @@ alias cb.hist="clipboard.history"
 
 
 alias ping="ping -DO" #  timeout
+
+
+function unsudo -d "un-sudo some commands"
+    for arg in $argv
+        if command -v $arg >/dev/null
+            alias $arg="sudo $arg"
+        end
+    end
+end
+
+unsudo pacman systemctl ausearch reboot poweroff
+
