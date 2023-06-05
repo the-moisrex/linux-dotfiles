@@ -162,5 +162,5 @@ function unsudo -d "un-sudo some commands"
     end
 end
 
-unsudo pacman systemctl ausearch reboot poweroff auditctl aureport dnstop nftop
+unsudo pacman systemctl ausearch reboot poweroff auditctl aureport dnstop nftop nft
 
