@@ -1,11 +1,26 @@
 #!/bin/bash
 
+default_proxy="v2ray"
+
+curdir=$(dirname "$0")
+
 lo_v2ray_fwmark=0xff
+lo_socks_fwmark=0xff
 table_id=153
+redsocks_bin="$HOME/bin/redsocks2"
+redsocks_config="$curdir/tproxy2socks-redsocks.conf"
+redsocks_pid="/tmp/tproxy/redsocks2.pid"
+tproxy_type_file="/tmp/tproxy/tproxy-type.txt"
 
 # rp_filer = https://sysctl-explorer.net/net/ipv4/rp_filter/
 
-function enable_proxy {
+mkdir -p "$(dirname "$redsocks_pid")";
+
+
+############################## V2ray ##############################
+
+function enable_v2ray_proxy {
+    echo "Enabling v2ray proxy"
     for dir in /proc/sys/net/ipv4/conf/*; do
         if [ -d "$dir" ]; then
             dirname=$(basename $dir)
@@ -16,9 +31,11 @@ function enable_proxy {
     sudo ip rule add fwmark $lo_v2ray_fwmark table $table_id
     sudo ip route add local default dev lo table $table_id
     sudo tproxy-to-v2ray.nft
+    echo "v2ray" > "$tproxy_type_file"
 }
 
-function disable_proxy {
+function disable_v2ray_proxy {
+    echo "Disabling v2ray proxy"
     sudo nft delete table inet v2ray;
     sudo ip route delete local default dev lo table $table_id
     sudo ip rule delete fwmark $lo_v2ray_fwmark table $table_id
@@ -30,22 +47,190 @@ function disable_proxy {
             sudo sysctl net/ipv4/conf/$dirname/rp_filter=2
         fi
     done
+    rm -f "$tproxy_type_file"
+}
+
+
+############################## Redsocks ##############################
+
+function prepare_redsocks_proxy {
+    if [ ! -f "$redsocks_bin" ]; then
+        install_redsocks;
+    fi
+
+    echo "Enabling redsocks proxy"
+    for dir in /proc/sys/net/ipv4/conf/*; do
+        if [ -d "$dir" ]; then
+            dirname=$(basename $dir)
+            sudo sysctl net/ipv4/conf/$dirname/rp_filter=0
+        fi
+    done
+
+    sudo ip rule add fwmark $lo_socks_fwmark table $table_id
+    sudo ip route add local default dev lo table $table_id
+    sudo tproxy2socks.nft
+    echo "redsocks" > "$tproxy_type_file"
+
+    echo
+    echo "Redsocks Executable:  $redsocks_bin"
+    echo "Redsocks Config file: $redsocks_config"
+    echo "Redsocks pid file:    $redsocks_pid"
+    echo
+}
+
+function enable_redsocks_proxy {
+    prepare_redsocks_proxy;
+    $redsocks_bin -c "$redsocks_config" -p "$redsocks_pid"
+    disable_redsocks_proxy;
+}
+
+function disable_redsocks_proxy {
+    echo "Disabling redsocks proxy"
+    sudo nft delete table inet socks;
+    sudo ip route delete local default dev lo table $table_id
+    sudo ip rule delete fwmark $lo_socks_fwmark table $table_id
+
+
+    for dir in /proc/sys/net/ipv4/conf/*; do
+        if [ -d "$dir" ]; then
+            dirname=$(basename $dir)
+            sudo sysctl net/ipv4/conf/$dirname/rp_filter=2
+        fi
+    done
+    rm -f "$tproxy_type_file"
+}
+
+function enable_redsocks_background_proxy {
+    prepare_redsocks_proxy;
+    $redsocks_bin -c "$redsocks_config" -p "$redsocks_pid" &
+}
+
+function disable_redsocks_background_proxy {
+    disable_redsocks_proxy;
+    kill $(cat "$redsocks_pid");
+    rm -f "$redsocks_pid";
+}
+
+
+function install_redsocks {
+    echo "Installing redsocks proxy"
+    destination="$1"
+    if [ -z "$destination" ]; then
+        destination=$(mktemp -d);
+    fi
+    git clone https://github.com/semigodking/redsocks.git --recursive --depth=1 "$destination"
+    cwd="$PWD"
+    builtin cd "$destination"
+    make DISABLE_SHADOWSOCKS=true
+    cp ./redsocks2 "$redsocks_bin"
+    builtin cd "$cwd"
+    if command -v strip >/dev/null; then 
+        strip "$redsocks_bin";
+    fi
+}
+
+function print_help {
+    echo "tproxy help                       # show this help"
+    echo "tproxy enable [v2ray/redsocks]    # enables the tproxy"
+    echo "tproxy disable [v2ray/redsocks/]  # disables the transparent proxy (the type can be omitted)"
+    # echo "tproxy enable-background          # enables the tproxy in background"
+    # echo "tproxy disable-background         # disables the transparent proxy that is run in the background"
+    echo "tproxy reload/reset/restart       # disables and then enable the transparent proxy"
+    echo "tproxy install-redsocks [dir]     # install redsocks"
+    echo "tproxy is-running                 # check if it's running"
+}
+
+
+function enable_proxy {
+    case $1 in
+        socks|s|sock|red|redsocks)
+            if [ -f "$tproxy_type_file" ]; then
+                tproxy_type=$(cat "$tproxy_type_file")
+                if [ "$tproxy_type" == "redsocks" ]; then
+                    echo "Already running redsocks proxy";
+                else
+                    echo "There's already a proxy running, let's disable it first."
+                    disable_proxy
+                    enable_redsocks_background_proxy;
+                fi
+            else
+                enable_redsocks_background_proxy;
+            fi
+            ;;
+        v2ray|2ray|2|ray|xray)
+            if [ -f "$tproxy_type_file" ]; then
+                tproxy_type=$(cat "$tproxy_type_file")
+                if [ "$tproxy_type" == "v2ray" ]; then
+                    echo "Already running v2ray proxy";
+                else
+                    echo "There's already a proxy running, let's disable it first."
+                    disable_proxy
+                    enable_v2ray_proxy;
+                fi
+            else
+                enable_v2ray_proxy;
+            fi
+            ;;
+        *)
+            echo "Enabling $default_proxy proxy by default."
+            if [ "$default_proxy" == "v2ray" ]; then
+                enable_v2ray_proxy;
+            else
+                enable_redsocks_background_proxy;
+            fi
+            ;;
+    esac
+}
+
+function disable_proxy {
+    case $1 in
+        socks|s|sock|red|redsocks)
+            disable_redsocks_background_proxy;
+            ;;
+        v2ray|2ray|2|ray|xray)
+            disable_v2ray_proxy;
+            ;;
+        *)
+            if [ -f "$tproxy_type_file" ]; then
+                tproxy_type=$(cat "$tproxy_type_file");
+                if [ "$tproxy_type" == "v2ray" ]; then
+                    disable_v2ray_proxy;
+                elif [ "$tproxy_type" == "redsocks" ]; then
+                    disable_redsocks_background_proxy;
+                else
+                    echo "Unknown tproxy type $tproxy_type";
+                fi
+            else
+                echo "Trying to disable all proxies (there will be failures)";
+                disable_v2ray_proxy;
+                disable_redsocks_background_proxy;
+            fi
+            ;;
+    esac
 }
 
 case $1 in
     enable)
-        enable_proxy
+        enable_proxy $2;
         ;;
     disable)
-        disable_proxy
+        disable_proxy $2;
+        ;;
+    is-running|running|isrunning)
+        if [ -f "$tproxy_type_file" ]; then
+            exit 0;
+        else
+            exit 1;
+        fi
         ;;
     reload|restart|reset)
         disable_proxy
         enable_proxy
         ;;
+    install-redsocks)
+        install_redsocks $2
+        ;;
     *)
-        echo "tproxy enable # enables the tproxy"
-        echo "tproxy disable # disables the transparent proxy"
-        echo "tproxy reload/reset/restart # disables and then enable the transparent proxy"
+        print_help;
         ;;
 esac;
