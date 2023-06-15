@@ -95,6 +95,14 @@ function spacevim {
     fi
 }
 
+# Firefox Policies
+function firefox-policies {
+    # https://mozilla.github.io/policy-templates/
+    cmd_config="$configs_dir/firefox/policies.json";
+    sp_config="/etc/firefox/policies/policies.json";
+    install "$cmd_config" "$sp_config";
+}
+
 
 
 # TV Shortcuts
@@ -199,6 +207,11 @@ for i in "$@"; do
 
         codeshell)
             codeshell_shortcut;
+            shift;
+            ;;
+
+        firefox-policies|firefox)
+            firefox-policies;
             shift;
             ;;
 

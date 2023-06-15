@@ -1,0 +1,44 @@
+{
+    "policies": {
+        "DisableTelemetry": true,
+        "AppAutoUpdate": false,
+        "BackgroundAppUpdate": false,
+        "CaptivePortal": false,
+        "Containers": {
+            "Default": [{
+                "name": "Coding",
+                "icon": "chill",
+                "color": "purple"
+            }, {
+                "name": "Private",
+                "icon": "fence",
+                "color": "green"
+            }, {
+                "name": "Social Media",
+                "icon": "pet",
+                "color": "orange"
+            }]
+        },
+        "DisableFirefoxStudies": true,
+        "DontCheckDefaultBrowser": true,
+        "EnableTrackingProtection": {
+            "Value": true,
+            "Locked": false,
+            "Cryptomining": true,
+            "Fingerprinting": true,
+            "EmailTracking": true
+        },
+        "FirefoxHome": {
+            "Search": true,
+            "TopSites": false,
+            "SponsoredTopSites": false,
+            "Highlights": false,
+            "Pocket": false,
+            "SponsoredPocket": false,
+            "Snippets": false,
+            "Locked": false
+        }
+    },
+    "NetworkPrediction": true,
+    "SearchBar": "unified"
+}
