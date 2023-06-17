@@ -42,6 +42,10 @@ if status is-interactive
     source $HOME/.config/fish/aliases.fish;
     source $HOME/.config/fish/completions/completions.fish;
 
+    if [ -f "$HOME/.fishrc" ];
+        source $HOME/.fishrc;
+    end
+
     # >>> conda initialize >>>
     # !! Contents within this block are managed by 'conda init' !!
     # if test -f /opt/miniconda3/bin/conda

@@ -4,6 +4,8 @@
 dir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 configs_dir="$dir/configs";
 
+should_uninstall=false # boolean
+
 function log {
     echo $@;
 }
@@ -19,10 +21,17 @@ function error {
 function link_item {
     cmd_path="$1";
     install_path="$2";
+
+    if $should_uninstall; then
+	    log "Uninstalling $install_path"
+	    rm -rf "$install_path";
+	    return;
+    fi
+
     cmd_inode=$(stat -c %i -- "$cmd_path");
     install_inode=$(stat -c %i -- "$install_path" 2>/dev/null);
     if [ "$cmd_inode" = "$install_inode" ] && [ ! -z "$install_inode" ]; then
-        log "Already Linked: $install_inode $cmd_path -> $install_path";
+        log "Already Linked: $cmd_inode $install_inode $cmd_path -> $install_path";
         log
         return;
     fi;
@@ -187,6 +196,8 @@ for i in "$@"; do
             log "install.sh chromium"
             log "install.sh codeshell"
             log "install.sh --all"
+            log "install.sh uninstall fish"
+            log "install.sh uninstall all"
             shift;
             ;;
 
@@ -220,12 +231,19 @@ for i in "$@"; do
             shift;
             ;;
 
+        uninstall|--uninstall|remove|rm|--remove|--rm)
+	    should_uninstall=true
+            shift;
+            ;;
+
         all|--all|-a)
             setup_fish;
             chromium;
             spacevim;
             codeshell_shortcut;
             tv_shortcuts;
+	    firefox-policies;
+	    setup_fish;
             exit;
             ;;
 
