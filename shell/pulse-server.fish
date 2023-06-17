@@ -15,7 +15,7 @@ function export_pulse_server -d "Set PULSE_SERVER"
 
     if [ ! -z "$uname_ip" ];
         set -gx PULSE_SERVER tcp:$uname_ip:4713
-    else if ping -c 1 -q -w 1 -W 1 $fallback_ip >/dev/null;
+    else if [ ! -z "$fallback_ip"] && ping -c 1 -q -w 1 -W 1 $fallback_ip >/dev/null;
         set -gx PULSE_SERVER tcp:$fallback_ip:4713;
     end
 end
