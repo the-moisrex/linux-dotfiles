@@ -12,6 +12,7 @@ export PATH=".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$PATH:$JAVA_HOME/bin"
 export CPM_SOURCE_CACHE="$HOME/.cache/CPM"
 export HISTSIZE="100000000"
 export SAVEHIST="$HISTSIZE"
+set -gx LD_LIBRARY_PATH "." $LD_LIBRARY_PATH
 
 # JAVA
 export JAVA_HOME="/usr/lib/jvm/java-19-openjdk"
@@ -52,6 +53,9 @@ if status is-interactive
     #     eval /opt/miniconda3/bin/conda "shell.fish" "hook" $argv | source
     # end
     # <<< conda initialize <<<
+
+
+    source $HOME/.config/fish/cmd_timer.fish
 end
 
 

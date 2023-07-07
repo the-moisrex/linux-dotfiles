@@ -173,6 +173,7 @@ function setup_fish {
     shell_dir="$dir/shell"
     install "$shell_dir/aliases.fish" "$fish_dir/aliases.fish"
     install "$shell_dir/config.fish" "$fish_dir/config.fish"
+    install "$shell_dir/cmd_timer.fish" "$fish_dir/cmd_timer.fish"
     install "$shell_dir/completions.fish" "$fish_dir/completions/completions.fish"
     install "$dir/assets/ok.oga" "$fish_dir/assets/ok.oga"
     install "$dir/assets/error.oga" "$fish_dir/assets/error.oga"
