@@ -35,7 +35,9 @@ if status is-interactive
     # Play a sound on indicating the status of the last command
     if play_pipe_sound --is-possible;
         function precmd --on-event fish_postexec;
-            play_pipe_sound $pipestatus &
+            set p_status "$pipestatus"
+            echo -ne (set_color yellow)► [ "$p_status" ]
+            play_pipe_sound $p_status &
         end
     end
 
