@@ -1,6 +1,6 @@
 #!/bin/bash
 
-default_proxy="v2ray"
+default_proxy="v2raya"
 
 curdir=$(dirname "$0")
 
@@ -17,10 +17,10 @@ tproxy_type_file="/tmp/tproxy/tproxy-type.txt"
 mkdir -p "$(dirname "$redsocks_pid")";
 
 
-############################## V2ray ##############################
+############################## QV2ray ##############################
 
 function enable_v2ray_proxy {
-    echo "Enabling v2ray proxy"
+    echo "Enabling Qv2ray proxy"
     for dir in /proc/sys/net/ipv4/conf/*; do
         if [ -d "$dir" ]; then
             dirname=$(basename $dir)
@@ -35,10 +35,40 @@ function enable_v2ray_proxy {
 }
 
 function disable_v2ray_proxy {
-    echo "Disabling v2ray proxy"
+    echo "Disabling Qv2ray proxy"
     sudo nft delete table inet v2ray;
     sudo ip route delete local default dev lo table $table_id
     sudo ip rule delete fwmark $lo_v2ray_fwmark table $table_id
+
+
+    for dir in /proc/sys/net/ipv4/conf/*; do
+        if [ -d "$dir" ]; then
+            dirname=$(basename $dir)
+            sudo sysctl net/ipv4/conf/$dirname/rp_filter=2
+        fi
+    done
+    rm -f "$tproxy_type_file"
+}
+
+############################## V2rayA ##############################
+
+function enable_v2raya_proxy {
+    echo "Enabling V2rayA proxy"
+    for dir in /proc/sys/net/ipv4/conf/*; do
+        if [ -d "$dir" ]; then
+            dirname=$(basename $dir)
+            sudo sysctl net/ipv4/conf/$dirname/rp_filter=0
+        fi
+    done
+
+    sudo systemctl start v2raya.service
+    echo "v2raya" > "$tproxy_type_file"
+}
+
+function disable_v2raya_proxy {
+    echo "Disabling V2rayA proxy"
+
+    sudo systemctl stop v2raya.service
 
 
     for dir in /proc/sys/net/ipv4/conf/*; do
@@ -171,10 +201,26 @@ function enable_proxy {
                 enable_v2ray_proxy;
             fi
             ;;
+        v2raya)
+            if [ -f "$tproxy_type_file" ]; then
+                tproxy_type=$(cat "$tproxy_type_file")
+                if [ "$tproxy_type" == "v2raya" ]; then
+                    echo "Already running V2rayA proxy";
+                else
+                    echo "There's already a proxy running, let's disable it first."
+                    disable_proxy
+                    enable_v2raya_proxy;
+                fi
+            else
+                enable_v2raya_proxy;
+            fi
+            ;;
         *)
             echo "Enabling $default_proxy proxy by default."
             if [ "$default_proxy" == "v2ray" ]; then
                 enable_v2ray_proxy;
+            elif [ "$default_proxy" == "v2raya" ]; then
+                enable_v2raya_proxy;
             else
                 enable_redsocks_background_proxy;
             fi
@@ -190,6 +236,9 @@ function disable_proxy {
         v2ray|2ray|2|ray|xray)
             disable_v2ray_proxy;
             ;;
+        v2raya)
+            disable_v2ray_proxy;
+            ;;
         *)
             if [ -f "$tproxy_type_file" ]; then
                 tproxy_type=$(cat "$tproxy_type_file");
@@ -197,12 +246,15 @@ function disable_proxy {
                     disable_v2ray_proxy;
                 elif [ "$tproxy_type" == "redsocks" ]; then
                     disable_redsocks_background_proxy;
+                elif [ "$tproxy_type" == "v2raya" ]; then
+                    disable_v2raya_proxy;
                 else
                     echo "Unknown tproxy type $tproxy_type";
                 fi
             else
                 echo "Trying to disable all proxies (there will be failures)";
                 disable_v2ray_proxy;
+                disable_v2raya_proxy;
                 disable_redsocks_background_proxy;
             fi
             ;;
