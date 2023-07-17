@@ -152,6 +152,7 @@ alias cb.hist="clipboard.history"
 
 
 alias ping="ping -DO" #  timeout
+alias please="sudo"
 
 
 function unsudo -d "un-sudo some commands"
