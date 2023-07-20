@@ -200,10 +200,6 @@ fi;
 
 tmpdir=$(realpath ${tmpdir});
 
-if [ -z "$EDITOR" ]; then
-  EDITOR="nvim";
-fi;
-
 template_dir="${template_root}/${template}"
 
 if [ ! -d $template_dir ]; then
@@ -239,6 +235,12 @@ fi;
 
 # write config files:
 echo "${template}" > "${tmpdir}/.template";
+
+if [ -f "${tmpdir}/.editor" ]; then
+    EDITOR=$(cat "${tmpdir}/.editor");
+elif [ -z "$EDITOR" ]; then
+    EDITOR="nvim";
+fi;
 
 function open_editor() {
   local file="$1";
