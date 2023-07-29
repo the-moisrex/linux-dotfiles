@@ -1,36 +1,39 @@
 
-
-# Disable fish greeting
-set -g fish_greeting
-
-set -g cmddir "$HOME/cmd"
-
-#export TERM=alacritty
-# export TERM=kitty
-export EDITOR="nvim"
-export PATH=".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$PATH:$JAVA_HOME/bin"
-export CPM_SOURCE_CACHE="$HOME/.cache/CPM"
-export HISTSIZE="100000000"
-export SAVEHIST="$HISTSIZE"
-set -gx LD_LIBRARY_PATH "." $LD_LIBRARY_PATH
-
-# JAVA
-export JAVA_HOME="/usr/lib/jvm/java-19-openjdk"
-if [ ! -d "$JAVA_HOME" ]
-    export JAVA_HOME=/usr/lib/jvm/default
-end
-
-
-function conda -d 'lazy initialize conda'
-  functions --erase conda
-  eval /opt/miniconda3/bin/conda "shell.fish" "hook" | source
-  # There's some opportunity to use `psub` but I don't really understand it.
-  conda $argv
-end
-
-
 if status is-interactive
     # Commands to run in interactive sessions can go here
+
+    # Disable fish greeting
+    set -gx fish_greeting
+
+    set -gx cmddir "$HOME/cmd"
+
+    # set -gx TERM=alacritty
+    # set -gx TERM=kitty
+    set -gx EDITOR "nvim"
+    set -gx PATH ".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$PATH:$JAVA_HOME/bin"
+    set -gx CPM_SOURCE_CACHE "$HOME/.cache/CPM"
+    set -gx HISTSIZE "100000000"
+    set -gx SAVEHIST "$HISTSIZE"
+    set -gx LD_LIBRARY_PATH "." $LD_LIBRARY_PATH
+
+    # JAVA
+    set -gx JAVA_HOME "/usr/lib/jvm/java-20-openjdk"
+    if [ ! -d "$JAVA_HOME" ]
+        set -gx JAVA_HOME /usr/lib/jvm/default
+    end
+
+    # VCPkg (pacman -S vcpkg):
+    set -gx VCPKG_ROOT "/opt/vcpkg"
+    if [ ! -d "$VCPKG_ROOT" ]
+        set --erase VCPKG_ROOT
+    end
+
+    function conda -d 'lazy initialize conda'
+      functions --erase conda
+      eval /opt/miniconda3/bin/conda "shell.fish" "hook" | source
+      # There's some opportunity to use `psub` but I don't really understand it.
+      conda $argv
+    end
 
     # Play a sound on indicating the status of the last command
     if play_pipe_sound --is-possible;

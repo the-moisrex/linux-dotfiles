@@ -4,6 +4,7 @@
 int main(int argc, char *argv[]) {
   QCoreApplication a(argc, argv);
 
-  qInfo() << "Done";
-  return a.exec();
+  int res = a.exec();
+  qInfo() << "Done with exit code:" << res;
+  return res;
 }
