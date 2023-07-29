@@ -23,8 +23,11 @@ function link_item {
     install_path="$2";
 
     if $should_uninstall; then
-	    log "Uninstalling $install_path"
-	    rm -rf "$install_path";
+        if rm -rf "$install_path"; then
+	        log "Uninstalled $install_path"
+        else
+            error "Uninstalling FAILD: $install_path"
+        fi
 	    return;
     fi
 
