@@ -1,7 +1,12 @@
 #!/bin/bash
 
+if ! command -v chromium >/dev/null; then
+    echo "Chromium is not installed or it's not in the PATH";
+    exit 1;
+fi
+
 dir=$(mktemp -d)
 echo "Chromium Config Directory: $dir"
-chromium --incognito --user-data-dir="$dir"
+chromium --incognito --user-data-dir="$dir" $@
 rm -rf "$dir"
 echo "Chromium Config Directory $dir Deleted."
