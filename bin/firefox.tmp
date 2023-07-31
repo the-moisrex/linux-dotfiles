@@ -1,0 +1,16 @@
+#!/bin/bash
+
+firefox_exe="firefox"
+if command -v firefox-developer-edition >/dev/null; then
+    if ! command -v firefox >/dev/null; then
+        firefox_exe="firefox-developer-edition"
+    fi
+elif ! command -v firefox >/dev/null; then
+    echo "Firefox is not installed or it's not in the PATH";
+    exit 1;
+fi
+dir=$(mktemp -d)
+echo "Firefox Config Directory: $dir"
+eval $firefox_exe --no-remote --new-instance --profile "$dir" "about:blank"
+rm -rf "$dir"
+echo "Firefox Config Directory $dir Deleted."

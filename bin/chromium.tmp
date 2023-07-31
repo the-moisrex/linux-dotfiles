@@ -3,5 +3,5 @@
 dir=$(mktemp -d)
 echo "Chromium Config Directory: $dir"
 chromium --incognito --user-data-dir="$dir"
-rm -rd "$dir"
+rm -rf "$dir"
 echo "Chromium Config Directory $dir Deleted."
