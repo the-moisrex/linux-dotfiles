@@ -1,7 +1,32 @@
 #!/bin/bash
 
-username=$(date +%s | sha256sum | base64 | head -c 16)
-echo Username: $username
-echo Password: 
+function print_help {
+	echo "Usage: pass-gen username password-file"
+	echo "       pass-gen password-file         # Random username"
+}
 
-pass generate -f $1
+case $1 in
+	--help|help|-h)
+		print_help
+		exit;
+esac
+
+if [ -z "$1" ]; then
+	echo "Please enter a password file name/path";
+	print_help
+	exit 1;
+fi
+
+if [ ! -z "$2" ]; then
+	password_file="$2"
+	username="$1"
+else
+	password_file="$1"
+	username=$(date +%s | sha256sum | base64 | head -c 16)
+fi
+password_file="$password_file/$username"
+
+echo Username: $username
+echo Password File: $password_file
+echo Password: 
+pass generate --force $password_file
