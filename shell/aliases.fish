@@ -18,30 +18,33 @@ abbr v vim
 abbr bwre brew
 abbr brwe brew
 
-if command -v lsd >/dev/null
+if command -v exa >/dev/null
+    set ls_exec "exa --icons"
+    set ls_cmd "$ls_exec --group-directories-first"
+
+    # some more ls aliases
+    alias ll="$ls_cmd -alFh"
+    alias la="$ls_cmd -a"
+    alias l="$ls_cmd -F"
+    alias lh="$ls_cmd -lh"
+else if command -v lsd >/dev/null
     set ls_exec "lsd"
+    set ls_cmd "$ls_exec --group-directories-first"
 
     # some more ls aliases
-    alias ll="$ls_exec -alFh --group-directories-first"
-    alias la="$ls_exec -a --group-directories-first"
-    alias l="$ls_exec -F --group-directories-first"
-    alias lh="$ls_exec -lh --group-directories-first"
-else if command -v exa >/dev/null
-    set ls_exec "exa"
-
-    # some more ls aliases
-    alias ll="$ls_exec -alFh"
-    alias la="$ls_exec -a"
-    alias l="$ls_exec -F"
-    alias lh="$ls_exec -lh"
+    alias ll="$ls_cmd -alFh"
+    alias la="$ls_cmd -a"
+    alias l="$ls_cmd -F"
+    alias lh="$ls_cmd -lh"
 else
     set ls_exec "ls"
+    set ls_cmd "$ls_exec --hyperlink=auto"
 
     # some more ls aliases
-    alias ll="$ls_exec -alFh --hyperlink=auto"
-    alias la="$ls_exec -A --hyperlink=auto"
-    alias l="$ls_exec -CF --hyperlink=auto"
-    alias lh="$ls_exec -lh --hyperlink=auto"
+    alias ll="$ls_cmd -alFh"
+    alias la="$ls_cmd -A"
+    alias l="$ls_cmd -CF"
+    alias lh="$ls_cmd -lh"
 end
 
 # enable color support of ls and also add handy aliases
@@ -57,7 +60,7 @@ if [ -x /usr/bin/dircolors ]
     alias egrep="egrep --color=auto"
 end
 
-alias ls="$ls_exec --group-directories-first"
+alias ls="$ls_cmd"
 
 # Network Start, Stop, and Restart
 
