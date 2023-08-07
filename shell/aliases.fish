@@ -18,7 +18,15 @@ abbr v vim
 abbr bwre brew
 abbr brwe brew
 
-if command -v exa >/dev/null
+if command -v lsd >/dev/null
+    set ls_exec "lsd"
+
+    # some more ls aliases
+    alias ll="$ls_exec -alFh --group-directories-first"
+    alias la="$ls_exec -a --group-directories-first"
+    alias l="$ls_exec -F --group-directories-first"
+    alias lh="$ls_exec -lh --group-directories-first"
+else if command -v exa >/dev/null
     set ls_exec "exa"
 
     # some more ls aliases
@@ -48,6 +56,8 @@ if [ -x /usr/bin/dircolors ]
     alias fgrep="fgrep --color=auto"
     alias egrep="egrep --color=auto"
 end
+
+alias ls="$ls_exec --group-directories-first"
 
 # Network Start, Stop, and Restart
 
