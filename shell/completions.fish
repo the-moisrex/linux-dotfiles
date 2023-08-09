@@ -10,3 +10,13 @@ complete -x -c codeshell -d "Template" -a "(find \$HOME/cmd/code-templates/ -max
 complete -x -c run -a "(run print-targets)"
 complete -c run -a lldb -d "Debug in lldb"
 complete -c run -a gdb -d "Debug in gdb"
+
+# execif
+# complete -c execif -d "Executable Name" \
+#     -n "[ (commandline | wc -l) = '1' ]" \
+#     -n "[ (commandline --tokenize | wc -l) != '1' ]" \
+#     -xa "three four yay"
+#     -xa '(set -l t (commandline -ct | string split " " -f2); complete -C "$t")'
+#     -xa '(set -l t (commandline -opc)[2..-1]; complete -C "$t")'
+complete -c execif -d "Executable Arguments" \
+    -xa '(set -l t (commandline | string replace "execif " ""); complete -C "$t")'
