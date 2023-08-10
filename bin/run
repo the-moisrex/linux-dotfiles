@@ -18,7 +18,15 @@ build_dir="$proj_dir/build";
 
 
 function print_cmake_targets {
-    cmake --build "$build_dir" --target help | grep -v phony | cut -d: -f1 | tail -n +2
+    current_version=$(cmake --version | grep "cmake version" | cut -d" " -f3)
+    version="3.27"
+    if [[ $(echo -e "$version\n$current_version" | sort --version-sort -r | head -n1) == "$current_version" ]]; then
+        # newer versions of cmake
+        cmake --build "$build_dir" --target help | cut -d" " -f2 | tail -n +2
+    else
+        # older versions of cmake
+        cmake --build "$build_dir" --target help | grep -v phony | cut -d: -f1 | tail -n +2
+    fi
 }
 
 function run {
