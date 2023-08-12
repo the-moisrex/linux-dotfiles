@@ -96,18 +96,38 @@ function keep-running-head {
 exec_name=$(realpath "$0");
 function print_help {
     echo "$exec_name help"
-    echo "           [target]"
-    echo "           keep [target]"
-    echo "           keep head [target]"
-    echo "           analyze/scan-build [target]"
-    echo "           lldb/gdb [target]"
+    echo "           [target]                     # the target to compile/run"
+    echo "           keep [target]                # keep running the target"
+    echo "           keep head [target]           # keep running with the head of the results"
+    echo "           analyze/scan-build [target]  # "
+    echo "           lldb/gdb [target]            # run lldb/gdb on the target"
+    echo "           less [command]               # pipe 'command' to 'less -r'"
 }
 
 
+# Make a copy
+args=("$@")
+
+arg_pos=0
+for arg in "${args[@]}"; do
+    arg_pos=$(($arg_pos + 1))
+    case $arg in
+        -r|less|-less|--less|-l|l)
+            # Remove the string from the array by position
+            args=("${args[@]:0:$(($arg_pos - 1))}" "${args[@]:$arg_pos}")
+
+            $0 $args | less -r;
+            exit $?
+            ;;
+        help)
+            print_help;
+            exit 0;
+            ;;
+    esac
+done
+
+
 case "$1" in
-    help)
-        print_help;
-        ;;
     keep)
         shift;
         case "$2" in

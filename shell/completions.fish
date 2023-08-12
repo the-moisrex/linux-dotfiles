@@ -10,6 +10,9 @@ complete -x -c codeshell -d "Template" -a "(find \$HOME/cmd/code-templates/ -max
 complete -x -c run -a "(run print-targets)"
 complete -c run -a lldb -d "Debug in lldb"
 complete -c run -a gdb -d "Debug in gdb"
+complete -c run -a 'less -r -l l' -d "Pipe the results to 'less'"
+complete -c run -a 'print-targets' -d "Print Targets"
+complete -c run -a help -d "Print Help"
 
 # runif
 # complete -c runif -d "Executable Name" \
