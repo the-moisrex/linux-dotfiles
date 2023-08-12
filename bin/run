@@ -82,14 +82,7 @@ function run {
 
 
 function keep-running {
-  repo=$(repo_path);
-  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1}"
-}
-
-
-function keep-running-head {
-  repo=$(repo_path);
-  git -C "$repo" ls-files -cm | entr -cs "source ${functions_file_path}; run ${1} | head -${2}"
+  git -C "$proj_dir" ls-files -cm | entr -ardc $0 $@
 }
 
 
@@ -98,7 +91,6 @@ function print_help {
     echo "$exec_name help"
     echo "           [target]                     # the target to compile/run"
     echo "           keep [target]                # keep running the target"
-    echo "           keep head [target]           # keep running with the head of the results"
     echo "           analyze/scan-build [target]  # "
     echo "           lldb/gdb [target]            # run lldb/gdb on the target"
     echo "           less [command]               # pipe 'command' to 'less -r'"
@@ -108,38 +100,32 @@ function print_help {
 # Make a copy
 args=("$@")
 
-arg_pos=0
+arg_pos=-1
 for arg in "${args[@]}"; do
     arg_pos=$(($arg_pos + 1))
     case $arg in
         -r|less|-less|--less|-l|l)
             # Remove the string from the array by position
-            args=("${args[@]:0:$(($arg_pos - 1))}" "${args[@]:$arg_pos}")
+            unset "args[$arg_pos]"
 
-            $0 $args | less -r;
+            $0 ${args[@]} | less -r;
             exit $?
             ;;
         help)
             print_help;
             exit 0;
             ;;
+        keep)
+            # Remove the string from the array by position
+            unset "args[$arg_pos]"
+            keep-running "${args[@]}";
+            exit $?
+            ;;
     esac
 done
 
 
 case "$1" in
-    keep)
-        shift;
-        case "$2" in
-            head)
-                shift;
-                keep-running-head $@;
-                ;;
-            *)
-                keep-running $@;
-                ;;
-        esac
-        ;;
     analyze|scan-build)
         shift;
         run analyze $@;
