@@ -2,6 +2,13 @@
 if status is-interactive
     # Commands to run in interactive sessions can go here
 
+    # https://github.com/fish-shell/fish-shell/wiki/Bash-Style-Command-Substitution-and-Chaining-(!!-!$)
+    function fish_user_key_bindings
+        fish_hybrid_key_bindings
+        bind -M insert ! bind_bang
+        bind -M insert '$' bind_dollar
+    end
+
     # Disable fish greeting
     set -gx fish_greeting
 
