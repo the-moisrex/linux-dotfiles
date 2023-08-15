@@ -15,6 +15,7 @@ done;
 
 proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
 build_dir="$proj_dir/build";
+should_clean=true;
 
 
 function print_cmake_targets {
@@ -57,12 +58,14 @@ function run {
       echo -e "${RED}Wrong build directory.${NC}";
       return;
     fi;
-    clear;
+    if $should_clean; then
+        clear;
+    fi
     echo -e "${GRAY}Project root:${NC}    $proj_dir"
     echo -e "${GRAY}Build Directory:${NC} $build_dir"
     echo -e "${GRAY}Build command:${NC}   $scan_build $build_cmd"
     echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
-    if eval "unbuffer $scan_build $build_cmd"; then
+    if eval "$scan_build $build_cmd"; then
       timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile";
@@ -93,7 +96,7 @@ function print_help {
     echo "           keep [target]                # keep running the target"
     echo "           analyze/scan-build [target]  # "
     echo "           lldb/gdb [target]            # run lldb/gdb on the target"
-    echo "           less [command]               # pipe 'command' to 'less -r'"
+    echo "           less [command]               # pipe 'command' to 'less'"
 }
 
 
@@ -104,11 +107,15 @@ arg_pos=-1
 for arg in "${args[@]}"; do
     arg_pos=$(($arg_pos + 1))
     case $arg in
+        --clean=false|--no-clean)
+            should_clean=false;
+            unset "args[$arg_pos]"
+            ;;
         -r|less|-less|--less|-l|l)
             # Remove the string from the array by position
             unset "args[$arg_pos]"
 
-            $0 ${args[@]} | less -r;
+            $0 --no-clean ${args[@]} | less --RAW-CONTROL-CHARS --with-colors --buffers=-1;
             exit $?
             ;;
         help)
@@ -121,30 +128,30 @@ for arg in "${args[@]}"; do
             keep-running "${args[@]}";
             exit $?
             ;;
+        print-targets)
+            shift;
+            print_cmake_targets;
+            exit;
+            ;;
     esac
 done
 
 
-case "$1" in
+case "${args[0]}" in
     analyze|scan-build)
-        shift;
-        run analyze $@;
+        unset "args[0]"
+        run analyze ${args[@]};
         ;;
     lldb)
-        shift;
-        run lldb $@;
+        unset "args[0]"
+        run lldb ${args[@]};
         ;;
     gdb)
-        shift;
-        run gdb $@;
-        ;;
-    print-targets)
-        shift;
-        print_cmake_targets;
-        exit;
+        unset "args[0]"
+        run gdb ${args[@]};
         ;;
     *)
-        run $@;
+        run ${args[@]};
         ;;
 esac
 
