@@ -65,7 +65,7 @@ function run {
     echo -e "${GRAY}Build Directory:${NC} $build_dir"
     echo -e "${GRAY}Build command:${NC}   $scan_build $build_cmd"
     echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
-    if eval "$scan_build $build_cmd"; then
+    if eval "unbuffer $scan_build $build_cmd"; then
       timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile";
@@ -115,7 +115,7 @@ for arg in "${args[@]}"; do
             # Remove the string from the array by position
             unset "args[$arg_pos]"
 
-            $0 --no-clean ${args[@]} | less --RAW-CONTROL-CHARS --with-colors --buffers=-1;
+            $0 --no-clean ${args[@]} | less --RAW-CONTROL-CHARS --buffers=-1;
             exit $?
             ;;
         help)
