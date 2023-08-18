@@ -1,9 +1,13 @@
-#!/bin/bash
+#!/bin/sh
 
 cmd="$1"
 
 if command -v "$cmd" >/dev/null; then
-    eval $@
+    if [ ! -z "$SHELL" ]; then
+        eval $SHELL -i -c \"$@\";
+    else
+        eval $@
+    fi
 else
     echo "Command '$cmd' deson't exists."
     exit 1
