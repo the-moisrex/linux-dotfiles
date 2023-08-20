@@ -193,7 +193,7 @@ table inet filter {
 
         meta mark $accepted_fwmark counter name filter.marked accept;
 
-	# Accept packets that are marked by the "v2rayA" firewall rules
+	    # Accept packets that are marked by the "v2rayA" firewall rules
         meta mark 0x40 counter name filter.marked accept;
         meta mark 0x80 counter name filter.marked accept;
 
@@ -226,6 +226,7 @@ table inet mangle {
     counter skip.ignored { comment "IPs of domain names that got to skip the VPN" }
     counter skip.geoips4 { comment "IPs of countries" }
     counter skip.multicast { comment "Multicast IPs that marked to skip VPN" }
+    counter skip.broadcast { comment "Broadcast IPs that marked to skip VPN" }
     counter skip.dns { comment "DNSCrypt skipped" }
     counter skip.never { comment "Never Skip these IPs" }
 
@@ -286,6 +287,7 @@ table inet mangle {
         @if-user(tor) skuid tor goto marker
         @if-group(v2ray) skgid v2ray goto marker
         meta pkttype multicast counter name skip.multicast goto marker
+        meta pkttype broadcast counter name skip.broadcast goto marker
     }
 
     # chain ingress {
