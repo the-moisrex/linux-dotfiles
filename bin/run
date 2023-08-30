@@ -14,20 +14,44 @@ gitroot="../${gitroot}";
 done;
 
 proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
-build_dir="$proj_dir/build";
 should_clean=true;
+build_dir="";
+is_interactive=true;
+
+# find the project directories
+function calculate_build_dir {
+    build_dir=$(find $proj_dir -maxdepth 2 -type f -name build.ninja -o -name CMakeCache.txt -o -name Makefile | xargs -l dirname | sort -u | xargs -l basename);
+    if $is_interactive; then
+        if [ $(echo -e "$build_dir" | wc -l) != "1" ]; then
+            if ! command -v dialog >/dev/null; then
+                echo "Install the 'dialog' command.";
+                exit 1;
+            fi
+            build_options=()
+            readarray -t build_options <<< "$build_dir";
+            echo "${build_options[@]}"
+            build_dir=$(dialog --stdout --erase-on-exit --no-cancel --no-items --ok-label "Run" --trim --scrollbar --menu "Select the build directory:" 20 50 ${#build_options[@]} ${build_options[@]})
+        fi
+    else
+        # select the first choice in non-interactive modes
+        build_dir=$(echo -e "$build_dir" | head -n 1)
+    fi
+}
 
 
 function print_cmake_targets {
-    current_version=$(cmake --version | grep "cmake version" | cut -d" " -f3)
-    version="3.27"
-    if [[ $(echo -e "$version\n$current_version" | sort --version-sort -r | head -n1) == "$current_version" ]]; then
-        # newer versions of cmake
-        cmake --build "$build_dir" --target help | cut -d" " -f2 | tail -n +2
-    else
+    is_interactive=false;
+    calculate_build_dir;
+
+    # current_version=$(cmake --version | grep "cmake version" | cut -d" " -f3)
+    # version="3.27"
+    # if [[ $(echo -e "$version\n$current_version" | sort --version-sort -r | head -n1) == "$current_version" ]]; then
+    #     # newer versions of cmake
+    #     cmake --build "$build_dir" --target help | cut -d" " -f2 | tail -n +2
+    # else
         # older versions of cmake
         cmake --build "$build_dir" --target help | grep -v phony | cut -d: -f1 | tail -n +2
-    fi
+    # fi
 }
 
 function run {
@@ -43,6 +67,8 @@ function run {
       debug_cmd="gdb";
       shift;
   fi
+
+  calculate_build_dir
 
   old_dir=$(pwd);
   execfile="$@";
