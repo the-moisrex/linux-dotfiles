@@ -1,0 +1,160 @@
+#!/bin/bash
+
+# Check if a device is up or not
+# Usage: try isup router && ssh router
+function isup {
+    ping -w1 -c1 $@ &>/dev/null || ping -w6 -W1 -c3 $@ &>/dev/null
+}
+
+function ishttpfiltered {
+    # timeout:     3  seconds
+    # max timeout: 10 seconds
+    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>&1);
+    if [ "$?" != 0 ]; then
+        return 0;
+    fi
+    echo -n "$res" | grep 10.10.34 &>/dev/null;
+}
+
+function ishttpsfiltered {
+    # timeout:     3  seconds
+    # max timeout: 10 seconds
+    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter https://$@ 2>&1);
+    if [ "$?" != 0 ]; then
+        return 0;
+    fi
+    echo -n "$res" | grep 10.10.34 &>/dev/null;
+}
+
+function isempty {
+    if test -n "$1"; then
+        test -z "$@" && false || true;
+    elif test ! -t 0; then
+        cat | xargs test -z;
+    else
+        echo "No input for to check if it's empty or not.";
+    fi;
+}
+
+function isnotempty {
+    if test -n "$1"; then
+        test -z "$@" && false || true;
+    elif test ! -t 0; then
+        # (cat | xargs test -z) && false || true;
+        read line || return 1
+        test -z "$line" && false || true;
+        # (echo "$line"; cat) | eval "$@"
+    else
+        echo "No input for to check if it's empty or not.";
+    fi;
+}
+
+function ishttpup {
+    # todo: ishttpup IPAddr is not supported
+    (ipof $@ | isnotempty) && (! ishttpfiltered $@) || (! ishttpfiltered $@) || false && true
+}
+
+function ishttpsup {
+    domain="$@"
+    if [ -z "$@" ]; then
+        domain="youtube.com"
+    fi
+    (ipof $domain | isnotempty) && (! ishttpsfiltered $domain) || (! ishttpsfiltered $domain) || false && true
+}
+
+function print_help {
+    name=$(basename "$0");
+    echo "Usage: $name [command] [options]"
+    echo
+    echo "  $name domain.ext            # Check ping,http,https"
+    echo "  $name http domain.ext       # Check http only"
+    echo "  $name https ip              # Check https only"
+    echo "  $name ping domain.ext       # Check ping only"
+    echo
+    echo " Check if they are filtrered:"
+    echo "  $name filtered https domain.ext       # Check https only"
+    echo "  $name filtered http domain.ext        # Check http only"
+    echo "  $name filtered domain.ext             # Check both http and https only"
+}
+
+case $1 in
+    --help|help|-h)
+        print_help;
+        exit 1;
+        ;;
+
+    http)
+        shift;
+        ishttpup $@;
+        exit $?
+        ;;
+
+    https)
+        shift
+        ishttpsup $@;
+        exit $?
+        ;;
+
+    ping)
+        shift;
+        isup $@;
+        ;;
+
+    filtered|filter|is-filter)
+        shift;
+        case $1 in
+            http)
+                shift;
+                ishttpfiltered $@;
+                exit $?
+                ;;
+            https)
+                shift;
+                ishttpsfiltered $@;
+                exit $?;
+                ;;
+            *)
+                code=0
+                if ishttpfiltered $@; then
+                    echo "HTTP is filtred."
+                else
+                    code=$?;
+                    echo "HTTP is OK."
+                fi
+                if ishttpsfiltered $@; then
+                    echo "HTTPS is filtrered.";
+                else
+                    code=$?
+                    echo "HTTPS is OK.";
+                fi
+                exit $code;
+                ;;
+        esac
+        ;;
+
+    *)
+        # all information:
+        if isup $@; then
+            echo "Ping OK.";
+            if ishttpup $@; then
+                echo "HTTP OK.";
+                if ishttpsup $@; then
+                    echo "HTTPS OK.";
+                    exit 0;
+                else
+                    code=$?;
+                    echo "HTTPS Failed.";
+                    exit $code
+                fi
+            else
+                code=$?;
+                echo "HTTP Failed.";
+                exit $code
+            fi
+        else
+            code=$?;
+            echo "Ping Failed.";
+            exit $code;
+        fi
+        ;;
+esac

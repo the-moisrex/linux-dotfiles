@@ -1,0 +1,20 @@
+#!/bin/bash
+
+function print_help {
+    name=$(basename "$0")
+    echo "Usage: "
+    echo "$name   domain.exit"
+    echo "       help | -h | --help"
+}
+
+case $1 in
+    help|-h|--help)
+        print_help;
+        exit;
+        ;;
+
+    *)
+        # Get the ip address of the specified domain (only one ip)
+        dig +short +timeout=3 $1 | grep '^[.0-9]*$' | head -n 1
+    ;;
+esac
