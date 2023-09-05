@@ -182,6 +182,25 @@ function setup_fish {
     install "$dir/assets/error.oga" "$fish_dir/assets/error.oga"
 }
 
+function install_jcal {
+    if $should_uninstall; then
+        echo "Cannot uninstall jcal";
+    else
+        repo="https://github.com/ashkang/jcal.git"
+        dir=$(mktemp -d);
+        echo "Temp Directory: $dir"
+        working_dir=$PWD
+        git clone --depth 1 $repo "$dir/jcal";
+        builtin cd "$dir/jcal/sources"
+        ./autogen.sh
+        ./configure
+        make -j
+        sudo make install
+        rm -rf "$dir";
+        builtin cd "$working_dir";
+    fi
+}
+
 # default values;
 forced=false
 for i in "$@"; do
@@ -207,6 +226,11 @@ for i in "$@"; do
 
         chrome|chromium)
             chromium;
+            shift;
+            ;;
+
+        jcal)
+            install_jcal;
             shift;
             ;;
 
