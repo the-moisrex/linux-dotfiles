@@ -11,8 +11,8 @@
     # set spacevim theme. by default colorscheme layer is not loaded,
     # if you want to use more colorscheme, please load the colorscheme
     # layer
-    # colorscheme = "gruvbox"
-    colorscheme = "SpaceVim"
+    colorscheme = "gruvbox"
+    # colorscheme = "SpaceVim"
     colorscheme_bg = "dark"
     # Disable guicolors in basic mode, many terminal do not support 24bit
     # true colors
@@ -29,6 +29,7 @@
     enable_vimfiler_welcome = false
     filemanager = "vimfiler"
     enable_filetree_gitstatus = true
+    windows_smartclose = ''  # disable smart close so the vim's "q" command (recording) would be available again
 
 # Enable autocomplete layer
 [[layers]]
@@ -60,7 +61,7 @@
     name="tools"
 
 [[layers]]
-    name="denite"
+    name="telescope"
 
 [[layers]]
     name="git"
