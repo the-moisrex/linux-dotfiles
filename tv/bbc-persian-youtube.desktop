@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Name=BBC Persian (Youtube)
+Exec=/usr/bin/vlc https://www.youtube.com/@BBCNewsPersian/live
+Icon=tv.bbc-persian
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video
+Keywords=bbc persian;BBC;persian;farsi;BBC farsi;BBC News;News;Europe;youtube;yt
