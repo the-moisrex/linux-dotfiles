@@ -44,7 +44,7 @@ if [ "$pretext" == "webpp" ]; then
   cd "$working_dir"
 fi
 
-title="${*:2}"
+title="$@"
 
 # splugify from: https://gist.github.com/oneohthree/f528c7ae1e701ad990e6?permalink_comment_id=2047474#gistcomment-2047474
 filename=$(echo "$pretext-$title" | iconv -t ascii//TRANSLIT | sed -r s/[~\^]+//g | sed -r s/[^a-zA-Z0-9]+/-/g | sed -r s/^-+\|-+$//g | tr A-Z a-z)
