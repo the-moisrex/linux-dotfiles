@@ -48,6 +48,19 @@ function convert_files {
   done < <(echo -e "$@")
 }
 
-while read -r file; do
-  run_cmd convert_files "$file"
-done < <(echo -ne "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS")
+function print_error {
+  echo -e "$@"
+}
+
+if [ ! -z "$NAUTILUS_SCRIPT_SELECTED_URIS" ]; then
+  run_cmd print_error "ffmpeg doesn't work on remote files.\n\nfiles:\n$NAUTILUS_SCRIPT_SELECTED_URIS"
+  # while read -r file; do
+  #   run_cmd convert_files "$file"
+  # done < <(echo -ne "$NAUTILUS_SCRIPT_SELECTED_URIS")
+elif [ -z "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" ]; then
+  while read -r file; do
+    run_cmd convert_files "$file"
+  done < <(echo -ne "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS")
+else
+  run_cmd print_error "No file specified."
+fi
