@@ -3,7 +3,7 @@
 # to monitor logs use this command:
 #   $ journalctl -k -t kernel -g 'nft#' --follow
 
-define local_network   = { 192.168.88.0/24, 192.168.167.164/30, 127.0.0.0/8, 10.1.1.0/24 }
+define local_network   = { 192.168.0.0/16, 169.254.0.0/16, 127.0.0.0/8, 10.0.0.0/8 }
 define skip_vpn_mark   = 0xe1f1 # NordVPN default vpn mark used in iproute2
 define accepted_fwmark = 0xe5ff # Accepted packets' mark; used for tor load balancing scripts
 define lo_v2ray_fwmark = 0xff   # Directly connect SO_MARK to 0xff traffic (0xff is a hexadecimal number, numerically equivalent to 255), the purpose of this rule is to avoid proxy loopback with local (gateway) traffic
@@ -193,7 +193,7 @@ table inet filter {
 
         meta mark $accepted_fwmark counter name filter.marked accept;
 
-	    # Accept packets that are marked by the "v2rayA" firewall rules
+	      # Accept packets that are marked by the "v2rayA" firewall rules
         meta mark 0x40 counter name filter.marked accept;
         meta mark 0x80 counter name filter.marked accept;
 
