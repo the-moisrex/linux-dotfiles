@@ -182,6 +182,12 @@ function setup_fish {
     install "$dir/assets/error.oga" "$fish_dir/assets/error.oga"
 }
 
+
+function setup_nautilus_actions {
+    nautilus_actions_dir="$HOME/.local/share/nautilus/scripts"
+    install "$dir/nautilus/ffmpeg-to-mp3" "$nautilus_actions_dir/Convert To MP3 (ffmpeg)"
+}
+
 function install_jcal {
     if $should_uninstall; then
         echo "Cannot uninstall jcal";
@@ -217,6 +223,7 @@ for i in "$@"; do
             log "install.sh spacevim"
             log "install.sh tv"
             log "install.sh chromium"
+            log "install.sh nautilus"
             log "install.sh codeshell"
             log "install.sh --all"
             log "install.sh uninstall fish"
@@ -249,6 +256,11 @@ for i in "$@"; do
             shift;
             ;;
 
+        nautilus)
+            setup_nautilus_actions;
+            shift;
+            ;;
+
         firefox-policies|firefox)
             firefox-policies;
             shift;
@@ -260,7 +272,7 @@ for i in "$@"; do
             ;;
 
         uninstall|--uninstall|remove|rm|--remove|--rm)
-	    should_uninstall=true
+            should_uninstall=true
             shift;
             ;;
 
@@ -270,8 +282,8 @@ for i in "$@"; do
             spacevim;
             codeshell_shortcut;
             tv_shortcuts;
-	    firefox-policies;
-	    setup_fish;
+	          firefox-policies;
+            setup_fish;
             exit;
             ;;
 

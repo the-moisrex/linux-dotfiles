@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Newline-delimited paths for selected files - only if local ( i.e. /home/user/someFile).
+#   $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS
+#
+# Newline-delimited URIs for selected files (i.e. file:///home/user/someFile).
+#   $NAUTILUS_SCRIPT_SELECTED_URIS
+#
+# Current location
+#   $NAUTILUS_SCRIPT_CURRENT_URI
+#
+# Position and size of current window
+#   $NAUTILUS_SCRIPT_WINDOW_GEOMETRY
+
+function run_cmd() {
+  # Check if the gnome-terminal command exists.
+  if ! command -v gnome-terminal > /dev/null; then
+    echo "The gnome-terminal command does not exist."
+    return 1
+  fi
+
+  # Get the command to run.
+  cmd="$1"
+  shift
+
+  # Get the function definishion
+  func_def=$(type -a $cmd | tail -n +2)
+  dir=$(mktemp -d)
+  file="$dir/command.sh"
+  file_content="#!/bin/bash\n\n"
+  file_content="$file_content\n\necho File: $file\n"
+  file_content="$file_content\n$func_def\neval $cmd "
+  for i in "$@"; do
+    echo "$i" >> $dir/arguments.txt
+    arg=$(printf %q "$i")
+    file_content="$file_content \"$arg\""
+  done
+  echo -e "$file_content" > $file
+
+  # Open a new terminal window and run the command.
+  gnome-terminal --window --title="Run command: $cmd" -- bash -ic "bash --rcfile $file"
+}
+
+function convert_files {
+  while read -r file; do
+    echo "Converting file $file"
+    ffmpeg -i "$file" "${file%.*}.mp3"
+  done < <(echo -e "$@")
+}
+
+while read -r file; do
+  run_cmd convert_files "$file"
+done < <(echo -ne "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS")
