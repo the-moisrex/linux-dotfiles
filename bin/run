@@ -91,7 +91,7 @@ function run {
     echo -e "${GRAY}Build Directory:${NC} $build_dir"
     echo -e "${GRAY}Build command:${NC}   $scan_build $build_cmd"
     echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
-    if eval "unbuffer $scan_build $build_cmd"; then
+    if eval "stdbuf -i0 -o0 -e0 $scan_build $build_cmd"; then
       timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile";
