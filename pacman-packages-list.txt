@@ -117,6 +117,7 @@ indent   # C language source code formatting program
 octave
 typescript
 $miniconda3
+strace
 
 # Sound
 pavucontrol
