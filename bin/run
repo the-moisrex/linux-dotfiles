@@ -136,6 +136,7 @@ function build-report {
     echo -e "${GRAY}Project root:${NC}    $proj_dir"
     echo -e "${GRAY}Build Directory:${NC} $build_dir"
     
+    all_cmds=""
     for target in $@; do
       if [ -f "$build_dir/CMakeCache.txt" ]; then
         build_cmd="cmake --build '$build_dir' --target $target";
@@ -147,13 +148,17 @@ function build-report {
         echo -e "${RED}Wrong build directory.${NC}";
         return;
       fi;
-      echo -e "${GRAY} - [COMPILING] $target${NC}: $build_cmd"
-      if eval "stdbuf -i0 -o0 -e0 $scan_build $build_cmd" &>/dev/null; then
-        echo -e "${GREEN} - [SUCCESS]   $target ${NC}"
+      cmd="stdbuf -i0 -o0 -e0 $scan_build $build_cmd &>/dev/null && echo -e \"${GREEN} - [SUCCESS]   $target ${NC}\" || echo -e \"${RED} - [FAILED]    $target ${NC} \t\t $build_cmd\""
+      # echo -e "${GRAY} - [COMPILING] $target${NC}: $build_cmd"
+      if command -v parallel &>/dev/null; then
+        all_cmds="${all_cmds}\n${cmd}"
       else
-        echo -e "${RED} - [FAILED]    $target ${NC}"
-      fi;
+        eval $cmd;
+      fi
     done
+    if command -v parallel &>/dev/null; then
+      echo -ne "$all_cmds" | parallel -j+0
+    fi
   else
     echo -e "${RED}Project Root not found.${NC}"
   fi;
