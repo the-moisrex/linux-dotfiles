@@ -23,9 +23,10 @@ if status is-interactive
     set -gx SAVEHIST "$HISTSIZE"
     set -gx LD_LIBRARY_PATH "." $LD_LIBRARY_PATH
 
-    if [ -d /opt/depot_tools ];
-      fish_add_path /opt/depot_tools
-    end
+    # There are conflicts for "clang-format" for example
+    # if [ -d /opt/depot_tools ];
+    #   fish_add_path /opt/depot_tools
+    # end
 
     # JAVA
     set -gx JAVA_HOME "/usr/lib/jvm/java-20-openjdk"
