@@ -51,6 +51,7 @@ pigz
 xorg-twm
 xterm
 whois
+parallel
 
 # Shells
 kitty
