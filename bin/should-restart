@@ -1,5 +1,11 @@
 #!/bin/bash
 
+if ! command -v lsof >/dev/null; then
+    echo "Install lsof command."
+    echo " # pacman -S lsof"
+    exit 1;
+fi
+
 echo Checking if you should reboot the system or restart applications...
 echo Other possible usage: "$0 && reboot";
 echo
