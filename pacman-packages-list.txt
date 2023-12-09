@@ -1,0 +1,126 @@
+# CMD requirements:
+lsof      # needed for should-restart
+nftables  # for firewall
+python
+dialog
+entr
+
+# Media software
+vlc
+smplayer
+gimp
+opera
+opera-ffmpeg-codecs
+firefox-developer-edition
+chromium
+obs-studio
+obsidian
+obsidian-icon-theme
+
+# Virtualization
+virtualbox
+virtualbox-guest-iso
+virtualbox-sdk
+wine
+wine-mono
+
+# DNS
+dnsmasq
+dnscrypt-proxy
+bind
+
+# Utilities
+xclip        # for X system
+wl-clipboard # for wayland
+which
+tree
+sudo
+ntfs-3g      # handling NTFS partitions
+neovim
+vim
+cpupower
+cpupower-gui
+criu         # Utilities to checkpoint and restore processes in userspace
+gpart
+gparted
+man-pages
+nano
+p7zip
+pass         # password manager
+pigz
+xorg-twm
+xterm
+whois
+
+# Shells
+kitty
+zsh
+zsh-completions
+fish
+bash-completion
+
+# Networking
+wget
+wireshark-cli
+wireshark-qt
+kdeconnect
+aria2
+v2ray
+v2ray-domain-list-community
+v2ray-geoip
+$winbox
+ethtool   # Utility for controlling network drivers and hardware
+
+# Fonts
+ttf-anonymous-pro
+ttf-cascadia-code
+ttf-dejavu
+ttf-fira-code
+ttf-fira-mono
+ttf-fira-sans
+ttf-jetbrains-mono
+ttf-jetbrains-mono-nerd
+ttf-ms-win11
+ttf-ms-win11-japanese
+ttf-ms-win11-korean
+ttf-ms-win11-other
+ttf-ms-win11-sea
+ttf-ms-win11-thai
+ttf-ms-win11-zh_cn
+ttf-ms-win11-zh_tw
+ttf-roboto
+ttf-roboto-mono
+$persian-fonts
+
+
+# Coding
+git
+curl
+gedit
+gedit-plugins
+qtcreator
+zeal
+npm
+nodejs
+ninja
+cmake
+mold      # requires additional steps (replacing the /usr/bin/ld with mold)
+kdevelop
+code
+boost
+autoconf
+automake
+google-glog
+gtest
+fmt
+indent   # C language source code formatting program
+octave
+typescript
+$miniconda3
+
+# Sound
+pavucontrol
+pipewire-alsa
+pipewire-pulse
+pipewire-zeroconf
+bluez-utils
