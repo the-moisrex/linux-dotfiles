@@ -313,14 +313,14 @@ table inet mangle {
 table inet nat {
     counter nat.masquerade { comment "NAT performed on them" }
     counter nat.skip { comment "NAT performed marked packets" }
-    counter nat.dns.hijack { comment "Hijack DNS to localhost" }
+    # counter nat.dns.hijack { comment "Hijack DNS to localhost" }
 
     chain prerouting {
         type nat hook prerouting priority dstnat
         policy accept
 
         # Hijack the DNS Queries
-        ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to $gateway_router comment "Hijack DNS"
+        # ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to $gateway_router comment "Hijack DNS"
     }
 
     chain input {
@@ -334,6 +334,8 @@ table inet nat {
     chain postrouting {
         type nat hook postrouting priority srcnat
 
+        meta pkttype broadcast accept;
+        meta pkttype multicast accept;
         meta mark $lo_v2ray_fwmark accept;
         meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
         ip daddr != $local_network counter name nat.masquerade masquerade comment "nat everything"
