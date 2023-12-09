@@ -2,6 +2,7 @@
 
 RED="\033[0;31m"
 GRAY="\033[0;37m"
+GREEN="\033[0;32m"
 NC="\033[0m" # No Color
 
 
@@ -10,7 +11,7 @@ until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" -o \
       "$(realpath "$gitroot" 2>/dev/null)" = "/" -o \
       -d "$gitroot" \
     ]; do
-gitroot="../${gitroot}";
+  gitroot="../${gitroot}";
 done;
 
 proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
@@ -36,6 +37,7 @@ function calculate_build_dir {
         # select the first choice in non-interactive modes
         build_dir=$(echo -e "$build_dir" | head -n 1)
     fi
+    build_dir=$(realpath "$proj_dir/$build_dir")
 }
 
 
@@ -50,7 +52,8 @@ function print_cmake_targets {
     #     cmake --build "$build_dir" --target help | cut -d" " -f2 | tail -n +2
     # else
         # older versions of cmake
-        cmake --build "$build_dir" --target help | grep -v phony | cut -d: -f1 | tail -n +2
+        # you can also use "ninja -t targets"
+        cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/: phony|\.cmake|\[|build.ninja|^help/ { print $1 }'
     # fi
 }
 
@@ -114,15 +117,60 @@ function keep-running {
   git -C "$proj_dir" ls-files -cm | entr -ardc $0 $@
 }
 
+function build-report {
+  if [ -z "$@" ]; then
+    echo "Targets are empty, specify some;"
+    echo " Usage Example:"
+    echo "     # test all the targets:"
+    echo "   $ run targets | grep test- | xargs run report"
+    exit 1
+  fi
+
+
+  calculate_build_dir
+
+  if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
+    if $should_clean; then
+        clear;
+    fi
+    echo -e "${GRAY}Project root:${NC}    $proj_dir"
+    echo -e "${GRAY}Build Directory:${NC} $build_dir"
+    
+    for target in $@; do
+      if [ -f "$build_dir/CMakeCache.txt" ]; then
+        build_cmd="cmake --build '$build_dir' --target $target";
+      elif [ -f "$build_dir/build.ninja" ]; then
+        build_cmd="ninja -C '$build_dir' -v $target";
+      elif [ -f "Makefile" ]; then
+        build_cmd="make -C '$build_dir' $target";
+      else
+        echo -e "${RED}Wrong build directory.${NC}";
+        return;
+      fi;
+      echo -e "${GRAY} - [COMPILING] $target${NC}: $build_cmd"
+      if eval "stdbuf -i0 -o0 -e0 $scan_build $build_cmd" &>/dev/null; then
+        echo -e "${GREEN} - [SUCCESS]   $target ${NC}"
+      else
+        echo -e "${RED} - [FAILED]    $target ${NC}"
+      fi;
+    done
+  else
+    echo -e "${RED}Project Root not found.${NC}"
+  fi;
+}
+
 
 exec_name=$(realpath "$0");
 function print_help {
     echo "$exec_name help"
-    echo "           [target]                     # the target to compile/run"
-    echo "           keep [target]                # keep running the target"
-    echo "           analyze/scan-build [target]  # "
-    echo "           lldb/gdb [target]            # run lldb/gdb on the target"
-    echo "           less [command]               # pipe 'command' to 'less'"
+    echo "           [target]                        # the target to compile/run"
+    echo "           keep [target]                   # keep running the target"
+    echo "           analyze/scan-build [target]     # "
+    echo "           lldb/gdb [target]               # run lldb/gdb on the target"
+    echo "           less [command]                  # pipe 'command' to 'less'"
+    echo "           print-targets                   # List the build targets"
+    echo "           report/build-report [targets]   # build targets and see if they compile without errors"
+    echo "           --quite --no-interactive -q     # Don't ask questions"
 }
 
 
@@ -133,6 +181,10 @@ arg_pos=-1
 for arg in "${args[@]}"; do
     arg_pos=$(($arg_pos + 1))
     case $arg in
+        --no-interactive|--quite|-q)
+            is_interactive=false
+            unset "args[$arg_pos]"
+            ;;
         --clean=false|--no-clean)
             should_clean=false;
             unset "args[$arg_pos]"
@@ -154,7 +206,7 @@ for arg in "${args[@]}"; do
             keep-running "${args[@]}";
             exit $?
             ;;
-        print-targets)
+        print-targets|list|targets)
             shift;
             print_cmake_targets;
             exit;
@@ -175,6 +227,10 @@ case "${args[0]}" in
     gdb)
         unset "args[0]"
         run gdb ${args[@]};
+        ;;
+    build-report|report)
+        unset "args[0]"
+        build-report ${args[@]};
         ;;
     *)
         run ${args[@]};
