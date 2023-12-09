@@ -3,11 +3,11 @@ if status is-interactive
     # Commands to run in interactive sessions can go here
 
     # https://github.com/fish-shell/fish-shell/wiki/Bash-Style-Command-Substitution-and-Chaining-(!!-!$)
-    function fish_user_key_bindings
-        fish_hybrid_key_bindings
-        bind -M insert ! bind_bang
-        bind -M insert '$' bind_dollar
-    end
+    # function fish_user_key_bindings
+    #     fish_hybrid_key_bindings
+    #     bind -M insert ! bind_bang
+    #     bind -M insert '$' bind_dollar
+    # end
 
     # Disable fish greeting
     set -gx fish_greeting
@@ -22,6 +22,10 @@ if status is-interactive
     set -gx HISTSIZE "100000000"
     set -gx SAVEHIST "$HISTSIZE"
     set -gx LD_LIBRARY_PATH "." $LD_LIBRARY_PATH
+
+    if [ -d /opt/depot_tools ];
+      fish_add_path /opt/depot_tools
+    end
 
     # JAVA
     set -gx JAVA_HOME "/usr/lib/jvm/java-20-openjdk"
