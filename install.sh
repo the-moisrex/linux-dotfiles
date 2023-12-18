@@ -98,9 +98,9 @@ function chromium {
 # SpaceVim
 function spacevim {
     if (command -v vim &>/dev/null || command -v nvim &>/dev/null) &&
-        [ -d "$HOME/.config/SpaceVim" ]; then
+        [ -d "$HOME/.SpaceVim.d" ]; then
         cmd_config="$configs_dir/SpaceVim.d/init.toml";
-        sp_config="$HOME/.config/SpaceVim.d/init.toml";
+        sp_config="$HOME/.SpaceVim.d/init.toml";
         install "$cmd_config" "$sp_config";
     else
         warning "Either vim/nvim or SpaceVim is not installed.";
