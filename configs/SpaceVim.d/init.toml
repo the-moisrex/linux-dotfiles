@@ -61,7 +61,8 @@
     name="tools"
 
 [[layers]]
-    name="telescope"
+    # name="telescope"
+    name="ctrlp"
 
 [[layers]]
     name="git"
