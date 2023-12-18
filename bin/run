@@ -117,6 +117,22 @@ function keep-running {
   git -C "$proj_dir" ls-files -cm | entr -ardc $0 $@
 }
 
+function build-step {
+  target="$1"
+  build_cmd="$2"
+  RED="\033[0;31m"
+  GRAY="\033[0;37m"
+  GREEN="\033[0;32m"
+  NC="\033[0m" # No Color
+  # cmd="stdbuf -i0 -o0 -e0 $build_cmd &>/dev/null && echo -e \"${GREEN} - [SUCCESS]   $target ${NC}\" || echo -e \"${RED} - [FAILED]    $target ${NC} \t\t $build_cmd\""
+  # echo -e "${GRAY} - [COMPILING] $target${NC}: $build_cmd"
+  if eval "stdbuf -i0 -o0 -e0  $build_cmd" &>/dev/null; then
+    echo -e "${GREEN} - [$?][SUCCESS]   $target ${NC}";
+  else
+    echo -e "${RED} - [$?][FAILED]    $target ${NC} \t\t $build_cmd";
+  fi
+}
+
 function build-report {
   if [ -z "$@" ]; then
     echo "Targets are empty, specify some;"
@@ -148,14 +164,14 @@ function build-report {
         echo -e "${RED}Wrong build directory.${NC}";
         return;
       fi;
-      cmd="stdbuf -i0 -o0 -e0 $scan_build $build_cmd &>/dev/null && echo -e \"${GREEN} - [SUCCESS]   $target ${NC}\" || echo -e \"${RED} - [FAILED]    $target ${NC} \t\t $build_cmd\""
-      # echo -e "${GRAY} - [COMPILING] $target${NC}: $build_cmd"
       if command -v parallel &>/dev/null; then
-        all_cmds="${all_cmds}\n${cmd}"
+        all_cmds="${all_cmds}\n build-step '$target' \"$build_cmd\""
+        # all_cmds="${all_cmds}\n$cmd"
       else
-        eval $cmd;
+        build-step "$target" "$build_cmd";
       fi
     done
+    export -f build-step # exposing to 'parallel'
     if command -v parallel &>/dev/null; then
       echo -ne "$all_cmds" | parallel -j+0
     fi
