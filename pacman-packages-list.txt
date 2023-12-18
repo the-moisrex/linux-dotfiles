@@ -52,6 +52,8 @@ xorg-twm
 xterm
 whois
 parallel
+htop
+unrar
 
 # Shells
 kitty
@@ -61,6 +63,7 @@ fish
 bash-completion
 
 # Networking
+nethogs
 wget
 wireshark-cli
 wireshark-qt
@@ -71,6 +74,8 @@ v2ray-domain-list-community
 v2ray-geoip
 $winbox
 ethtool   # Utility for controlling network drivers and hardware
+wol
+nmap
 
 # Fonts
 ttf-anonymous-pro
