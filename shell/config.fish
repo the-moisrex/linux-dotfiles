@@ -17,11 +17,15 @@ if status is-interactive
     # set -gx TERM=alacritty
     # set -gx TERM=kitty
     set -gx EDITOR "nvim"
-    set -gx PATH ".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$PATH:$JAVA_HOME/bin"
+    set -gx PATH ".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$PATH:$JAVA_HOME/bin:$HOME/.cargo/bin"
     set -gx CPM_SOURCE_CACHE "$HOME/.cache/CPM"
     set -gx HISTSIZE "100000000"
     set -gx SAVEHIST "$HISTSIZE"
     set -gx LD_LIBRARY_PATH "." $LD_LIBRARY_PATH
+
+    # improving build times: https://wiki.archlinux.org/title/Makepkg#Improving_build_times
+    set -gx MAKEFLAGS "-j$(nproc)"
+    set -gx LDFLAGS "-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now -fuse-ld=mold"
 
     # There are conflicts for "clang-format" for example
     # if [ -d /opt/depot_tools ];
