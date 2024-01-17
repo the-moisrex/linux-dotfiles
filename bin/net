@@ -56,7 +56,9 @@ for i in "$@"; do
 done
 
 if [ -z "$device" ]; then
-  if link_exists "eth0"; then
+  if link_exists "eno1"; then
+    device="eno1";
+  elif link_exists "eth0"; then
     device="eth0";
   elif link_exists "enp2s0"; then
     device="enp2s0"
@@ -64,8 +66,11 @@ if [ -z "$device" ]; then
     device="wlan0"
   elif link_exists "wlp3s0"; then
     device="wlp3s0"
+  elif link_exists "wlp0s20f3"; then
+    device="wlp0s20f3"
   else
     >&2 echo "Error: please specify the device to be used.";
+    exit;
   fi
 fi
 
@@ -131,6 +136,11 @@ function add_skip_vpn_ns {
   local _device="$1"
   local _nsn="$2"
   local _mvlan_name="$3"
+
+  if ! command -v dhclient --version &>/dev/null; then
+      echo "Error: Install dhclient package.";
+      exit
+  fi
 
   if [ -z "$_device" ]; then
     _device="$device"
