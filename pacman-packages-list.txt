@@ -54,6 +54,7 @@ whois
 parallel
 htop
 unrar
+lshw
 
 # Shells
 kitty
@@ -76,6 +77,7 @@ $winbox
 ethtool   # Utility for controlling network drivers and hardware
 wol
 nmap
+dhclient  # for ./bin/net and ./bin/net.ns
 
 # Fonts
 ttf-anonymous-pro
@@ -124,6 +126,11 @@ octave
 typescript
 $miniconda3
 strace
+distcc
+ccache
+check
+perf
+lldb
 
 # Sound
 pavucontrol
