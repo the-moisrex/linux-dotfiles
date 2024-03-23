@@ -101,6 +101,7 @@ alias yt="try yt-dlp --restrict-filenames --continue --embed-thumbnail --write-a
 alias yt-list="yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'"
 alias yt-audio="yt -x"
 alias yt-1080="yt -f bestvideo[ext=mp4][width<2000][height<=1200]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<2000][height<=1200]+bestaudio[ext=webm]/bestvideo[width<2000][height<=1200]+bestaudio/best[width<2000][height<=1200]/best"
+alias yt-720="yt -f bestvideo[ext=mp4][width<1500][height<=720]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<1500][height<=720]+bestaudio[ext=webm]/bestvideo[width<1500][height<=720]+bestaudio/best[width<1500][height<=720]/best"
 alias yt-audio-list="yt-list -x"
 alias youtube="yt"
 alias yt8000="yt --proxy=http://localhost:8000"
