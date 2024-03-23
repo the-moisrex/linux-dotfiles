@@ -138,3 +138,7 @@ pipewire-alsa
 pipewire-pulse
 pipewire-zeroconf
 bluez-utils
+
+# Cool
+neofetch
+chafa    # convert images to ascii
