@@ -77,7 +77,7 @@ function print_help {
     echo "       ignore nft create country ir"
     # echo "       ignore nft clear country ir"
     # echo "       ignore nft list"
-    echo "       ignore nft add country ir"
+    echo "       ignore nft add country ir [--force]"
     # echo "       ignore nft add ignored"
     # echo "       ignore nft remove ignored"
     # echo "       ignore nft remove country ir"
@@ -132,6 +132,7 @@ function nft_create_country {
 
 function nft_add_country {
     name="$1"
+    is_force="$2"
     file="$nft_include_dir/$name.nft"
     if [ ! -f "$file" ]; then
         echo no such file: $file
@@ -139,7 +140,11 @@ function nft_add_country {
     fi
     if sudo nft -t list set inet mangle $name &>/dev/null; then
         echo "Already added";
-        return;
+        if [ "$is_force" != "--force" ]; then
+            return;
+        else
+            echo "But, forcing it.";
+        fi
     fi
     set_source=$(cat "$file");
     sudo nft -f - <<-END
@@ -410,7 +415,7 @@ function run {
                 add)
                     case "$3" in
                         country)
-                            nft_add_country "$4";
+                            nft_add_country "$4" "$5";
                             ;;
                         *)
                             echo "Add what?";

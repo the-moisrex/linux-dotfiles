@@ -8,7 +8,7 @@ function print_help {
     name="iptun"
     echo "Description:"
     echo "       This script will let you create a tunnel between two systems,"
-    echo "       and route (almost) all the traffic here to that macine."
+    echo "       and route (almost) all the traffic here to that machine."
     echo "       This can be useful when two machine are separated by a router,"
     echo "       and you want to route your traffic to that machine so it can"
     echo "       re-route them through a VPN for example."
