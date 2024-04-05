@@ -9,12 +9,46 @@ if [ "$governor" == "" ]; then
       sudo cpupower frequency-info
       echo "------------------   Idle info    ------------------------"
       sudo cpupower idle-info --silent
+      echo "------------------   Perf-Bias    ------------------------"
+      ebp=$(sudo cpupower info | grep perf-bias | cut -d" " -f2)
+      if [ "$ebp" == "0" ]; then
+          perf="performance";
+      elif [ "$ebp" == "15" ]; then
+          perf="powersave";
+      elif [ "$ebp" == "4" ]; then
+          perf="balance-performance";
+      elif [ "$ebp" == "6" ]; then
+          perf="normal";
+      elif [ "$ebp" == "8" ]; then
+          perf="balance-power";
+      else
+          perf="unknown";
+      fi
+      echo "perf-bias: $ebp ($perf)"
+  fi
+
+  if command powerprofilesctl version >/dev/null; then
+      echo "------------------ power-profiles-daemon (powerprofilesctl) ------------------------"
+      powerprofilesctl get
   fi
   
   if command turbostat --version &>/dev/null; then
     echo "------------------ CPU Power Usage ------------------------"
     sudo turbostat --Summary --quiet --show Busy%,Avg_MHz,PkgTmp,PkgWatt --interval 1
   fi
+elif [ "$governor" == "default" ]; then
+    echo "powerprofilesctl: power-saver"
+    powerprofilesctl set power-saver
+
+    echo "cpupower governor: powersave"
+    sudo cpupower frequency-set --related -g powersave
+
+    echo "cpupower perf-bias: 6 (normal, default)"
+    sudo cpupower set --perf-bias 6
+
+elif [ "$governor" == "balanced" ]; then
+    echo "powerprofilesctl: balanced"
+    powerprofilesctl set balanced
 else
   echo "$governor" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
   if command cpupower --version >/dev/null; then
@@ -36,5 +70,15 @@ else
       sudo cpupower set --perf-bias $ebp;
 
       sudo cpupower frequency-set --related -g $governor
+  fi
+
+  if command powerprofilesctl version >/dev/null; then
+      if [ "$governor" == "powersave" ]; then
+          gov="power-saver";
+      else
+          gov="$governor";
+      fi
+      powerprofilesctl set $gov
+      echo "power-profiles-daemon (powerprofilesctl): $gov"
   fi
 fi
