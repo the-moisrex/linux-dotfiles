@@ -8,13 +8,20 @@ fi
 tor_cmds=""
 case $1 in
 	--tor|tor)
-		tor_cmds='--proxy-server="socks5://127.0.0.1:9050" --host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"'
+        if [ -z "$2" ]; then
+            port="9050";
+        else
+            port="$2";
+            shift;
+        fi;
+        # --host-resolver-rules='MAP * ~NOTFOUND , EXCLUDE 127.0.0.1'
+		tor_cmds="--proxy-server=\"socks5://127.0.0.1:$port\""
 		shift
 		;;
 esac
 
 dir=$(mktemp -d)
 echo "Chromium Config Directory: $dir"
-eval chromium --incognito --user-data-dir="$dir" $tor_cmds $@
+eval chromium --incognito --user-data-dir="$dir" "$tor_cmds" $@
 rm -rf "$dir"
 echo "Chromium Config Directory $dir Deleted."
