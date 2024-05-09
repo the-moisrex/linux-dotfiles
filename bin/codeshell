@@ -2,6 +2,7 @@
 
 curfile="$0"
 curdir=$(realpath "$(dirname $curfile)");
+default_template="cpp";
 
 detect_distro() {
     if [[ "$OSTYPE" == linux-android* ]]; then
@@ -103,7 +104,7 @@ for i in "$@"; do
         ;;
 
       -h|--help|help)
-        echo "Usage: codeshell [template=simple] [name=...]"
+        echo "Usage: codeshell [template=${default_template}] [name=...]"
         echo "       codeshell help"
         echo "       codeshell save   NAME         # Save the temp codeshell you're in"
         echo "       codeshell remove [NAME]       # Remove the codeshell you're in or the codeshell you named"
@@ -191,7 +192,7 @@ if [ -z "${template}" ] && [ ! -z "${tmpdir}" ]; then
 fi
 
 if [ -z "$template" ]; then
-  template="simple"
+  template="${default_template}"
 fi
 
 if [ -z "$tmpdir" ]; then
