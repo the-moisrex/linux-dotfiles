@@ -272,11 +272,13 @@ echo "Code directory: ${tmpdir}"
 
 # run build commands
 if [ -f "${template_dir}/.start" ]; then
-  main_file=$(cat "${template_dir}/.start")
+  start_file="${template_dir}/.start";
+  main_file=$(cat "${start_file}" | grep "main:" | cut -d" " -f2- | sed 's/^[ \t]*//;s/[ \t]*$//');
+  manifest_file=$(cat "${start_file}" | grep "manifest:" | cut -d" " -f2- | sed 's/^[ \t]*//;s/[ \t]*$//');
   if [ -f "${template_dir}/.watch" ]; then
     tmux send-keys -t ${window}.${side} "/bin/bash ${tmpdir}/.watch" C-m
   fi
-  open_editor "$main_file" "$main_file";
+  open_editor "$main_file" "$manifest_file";
 elif [[ "$template" == asm* ]]; then # make
   tmux send-keys -t ${window}.${side} "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
   open_editor "main.asm" "main.asm";
