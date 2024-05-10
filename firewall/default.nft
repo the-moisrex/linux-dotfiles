@@ -247,6 +247,8 @@ table inet mangle {
     # Ignored set of IPs of domain names
     set ignored {
         typeof ip daddr
+        flags interval
+        auto-merge # merge ip intervals together, and don't give error
     }
 
     # Never ignore these IPs of domain names
