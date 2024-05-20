@@ -248,15 +248,19 @@ function open_editor() {
   local manifest_file="$2";
   local nonblocking=""
   local kill_window=0;
-  if [ "$EDITOR" == "qtcreator" ]; then
-    nonblocking="setsid"
-    file=$manifest_file;
-  elif [ "$EDITOR" == "clion" ]; then
-    file="${tmpdir}";
-    kill_window=1;
-  elif [ "$EDITOR" == "code" ]; then
-    file="${tmpdir}";
-  fi
+  case "$EDITOR" in
+    qtcreator)
+        nonblocking="setsid"
+        file=$manifest_file;
+        ;;
+    aqua|clion1|clion|dataspell|phpstorm|pycharm|studio|webstorm)
+        file="${tmpdir}";
+        kill_window=1;
+        ;;
+    code)
+        file="${tmpdir}";
+        ;;
+  esac
   if [ "$file" != "nothing" ]; then
     tmux send-keys -t ${window}.${main} "${nonblocking} ${EDITOR} ${file}" C-m
   fi
