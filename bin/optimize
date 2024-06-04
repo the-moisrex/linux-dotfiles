@@ -1,24 +1,38 @@
 #!/bin/bash
 
 cache_dir="$HOME/.cache/cleaner";
-bleaching=true;
+bleaching=false;
 trim=false;
 update=false;
+empty_trash=false;
+
+if ! command -v trash-empty >/dev/null; then
+    echo "trash-empty is not installed; install trash-cli.";
+    exit 1;
+fi
+
+if ! command -v bleachbit >/dev/null; then
+    echo "bleachbit is not installed; install bleachbit.";
+    exit 1;
+fi
 
 function print_help {
-    echo "Clean unseless things."
+    echo "Clean useless things."
     echo "$0"
-    echo "    -t|--trim      # run fstrim service to trim SSDs"
-    echo "    -u|--update    # update the system before cleaning"
-    echo "    --no-bleaching # don't run bleachbit"
-    echo "    --no-trim      # don't trim"
-    echo "    --no-update    # don't update"
+    echo "    -t|--trim           # run fstrim service to trim SSDs"
+    echo "    -u|--update         # update the system before cleaning"
+    echo "    -e|--empty-trash    # empty all user's trashes"
+    echo "    --no-bleaching      # don't run bleachbit"
+    echo "    --no-trim           # don't trim"
+    echo "    --no-update         # don't update"
+    echo "    --no-trash          # don't clean trashes"
     exit 0;
 }
 
-while getopts ":htu-:" opt; do
+while getopts ":hetu-:" opt; do
   case $opt in
     t) trim=true;;
+    e) empty_trash=true;;
     u) update=true;;
     h) print_help;;
     -)
@@ -26,6 +40,8 @@ while getopts ":htu-:" opt; do
         no-bleaching) bleaching=false;;
         bleaching) bleaching=true;;
         trim) trim=true;;
+        empty-trash|empty|trash|clear-trash|clean-trash) empty_trash=true;;
+        no-trash|no-empty-trash|no-empty-trashes) empty_trash=false;;
         update) update=true;;
         no-trim) trim=false;;
         no-update) update=false;;
@@ -43,6 +59,12 @@ done
 shift $((OPTIND-1))
 
 mkdir -p "$cache_dir";
+
+if $empty_trash; then
+    echo "Clearing Trash:";
+    trash-list --all-users;
+    trash-empty --all-users -f;
+fi
 
 if $update; then
     echo "Updating:";
