@@ -21,6 +21,7 @@ function print_help {
     echo "$0"
     echo "    -t|--trim           # run fstrim service to trim SSDs"
     echo "    -u|--update         # update the system before cleaning"
+    echo "    -b|--bleach         # remove useless files using bleachbit"
     echo "    -e|--empty-trash    # empty all user's trashes"
     echo "    --no-bleaching      # don't run bleachbit"
     echo "    --no-trim           # don't trim"
@@ -29,16 +30,17 @@ function print_help {
     exit 0;
 }
 
-while getopts ":hetu-:" opt; do
+while getopts ":hbetu-:" opt; do
   case $opt in
     t) trim=true;;
     e) empty_trash=true;;
     u) update=true;;
+    b) bleaching=true;;
     h) print_help;;
     -)
       case "$OPTARG" in
         no-bleaching) bleaching=false;;
-        bleaching) bleaching=true;;
+        bleaching|bleach|clean|clear) bleaching=true;;
         trim) trim=true;;
         empty-trash|empty|trash|clear-trash|clean-trash) empty_trash=true;;
         no-trash|no-empty-trash|no-empty-trashes) empty_trash=false;;
@@ -80,11 +82,7 @@ fi
 
 if $bleaching; then
     echo "Bleaching:";
-    if ! command -v bleachbit >/dev/null; then
-        echo "Bleachbit is not installed.";
-        exit 1;
-    fi
-    bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit.log";
+    # bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit.log";
     sudo -E bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit-semi-root.log";
 fi
 
