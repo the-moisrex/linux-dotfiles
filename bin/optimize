@@ -64,7 +64,7 @@ mkdir -p "$cache_dir";
 
 if $empty_trash; then
     echo "Clearing Trash:";
-    trash-list --all-users;
+    trash-list --all-users 2>&1 | tee "$cache_dir/trash.log";
     trash-empty --all-users -f;
 fi
 
