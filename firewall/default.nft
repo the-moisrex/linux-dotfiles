@@ -98,8 +98,10 @@ table inet filter {
             udp . rfb,           # VNC
             udp . ms-wbt-server, # RDP
             udp . 1714-1765,     # kdeconnect
+            udp . 5353,          # mDNS
             tcp . 4713,          # PULSE_SERVER=tcp:machine:4713 allow input audio
             tcp . 1714-1765,     # kdeconnect
+            tcp . 5353,          # mDNS
             tcp . imap,          # email
             tcp . imaps,         # email
             tcp . smtp,          # Mail Server for router
