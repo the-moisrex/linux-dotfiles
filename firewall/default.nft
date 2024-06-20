@@ -69,6 +69,7 @@ table inet filter {
     counter filter.invalid { comment "Invalid connection states" }
     counter filter.protocols { comment "Allowed protocols" }
     counter filter.marked { comment "Marked previously accepted" }
+    counter filter.broadcast { comment "Broadcast" }
     # counter filter.igmp { comment "IGMP" }
     counter filter.dhcp { comment "DHCP/bootp" }
     counter filter.icmp { comment "IP ICMP" }
@@ -186,8 +187,8 @@ table inet filter {
 
 
         # ip protocol igmp counter name filter.igmp accept comment "allow IGMP"
-        ip daddr $multicast_ips counter accept comment "allow multicast ips (for winbox)"
-        ip daddr 255.255.255.255 counter accept comment "allow broadcast"
+        ip daddr $multicast_ips counter name filter.broadcast accept comment "allow multicast ips (for winbox)"
+        ip daddr 255.255.255.255 counter name filter.broadcast accept comment "allow broadcast"
 
         # pkttype host limit rate 5/second counter name filter.ratelimit reject with icmpx type admin-prohibited comment "rate limit"
 
