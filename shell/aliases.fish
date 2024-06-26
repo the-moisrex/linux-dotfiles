@@ -183,5 +183,5 @@ function unsudo -d "un-sudo some commands"
     end
 end
 
-unsudo pacman ausearch reboot poweroff auditctl aureport dnstop nftop nft cpupower apt
+unsudo pacman ausearch reboot poweroff auditctl aureport dnstop nftop nft cpupower apt ufw strace
 

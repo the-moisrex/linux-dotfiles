@@ -1,0 +1,193 @@
+#!/bin/bash
+
+# List of allowed websites for yt-dlp
+ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com")
+
+if ! command -v yt-dlp >/dev/null; then
+    echo "yt-dlp is not installed."
+    exit;
+fi
+
+# Function to display usage
+usage() {
+    echo "Usage: $0 <input_file1> [<input_file2> ...] [--360] [--480] [--720] [--1080]"
+    echo "Options:"
+    echo "  <input_file>     Input file(s) containing YouTube links"
+    echo "  [--240]          Download 240p resolution"
+    echo "  [--360]          Download 360p resolution"
+    echo "  [--480]          Download 480p resolution"
+    echo "  [--720]          Download 720p resolution"
+    echo "  [--1080]         Download 1080p resolution"
+    echo "  [--1440]         Download 1440 resolution"
+    echo "  [--list]         Number them in order"
+    echo "  [--audio]        Audio only"
+    echo "  [--audio-list]   Audio List"
+    # echo "  [additional arguments]     Additional arguments to pass to yt-dlp"
+    exit 1
+}
+
+# try a command until it works.
+function try {
+    while ! "$@"; do
+        sleep 1s;
+    done;
+}
+
+
+yt="try yt-dlp --restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs 'en*,es,fa,-live_chat'"
+yt_list="$yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'"
+yt_audio="$yt -x"
+yt_1440="$yt -f 'bestvideo[ext=mp4][width<3000][height<=1600]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<3000][height<=1600]+bestaudio[ext=webm]/bestvideo[width<3000][height<=1600]+bestaudio/best[width<3000][height<=1600]/best'"
+yt_1080="$yt -f 'bestvideo[ext=mp4][width<2000][height<=1200]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<2000][height<=1200]+bestaudio[ext=webm]/bestvideo[width<2000][height<=1200]+bestaudio/best[width<2000][height<=1200]/best'"
+yt_720="$yt -f 'bestvideo[ext=mp4][width<1500][height<=720]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<1500][height<=720]+bestaudio[ext=webm]/bestvideo[width<1500][height<=720]+bestaudio/best[width<1500][height<=720]/best'"
+yt_480="$yt -f 'bestvideo[ext=mp4][width<=900][height<=480]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<=900][height<=480]+bestaudio[ext=webm]/bestvideo[width<=900][height<=480]+bestaudio/best[width<=900][height<=480]/best'"
+yt_360="$yt -f 'bestvideo[ext=mp4][width<=700][height<=360]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<=700][height<=360]+bestaudio[ext=webm]/bestvideo[width<=700][height<=360]+bestaudio/best[width<=700][height<=360]/best'"
+yt_240="$yt -f 'bestvideo[ext=mp4][width<=500][height<=240]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<=500][height<=240]+bestaudio[ext=webm]/bestvideo[width<=500][height<=240]+bestaudio/best[width<=500][height<=240]/best'"
+yt_audio_list="$yt_list -x"
+
+is_valid_url() {
+    local url="$1"
+    
+    # Check if the URL is not empty
+    if [ -z "$url" ]; then
+        return 1
+    fi
+    
+    # Use the built-in `curl` command to check the URL
+    if curl --silent --head --request GET "$url" 2>/dev/null | grep -q "HTTP/"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+highlight_code() {
+    local code="$1"
+    local reset="\033[0m"
+    local bold="\033[1m"
+
+    if command -v highlight &> /dev/null; then
+        echo -e "$(echo "$code" | highlight --syntax=bash -O ansi)"
+    else
+        echo -e "${bold}$code${reset}"
+    fi
+}
+
+remove_duplicates() {
+    local input_array=("$@");
+    local unique_array=();
+
+    for item in "${input_array[@]}"; do
+        if [[ ! " ${unique_array[*]} " =~ " $item " ]]; then
+            unique_array+=("$item")
+        fi
+    done
+
+    echo "${unique_array[*]}";
+}
+
+function download {
+    link="$1";
+    args="$2";
+
+    # Check if the link is from an allowed website for yt-dlp
+    allowed=false;
+    for website in "${ALLOWED_WEBSITES[@]}"; do
+        if [[ "$link" == *"$website"* ]]; then
+            allowed=true
+            break
+        fi
+    done
+
+    # Download the video using the appropriate tool
+    if $allowed; then
+        yt_dlp_args=()
+        yt_cmd="$yt";
+        for arg in $args; do
+            case $arg in
+                --240|--240p|-240|240|240p)
+                    yt_cmd="$yt_240";
+                    ;;
+                --360|--360p|-360|360|360p)
+                    yt_cmd="$yt_360";
+                    ;;
+                --480|--480p|-480|480|480p)
+                    yt_cmd="$yt_480";
+                    ;;
+                --720|--720p|-720|720|720p)
+                    yt_cmd="$yt_720";
+                    ;;
+                --1080|--1080p|-1080|1080|1080p)
+                    yt_cmd="$yt_1080";
+                    ;;
+                --1440|--1440p|-1440|1440|1440p)
+                    yt_cmd="$yt_1440";
+                    ;;
+                --list|-list|list)
+                    yt_dlp_args+=("--output" "'%(playlist_index)s - %(title)s [%(id)s].%(ext)s'")
+                    ;;
+                --audio|-audio|audio)
+                    yt_cmd="$yt_audio";
+                    ;;
+                --audio-list|-audio-list|audio-list)
+                    yt_cmd="$yt_audio_list";
+                    ;;
+                *)
+                    yt_dlp_args+=("$arg")
+                    ;;
+            esac
+        done
+        cmd="$yt_cmd \"$link\" ${yt_dlp_args[*]}";
+        highlight_code "$cmd";
+        echo
+        eval "$cmd";
+        echo
+        echo
+    else
+        echo "Downloading $link with wget..."
+        wget "$link"
+    fi
+}
+
+# Check if input files are provided
+if [ "$#" -lt 1 ]; then
+    usage
+fi
+
+# Loop through each input file
+links=();
+args=();
+for file in "$@"; do
+    if [ -f "$file" ]; then
+        # Loop through each link in the current file
+        while read -r link; do
+            links+=("$link");
+        done < "$file"
+    elif is_valid_url "$file"; then
+        links+=("$file");
+    else
+        args+=("$file");
+    fi
+done
+
+links=($(remove_duplicates "${links[@]}"));
+args=($(remove_duplicates "${args[@]}"));
+
+
+for link in "${links[@]}"; do
+    if [ -z "$link" ]; then
+        continue;
+    fi
+    echo " Link -->" "$link";
+    # download "$link" "${args[@]}"
+done
+echo " Args -->" "${args[@]}";
+echo
+echo
+
+for link in "${links[@]}"; do
+    if [ -z "$link" ]; then
+        continue;
+    fi
+    download "$link" "${args[*]}"
+done
