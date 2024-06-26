@@ -154,6 +154,32 @@ if [ "$#" -lt 1 ]; then
     usage
 fi
 
+function fix_link {
+    link="$1";
+    # if [[ "$link" =~ .*?rumble.com.*?\.html ]]; then
+    #     link_rp=$(curl -sL "$link" \
+    #         -H 'accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8' \
+    #         -H 'accept-language: en-US,en;q=0.7' \
+    #         -H 'cache-control: max-age=0' \
+    #         -H 'priority: u=0, i' \
+    #         -H 'sec-ch-ua-mobile: ?0' \
+    #         -H 'sec-fetch-dest: document' \
+    #         -H 'sec-fetch-mode: navigate' \
+    #         -H 'sec-fetch-site: none' \
+    #         -H 'sec-fetch-user: ?1' \
+    #         -H 'sec-gpc: 1' \
+    #         -H 'upgrade-insecure-requests: 1' \
+    #         -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' | grep -oE "https://rumble.com/embed/[^\"]*");
+    #     if [ -n "$link_rp" ]; then
+    #         link="$link_rp";
+    #     else
+    #         echo "Could not get the rumble link.";
+    #         exit;
+    #     fi
+    # fi
+    echo "$link";
+}
+
 # Loop through each input file
 links=();
 args=();
@@ -161,10 +187,12 @@ for file in "$@"; do
     if [ -f "$file" ]; then
         # Loop through each link in the current file
         while read -r link; do
+            link=$(fix_link "$link");
             links+=("$link");
         done < "$file"
     elif is_valid_url "$file"; then
-        links+=("$file");
+        link=$(fix_link "$file");
+        links+=("$link");
     else
         args+=("$file");
     fi
@@ -173,14 +201,13 @@ done
 links=($(remove_duplicates "${links[@]}"));
 args=($(remove_duplicates "${args[@]}"));
 
-
 for link in "${links[@]}"; do
     if [ -z "$link" ]; then
         continue;
     fi
     echo " Link -->" "$link";
-    # download "$link" "${args[@]}"
 done
+
 echo " Args -->" "${args[@]}";
 echo
 echo
