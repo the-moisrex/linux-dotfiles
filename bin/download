@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of allowed websites for yt-dlp
-ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com")
+ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com" "t.me")
 
 if ! command -v yt-dlp >/dev/null; then
     echo "yt-dlp is not installed."
