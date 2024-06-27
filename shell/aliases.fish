@@ -97,6 +97,7 @@ alias paux="ps aux | grep"
 # alias .5="cd ../../../../.."
 # alias cd..="cd .."
 
+alias dl="download"
 alias yt="try yt-dlp --restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs 'en*,es,fa,-live_chat'"
 alias yt-list="yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'"
 alias yt-audio="yt -x"
