@@ -282,7 +282,7 @@ for i in "$@"; do
             spacevim;
             codeshell_shortcut;
             tv_shortcuts;
-	          firefox-policies;
+            firefox-policies;
             setup_fish;
             exit;
             ;;
