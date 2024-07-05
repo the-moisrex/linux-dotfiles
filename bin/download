@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of allowed websites for yt-dlp
-ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com" "t.me" "x.com" "twitter.com")
+ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com" "t.me" "x.com" "twitter.com" "aparat.com")
 
 if ! command -v yt-dlp >/dev/null; then
     echo "yt-dlp is not installed."
@@ -145,7 +145,8 @@ function download {
         echo
     else
         echo "Downloading $link with wget..."
-        wget --continue "$link"
+        cmd="wget --continue ${args[*]} \"$link\"";
+        eval "$cmd";
     fi
 }
 
