@@ -2,6 +2,7 @@
 set -e
 
 # Source from: https://github.com/coryfklein/sw
+# It's been modified since
 
 # Usage:
 # stopwatch
@@ -9,6 +10,8 @@ set -e
 # stopwatch [-r|--resume]
 #  - start a stopwatch from the last saved start time (or current time if no last saved start time exists)
 #  - "-r" stands for --resume
+
+cache_file="$HOME/.cache/stopwatch";
 
 function finish {
   tput cnorm # Restore cursor
@@ -19,9 +22,9 @@ trap finish EXIT
 
 # Use GNU date if possible as it's most likely to have nanoseconds available.
 if hash gdate 2>/dev/null; then
-    GNU_DATE=gdate
+    GNU_DATE="gdate"
 elif date --version | grep 'GNU coreutils' >/dev/null; then
-    GNU_DATE=date
+    GNU_DATE="date"
 fi
 
 function datef {
@@ -42,15 +45,15 @@ fi
 
 tput civis # hide cursor
 
-# If -r is passed, use saved start time from ~/.stopwatch
+# If -r is passed, use saved start time from ~/.cache/stopwatch
 if [[ "$1" == "-r" || "$1" == "--resume" ]]; then
-    if [[ ! -f $HOME/.stopwatch ]]; then
-        datef +%s > $HOME/.stopwatch
+    if [[ ! -f "$cache_file" ]]; then
+        datef +%s > "$cache_file"
     fi
-    START_TIME=$(cat $HOME/.stopwatch)
+    START_TIME=$(cat "$cache_file")
 else
     START_TIME=$(datef +%s)
-    echo -n $START_TIME > $HOME/.stopwatch
+    echo -n "$START_TIME" > "$cache_file"
 fi
 
 # GNU date accepts the input date differently than BSD
@@ -60,9 +63,9 @@ else
     DATE_INPUT="--date now-${START_TIME}sec"
 fi
 
-while [ true ]; do
-    STOPWATCH=$(TZ=UTC datef $DATE_INPUT $DATE_FORMAT | ( [[ "$NANOS_SUPPORTED" ]] && sed 's/.\{7\}$//' || cat ) )
-    printf "\r\e%s" $STOPWATCH
+while true; do
+    STOPWATCH=$(TZ=UTC datef $DATE_INPUT $DATE_FORMAT | ( ([[ "$NANOS_SUPPORTED" ]] && sed 's/.\{7\}$//') || cat ) )
+    printf "\r\e%s" "$STOPWATCH"
     sleep 0.03
 done
 

@@ -22,6 +22,8 @@ usage() {
     echo "  [--list]         Number them in order"
     echo "  [--audio]        Audio only"
     echo "  [--audio-list]   Audio List"
+    echo "  [--force-yt-dlp] Force using yt-dlp"
+    echo "  [--force-wget]   Force using wget"
     # echo "  [additional arguments]     Additional arguments to pass to yt-dlp"
     exit 1
 }
@@ -87,11 +89,17 @@ remove_duplicates() {
 }
 
 function download {
-    link="$1";
-    args="$2";
+    downloader="$1";
+    link="$2";
+    args="$3";
 
     # Check if the link is from an allowed website for yt-dlp
     allowed=false;
+
+    if [ "$downloader" == "ytdlp" ]; then
+        allowed=true;
+    fi
+
     for website in "${ALLOWED_WEBSITES[@]}"; do
         if [[ "$link" == *"$website"* ]]; then
             allowed=true
@@ -184,6 +192,7 @@ function fix_link {
 # Loop through each input file
 links=();
 args=();
+downloader=""
 for file in "$@"; do
     if [ -f "$file" ]; then
         # Loop through each link in the current file
@@ -195,7 +204,17 @@ for file in "$@"; do
         link=$(fix_link "$file");
         links+=("$link");
     else
-        args+=("$file");
+        case "$file" in
+            --force-ytdlp|--force-yt-dlp|yt|ytdlp|yt-dlp|youtube|-force-yt-dlp|-force-ytdlp|force-ytdlp|force-yt-dlp|video|vid|movie|mov)
+                downloader="ytdlp";
+                ;;
+            wget|--force-wget|-force-wget|force-wget|file)
+                downloader="wget";
+                ;;
+            *)
+                args+=("$file");
+                ;;
+        esac
     fi
 done
 
@@ -217,5 +236,5 @@ for link in "${links[@]}"; do
     if [ -z "$link" ]; then
         continue;
     fi
-    download "$link" "${args[*]}"
+    download "$downloader" "$link" "${args[*]}"
 done
