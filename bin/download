@@ -3,6 +3,11 @@
 # List of allowed websites for yt-dlp
 ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com" "t.me" "x.com" "twitter.com" "aparat.com")
 
+default_list="$HOME/.config/download/default-list.txt"
+done_file="$HOME/.config/download/done.txt"
+
+mkdir -p "$(dirname "$default_list")";
+
 if ! command -v yt-dlp >/dev/null; then
     echo "yt-dlp is not installed."
     exit;
@@ -12,18 +17,23 @@ fi
 usage() {
     echo "Usage: $0 <input_file1> [<input_file2> ...] [--360] [--480] [--720] [--1080]"
     echo "Options:"
-    echo "  <input_file>     Input file(s) containing YouTube links"
-    echo "  [--240]          Download 240p resolution"
-    echo "  [--360]          Download 360p resolution"
-    echo "  [--480]          Download 480p resolution"
-    echo "  [--720]          Download 720p resolution"
-    echo "  [--1080]         Download 1080p resolution"
-    echo "  [--1440]         Download 1440 resolution"
-    echo "  [--list]         Number them in order"
-    echo "  [--audio]        Audio only"
-    echo "  [--audio-list]   Audio List"
-    echo "  [--force-yt-dlp] Force using yt-dlp"
-    echo "  [--force-wget]   Force using wget"
+    echo "  <input_file>       Input file(s) containing YouTube links"
+    echo "  [--240]            Download 240p resolution"
+    echo "  [--360]            Download 360p resolution"
+    echo "  [--480]            Download 480p resolution"
+    echo "  [--720]            Download 720p resolution"
+    echo "  [--1080]           Download 1080p resolution"
+    echo "  [--1440]           Download 1440 resolution"
+    echo "  [--list]           Number them in order"
+    echo "  [--audio]          Audio only"
+    echo "  [--audio-list]     Audio List"
+    echo
+    echo "  [--force-yt-dlp]   Force using yt-dlp"
+    echo "  [--force-wget]     Force using wget"
+    echo
+    echo "  [--add]            Add to default download list"
+    echo "  [--list-pendings]  List pendings"
+    echo "  [--clear]          Clear download list"
     # echo "  [additional arguments]     Additional arguments to pass to yt-dlp"
     exit 1
 }
@@ -55,10 +65,13 @@ is_valid_url() {
         return 1
     fi
     
+    echo -ne "Checking: ${url}";
     # Use the built-in `curl` command to check the URL
     if curl --silent --head --request GET "$url" 2>/dev/null | grep -q "HTTP/"; then
+        echo -ne "\033[2K\033[1A\033[2K\r"
         return 0
     else
+        echo -ne "\033[2K\033[1A\033[2K\r"
         return 1
     fi
 }
@@ -96,16 +109,27 @@ function download {
     # Check if the link is from an allowed website for yt-dlp
     allowed=false;
 
-    if [ "$downloader" == "ytdlp" ]; then
-        allowed=true;
-    fi
+    case "$downloader" in
+        ytdlp)
+            allowed=true;
+            ;;
+        wget)
+            allowed=false;
+            ;;
+        auto)
+            for website in "${ALLOWED_WEBSITES[@]}"; do
+                if [[ "$link" == *"$website"* ]]; then
+                    allowed=true
+                    break
+                fi
+            done
+            ;;
+        *)
+            echo "Unknown downloader: $downloader";
+            exit 1;
+            ;;
+    esac
 
-    for website in "${ALLOWED_WEBSITES[@]}"; do
-        if [[ "$link" == *"$website"* ]]; then
-            allowed=true
-            break
-        fi
-    done
 
     # Download the video using the appropriate tool
     if $allowed; then
@@ -156,12 +180,15 @@ function download {
         cmd="wget --continue ${args[*]} \"$link\"";
         eval "$cmd";
     fi
+    echo "$link" >> "$done_file";
+    removed_link=$(grep -v "$link" "$default_list");
+    echo "$removed_link" > "$default_list";
 }
 
 # Check if input files are provided
-if [ "$#" -lt 1 ]; then
-    usage
-fi
+# if [ "$#" -lt 1 ]; then
+#     usage
+# fi
 
 function fix_link {
     link="$1";
@@ -192,7 +219,8 @@ function fix_link {
 # Loop through each input file
 links=();
 args=();
-downloader=""
+downloader="auto"
+action="download";
 for file in "$@"; do
     if [ -f "$file" ]; then
         # Loop through each link in the current file
@@ -211,6 +239,16 @@ for file in "$@"; do
             wget|--force-wget|-force-wget|force-wget|file)
                 downloader="wget";
                 ;;
+            add|--add|-add|append|--append|-append)
+                action="add";
+                ;;
+            pendings|list-pendings|pend|pends|--pendings|--list-pendings|--list-pending|-list-pendings|-pendings|-pending|pending)
+                action="list-pendings";
+                ;;
+            clear|clean|--clear|-clear|--clean|-clean)
+                action="clear";
+                break;
+                ;;
             *)
                 args+=("$file");
                 ;;
@@ -221,20 +259,75 @@ done
 links=($(remove_duplicates "${links[@]}"));
 args=($(remove_duplicates "${args[@]}"));
 
-for link in "${links[@]}"; do
-    if [ -z "$link" ]; then
-        continue;
+if [ "$action" = "download" ]; then
+    if [ -z "${links[*]}" ]; then
+        action="run";
     fi
-    echo " Link -->" "$link";
-done
+fi
 
-echo " Args -->" "${args[@]}";
-echo
-echo
 
-for link in "${links[@]}"; do
-    if [ -z "$link" ]; then
-        continue;
-    fi
-    download "$downloader" "$link" "${args[*]}"
-done
+case "$action" in
+    run)
+        if [ ! -f "$default_list" ]; then
+            echo "Empty list.";
+            echo
+            echo
+            usage;
+            exit;
+        fi;
+        uniqs=$(sort -u "$default_list");
+        echo "$uniqs" > "$default_list";
+
+        while IFS=' ' read -era vars; do
+            downloader=${vars[0]}
+            link=${vars[1]}
+            args=("${vars[@]:2}")
+            echo "$downloader $link ${args[*]}"
+            if [ -z "$downloader" ] || [ -z "$link" ]; then
+                continue;
+            fi
+            download "$downloader" "$link" "${args[*]}";
+        done < "$default_list";
+        ;;
+    list-pendings)
+        sort -u "$default_list";
+        ;;
+    clear)
+        echo "" > "$default_list";
+        ;;
+    download)
+        for link in "${links[@]}"; do
+            if [ -z "$link" ]; then
+                continue;
+            fi
+            echo " Link -->" "$link";
+        done
+
+        echo " Args -->" "${args[@]}";
+        echo
+        echo
+
+        for link in "${links[@]}"; do
+            if [ -z "$link" ]; then
+                continue;
+            fi
+            download "$downloader" "$link" "${args[*]}"
+        done
+        ;;
+    add)
+        touch "$default_list";
+        for link in "${links[@]}"; do
+            if [ -z "$link" ]; then
+                continue;
+            fi
+            echo "$downloader \"$link\" ${args[*]}" | tee >> "$default_list";
+        done
+        uniqs=$(sort -u "$default_list");
+        echo "$uniqs" > "$default_list";
+        ;;
+    *)
+        echo "Unknown action";
+        exit 1;
+        ;;
+esac
+
