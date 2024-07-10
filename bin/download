@@ -59,6 +59,8 @@ yt_audio_list="$yt_list -x"
 
 is_valid_url() {
     local url="$1"
+
+    url=$(trim_unquoted "$url");
     
     # Check if the URL is not empty
     if [ -z "$url" ]; then
@@ -101,10 +103,32 @@ remove_duplicates() {
     echo "${unique_array[*]}";
 }
 
+trim_unquoted() {
+  local var="$1"
+  var="${var#"${var%%[![:space:]]*}"}"
+  var="${var%"${var##*[![:space:]]}"}"
+  
+  if [[ "$var" == \'* ]] && [[ "$var" == *\' ]]; then
+    var="${var#\'}"
+    var="${var%\'}"
+  fi
+  
+  if [[ "$var" == \"* ]] && [[ "$var" == *\" ]]; then
+    var="${var#\"}"
+    var="${var%\"}"
+  fi
+  
+  echo "$var"
+}
+
+
 function download {
     downloader="$1";
     link="$2";
     args="$3";
+
+    link=$(trim_unquoted "$link");
+    downloader=$(trim_unquoted "$downloader");
 
     # Check if the link is from an allowed website for yt-dlp
     allowed=false;
@@ -222,38 +246,41 @@ args=();
 downloader="auto"
 action="download";
 for file in "$@"; do
-    if [ -f "$file" ]; then
-        # Loop through each link in the current file
-        while read -r link; do
-            link=$(fix_link "$link");
-            links+=("$link");
-        done < "$file"
-    elif is_valid_url "$file"; then
-        link=$(fix_link "$file");
-        links+=("$link");
-    else
-        case "$file" in
-            --force-ytdlp|--force-yt-dlp|yt|ytdlp|yt-dlp|youtube|-force-yt-dlp|-force-ytdlp|force-ytdlp|force-yt-dlp|video|vid|movie|mov)
-                downloader="ytdlp";
-                ;;
-            wget|--force-wget|-force-wget|force-wget|file)
-                downloader="wget";
-                ;;
-            add|--add|-add|append|--append|-append)
-                action="add";
-                ;;
-            pendings|list-pendings|pend|pends|--pendings|--list-pendings|--list-pending|-list-pendings|-pendings|-pending|pending)
-                action="list-pendings";
-                ;;
-            clear|clean|--clear|-clear|--clean|-clean)
-                action="clear";
-                break;
-                ;;
-            *)
+    case "$file" in
+        --force-ytdlp|--force-yt-dlp|yt|ytdlp|yt-dlp|youtube|-force-yt-dlp|-force-ytdlp|force-ytdlp|force-yt-dlp|video|vid|movie|mov)
+            downloader="ytdlp";
+            ;;
+        wget|--force-wget|-force-wget|force-wget|file)
+            downloader="wget";
+            ;;
+        add|--add|-add|append|--append|-append)
+            action="add";
+            ;;
+        pendings|list-pendings|pend|pends|--pendings|--list-pendings|--list-pending|-list-pendings|-pendings|-pending|pending)
+            action="list-pendings";
+            ;;
+        clear|clean|--clear|-clear|--clean|-clean)
+            action="clear";
+            break;
+            ;;
+        --240|--240p|-240|240|240p|--360|--360p|-360|360|360p|--480|--480p|-480|480|480p|--720|--720p|-720|720|720p|--1080|--1080p|-1080|1080|1080p|--1440|--1440p|-1440|1440|1440p|--list|-list|list|--audio|-audio|audio|--audio-list|-audio-list|audio-list)
+            args+=("$file");
+            ;;
+        *)
+            if [ -f "$file" ]; then
+                # Loop through each link in the current file
+                while read -r link; do
+                    link=$(fix_link "$link");
+                    links+=("$link");
+                done < "$file"
+            elif is_valid_url "$file"; then
+                link=$(fix_link "$file");
+                links+=("$link");
+            else
                 args+=("$file");
-                ;;
-        esac
-    fi
+            fi
+            ;;
+    esac
 done
 
 links=($(remove_duplicates "${links[@]}"));
@@ -286,6 +313,7 @@ case "$action" in
             if [ -z "$downloader" ] || [ -z "$link" ]; then
                 continue;
             fi
+            link=$(trim_unquoted "$link");
             download "$downloader" "$link" "${args[*]}";
         done < "$default_list";
         ;;
@@ -311,6 +339,7 @@ case "$action" in
             if [ -z "$link" ]; then
                 continue;
             fi
+            link=$(trim_unquoted "$link");
             download "$downloader" "$link" "${args[*]}"
         done
         ;;
