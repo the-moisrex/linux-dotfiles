@@ -23,6 +23,8 @@ if status is-interactive
     set -gx SAVEHIST "$HISTSIZE"
     set -gx LD_LIBRARY_PATH "." $LD_LIBRARY_PATH
 
+    set -gx GPG_TTY "$(tty)"
+
     # improving build times: https://wiki.archlinux.org/title/Makepkg#Improving_build_times
     set -gx MAKEFLAGS "-j$(nproc)"
     set -gx LDFLAGS "-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now -fuse-ld=mold"
