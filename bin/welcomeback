@@ -1,13 +1,31 @@
 #!/bin/bash
 
-dir=~/.cache/last_visit
+text="Oh, there you are! I was getting worried."
+
+if ! command -v cowsay >/dev/null; then
+    function cowsay {
+        echo "$*";
+    }
+fi
+
+
+dir="$HOME/.cache/last_visit"
 file=$dir/last_visit
-mkdir -p $dir
-touch $file
-last_visit=$(cat $file)
+mkdir -p "$dir"
+touch "$file"
+last_visit=$(cat "$file");
+if [ -z "$last_viist" ]; then
+    last_visit="200101";
+fi
 days=$(( ($(date -u +%s) - $(date -u --date="${last_visit}" +%s) )/(60*60*24) ))
-if [ $days -gt 2 ]; then
-  cowsay "Oh, there you are! I was getting worried." | lolcat
+echo "last visited $days days ago.";
+if [ $days -gt 1 ]; then
+    if ! command -v lolcat >/dev/null; then
+        cowsay "$text";
+    else
+        cowsay "$text" | lolcat;
+    fi
 fi;
-echo $(date -u +%y%m%d) > $file
+
+date -u +%y%m%d > "$file";
 

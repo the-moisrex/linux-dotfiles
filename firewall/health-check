@@ -5,25 +5,25 @@ timezone="$TZ"
 site="$2"
 
 curdir=$(dirname "$0")
-source "$curdir/../shell/functions" # for ishttpsup
+isup="$curdir/../bin/isup";
 
 if [ -z "$timezone" ]; then
     timezone="Asia/Tehran";
 fi
 
 if [ -z "$file" ]; then
-    file="$HOME/network-status.log"
+    file="/tmp/network-status.log"
 fi
 
 while true; do
 
-    if ishttpsup $site; then
+    if $isup https "$site" >/dev/null; then
         datetime=$(TZ="$timezone" date)
         country=$(env myip country)
-        echo $datetime: Network Connected \($country\) | tee -a "$file";
+        echo "$datetime: Network Connected ($country)" | tee -a "$file";
     else
         datetime=$(TZ="$timezone" date)
-        echo $datetime: Network Not connected. | tee -a "$file";
+        echo "$datetime: Network Not connected." | tee -a "$file";
     fi;
 
     sleep 5s;

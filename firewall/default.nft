@@ -69,6 +69,7 @@ table inet filter {
     counter filter.invalid { comment "Invalid connection states" }
     counter filter.protocols { comment "Allowed protocols" }
     counter filter.marked { comment "Marked previously accepted" }
+    counter filter.broadcast { comment "Broadcast" }
     # counter filter.igmp { comment "IGMP" }
     counter filter.dhcp { comment "DHCP/bootp" }
     counter filter.icmp { comment "IP ICMP" }
@@ -97,8 +98,10 @@ table inet filter {
             udp . rfb,           # VNC
             udp . ms-wbt-server, # RDP
             udp . 1714-1765,     # kdeconnect
+            udp . 5353,          # mDNS
             tcp . 4713,          # PULSE_SERVER=tcp:machine:4713 allow input audio
             tcp . 1714-1765,     # kdeconnect
+            tcp . 5353,          # mDNS
             tcp . imap,          # email
             tcp . imaps,         # email
             tcp . smtp,          # Mail Server for router
@@ -186,8 +189,8 @@ table inet filter {
 
 
         # ip protocol igmp counter name filter.igmp accept comment "allow IGMP"
-        ip daddr $multicast_ips counter accept comment "allow multicast ips (for winbox)"
-        ip daddr 255.255.255.255 counter accept comment "allow broadcast"
+        ip daddr $multicast_ips counter name filter.broadcast accept comment "allow multicast ips (for winbox)"
+        ip daddr 255.255.255.255 counter name filter.broadcast accept comment "allow broadcast"
 
         # pkttype host limit rate 5/second counter name filter.ratelimit reject with icmpx type admin-prohibited comment "rate limit"
 
@@ -315,14 +318,14 @@ table inet mangle {
 table inet nat {
     counter nat.masquerade { comment "NAT performed on them" }
     counter nat.skip { comment "NAT performed marked packets" }
-    # counter nat.dns.hijack { comment "Hijack DNS to localhost" }
+    counter nat.dns.hijack { comment "Hijack DNS to localhost" }
 
     chain prerouting {
         type nat hook prerouting priority dstnat
         policy accept
 
         # Hijack the DNS Queries
-        # ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to $gateway_router comment "Hijack DNS"
+        ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to meta iifname map {$devices_ips_map} comment "Hijack DNS"
     }
 
     chain input {
@@ -339,7 +342,7 @@ table inet nat {
         meta pkttype broadcast accept;
         meta pkttype multicast accept;
         meta mark $lo_v2ray_fwmark accept;
-        meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
+        ip daddr != $local_network meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
         ip daddr != $local_network counter name nat.masquerade masquerade comment "nat everything"
     }
 }

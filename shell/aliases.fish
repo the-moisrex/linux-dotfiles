@@ -97,11 +97,16 @@ alias paux="ps aux | grep"
 # alias .5="cd ../../../../.."
 # alias cd..="cd .."
 
+alias dl="download"
 alias yt="try yt-dlp --restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs 'en*,es,fa,-live_chat'"
 alias yt-list="yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'"
 alias yt-audio="yt -x"
+alias yt-1440="yt -f bestvideo[ext=mp4][width<3000][height<=1600]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<3000][height<=1600]+bestaudio[ext=webm]/bestvideo[width<3000][height<=1600]+bestaudio/best[width<3000][height<=1600]/best"
 alias yt-1080="yt -f bestvideo[ext=mp4][width<2000][height<=1200]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<2000][height<=1200]+bestaudio[ext=webm]/bestvideo[width<2000][height<=1200]+bestaudio/best[width<2000][height<=1200]/best"
 alias yt-720="yt -f bestvideo[ext=mp4][width<1500][height<=720]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<1500][height<=720]+bestaudio[ext=webm]/bestvideo[width<1500][height<=720]+bestaudio/best[width<1500][height<=720]/best"
+alias yt-480="yt -f bestvideo[ext=mp4][width<=900][height<=480]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<=900][height<=480]+bestaudio[ext=webm]/bestvideo[width<=900][height<=480]+bestaudio/best[width<=900][height<=480]/best"
+alias yt-360="yt -f bestvideo[ext=mp4][width<=700][height<=360]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<=700][height<=360]+bestaudio[ext=webm]/bestvideo[width<=700][height<=360]+bestaudio/best[width<=700][height<=360]/best"
+alias yt-240="yt -f bestvideo[ext=mp4][width<=500][height<=240]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<=500][height<=240]+bestaudio[ext=webm]/bestvideo[width<=500][height<=240]+bestaudio/best[width<=500][height<=240]/best"
 alias yt-audio-list="yt-list -x"
 alias youtube="yt"
 alias yt8000="yt --proxy=http://localhost:8000"
@@ -179,5 +184,5 @@ function unsudo -d "un-sudo some commands"
     end
 end
 
-unsudo pacman ausearch reboot poweroff auditctl aureport dnstop nftop nft cpupower apt
+unsudo pacman ausearch reboot poweroff auditctl aureport dnstop nftop nft cpupower apt ufw strace
 
