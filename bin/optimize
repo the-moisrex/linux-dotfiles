@@ -1,0 +1,98 @@
+#!/bin/bash
+
+cache_dir="$HOME/.cache/cleaner";
+bleaching=false;
+trim=false;
+update=false;
+empty_trash=false;
+
+if ! command -v trash-empty >/dev/null; then
+    echo "trash-empty is not installed; install trash-cli.";
+    exit 1;
+fi
+
+if ! command -v bleachbit >/dev/null; then
+    echo "bleachbit is not installed; install bleachbit.";
+    exit 1;
+fi
+
+function print_help {
+    echo "Clean useless things."
+    echo "$0"
+    echo "    -t|--trim           # run fstrim service to trim SSDs"
+    echo "    -u|--update         # update the system before cleaning"
+    echo "    -b|--bleach         # remove useless files using bleachbit"
+    echo "    -e|--empty-trash    # empty all user's trashes"
+    echo "    --no-bleaching      # don't run bleachbit"
+    echo "    --no-trim           # don't trim"
+    echo "    --no-update         # don't update"
+    echo "    --no-trash          # don't clean trashes"
+    exit 0;
+}
+
+while getopts ":hbetu-:" opt; do
+  case $opt in
+    t) trim=true;;
+    e) empty_trash=true;;
+    u) update=true;;
+    b) bleaching=true;;
+    h) print_help;;
+    -)
+      case "$OPTARG" in
+        no-bleaching) bleaching=false;;
+        bleaching|bleach|clean|clear) bleaching=true;;
+        trim) trim=true;;
+        empty-trash|empty|trash|clear-trash|clean-trash) empty_trash=true;;
+        no-trash|no-empty-trash|no-empty-trashes) empty_trash=false;;
+        update) update=true;;
+        no-trim) trim=false;;
+        no-update) update=false;;
+        help) print_help;;
+        *) echo "Invalid option: --$OPTARG" >&2
+           exit 1
+           ;;
+      esac
+      ;;
+    \?) echo "Invalid option: -$OPTARG" >&2
+        exit 1
+        ;;
+  esac
+done
+shift $((OPTIND-1))
+
+mkdir -p "$cache_dir";
+
+if $empty_trash; then
+    echo "Clearing Trash:";
+    trash-list --all-users 2>&1 | tee "$cache_dir/trash.log";
+    trash-empty --all-users -f;
+fi
+
+if $update; then
+    echo "Updating:";
+    if command -v yay >/dev/null; then
+        yay -Syu --noconfirm 2>&1 | tee "$cache_dir/update.log";
+    elif command -v pacman >/dev/null; then
+        sudo pacman -Syu --noconfirm 2>&1 | tee "$cache_dir/update.log";
+    else
+        echo "Bleachbit is not installed.";
+        exit 1;
+    fi
+fi
+
+if $bleaching; then
+    echo "Bleaching:";
+    # bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit.log";
+    sudo -E bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit-semi-root.log";
+fi
+
+if $trim; then
+    echo "Trimming:";
+    if ! sudo systemctl list-unit-files | grep "^fstrim" >/dev/null; then
+        echo "Bleachbit is not installed.";
+        exit 1;
+    fi
+    sudo systemctl restart fstrim
+    sudo systemctl status fstrim 2>&1 | tee "$cache_dir/fstrim.log";
+fi
+

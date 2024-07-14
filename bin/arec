@@ -9,11 +9,11 @@ fi
 function print_help {
   echo Record shell using asciinema
   echo
-  echo "Usage: arec [pretext] [title]"
-  echo "Example: arec webpp Working on database"
+  echo "   Usage:   arec [pretext] [title]"
+  echo "   Example: arec webpp Working on database"
   echo
-  echo "Pretext: the name of the project you're working on so we can write custom configurations for them."
-  echo "Title:   the title of this session that you're working on."
+  echo "   Pretext: the name of the project you're working on so we can write custom configurations for them."
+  echo "   Title:   the title of this session that you're working on."
   exit
 }
 
@@ -41,23 +41,33 @@ if [ "$pretext" == "webpp" ]; then
     working_dir="$HOME/Projects/webpp"
     cmd="tmux new -c $working_dir"
   fi
-  cd "$working_dir"
+  cd "$working_dir" || exit;
+elif [ "$pretext" == "foresight" ]; then
+  pretext="Webpp live coding"
+  working_dir="$HOME"
+  if [ -d "$HOME/foresight" ]; then
+    working_dir="$HOME/foresight"
+  elif [ -d "$HOME/Projects/foresight" ]; then
+    working_dir="$HOME/Projects/foresight"
+    cmd="tmux new -c $working_dir"
+  fi
+  cd "$working_dir" || exit;
 fi
 
-title="$@"
+title="${*}"
 
 # splugify from: https://gist.github.com/oneohthree/f528c7ae1e701ad990e6?permalink_comment_id=2047474#gistcomment-2047474
-filename=$(echo "$pretext-$title" | iconv -t ascii//TRANSLIT | sed -r s/[~\^]+//g | sed -r s/[^a-zA-Z0-9]+/-/g | sed -r s/^-+\|-+$//g | tr A-Z a-z)
+filename=$(echo "$pretext-$title" | iconv -t ascii//TRANSLIT | sed -r s/[~^]+//g | sed -r s/[^a-zA-Z0-9]+/-/g | sed -r s/^-+\|-+$//g | tr A-Z a-z)
 file="$HOME/live/$(date +%Y-%m-%d)-$filename.cast"
 
-echo Recording $pretext, $title
-echo File: $file
+echo "Recording $pretext, $title"
+echo "File: $file"
 echo
 
 append=""
 if [ -f "$file" ]; then
   while true; do
-    read -p "File $file already exists, do you want to append? (Y/n) " yn
+    read -rp "File $file already exists, do you want to append? (Y/n) " yn
     case $yn in
       [Yy]* ) break;;
       [Nn]* ) exit;;

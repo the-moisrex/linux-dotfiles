@@ -1,5 +1,6 @@
 -- How to run the script with tshark:
 --   $ tshark -X lua_script:dns.lua
+--   $ tshark --color -X lua_script:dns.lua
 
 -- latest development release of Wireshark supports plugin version information
 if set_plugin_info then
@@ -46,7 +47,7 @@ do
             print("Query: " .. query_name.value)
         end
         if response then
-            print("Response returned: " .. response.value)
+            print("Query Response: " .. response.value)
         end
         if a_rec then
             for rec in a_rec.value do
