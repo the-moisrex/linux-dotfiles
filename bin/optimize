@@ -74,9 +74,21 @@ if $update; then
         yay -Syu --noconfirm 2>&1 | tee "$cache_dir/update.log";
     elif command -v pacman >/dev/null; then
         sudo pacman -Syu --noconfirm 2>&1 | tee "$cache_dir/update.log";
+    elif command -v apt >/dev/null; then
+        sudo apt update -y;
+        export DEBIAN_FRONTEND=noninteractive;
+        sudo -E apt-get -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef" dist-upgrade -q -y --allow-downgrades --allow-remove-essential --allow-change-held-packages;
     else
         echo "Bleachbit is not installed.";
         exit 1;
+    fi
+
+    if command -v flatpak >/dev/null; then
+        echo
+        echo
+        echo
+        echo "Update Flatpak:"
+        flatpak update --noninteractive --assumeyes 2>&1 | tee "$cache_dir/update-flatpak.log";
     fi
 fi
 
