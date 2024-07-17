@@ -6,16 +6,6 @@ trim=false;
 update=false;
 empty_trash=false;
 
-if ! command -v trash-empty >/dev/null; then
-    echo "trash-empty is not installed; install trash-cli.";
-    exit 1;
-fi
-
-if ! command -v bleachbit >/dev/null; then
-    echo "bleachbit is not installed; install bleachbit.";
-    exit 1;
-fi
-
 function print_help {
     echo "Clean useless things."
     echo "$0"
@@ -63,9 +53,11 @@ shift $((OPTIND-1))
 mkdir -p "$cache_dir";
 
 if $empty_trash; then
-    echo "Clearing Trash:";
-    trash-list --all-users 2>&1 | tee "$cache_dir/trash.log";
-    trash-empty --all-users -f;
+    if command -v trash-empty >/dev/null; then
+        echo "Clearing Trash:";
+        trash-list --all-users 2>&1 | tee "$cache_dir/trash.log";
+        trash-empty --all-users -f;
+    fi
 fi
 
 if $update; then
@@ -93,9 +85,11 @@ if $update; then
 fi
 
 if $bleaching; then
-    echo "Bleaching:";
-    # bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit.log";
-    sudo -E bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit-semi-root.log";
+    if command -v bleachbit >/dev/null; then
+        echo "Bleaching:";
+        # bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit.log";
+        sudo -E bleachbit --clean --preset 2>&1 | tee "$cache_dir/bleachbit-semi-root.log";
+    fi
 fi
 
 if $trim; then
