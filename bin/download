@@ -300,12 +300,11 @@ case "$action" in
             echo
             echo
             usage;
-            exit;
         fi;
         uniqs=$(sort -u "$default_list");
         echo "$uniqs" > "$default_list";
 
-        while IFS=' ' read -era vars; do
+        while read -era vars; do
             downloader=${vars[0]}
             link=${vars[1]}
             args=("${vars[@]:2}")
@@ -315,7 +314,7 @@ case "$action" in
             fi
             link=$(trim_unquoted "$link");
             download "$downloader" "$link" "${args[*]}";
-        done < "$default_list";
+        done <<< "$uniqs";
         ;;
     list-pendings)
         sort -u "$default_list";
