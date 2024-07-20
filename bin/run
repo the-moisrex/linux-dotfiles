@@ -53,7 +53,7 @@ function print_cmake_targets {
     # else
         # older versions of cmake
         # you can also use "ninja -t targets"
-        cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/: phony|\.cmake|\[|build.ninja|^help/ { print $1 }'
+        cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/: phony|\/|CMAKE_SYMLINK_LIBRARY|\.json|^clean|\[|build.ninja|^help/ { print $1 }'
     # fi
 }
 
