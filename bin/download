@@ -123,12 +123,15 @@ trim_unquoted() {
 
 
 function download {
-    downloader="$1";
-    link="$2";
-    args="$3";
+    local downloader="$1";
+    local link="$2";
+    local inp_args="$3";
 
     link=$(trim_unquoted "$link");
     downloader=$(trim_unquoted "$downloader");
+    echo "---> link:       $link";
+    echo "---> downloader: $downloader"
+    echo "---> args:       $inp_args"
 
     # Check if the link is from an allowed website for yt-dlp
     allowed=false;
@@ -159,7 +162,7 @@ function download {
     if $allowed; then
         yt_dlp_args=()
         yt_cmd="$yt";
-        for arg in $args; do
+        for arg in $inp_args; do
             case $arg in
                 --240|--240p|-240|240|240p)
                     yt_cmd="$yt_240";
@@ -201,7 +204,7 @@ function download {
         echo
     else
         echo "Downloading $link with wget..."
-        cmd="wget --continue ${args[*]} \"$link\"";
+        cmd="wget --continue ${inp_args[*]} \"$link\"";
         eval "$cmd";
     fi
     echo "$link" >> "$done_file";
@@ -293,6 +296,7 @@ if [ "$action" = "download" ]; then
 fi
 
 
+args_str="${args[@]}";
 case "$action" in
     run)
         if [ ! -f "$default_list" ]; then
@@ -330,7 +334,7 @@ case "$action" in
             echo " Link -->" "$link";
         done
 
-        echo " Args -->" "${args[@]}";
+        echo " Args -->" "$args_str";
         echo
         echo
 
@@ -339,7 +343,7 @@ case "$action" in
                 continue;
             fi
             link=$(trim_unquoted "$link");
-            download "$downloader" "$link" "${args[*]}"
+            download "$downloader" "$link" "$args_str"
         done
         ;;
     add)
@@ -348,7 +352,7 @@ case "$action" in
             if [ -z "$link" ]; then
                 continue;
             fi
-            echo "$downloader \"$link\" ${args[*]}" | tee >> "$default_list";
+            echo "$downloader \"$link\" $args_str" | tee >> "$default_list";
         done
         uniqs=$(sort -u "$default_list");
         echo "$uniqs" > "$default_list";
