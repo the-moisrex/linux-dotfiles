@@ -11,6 +11,7 @@ redsocks_bin="$HOME/bin/redsocks2"
 redsocks_config="$curdir/tproxy2socks-redsocks.conf"
 redsocks_pid="/tmp/tproxy/redsocks2.pid"
 tproxy_type_file="/tmp/tproxy/tproxy-type.txt"
+tproxy_port="9550"
 
 # rp_filer = https://sysctl-explorer.net/net/ipv4/rp_filter/
 
@@ -91,8 +92,14 @@ function prepare_redsocks_proxy {
 
     sudo ip rule add fwmark $lo_socks_fwmark table $table_id
     sudo ip route add local default dev lo table $table_id
-    sudo tproxy2socks.nft
+    sudo tproxy_port="${tproxy_port}" bashify nft "$curdir/tproxy2socks.nft"
     echo "redsocks" > "$tproxy_type_file"
+
+    new_config="/tmp/tproxy/tproxy2socks-redsocks.conf";
+    tproxy_port="$tproxy_port" bashify "$redsocks_config" > $new_config;
+    redsocks_config="$new_config";
+
+    touch /tmp/ipcache.txt
 
     echo
     echo "Redsocks Executable:  $redsocks_bin"
@@ -103,7 +110,8 @@ function prepare_redsocks_proxy {
 
 function enable_redsocks_proxy {
     prepare_redsocks_proxy;
-    $redsocks_bin -c "$redsocks_config" -p "$redsocks_pid"
+    echo "$redsocks_bin -w -c $redsocks_config -p $redsocks_pid"
+    sudo -E $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid"
     disable_redsocks_proxy;
 }
 
@@ -120,12 +128,13 @@ function disable_redsocks_proxy {
 
 function enable_redsocks_background_proxy {
     prepare_redsocks_proxy;
-    $redsocks_bin -c "$redsocks_config" -p "$redsocks_pid" &
+    echo "$redsocks_bin -w -c $redsocks_config -p $redsocks_pid"
+    sudo -E $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid" &
 }
 
 function disable_redsocks_background_proxy {
     disable_redsocks_proxy;
-    kill $(cat "$redsocks_pid");
+    sudo -E kill $(cat "$redsocks_pid");
     rm -f "$redsocks_pid";
 }
 
@@ -249,28 +258,40 @@ function disable_proxy {
     esac
 }
 
-case $1 in
-    enable)
-        enable_proxy $2;
-        ;;
-    disable)
-        disable_proxy $2;
-        ;;
-    is-running|running|isrunning)
-        if [ -f "$tproxy_type_file" ]; then
-            exit 0;
-        else
-            exit 1;
-        fi
-        ;;
-    reload|restart|reset)
-        disable_proxy
-        enable_proxy
-        ;;
-    install-redsocks)
-        install_redsocks $2
-        ;;
-    *)
-        print_help;
-        ;;
-esac;
+while [ -n "$1" ]; do
+    case $1 in
+        --port|-port|port)
+            tproxy_port="$2";
+            shift;
+            ;;
+        enable)
+            enable_proxy "$2";
+            exit;
+            ;;
+        disable)
+            disable_proxy "$2";
+            exit;
+            ;;
+        is-running|running|isrunning)
+            if [ -f "$tproxy_type_file" ]; then
+                exit 0;
+            else
+                exit 1;
+            fi
+            ;;
+        reload|restart|reset)
+            disable_proxy
+            enable_proxy
+            exit;
+            ;;
+        install-redsocks)
+            install_redsocks "$2";
+            exit;
+            ;;
+        help|--help|*)
+            print_help;
+            exit;
+            ;;
+    esac;
+    shift;
+done;
