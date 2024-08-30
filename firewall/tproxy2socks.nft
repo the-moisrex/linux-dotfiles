@@ -1,4 +1,4 @@
-#!/usr/bin/nft -f
+#!/usr/bin/env -S bashify nft
 
 define tproxy_port              = 9555
 define local_network            = { 192.168.88.0/24, 192.168.167.164/30, 127.0.0.0/8, 10.1.1.0/24 }

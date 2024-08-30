@@ -137,7 +137,7 @@ alias open="emacsclient -nc -s initd -a nvim"
 alias edit="emacsclient -nw -s initd -a nvim"
 alias svim="vim --clean" # Simple vim
 alias snvim="nvim --noplugin --clean" # Simple nvim
-alias proxychains="http_proxy=\"\" https_proxy=\"\" all_proxy=\"\" proxychains"
+# alias proxychains="http_proxy=\"\" https_proxy=\"\" all_proxy=\"\" proxychains"
 alias c="xclip -selection clipboard"
 
 

@@ -17,6 +17,7 @@ function create_bash {
 
     export -f bashify; # make 'bashify' available to sed
     cat "$file" | 
+        sed -re '/#\$/! s/\\/\\\\/g' |                  # replace \ with \\
         sed -re '/#\$/! s/"/\\"/g' |                    # replace " with \"
         sed -re '/#\$/! s/\$(\w)/\\$\1/g' |             # replace $variables with \$vaiables
         sed -re '/#\$/! s/^[^\n]*$/echo "&";/' |        # wrap simple lines with 'echo "..."'
@@ -76,18 +77,18 @@ function print_help {
 
 case $1 in
     --bash|--sh|bash|sh)
-        create_bash $2;
+        create_bash "$2";
         ;;
     --run|run|exec|execute)
-        create_bash $2 | bash;
+        create_bash "$2" | bash;
         ;;
     --nft|nft|nftables)
-        create_bash $2 | nft -f -;
+        create_bash "$2" | bash | nft -f -;
         ;;
     --help|-h|help)
         print_help;
         ;;
     *)
-        create_bash $1 | bash;
+        create_bash "$1" | bash;
         ;;
 esac
