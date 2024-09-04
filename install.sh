@@ -121,6 +121,18 @@ function install_nvim {
     fi
 }
 
+# alacritty
+function alacritty {
+    if (command -v alacritty &>/dev/null); then
+        cmd_config="$configs_dir/alacritty";
+        sp_config="$HOME/.config/alacritty";
+        bash "$cmd_config/update-themes.sh";
+        install "$cmd_config" "$sp_config";
+    else
+        warning "Alacritty is not installed.";
+    fi
+}
+
 # Firefox Policies
 function firefox-policies {
     # https://mozilla.github.io/policy-templates/
@@ -266,6 +278,11 @@ for i in "$@"; do
             shift;
             ;;
 
+        alacritty)
+            alacritty;
+            shift;
+            ;;
+
         tv|television|tv-shortcuts)
             tv_shortcuts;
             shift;
@@ -301,6 +318,7 @@ for i in "$@"; do
             chromium;
             install_nvim;
             # spacevim;
+            alacritty;
             codeshell_shortcut;
             tv_shortcuts;
             firefox-policies;
