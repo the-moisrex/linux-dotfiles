@@ -35,7 +35,11 @@ vim.keymap.set("n", "Q", "<nop>")
 -- Tmux
 -- vim.keymap.set("n", "<C-f>", "<cmd>silent !tmux neww tmux-sessionizer<CR>")
 
+-- formatting:
 vim.keymap.set("n", "<leader>f", function()
+    vim.lsp.buf.format()
+end)
+vim.keymap.set("n", "<leader>bf", function()
     vim.lsp.buf.format()
 end)
 

@@ -41,11 +41,13 @@ require('pckr').add{
 
   -- Git
   'tpope/vim-fugitive';
+  'lewis6991/gitsigns.nvim';
 
   -- lsp
   {'VonHeikemen/lsp-zero.nvim', branch = 'v4.x'};
   {'neovim/nvim-lspconfig'};
   {'hrsh7th/cmp-nvim-lsp'};
   {'hrsh7th/nvim-cmp'};
+
 }
 
