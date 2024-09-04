@@ -58,6 +58,8 @@ function link_item {
     else
         if ln "$cmd_path" "$install_path"; then
             log "Linked: $cmd_path -> $install_path";
+        elif ln -s "$cmd_path" "$install_path"; then
+            log "Soft Linked: $cmd_path -> $install_path";
         else
             error "Link Failed: $cmd_path -> $install_path";
             log "We're gonna try to copy the file."
@@ -104,6 +106,18 @@ function spacevim {
         install "$cmd_config" "$sp_config";
     else
         warning "Either vim/nvim or SpaceVim is not installed.";
+    fi
+}
+
+# nvim
+function install_nvim {
+    if (command -v vim &>/dev/null || command -v nvim &>/dev/null); then
+	# yay -S nvim-packer-git --noconfirm;
+        cmd_config="$configs_dir/nvim";
+        sp_config="$HOME/.config/nvim";
+        install "$cmd_config" "$sp_config";
+    else
+        warning "Vim or nvim are not installed.";
     fi
 }
 
@@ -221,6 +235,7 @@ for i in "$@"; do
             log "install.sh --help"
             log "install.sh fish"
             log "install.sh spacevim"
+            log "install.sh nvim"
             log "install.sh tv"
             log "install.sh chromium"
             log "install.sh nautilus"
@@ -241,8 +256,13 @@ for i in "$@"; do
             shift;
             ;;
 
-        spacevim|vim)
+        spacevim)
             spacevim;
+            shift;
+            ;;
+
+        nvim|vim)
+            install_nvim;
             shift;
             ;;
 
@@ -279,7 +299,8 @@ for i in "$@"; do
         all|--all|-a)
             setup_fish;
             chromium;
-            spacevim;
+            install_nvim;
+            # spacevim;
             codeshell_shortcut;
             tv_shortcuts;
             firefox-policies;
