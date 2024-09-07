@@ -78,6 +78,7 @@ ethtool   # Utility for controlling network drivers and hardware
 wol
 nmap
 dhclient  # for ./bin/net and ./bin/net.ns
+inetutils # telnet
 
 # Fonts
 ttf-anonymous-pro
