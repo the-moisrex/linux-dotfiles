@@ -50,6 +50,11 @@ require('pckr').add{
   {'hrsh7th/nvim-cmp'};
 
   -- NerdTree
-  {'preservim/nerdtree'}
+  'preservim/nerdtree';
+
+  -- scrollbar:
+  'lewis6991/satellite.nvim';
+  -- petertriho/nvim-scrollbar
+  -- dstein64/nvim-scrollview
 }
 
