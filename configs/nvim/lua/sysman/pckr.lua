@@ -49,5 +49,7 @@ require('pckr').add{
   {'hrsh7th/cmp-nvim-lsp'};
   {'hrsh7th/nvim-cmp'};
 
+  -- NerdTree
+  {'preservim/nerdtree'}
 }
 
