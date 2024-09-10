@@ -56,5 +56,18 @@ require('pckr').add{
   'lewis6991/satellite.nvim';
   -- petertriho/nvim-scrollbar
   -- dstein64/nvim-scrollview
+
+  -- icons:
+  'nvim-tree/nvim-web-devicons';
+
+  -- indent blankline
+  'lukas-reineke/indent-blankline.nvim';
+
+  -- comments
+  'numToStr/Comment.nvim';
 }
+
+-- You can find more plugins here:
+--   https://github.com/rockerBOO/awesome-neovim?tab=readme-ov-file
+--   https://dotfyle.com/neovim/plugins/top
 
