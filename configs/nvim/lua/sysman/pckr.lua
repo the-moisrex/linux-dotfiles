@@ -65,6 +65,9 @@ require('pckr').add{
 
   -- comments
   'numToStr/Comment.nvim';
+
+  -- todo comments
+  {'folke/todo-comments.nvim', requires = { 'nvim-lua/plenary.nvim' }};
 }
 
 -- You can find more plugins here:
