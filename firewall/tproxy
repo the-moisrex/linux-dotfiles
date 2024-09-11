@@ -111,7 +111,9 @@ function prepare_redsocks_proxy {
 function enable_redsocks_proxy {
     prepare_redsocks_proxy;
     echo "$redsocks_bin -w -c $redsocks_config -p $redsocks_pid"
-    sudo -E $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid"
+    while ! sudo -E $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid"; do
+        sleep 1s;
+    done
     disable_redsocks_proxy;
 }
 
@@ -129,7 +131,7 @@ function disable_redsocks_proxy {
 function enable_redsocks_background_proxy {
     prepare_redsocks_proxy;
     echo "$redsocks_bin -w -c $redsocks_config -p $redsocks_pid"
-    sudo -E $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid" &
+    sudo -E "$curdir/../bin/try" $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid" &
 }
 
 function disable_redsocks_background_proxy {
