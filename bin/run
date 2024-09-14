@@ -97,8 +97,14 @@ function run {
       timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile";
+      else
+        execfile="$(find "$build_dir" -type f -executable -name "$execfile" -print -quit)";
       fi
-      if eval "$scan_build $debug_cmd $execfile"; then
+      echo
+      echo "----------------------------------------------------------------"
+      echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
+      echo
+      if [ -f "$execfile" ] && eval "$scan_build $debug_cmd $execfile"; then
         timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Passed";
       else
         timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Failed";
