@@ -3,7 +3,7 @@
 -- vim.opt.guicursor = ""
 
 vim.opt.mouse = 'a' -- enable mouse support in all modes
-vim.opt.clipboard = 'unnamedplus'  -- Use the system clipboard for copy/paste
+-- vim.opt.clipboard = 'unnamedplus'  -- Use the system clipboard for copy/paste
 
 vim.opt.termguicolors = true  -- Enable 24-bit RGB colors
 vim.opt.laststatus = 3  -- Always show the status line
