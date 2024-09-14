@@ -51,6 +51,7 @@ require('pckr').add{
 
   -- NerdTree
   'preservim/nerdtree';
+  'ryanoasis/vim-devicons'; -- icons
 
   -- scrollbar:
   'lewis6991/satellite.nvim';
@@ -71,6 +72,9 @@ require('pckr').add{
 
   -- tabs
   'romgrk/barbar.nvim';
+
+  -- which keys
+  'folke/which-key.nvim';
 }
 
 -- You can find more plugins here:
