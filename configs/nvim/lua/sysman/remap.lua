@@ -1,5 +1,8 @@
 vim.g.mapleader = " "
 
+-- un-highlight
+vim.keymap.set("n", "<Esc><Esc>", vim.cmd.nohlsearch, { desc = "Remove Current Highlights" })
+
 -- Explore
 vim.keymap.set("n", "<leader>pv", vim.cmd.Ex, { desc = "Explore Files" })
 

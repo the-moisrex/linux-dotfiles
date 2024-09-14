@@ -75,6 +75,12 @@ require('pckr').add{
 
   -- which keys
   'folke/which-key.nvim';
+
+  -- status line
+  'nvim-lualine/lualine.nvim';
+
+  -- notify
+  'rcarriga/nvim-notify';
 }
 
 -- You can find more plugins here:
