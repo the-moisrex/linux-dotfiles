@@ -111,9 +111,7 @@ function prepare_redsocks_proxy {
 function enable_redsocks_proxy {
     prepare_redsocks_proxy;
     echo "$redsocks_bin -w -c $redsocks_config -p $redsocks_pid"
-    while ! sudo -E $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid"; do
-        sleep 1s;
-    done
+    sudo -E "$curdir/../bin/trynot" $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid";
     disable_redsocks_proxy;
 }
 
@@ -131,7 +129,7 @@ function disable_redsocks_proxy {
 function enable_redsocks_background_proxy {
     prepare_redsocks_proxy;
     echo "$redsocks_bin -w -c $redsocks_config -p $redsocks_pid"
-    sudo -E "$curdir/../bin/try" $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid" &
+    sudo -E "$curdir/../bin/trynot" $redsocks_bin -w -c "$redsocks_config" -p "$redsocks_pid" &
 }
 
 function disable_redsocks_background_proxy {
@@ -180,10 +178,10 @@ function enable_proxy {
                 else
                     echo "There's already a proxy running, let's disable it first."
                     disable_proxy
-                    enable_redsocks_background_proxy;
+                    enable_redsocks_proxy;
                 fi
             else
-                enable_redsocks_background_proxy;
+                enable_redsocks_proxy;
             fi
             ;;
         v2ray|2ray|2|ray|xray)
@@ -221,7 +219,7 @@ function enable_proxy {
             elif [ "$default_proxy" == "v2raya" ]; then
                 enable_v2raya_proxy;
             else
-                enable_redsocks_background_proxy;
+                enable_redsocks_proxy;
             fi
             ;;
     esac
