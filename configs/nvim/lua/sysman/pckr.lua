@@ -68,6 +68,9 @@ require('pckr').add{
 
   -- todo comments
   {'folke/todo-comments.nvim', requires = { 'nvim-lua/plenary.nvim' }};
+
+  -- tabs
+  'romgrk/barbar.nvim';
 }
 
 -- You can find more plugins here:
