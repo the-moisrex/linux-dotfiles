@@ -7,10 +7,9 @@ NC="\033[0m" # No Color
 
 
 gitroot=".git";
-until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" -o \
-      "$(realpath "$gitroot" 2>/dev/null)" = "/" -o \
-      -d "$gitroot" \
-    ]; do
+until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" ] || \
+      [ "$(realpath "$gitroot" 2>/dev/null)" = "/" ] || \
+      [ -d "$gitroot" ]; do
   gitroot="../${gitroot}";
 done;
 
@@ -21,9 +20,9 @@ is_interactive=true;
 
 # find the project directories
 function calculate_build_dir {
-    build_dir=$(find $proj_dir -maxdepth 2 -type f -name build.ninja -o -name CMakeCache.txt -o -name Makefile | xargs -l dirname | sort -u | xargs -l basename);
+    build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt -o -name Makefile \) | xargs -l dirname | sort -u | xargs -l basename);
     if $is_interactive; then
-        if [ $(echo -e "$build_dir" | wc -l) != "1" ]; then
+        if [ "$(echo -e "$build_dir" | wc -l)" != "1" ]; then
             if ! command -v dialog >/dev/null; then
                 echo "Install the 'dialog' command.";
                 exit 1;
@@ -31,7 +30,7 @@ function calculate_build_dir {
             build_options=()
             readarray -t build_options <<< "$build_dir";
             echo "${build_options[@]}"
-            build_dir=$(dialog --stdout --erase-on-exit --no-cancel --no-items --ok-label "Run" --trim --scrollbar --menu "Select the build directory:" 20 50 ${#build_options[@]} ${build_options[@]})
+            build_dir=$(dialog --stdout --erase-on-exit --no-cancel --no-items --ok-label "Run" --trim --scrollbar --menu "Select the build directory:" 20 50 ${#build_options[@]} "${build_options[@]}")
         fi
     else
         # select the first choice in non-interactive modes
@@ -53,7 +52,8 @@ function print_cmake_targets {
     # else
         # older versions of cmake
         # you can also use "ninja -t targets"
-        cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/: phony|\/|CMAKE_SYMLINK_LIBRARY|\.json|^clean|\[|build.ninja|^help/ { print $1 }'
+        # cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/: phony|\/|CMAKE_SYMLINK_LIBRARY|\.json|^clean|\[|build.ninja|^help/ { print $1 }'
+        cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/\/|CMAKE_SYMLINK_LIBRARY|\.json|^clean|\[|build.ninja|^help/ { print $1 }'
     # fi
 }
 
@@ -73,10 +73,9 @@ function run {
 
   calculate_build_dir
 
-  old_dir=$(pwd);
-  execfile="$@";
+  execfile="$*";
 
-  if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
+  if [ -d "$gitroot" ] && [ -d "$proj_dir" ] && [ -d "$build_dir" ]; then
     if [ -f "$build_dir/CMakeCache.txt" ]; then
       build_cmd="cmake --build '$build_dir' --target $execfile";
     elif [ -f "$build_dir/build.ninja" ]; then
@@ -114,7 +113,7 @@ function run {
 
 
 function keep-running {
-  git -C "$proj_dir" ls-files -cm | entr -ardc $0 $@
+  git -C "$proj_dir" ls-files -cm | entr -ardc "$0" "$@";
 }
 
 function build-step {
@@ -134,7 +133,7 @@ function build-step {
 }
 
 function build-report {
-  if [ -z "$@" ]; then
+  if [ -z "$*" ]; then
     echo "Targets are empty, specify some;"
     echo " Usage Example:"
     echo "     # test all the targets:"
@@ -145,7 +144,7 @@ function build-report {
 
   calculate_build_dir
 
-  if [ -d "$gitroot" -a -d "$proj_dir" -a -d "$build_dir" ]; then
+  if [ -d "$gitroot" ] && [ -d "$proj_dir" ] && [ -d "$build_dir" ]; then
     if $should_clean; then
         clear;
     fi
@@ -153,7 +152,7 @@ function build-report {
     echo -e "${GRAY}Build Directory:${NC} $build_dir"
     
     all_cmds=""
-    for target in $@; do
+    for target in "$@"; do
       if [ -f "$build_dir/CMakeCache.txt" ]; then
         build_cmd="cmake --build '$build_dir' --target $target";
       elif [ -f "$build_dir/build.ninja" ]; then
@@ -200,7 +199,7 @@ args=("$@")
 
 arg_pos=-1
 for arg in "${args[@]}"; do
-    arg_pos=$(($arg_pos + 1))
+    arg_pos=$((arg_pos + 1))
     case $arg in
         --no-interactive|--quite|-q)
             is_interactive=false
@@ -214,7 +213,7 @@ for arg in "${args[@]}"; do
             # Remove the string from the array by position
             unset "args[$arg_pos]"
 
-            $0 --no-clean ${args[@]} | less --RAW-CONTROL-CHARS --buffers=-1;
+            $0 --no-clean "${args[@]}" | less --RAW-CONTROL-CHARS --buffers=-1;
             exit $?
             ;;
         help)
@@ -239,22 +238,22 @@ done
 case "${args[0]}" in
     analyze|scan-build)
         unset "args[0]"
-        run analyze ${args[@]};
+        run analyze "${args[@]}";
         ;;
     lldb)
         unset "args[0]"
-        run lldb ${args[@]};
+        run lldb "${args[@]}";
         ;;
     gdb)
         unset "args[0]"
-        run gdb ${args[@]};
+        run gdb "${args[@]}";
         ;;
     build-report|report)
         unset "args[0]"
-        build-report ${args[@]};
+        build-report "${args[@]}";
         ;;
     *)
-        run ${args[@]};
+        run "${args[@]}";
         ;;
 esac
 
