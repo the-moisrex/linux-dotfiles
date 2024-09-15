@@ -52,6 +52,16 @@ elif [ "$pretext" == "foresight" ]; then
     cmd="tmux new -c $working_dir"
   fi
   cd "$working_dir" || exit;
+elif [ "$pretext" == "simdjson" ]; then
+  pretext="SIMDJSON live coding"
+  working_dir="$HOME"
+  if [ -d "$HOME/simdjson" ]; then
+    working_dir="$HOME/simdjson"
+  elif [ -d "$HOME/Projects/simdjson" ]; then
+    working_dir="$HOME/Projects/simdjson"
+    cmd="tmux new -c $working_dir"
+  fi
+  cd "$working_dir" || exit;
 fi
 
 title="${*}"
