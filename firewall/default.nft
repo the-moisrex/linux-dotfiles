@@ -35,7 +35,7 @@ table netdev filter {
     chain ingress {
 
         # Drop all fragments.
-        ip frag-off & 0x1fff != 0 counter name ingress.drop drop;
+        # ip frag-off & 0x1fff != 0 counter name ingress.drop drop;
 
         # Drop XMAS packets.
         tcp flags & (fin|syn|rst|psh|ack|urg) == (fin|syn|rst|psh|ack|urg) counter name ingress.drop drop
@@ -98,9 +98,11 @@ table inet filter {
             udp . rfb,           # VNC
             udp . ms-wbt-server, # RDP
             udp . 1714-1765,     # kdeconnect
+            udp . 5901,          # kdeconnect (found in virtualmonitor.cpp file)
             udp . 5353,          # mDNS
             tcp . 4713,          # PULSE_SERVER=tcp:machine:4713 allow input audio
             tcp . 1714-1765,     # kdeconnect
+            tcp . 5901,          # kdeconnect (found in virtualmonitor.cpp file)
             tcp . 5353,          # mDNS
             tcp . imap,          # email
             tcp . imaps,         # email
@@ -173,7 +175,9 @@ table inet filter {
             established,
             related
         } counter name filter.established accept
-        ct state invalid counter name filter.invalid drop
+
+        meta pkttype broadcast accept;
+        meta pkttype multicast accept;
 
         # iif != lo ip daddr 127.0.0.1/8 counter drop comment "drop connections to loopback not comming from loopback"
         # iif != lo ip6 daddr ::1/128 counter drop comment "drop connections to loopback not comming from loopback"
@@ -200,6 +204,8 @@ table inet filter {
         meta mark 0x40 counter name filter.marked accept;
         meta mark 0x80 counter name filter.marked accept;
 
+        ct state invalid counter name filter.invalid drop;
+
         counter name filter.drop log flags all prefix "nft#in-dropped " comment "count dropped packets"
     }
 
@@ -215,6 +221,9 @@ table inet filter {
         # DHCP
         ip saddr 0.0.0.0 ip daddr 255.255.255.255 udp dport bootps counter name filter.dhcp counter name forward.all accept
         ip6 saddr fe80::/64 counter name filter.dhcp counter name forward.all accept
+
+        meta pkttype broadcast accept;
+        meta pkttype multicast accept;
         
         ip saddr $local_network counter name forward.upload counter name forward.all accept comment "from local network"
         ip daddr $local_network counter name forward.download counter name forward.all accept comment "to local network"
