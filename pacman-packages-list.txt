@@ -55,6 +55,9 @@ parallel
 htop
 unrar
 lshw
+ripgrep      # grep foo . -R (rg foo)
+ripgrep-all
+fd           # find . -name '*foo*'
 
 # Shells
 kitty
