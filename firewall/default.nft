@@ -34,17 +34,17 @@ table netdev filter {
     # This sets up a chain that acts for a dedicated network device before packets enter further processing – improved performance.
     chain ingress {
 
-        # Drop all fragments.
+        # Drop all fragments (will affect kdeconnect)
         # ip frag-off & 0x1fff != 0 counter name ingress.drop drop;
 
         # Drop XMAS packets.
-        tcp flags & (fin|syn|rst|psh|ack|urg) == (fin|syn|rst|psh|ack|urg) counter name ingress.drop drop
+        # tcp flags & (fin|syn|rst|psh|ack|urg) == (fin|syn|rst|psh|ack|urg) counter name ingress.drop drop
 
         # Drop NULL packets.
-        tcp flags & (fin|syn|rst|psh|ack|urg) == 0x0 counter name ingress.drop drop;
+        # tcp flags & (fin|syn|rst|psh|ack|urg) == 0x0 counter name ingress.drop drop;
 
         # Drop uncommon MSS values.
-        tcp flags syn tcp option maxseg size 1-535 counter name ingress.drop drop;
+        # tcp flags syn tcp option maxseg size 1-535 counter name ingress.drop drop;
     }
 
     chain ingress.enp {
@@ -175,6 +175,7 @@ table inet filter {
             established,
             related
         } counter name filter.established accept
+        # ct state invalid counter name filter.invalid drop;
 
         meta pkttype broadcast accept;
         meta pkttype multicast accept;
@@ -204,8 +205,6 @@ table inet filter {
         meta mark 0x40 counter name filter.marked accept;
         meta mark 0x80 counter name filter.marked accept;
 
-        ct state invalid counter name filter.invalid drop;
-
         counter name filter.drop log flags all prefix "nft#in-dropped " comment "count dropped packets"
     }
 
@@ -216,7 +215,7 @@ table inet filter {
         ip saddr $local_network ip daddr $local_network counter name forward.offload counter name forward.all flow offload @fast;
 
         ct state { established, related } counter name forward.established counter name forward.all accept;
-        ct state invalid counter name forward.drop;
+        # ct state invalid counter name forward.drop;
 
         # DHCP
         ip saddr 0.0.0.0 ip daddr 255.255.255.255 udp dport bootps counter name filter.dhcp counter name forward.all accept

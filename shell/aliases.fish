@@ -4,7 +4,7 @@ function ..    ; cd .. ; end
 function ...   ; cd ../.. ; end
 function ....  ; cd ../../.. ; end
 function ..... ; cd ../../../.. ; end
-function cd    ; builtin cd $argv; ls; end
+function cd    ; builtin cd $argv && ls; end
 
 # Utilities
 function grep     ; command grep --color=auto $argv ; end
