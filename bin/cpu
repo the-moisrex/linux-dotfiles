@@ -5,11 +5,11 @@ governor="$1"
 if [ "$governor" == "" ]; then
   cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
   if command cpupower --version >/dev/null; then
-      echo "------------------ Frequency Info ------------------------"
+      echo "------------------ cpupower: Frequency Info ------------------------"
       sudo cpupower frequency-info
-      echo "------------------   Idle info    ------------------------"
+      echo "------------------ cpupower: Idle info      ------------------------"
       sudo cpupower idle-info --silent
-      echo "------------------   Perf-Bias    ------------------------"
+      echo "------------------ cpupower: Perf-Bias      ------------------------"
       ebp=$(sudo cpupower info | grep perf-bias | cut -d" " -f2)
       if [ "$ebp" == "0" ]; then
           perf="performance";
@@ -49,6 +49,21 @@ elif [ "$governor" == "default" ]; then
 elif [ "$governor" == "balanced" ]; then
     echo "powerprofilesctl: balanced"
     powerprofilesctl set balanced
+
+    echo "cpupower governor: powersave"
+    sudo cpupower frequency-set --related -g powersave
+
+    echo "cpupower perf-bias: 4 (balance-performance, not the default)"
+    sudo cpupower set --perf-bias 4
+elif [ "$governor" == "ondemand" ]; then
+    echo "powerprofilesctl: balanced"
+    powerprofilesctl set balanced
+
+    echo "cpupower governor: powersave"
+    sudo cpupower frequency-set --related -g powersave
+
+    echo "cpupower perf-bias: 0 (performance, not the default)"
+    sudo cpupower set --perf-bias 0
 else
   echo "$governor" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
   if command cpupower --version >/dev/null; then
