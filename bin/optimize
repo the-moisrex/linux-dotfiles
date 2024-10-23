@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cache_dir="$HOME/.cache/cleaner";
+cache_dir="$HOME/.config/optimize";
 bleaching=false;
 trim=false;
 update=false;
