@@ -24,7 +24,7 @@
 # white = "0xd4be98"
 
 # Themes from: https://github.com/alacritty/alacritty-theme
-import = [
+general.import = [
     "~/.config/alacritty/alacritty-theme/themes/rose_pine.toml"
     # "~/.config/alacritty/alacritty-theme/themes/gruvbox_dark.toml"
     # "~/.config/alacritty/alacritty-theme/themes/tomorrow_night.toml"
