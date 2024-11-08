@@ -42,3 +42,11 @@ vim.opt.colorcolumn = "110"
 vim.g.mapleader = " "
 
 -- vim.opt.autochdir = true
+
+-- setting the language for some file extensions:
+vim.filetype.add({
+    extension = {
+        ixx = 'cpp', -- C++20 modules interface file
+        cxx = 'cpp', -- C++20 modules implementation file
+    }
+})
