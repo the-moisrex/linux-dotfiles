@@ -1,6 +1,0 @@
-# CLion
-{ "name": "java", "type": "Heavy_CPU" }
-{ "name": "clangd", "type": "Heavy_CPU" }
-{ "name": "ion.clangd.main", "type": "Heavy_CPU" }
-{ "name": "jetbrains-toolbox", "type": "Heavy_CPU" }
-{ "name": "clang-tidy", "type": "Heavy_CPU" }
