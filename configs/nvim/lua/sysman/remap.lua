@@ -61,4 +61,11 @@ vim.keymap.set(
     { desc = "Replace the thing under the cursor" }
 )
 
+-- Increment and decrement numbers with Ctrl + Scroll
+-- Increment more 10 Steps with Ctrl + Shift + Scroll
+vim.api.nvim_set_keymap('n', '<C-ScrollWheelUp>', '<C-A>', { noremap = true, silent = true })
+vim.api.nvim_set_keymap('n', '<C-ScrollWheelDown>', '<C-X>', { noremap = true, silent = true })
+vim.api.nvim_set_keymap('n', '<C-S-ScrollWheelUp>', '10<C-A>', { noremap = true, silent = true })
+vim.api.nvim_set_keymap('n', '<C-S-ScrollWheelDown>', '10<C-X>', { noremap = true, silent = true })
+
 
