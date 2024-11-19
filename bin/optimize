@@ -5,6 +5,7 @@ bleaching=false;
 trim=false;
 update=false;
 empty_trash=false;
+remove_update_cache=false;
 
 function print_help {
     echo "Clean useless things."
@@ -13,6 +14,7 @@ function print_help {
     echo "    -u|--update         # update the system before cleaning"
     echo "    -b|--bleach         # remove useless files using bleachbit"
     echo "    -e|--empty-trash    # empty all user's trashes"
+    echo "    -c|--clean-update   # remove update cache"
     echo "    --no-bleaching      # don't run bleachbit"
     echo "    --no-trim           # don't trim"
     echo "    --no-update         # don't update"
@@ -20,12 +22,13 @@ function print_help {
     exit 0;
 }
 
-while getopts ":hbetu-:" opt; do
+while getopts ":hbetuc-:" opt; do
   case $opt in
     t) trim=true;;
     e) empty_trash=true;;
     u) update=true;;
     b) bleaching=true;;
+    c) remove_update_cache=true;;
     h) print_help;;
     -)
       case "$OPTARG" in
@@ -102,3 +105,10 @@ if $trim; then
     sudo systemctl status fstrim 2>&1 | tee "$cache_dir/fstrim.log";
 fi
 
+if $remove_update_cache; then
+    if command -v yay >/dev/null; then
+        yes | yay -Scc 2>&1 | tee "$cache_dir/update-clean.log";
+    elif command -v pacman >/dev/null; then
+        yes | sudo pacman -Scc 2>&1 | tee "$cache_dir/update-clean.log";
+    fi
+fi
