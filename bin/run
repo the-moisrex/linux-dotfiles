@@ -20,7 +20,11 @@ is_interactive=true;
 
 # find the project directories
 function calculate_build_dir {
-    build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt -o -name Makefile \) | xargs -l dirname | sort -u | xargs -l basename);
+    if [ -f "$proj_dir/CMakeLists.txt" ]; then
+        build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt \) | xargs -l dirname | sort -u | xargs -l basename);
+    else
+        build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt -o -name Makefile \) | xargs -l dirname | sort -u | xargs -l basename);
+    fi
     if $is_interactive; then
         if [ "$(echo -e "$build_dir" | wc -l)" != "1" ]; then
             if ! command -v dialog >/dev/null; then
