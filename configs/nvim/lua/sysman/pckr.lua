@@ -81,6 +81,9 @@ require('pckr').add{
 
   -- notify
   'rcarriga/nvim-notify';
+
+  -- multi-cursor
+  {'mg979/vim-visual-multi', branch = 'master'};
 }
 
 -- You can find more plugins here:
