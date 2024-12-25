@@ -208,6 +208,11 @@ function setup_fish {
     install "$dir/assets/error.oga" "$fish_dir/assets/error.oga"
 }
 
+function setup_gdb {
+    src="$dir/configs/gdb/.gdbinit"
+    target="$HOME/.gdbinit"
+    install "$src" "$target"
+}
 
 function setup_nautilus_actions {
     nautilus_actions_dir="$HOME/.local/share/nautilus/scripts"
@@ -246,6 +251,7 @@ for i in "$@"; do
             log "install.sh [--forced]"
             log "install.sh --help"
             log "install.sh fish"
+            log "install.sh gdb"
             log "install.sh spacevim"
             log "install.sh nvim"
             log "install.sh tv"
@@ -308,13 +314,17 @@ for i in "$@"; do
             shift;
             ;;
 
+        gdb)
+            setup_gdb;
+            shift;
+            ;;
+
         uninstall|--uninstall|remove|rm|--remove|--rm)
             should_uninstall=true
             shift;
             ;;
 
         all|--all|-a)
-            setup_fish;
             chromium;
             install_nvim;
             # spacevim;
@@ -323,6 +333,7 @@ for i in "$@"; do
             tv_shortcuts;
             firefox-policies;
             setup_fish;
+            setup_gdb;
             exit;
             ;;
 
