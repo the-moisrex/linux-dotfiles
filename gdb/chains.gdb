@@ -63,7 +63,7 @@ define __chain_breakpoint
   end
 
   set $__batch_num = $__batch_num + 1
-  print "\n"
+  printf "\n"
 end
 
 define __rchain_breakpoint
