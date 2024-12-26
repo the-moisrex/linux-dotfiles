@@ -7,7 +7,7 @@ set $__bplist = (int**) 0
 define __resize_array
   if $__bplist_len < $arg0
     set $__bplist_newlen = $arg0 * 2
-    printf "Resizing array from %d to %d\n", $__bplist_len, $__bplist_newlen
+    printf "  Resizing array from %d to %d\n", $__bplist_len, $__bplist_newlen
     set $__bplist_new = (int**) malloc($__bplist_newlen * sizeof(int))
     set $__bplist_index = 0
     while $__bplist_index < $__bplist_len
@@ -29,25 +29,26 @@ end
 define __enable_breakpoints_of
   # arg0 = breakpoint id
 
-  set $__bps_size = $_strlen((char*)$__bplist[$arg0])
-  set $__bps_len = (int) ($__bps_size / sizeof(int))
-  set $__cur = 0
-  while $__cur < $__bps_len
-    set $__bp = $__bplist[$arg0][$__cur]
-    printf "  Enabling breakpoint: %d\n", $__bp
-    enable once $__bp
-    $__cur = $__cur + 1
+  if $__bplist[$arg0] != (int*) 0
+    set $__cur = $__bplist[$arg0]
+    printf "Enabling breakpoints dependent on: %d\n", $arg0
+    while *$__cur != 0
+      set $__bp = *$__cur
+      printf "  Enabling breakpoint: %d\n", $__bp
+      enable once $__bp
+      set $__cur = $__cur + 1
+    end
   end
 end
 
-define __add_bp_to_batch
+define __add_bp_dependency
   # arg0 = breakpoint id of the dependent breakpoint
   # arg1 = breakpoint id of non-dependent breakpoint
-  __resize_array $arg0
+  __resize_array $arg1
 
   # this is not the length, but the size in bytes:
-  if (int*) $__bplist[$arg0] != (int*) 0
-    set $__bps_size = $_strlen((char*)$__bplist[$arg0])
+  if (int*) $__bplist[$arg1] != (int*) 0
+    set $__bps_size = $_strlen((char*)$__bplist[$arg1])
   else
     set $__bps_size = 0
   end
@@ -57,17 +58,17 @@ define __add_bp_to_batch
   # copy the old batch ids
   set $__bp_index = 0
   while $__bp_index != $__bps_len
-    set $___ptr[$__bp_index] = $__bplist[$arg1][$__bp_index]
+    set $___ptr[$__bp_index] = $__bplist[$arg0][$__bp_index]
     set $__bp_index = $__bp_index + 1
   end
 
-  set $___ptr[$__bp_index] = $arg1
+  set $___ptr[$__bp_index] = $arg0
   set $__bp_index = $__bp_index + 1
   # set the ending zero to make strlen work
   set $___ptr[$__bp_index] = 0
 
-  printf "  Breakpoint[%d] += breakpoint #%d\n", $arg0, $arg1
-  set $__bplist[$arg0] = $___ptr
+  printf "  Breakpoint[%d] += breakpoint #%d\n", $arg1, $arg0
+  set $__bplist[$arg1] = $___ptr
 end
 
 define __reset_breakpoint_start
@@ -98,9 +99,9 @@ end
 define __chain_breakpoint
   printf "Chaining breakpoint %d after breakpoint %d\n", $arg0, $arg1
 
-  __add_bp_to_batch $arg0 $arg1
+  __add_bp_dependency $arg0 $arg1
 
-  commands $arg0
+  commands $arg1
       __enable_breakpoints_of $_hit_bpnum
   end
 
@@ -113,7 +114,7 @@ define __rchain_breakpoint
   printf "Chaining breakpoint range %d-%d to %d:\n", $arg0, $arg1, $arg3
   set $__cur = $arg0
   while $__cur <= $arg1
-    __add_bp_to_batch $__cur $arg3
+    __add_bp_dependency $__cur $arg3
 
     commands $__cur
       __enable_breakpoints_of $_hit_bpnum
@@ -127,10 +128,11 @@ define __rchain_breakpoint
   printf "\n"
 end
 
-define chain_up
-  __chain_breakpoint $bpnum ($bpnum - 1)
+define chainup
+  set $__prev_bp = ($bpnum - 1)
+  __chain_breakpoint $bpnum $__prev_bp
 end
-document chain_up
+document chainup
 Chain the last two breakpoints together
 end
 
@@ -168,9 +170,8 @@ define rechain
   __chain_breakpoint $arg0 $arg1
 end
 document rechain
-Chain two breakpoints together.
-Usage: rechain 1 [2]
-if you specify only one breakpoint, the last breakpoint before that is chosen.
+Chain two breakpoints together (breakpoint 1 will depend on breakpoint 2)
+Usage: rechain 1 2
 end
 
 
