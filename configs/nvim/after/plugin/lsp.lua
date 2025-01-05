@@ -33,6 +33,7 @@ lspconfig.clangd.setup({})
 lspconfig.bashls.setup({})
 lspconfig.pylsp.setup({})
 lspconfig.rust_analyzer.setup({})
+lspconfig.tsserver.setup({})
 
 -- fixme: ccls has problems on webpp
 -- lspconfig.ccls.setup({
