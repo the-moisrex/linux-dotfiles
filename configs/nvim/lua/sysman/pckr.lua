@@ -35,6 +35,18 @@ require('pckr').add{
     end
   };
 
+  -- tokyo night theme
+  'folke/tokyonight.nvim';
+
+  -- catppuccin theme
+  {'catppuccin/nvim', as = 'catppuccin'};
+
+  -- gruvbox theme
+  {'sainnhe/gruvbox-material', as = 'gruvbox'};
+
+  -- nightfox theme
+  'EdenEast/nightfox.nvim';
+
   -- undo tree
   'mbbill/undotree';
 
