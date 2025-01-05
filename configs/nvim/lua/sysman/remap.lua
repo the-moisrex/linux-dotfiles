@@ -69,3 +69,14 @@ vim.api.nvim_set_keymap('n', '<C-S-ScrollWheelUp>', '10<C-A>', { noremap = true,
 vim.api.nvim_set_keymap('n', '<C-S-ScrollWheelDown>', '10<C-X>', { noremap = true, silent = true })
 
 
+-- Buffer next and Buffer prev
+vim.keymap.set("n", "<C-Tab>", ":bn<CR>", { desc = "Next Buffer", noremap = true, silent = true })
+vim.keymap.set("n", "<C-S-Tab>", ":bp<CR>", { desc = "Prev Buffer", noremap = true, silent = true })
+
+-- Switch to a specific tab by number (e.g., 1 for first tab)
+-- for i = 1, 9 do
+--     vim.api.nvim_set_keymap('n', '<leader>' .. i, ':tabn ' .. i .. '<CR>', { noremap = true, silent = true })
+-- end
+
+
+vim.keymap.set("n", "<C-w><C-w>", ":bd<CR>", { desc = "Close Buffer", noremap = true, silent = true })

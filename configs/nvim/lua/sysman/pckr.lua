@@ -84,6 +84,9 @@ require('pckr').add{
 
   -- multi-cursor
   {'mg979/vim-visual-multi', branch = 'master'};
+
+  -- smooth scrolling
+  'declancm/cinnamon.nvim';
 }
 
 -- You can find more plugins here:
