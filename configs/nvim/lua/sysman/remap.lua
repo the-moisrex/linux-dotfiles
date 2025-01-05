@@ -79,4 +79,12 @@ vim.keymap.set("n", "<C-S-Tab>", ":bp<CR>", { desc = "Prev Buffer", noremap = tr
 -- end
 
 
-vim.keymap.set("n", "<C-w><C-w>", ":bd<CR>", { desc = "Close Buffer", noremap = true, silent = true })
+-- vim.keymap.set("n", "<C-w><C-w>", ":bd<CR>", { desc = "Close Buffer", noremap = true, silent = true })
+vim.keymap.set("n", "<C-w><C-q>", ":bd<CR>", { desc = "Close Buffer", noremap = true, silent = true })
+vim.keymap.set("n", "<C-w><C-q><C-q>", ":bd!<CR>", { desc = "Close Buffer", noremap = true, silent = true })
+
+
+-- Moving to diagnostic
+vim.keymap.set("n", "]g", vim.diagnostic.goto_next)  -- Jump to next diagnostic
+vim.keymap.set("n", "[g", vim.diagnostic.goto_prev)  -- Jump to previous diagnostic
+
