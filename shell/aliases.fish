@@ -1,10 +1,28 @@
 
+set -g gitroot ""
+set -g projects_root "$HOME/Projects"
+
+function calc_git_root
+    set cur_git_root ".git"
+    while not test (realpath "$cur_git_root" 2>/dev/null) = "/.git" -o (realpath "$cur_git_root" 2>/dev/null) = "/" -o -d "$cur_git_root"
+        set cur_git_root "../$cur_git_root"
+    end
+
+    if not test "$cur_git_root" = ""
+        set --global gitroot (realpath "$cur_git_root/.." 2>/dev/null)
+    end
+end
+
 # Navigation
-function ..    ; cd .. ; end
-function ...   ; cd ../.. ; end
-function ....  ; cd ../../.. ; end
-function ..... ; cd ../../../.. ; end
 function cd    ; builtin cd $argv && ls; end
+function cdi   ; calc_git_root; cd "$gitroot/$argv"; end # move from the git root
+function ..    ; cd ..; end
+function ...   ; cd ../..; end
+function ....  ; cd ../../..; end
+function ..... ; cd ../../../..; end
+function proj  ; cd "$projects_root/$argv"; end
+function cdproj; cd "$projects_root/$argv"; end
+
 
 # Utilities
 function grep     ; command grep --color=auto $argv ; end
@@ -15,6 +33,7 @@ abbr gi git
 abbr gti git
 abbr yearn yarn
 abbr v vim
+abbr n nvim
 abbr bwre brew
 abbr brwe brew
 
