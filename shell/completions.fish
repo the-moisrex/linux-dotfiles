@@ -23,3 +23,18 @@ complete -c run -a help -d "Print Help"
 #     -xa '(set -l t (commandline -opc)[2..-1]; complete -C "$t")'
 complete -c runif -d "Executable Arguments" \
     -xa '(set -l t (commandline | string replace "runif " ""); complete -C "$t")'
+
+function get_dirs_of
+    set -l root (realpath --relative-to=. "$argv")
+    __fish_complete_directories "$root/"(commandline -ct) | string replace "$root/" ""
+end
+
+function get_git_dirs
+    calc_git_root
+    # ls --oneline --no-symlink --almost-all --color=never --icon=never --sort=git --directory-only "$gitroot"/*/ | string replace "$gitroot" "" | string replace "/" ""
+    get_dirs_of "$gitroot"
+end
+
+complete -x -c cdi -d "Subdirs" -a '(get_git_dirs)'
+complete -x -c cdproj -d "Project Dirs" -a '(get_dirs_of $projects_root)'
+complete -x -c proj   -d "Project Dirs" -a '(get_dirs_of $projects_root)'
