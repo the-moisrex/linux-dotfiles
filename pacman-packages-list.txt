@@ -135,6 +135,7 @@ ccache
 check
 perf
 lldb
+typescript-language-server
 
 # Sound
 pavucontrol
