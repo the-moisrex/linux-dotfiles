@@ -59,7 +59,8 @@ require('satellite').setup {
 
 
 -- Smooth Scrolling
-require("cinnamon").setup {
+local cinnamon = require("cinnamon")
+cinnamon.setup {
     -- Enable all provided keymaps
     keymaps = {
         basic = true,
@@ -69,3 +70,11 @@ require("cinnamon").setup {
     options = { mode = "window" },
 }
 
+vim.keymap.set("n", "<S-Up>", function() cinnamon.scroll("<C-U>zz") end)
+vim.keymap.set("n", "<S-Down>", function() cinnamon.scroll("<C-D>zz") end)
+
+vim.keymap.set("n", "<A-Up>", function() cinnamon.scroll("<C-U>zz") end)
+vim.keymap.set("n", "<A-Down>", function() cinnamon.scroll("<C-D>zz") end)
+
+vim.keymap.set("n", "<A-k>", function() cinnamon.scroll("<C-U>zz") end)
+vim.keymap.set("n", "<A-j>", function() cinnamon.scroll("<C-D>zz") end)
