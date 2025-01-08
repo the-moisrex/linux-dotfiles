@@ -25,7 +25,8 @@
 
 # Themes from: https://github.com/alacritty/alacritty-theme
 general.import = [
-    "~/.config/alacritty/alacritty-theme/themes/rose_pine.toml"
+    "~/.config/alacritty/alacritty-theme/themes/carbonfox.toml"
+    # "~/.config/alacritty/alacritty-theme/themes/rose_pine.toml"
     # "~/.config/alacritty/alacritty-theme/themes/gruvbox_dark.toml"
     # "~/.config/alacritty/alacritty-theme/themes/tomorrow_night.toml"
     # "~/.config/alacritty/alacritty-theme/themes/konsole_linux.toml"
@@ -47,12 +48,14 @@ WINIT_X11_SCALE_FACTOR = "1.66"
 
 [window]
 dimensions.columns = 100
-dimensions.lines = 30
+dimensions.lines = 35
 padding.x = 16
 padding.y = 14
 decorations = "none"
-opacity = 0.99
-dynamic_padding = false
+opacity = 0.7
+dynamic_padding = true
+blur = true
+resize_increments = true # doesn't work on Wayland yet
 
 [scrolling]
 history=100000
@@ -67,3 +70,14 @@ bindings = [
 # command = { program = "code", args = [ "--goto" ] }
 # mouse = { enabled = true }
 
+[selection]
+save_to_clipboard = true
+
+[cursor]
+style = { shape = "Underline", blinking = "On" }
+blink_interval = 400
+unfocused_hollow = true
+thickness = 0.1
+
+[mouse]
+hide_when_typing = false
