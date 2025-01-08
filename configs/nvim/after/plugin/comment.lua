@@ -8,25 +8,25 @@ require('Comment').setup({
     ---LHS of toggle mappings in NORMAL mode
     toggler = {
         ---Line-comment toggle keymap
-        line = 'gcc',
+        line = '//',
         ---Block-comment toggle keymap
-        block = 'gbc',
+        block = '/\\',
     },
     ---LHS of operator-pending mappings in NORMAL and VISUAL mode
     opleader = {
         ---Line-comment keymap
-        line = 'gc',
+        line = '<C-/>',
         ---Block-comment keymap
-        block = 'gb',
+        block = '<C-\\>',
     },
     ---LHS of extra mappings
     extra = {
         ---Add comment on the line above
-        above = 'gcO',
+        -- above = 'gcO',
         ---Add comment on the line below
-        below = 'gco',
+        -- below = 'gco',
         ---Add comment at the end of line
-        eol = 'gcA',
+        -- eol = 'gcA',
     },
     ---Enable keybindings
     ---NOTE: If given `false` then the plugin won't create any mappings
@@ -34,7 +34,7 @@ require('Comment').setup({
         ---Operator-pending mapping; `gcc` `gbc` `gc[count]{motion}` `gb[count]{motion}`
         basic = true,
         ---Extra mapping; `gco`, `gcO`, `gcA`
-        extra = true,
+        extra = false,
     },
     ---Function to call before (un)comment
     pre_hook = nil,
@@ -43,10 +43,10 @@ require('Comment').setup({
 });
 
 
-local api = require("Comment.api");
-local call = api.call;
-vim.keymap.set("i", '<C-/>', call('toggle.linewise.current', 'g@$'), { expr = true, desc = 'Comment toggle current line' });
-vim.keymap.set("n", '<C-/>', call('toggle.linewise.current', 'g@$'), { expr = true, desc = 'Comment toggle current line' });
-vim.keymap.set("x", '<C-/>', function()
-    api.locked("toggle.linewise")(vim.fn.visualmode());
-end, { desc = 'Comment toggle current line' });
+-- local api = require("Comment.api");
+-- local call = api.call;
+-- vim.keymap.set("i", '<C-/>', call('toggle.linewise.current', 'g@$'), { expr = true, desc = 'Comment toggle current line' });
+-- vim.keymap.set("n", '<C-/>', call('toggle.linewise.current', 'g@$'), { expr = true, desc = 'Comment toggle current line' });
+-- vim.keymap.set("x", '<C-/>', function()
+--     api.locked("toggle.linewise")(vim.fn.visualmode());
+-- end, { desc = 'Comment toggle current line' });
