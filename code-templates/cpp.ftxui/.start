@@ -1,0 +1,2 @@
+main: main.cxx
+manifest: CMakeLists.txt
