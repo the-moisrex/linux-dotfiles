@@ -47,8 +47,8 @@ WINIT_X11_SCALE_FACTOR = "1.66"
 
 
 [window]
-dimensions.columns = 100
-dimensions.lines = 35
+dimensions.columns = 115
+dimensions.lines = 50
 padding.x = 16
 padding.y = 14
 decorations = "none"
