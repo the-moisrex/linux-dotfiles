@@ -41,7 +41,7 @@ function toggle_terminal()
 
     if terminal_buf then
         if vim.api.nvim_buf_is_loaded(terminal_buf) and is_buffer_visible(terminal_buf) then
-            vim.cmd('close' .. terminal_buf)
+            vim.cmd('close ' .. terminal_buf)
         else
             -- vim.cmd('botright split')
             auto_split()
@@ -56,8 +56,8 @@ function toggle_terminal()
     end
 end
 
-vim.api.nvim_set_keymap('n', '<F12>', ':lua toggle_terminal()<CR>', { noremap = true, silent = true })
-vim.api.nvim_set_keymap('t', '<F12>', '<ESC><C-\\><C-n>:lua toggle_terminal()<CR>', { noremap = true, silent = true })
+vim.keymap.set('n', '<F12>', '<ESC><C-\\><C-n>:lua toggle_terminal()<CR>', { noremap = true, silent = true })
+vim.keymap.set('t', '<F12>', '<ESC><C-\\><C-n>:lua toggle_terminal()<CR>', { noremap = true, silent = true })
 
 
 -- Open Terminal
