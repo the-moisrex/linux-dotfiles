@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 curfile="$0"
-curdir=$(realpath "$(dirname $curfile)");
+curdir="$(realpath "$(dirname "$curfile")")";
 default_template="cpp";
 
 detect_distro() {
@@ -30,7 +30,7 @@ detect_distro
 main="left"
 side="right"
 
-echo Distro: $distro
+echo Distro: "$distro"
 if [[ "$distro" == "termux" ]]; then
   main="top"
   side="bottom"
@@ -40,7 +40,7 @@ tmpdir=""
 template=""
 buildsys="Ninja"
 codeshells_dir="$HOME/codeshells"
-template_root=$(realpath "$(dirname $0)/../code-templates")
+template_root=$(realpath "$(dirname "$0")/../code-templates")
 
 function move_and_restart {
     name="$1"
@@ -74,7 +74,7 @@ function remove_codeshell {
         echo "Unknown command $cmd";
         exit 1;
     fi
-    if [ -z "$name" -o "$name" = "." ]; then
+    if [ -z "$name" ] || [ "$name" = "." ]; then
         directory=$(realpath .);
         eval $cmd "$directory";
         echo "Removed/Trashed $directory";
@@ -146,7 +146,7 @@ for i in "$@"; do
 
     save)
         shift;
-        move_and_restart $1;
+        move_and_restart "$1";
         exit;
         ;;
 
@@ -158,13 +158,13 @@ for i in "$@"; do
         
     remove)
         shift;
-        remove_codeshell remove $1;
+        remove_codeshell remove "$1";
         exit;
         ;;
         
     trash)
         shift;
-        remove_codeshell trash $1;
+        remove_codeshell trash "$1";
         exit;
         ;;
 
@@ -179,13 +179,13 @@ for i in "$@"; do
   esac
 done
 
-if [ ! -z "$dir" ]; then
+if [ -n "$dir" ]; then
   tmpdir="$codeshells_dir/$dir"
   mkdir -p "$tmpdir"
 fi
 
 # if there's no tempalte and no name
-if [ -z "${template}" ] && [ ! -z "${tmpdir}" ]; then
+if [ -z "${template}" ] && [ -n "${tmpdir}" ]; then
   if [ -s "${tmpdir}/.template" ]; then
     template=$(cat "${tmpdir}/.template")
   fi
@@ -196,16 +196,16 @@ if [ -z "$template" ]; then
 fi
 
 if [ -z "$tmpdir" ]; then
-  tmpdir=$(mktemp -d --suffix=-codeshell)
+  tmpdir=$(mktemp -d --suffix=.codeshell)
 fi;
 
-tmpdir=$(realpath ${tmpdir});
+tmpdir=$(realpath "${tmpdir}");
 
 template_dir="${template_root}/${template}"
 
-if [ ! -d $template_dir ]; then
+if [ ! -d "$template_dir" ]; then
   echo "The specified template ($template) does not exists. Possible code-templates are:"
-    dir="$(dirname $0)/../code-templates";
+    dir="$(dirname "$0")/../code-templates";
     echo "Directory: $dir"
     ls "$dir"
   exit;
@@ -219,18 +219,18 @@ else
 fi
 
 if [[ "$main" == "left" ]]; then
-  tmux split-window -t ${window} -h
+  tmux split-window -t "${window}" -h
 else
-  tmux split-window -t ${window}
+  tmux split-window -t "${window}"
 fi
-tmux select-pane -t ${window}.${side}
-tmux resize-pane -t ${window}.${side} -R 18
-tmux send-keys -t ${window}.${main} "cd ${tmpdir}" C-m
-tmux send-keys -t ${window}.${side} "cd ${tmpdir}" C-m
+tmux select-pane -t "${window}.${side}"
+tmux resize-pane -t "${window}.${side}" -R 18
+tmux send-keys -t "${window}.${main}" "cd ${tmpdir}" C-m
+tmux send-keys -t "${window}.${side}" "cd ${tmpdir}" C-m
 
 
 # copy files if the directory does not exists
-if [ `ls -A ${tmpdir} | wc -m` == "0" ]; then
+if [ `ls -A "${tmpdir}" | wc -m` == "0" ]; then
   cp -nTr "$template_dir" "${tmpdir}"
 fi;
 
@@ -262,10 +262,10 @@ function open_editor() {
         ;;
   esac
   if [ "$file" != "nothing" ]; then
-    tmux send-keys -t ${window}.${main} "${nonblocking} ${EDITOR} ${file}" C-m
+    tmux send-keys -t "${window}.${main}" "${nonblocking} ${EDITOR} ${file}" C-m
   fi
   if [ $kill_window == 1 ]; then
-    tmux send-keys -t ${window}.${main} "tmux kill-window" C-m;
+    tmux send-keys -t "${window}.${main}" "tmux kill-window" C-m;
   fi
 }
 
@@ -274,33 +274,52 @@ echo "Template: ${template}"
 echo "Template directory: ${template_dir}"
 echo "Code directory: ${tmpdir}"
 
+if [ -f "${template_dir}/.init" ]; then
+    "${template_dir}/.init";
+fi
+
+if [ -f "${template_dir}/.init.main" ]; then
+    while read -r line; do
+        tmux send-keys -t "${window}.${main}" "$line";
+        tmux send-keys -t "${window}.${main}" C-m;
+    done < "${template_dir}/.init.main"
+fi
+
+if [ -f "${template_dir}/.init.side" ]; then
+    while read -r line; do
+        tmux send-keys -t "${window}.${side}" "$line";
+        tmux send-keys -t "${window}.${side}" C-m;
+    done < "${template_dir}/.init.side"
+fi
+
+
 # run build commands
 if [ -f "${template_dir}/.start" ]; then
   start_file="${template_dir}/.start";
   main_file=$(cat "${start_file}" | grep "main:" | cut -d" " -f2- | sed 's/^[ \t]*//;s/[ \t]*$//');
   manifest_file=$(cat "${start_file}" | grep "manifest:" | cut -d" " -f2- | sed 's/^[ \t]*//;s/[ \t]*$//');
   if [ -f "${template_dir}/.watch" ]; then
-    tmux send-keys -t ${window}.${side} "/bin/bash ${tmpdir}/.watch" C-m
+    tmux send-keys -t "${window}.${side}" "/bin/bash ${tmpdir}/.watch" C-m
   fi
   open_editor "$main_file" "$manifest_file";
 elif [[ "$template" == asm* ]]; then # make
-  tmux send-keys -t ${window}.${side} "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
+  tmux send-keys -t "${window}.${side}" "find . -name '*.asm' | entr -cs 'make -j10 && ./a.out'" C-m
   open_editor "main.asm" "main.asm";
-elif [ -f ${template_dir}/main.lua ]; then # make
-  tmux send-keys -t ${window}.${side} "find . -name '*.lua' | entr -cs 'lua main.lua'" C-m
+elif [ -f "${template_dir}/main.lua" ]; then # make
+  tmux send-keys -t "${window}.${side}" "find . -name '*.lua' | entr -cs 'lua main.lua'" C-m
   open_editor "main.lua" "main.lua";
-elif [ -f ${template_dir}/package.json ]; then # make
-  tmux send-keys -t ${window}.${side} "find . -name '*.js' -or -name '*.json' | entr -cs 'make && npm start'" C-m
+elif [ -f "${template_dir}/package.json" ]; then # make
+  tmux send-keys -t "${window}.${side}" "find . -name '*.js' -or -name '*.json' | entr -cs 'make && npm start'" C-m
   open_editor "index.js" "index.js";
-elif [ -f ${template_dir}/Makefile ]; then # make
-  if [ -f ${template_dir}/main.c ]; then
-    tmux send-keys -t ${window}.${side} "find . -name '*.c' -or -name '*.h' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
-  open_editor "main.c" "main.c";
+elif [ -f "${template_dir}/Makefile" ]; then # make
+  if [ -f "${template_dir}/main.c" ]; then
+    tmux send-keys -t "${window}.${side}" "find . -name '*.c' -or -name '*.h' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
+    open_editor "main.c" "main.c";
   else
-    tmux send-keys -t ${window}.${side} "find . -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
-  open_editor "main.cpp" "main.cpp";
+    tmux send-keys -t "${window}.${side}" "find . -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'Makefile' | entr -cs 'make -j10 && ./a.out'" C-m
+    open_editor "main.cpp" "main.cpp";
   fi;
-elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
+elif [ -f "${template_dir}/CMakeLists.txt" ]; then # CMake
   buildsyscmd="ninja";
   if [ "${buildsys}" == "Ninja" ]; then
     buildsyscmd="ninja"
@@ -312,21 +331,21 @@ elif [ -f ${template_dir}/CMakeLists.txt ]; then # CMake
   echo "Build system: ${buildsys}"
   echo "Build system command: ${buildsyscmd}"
 
-  tmux send-keys -t ${window}.${side} "mkdir -p \"${tmpdir}/build\"" C-m
-  tmux send-keys -t ${window}.${side} "cd build/" C-m;
-  tmux send-keys -t ${window}.${main} "cmake -G \"${buildsys}\" -B${tmpdir}/build -S${tmpdir}" C-m
-  tmux send-keys -t ${window}.${side} "find .. -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'CMakeLists.txt' | entr -cs '${buildsyscmd} && ./a.out'" C-m
+  tmux send-keys -t "${window}.${side}" "mkdir -p \"${tmpdir}/build\"" C-m
+  tmux send-keys -t "${window}.${side}" "cd build/" C-m;
+  tmux send-keys -t "${window}.${main}" "cmake -G \"${buildsys}\" -B${tmpdir}/build -S${tmpdir}" C-m
+  tmux send-keys -t "${window}.${side}" "find .. -name '*.cpp' -or -name '*.h' -or -name '*.hpp' -or -name 'CMakeLists.txt' | entr -cs '${buildsyscmd} && ./a.out'" C-m
   open_editor "main.cpp" "CMakeLists.txt";
-elif [ -f ${template_dir}/main.py ]; then # Python
-  chmod +x ${tmpdir}/main.py
-  tmux send-keys -t ${window}.${side} "find . -name 'main.py' | entr -cs '${tmpdir}/main.py'" C-m
+elif [ -f "${template_dir}/main.py" ]; then # Python
+  chmod +x "${tmpdir}/main.py"
+  tmux send-keys -t "${window}.${side}" "find . -name 'main.py' | entr -cs '${tmpdir}/main.py'" C-m
   open_editor "main.py" "main.py";
-elif [ -f ${template_dir}/main.sh ]; then # Bash
-  chmod +x ${tmpdir}/main.sh
-  tmux send-keys -t ${window}.${side} "find . -name 'main.sh' | entr -cs '${tmpdir}/main.sh'" C-m
+elif [ -f "${template_dir}/main.sh" ]; then # Bash
+  chmod +x "${tmpdir}/main.sh"
+  tmux send-keys -t "${window}.${side}" "find . -name 'main.sh' | entr -cs '${tmpdir}/main.sh'" C-m
   open_editor "main.sh" "main.sh";
-elif [ -f ${template_dir}/Cargo.toml ]; then # Rust
-  tmux send-keys -t ${window}.${side} "find . -name '*.rs' | entr -cs 'cd ${tmpdir} && cargo build && cargo run'" C-m
+elif [ -f "${template_dir}/Cargo.toml" ]; then # Rust
+  tmux send-keys -t "${window}.${side}" "find . -name '*.rs' | entr -cs 'cd ${tmpdir} && cargo build && cargo run'" C-m
   open_editor "src/main.rs" "Cargo.toml";
 fi;
 
@@ -335,10 +354,10 @@ fi;
 # tmux send-keys -t ${window}.bottom-right "find ${tmpdir} -name \"*.s\" | entr -cs \"clear; cat ${tmpdir}/main.s\"" C-m
 
 
-tmux select-pane -t ${window}.${main}
+tmux select-pane -t "${window}.${main}"
 
 if [ -z "$TMUX" ]; then
-  tmux attach -t ${window}
+  tmux attach -t "${window}"
 fi
 
 

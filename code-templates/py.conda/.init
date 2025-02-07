@@ -1,0 +1,61 @@
+#!/bin/bash
+
+export CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+conda_base_env="base"
+
+curdir=$(dirname "$0")
+
+page_title=$(basename "${curdir}")
+file="$curdir/main.py"
+replace "{PageTitle}" "$page_title" -- "$file"
+
+if ! command -v conda >/dev/null; then
+    if command -v fish >/dev/null; then
+        # finding conda command and making it available in bash as well
+        PATH="$(dirname "$(fish -lic 'whereis conda | cut -d" " -f2')"):$PATH";
+        export PATH;
+    fi
+
+    if ! command -v conda >/dev/null; then
+        echo "Conda is not installed."
+
+        page_desc="
+    Python Version:    ${py_ver}
+        ";
+        replace "{PageDesc}" "$page_desc" -- "$file"
+        exit;
+    fi
+fi
+
+
+
+if conda env list | grep $conda_base_env >/dev/null; then
+    conda_base_env=$(conda env list | grep $conda_base_env | cut -d" " -f1)
+else
+    conda_base_env="base"
+fi
+conda_env=$(mktemp -qd --suffix=".conda" --dry-run) # we only want the name
+echo "Base Conda Environment: ${conda_base_env}";
+echo "Conda Environment: ${conda_env}";
+
+
+# cloning the environment
+conda create --clone "$conda_base_env" --prefix "$conda_env";
+if ! conda env list | grep "$conda_env" >/dev/null; then
+    echo "Error: could not find the newly cloned conda environment ${conda_env}";
+    exit;
+fi
+
+conda_loc=$(conda env list | grep "$conda_env" | sed 's/\*//' | awk '{print $2}' | sed -e "s/${HOME//\//\\/}/\$HOME/")
+conda_ver=$(conda --version)
+py_ver=$(python --version)
+page_desc="\\n\",
+    \"    Python Version:    ${py_ver}\\n\",
+    \"    Conda Version:     ${conda_ver}\\n\",
+    \"    Conda Environment: ${conda_env}\\n\",
+    \"    Conda Path:        ${conda_loc}\\n";
+replace "{PageDesc}" "$page_desc" -- "$file"
+replace "{PythonVersion}" "$py_ver" -- "$file"
+
+echo "$conda_env" > "$curdir/.conda_env"
+

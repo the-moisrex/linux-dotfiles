@@ -1,0 +1,2 @@
+export CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+conda activate "$(cat .conda_env)";

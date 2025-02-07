@@ -1,0 +1,27 @@
+#!/bin/bash
+
+export CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+curdir=$(dirname "$0")
+
+file="$curdir/main.py"
+
+if ! command -v conda >/dev/null; then
+    if command -v fish >/dev/null; then
+        # finding conda command and making it available in bash as well
+        PATH="$(dirname "$(fish -lic 'whereis conda | cut -d" " -f2')"):$PATH";
+        export PATH;
+    fi
+
+    if ! command -v conda >/dev/null; then
+        echo "Conda is not installed."
+        exit;
+    fi
+fi
+
+conda_env="$(cat "$curdir/.conda_env")"
+conda activate "$conda_env";
+
+find "$curdir" \
+        -name '*.py' \
+    -or -name '*.watch' | entr -cs "python \"$file\"";
+
