@@ -1,15 +1,14 @@
 #!/bin/bash
 
-if ! command -v asciinema &> /dev/null
-then
-    echo "asciinema could not be found"
+if ! command -v asciinema &> /dev/null; then
+    echo "asciinema could not be found."
     exit
 fi
 
 function print_help {
   echo Record shell using asciinema
   echo
-  echo "   Usage:   arec [pretext] [title]"
+  echo "   Usage:   arec [--no-tmux] [pretext] [title]"
   echo "   Example: arec webpp Working on database"
   echo
   echo "   Pretext: the name of the project you're working on so we can write custom configurations for them."
@@ -18,10 +17,19 @@ function print_help {
 }
 
 pretext=$1
+no_tmux=false
+cmd="$SHELL"
+working_dir="$HOME"
+
 
 case $1 in
     --help|-h|help)
         print_help;
+        ;;
+    --no-tmux|-nt|--notmux|no-tmux|-no-tmux)
+        no_tmux=true;
+        pretext=$2;
+        shift;
         ;;
     *)
         shift;
@@ -31,39 +39,27 @@ if [ -z "$pretext" ]; then
     print_help;
 fi
 
-cmd="$SHELL"
-if [ "$pretext" == "webpp" ]; then
-  pretext="Webpp live coding"
-  working_dir="$HOME"
-  if [ -d "$HOME/webpp" ]; then
-    working_dir="$HOME/webpp"
-  elif [ -d "$HOME/Projects/webpp" ]; then
-    working_dir="$HOME/Projects/webpp"
-    cmd="tmux new -c $working_dir"
+
+if [ "$pretext" != "" ]; then
+  if [ -d "$HOME/$pretext" ]; then
+    working_dir="$HOME/$pretext"
+  elif [ -d "$HOME/Projects/$pretext" ]; then
+    working_dir="$HOME/Projects/$pretext"
+    if ! $no_tmux; then
+      cmd="tmux new -c $working_dir"
+    fi
   fi
-  cd "$working_dir" || exit;
-elif [ "$pretext" == "foresight" ]; then
-  pretext="Webpp live coding"
-  working_dir="$HOME"
-  if [ -d "$HOME/foresight" ]; then
-    working_dir="$HOME/foresight"
-  elif [ -d "$HOME/Projects/foresight" ]; then
-    working_dir="$HOME/Projects/foresight"
-    cmd="tmux new -c $working_dir"
-  fi
-  cd "$working_dir" || exit;
-elif [ "$pretext" == "simdjson" ]; then
-  pretext="SIMDJSON live coding"
-  working_dir="$HOME"
-  if [ -d "$HOME/simdjson" ]; then
-    working_dir="$HOME/simdjson"
-  elif [ -d "$HOME/Projects/simdjson" ]; then
-    working_dir="$HOME/Projects/simdjson"
-    cmd="tmux new -c $working_dir"
-  fi
-  cd "$working_dir" || exit;
 fi
 
+if [ "$pretext" == "webpp" ]; then
+  pretext="Webpp live coding"
+elif [ "$pretext" == "foresight" ]; then
+  pretext="Foresight live coding"
+elif [ "$pretext" == "simdjson" ]; then
+  pretext="SIMDJSON live coding"
+fi
+
+cd "$working_dir" || exit;
 title="${*}"
 
 # splugify from: https://gist.github.com/oneohthree/f528c7ae1e701ad990e6?permalink_comment_id=2047474#gistcomment-2047474
