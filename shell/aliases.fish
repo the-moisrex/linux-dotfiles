@@ -194,6 +194,8 @@ alias cb.hist="clipboard.history"
 alias ping="ping -DO" #  timeout
 alias please="sudo"
 
+alias tog="sig toggle"
+
 
 function unsudo -d "un-sudo some commands"
     for arg in $argv
