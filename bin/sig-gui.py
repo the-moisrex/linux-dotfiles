@@ -86,13 +86,26 @@ class SigGUI(QMainWindow):
     LAST_SELECTION_KEY = "last_selected_process"
     PREVIOUS_SELECTIONS_KEY = "previous_selections"
     LAST_SIGNAL_KEY = "last_signal"
-    AUTO_REFRESH_KEY = "auto_refresh"
+    ICONS = {
+        psutil.STATUS_STOPPED: QStyle.StandardPixmap.SP_MediaPause,
+        psutil.STATUS_RUNNING: QStyle.StandardPixmap.SP_MediaPlay,
+        psutil.STATUS_DEAD: QStyle.StandardPixmap.SP_TrashIcon,
+        psutil.STATUS_IDLE: QStyle.StandardPixmap.SP_MediaPlay,
+        psutil.STATUS_LOCKED: QStyle.StandardPixmap.SP_VistaShield,
+        psutil.STATUS_ZOMBIE: QStyle.StandardPixmap.SP_MessageBoxWarning,
+        psutil.STATUS_SLEEPING: QStyle.StandardPixmap.SP_DialogSaveButton,
+        psutil.STATUS_PARKED: QStyle.StandardPixmap.SP_MessageBoxWarning,
+        psutil.STATUS_WAKING: QStyle.StandardPixmap.SP_MediaPlay,
+        psutil.STATUS_WAITING: QStyle.StandardPixmap.SP_MediaPlay,
+        psutil.STATUS_DISK_SLEEP: QStyle.StandardPixmap.SP_DialogSaveButton,
+        psutil.STATUS_TRACING_STOP: QStyle.StandardPixmap.SP_MediaPause,
+    }
 
     def __init__(self):
         """Initialize SigGUI."""
         super().__init__()
         self.setWindowTitle("Sig Script GUI")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 600, 500)
 
         self.settings = QSettings("SigGUIApp", "SigGUI")
 
@@ -186,16 +199,16 @@ class SigGUI(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("&File")
 
+        # About Action
+        about_action = file_menu.addAction("About")
+        about_action.triggered.connect(self.show_about_dialog)
+
         # Quit Action
         quit_action = file_menu.addAction(
             QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton),
             "Quit",
         )
         quit_action.triggered.connect(self.close)
-
-        # About Action
-        about_action = file_menu.addAction("About")
-        about_action.triggered.connect(self.show_about_dialog)
 
         # Set Tab Order for Keyboard Navigation
         self.setTabOrder(self.search_bar, self.process_list_widget)
@@ -204,8 +217,11 @@ class SigGUI(QMainWindow):
         self.setTabOrder(self.pick_button, self.run_button)
         self.setTabOrder(self.run_button, self.search_bar)
 
-    def populate_process_list(self):
+    def populate_process_list(self, search=None):
         """Populate process list, filter useless, sort by previous selections."""
+        if search is None:
+            search = self.search_bar.text()
+
         self.process_list_widget.clear()
         current_user_uid = os.getuid()
         processes = psutil.process_iter(
@@ -224,6 +240,9 @@ class SigGUI(QMainWindow):
                 pid = process_info["pid"]
                 user = proc.username()
 
+                if search.lower() not in process_name.lower():
+                    continue
+
                 is_daemon = (ppid == 1 or ppid == 0) and tty is None
 
                 if (
@@ -239,26 +258,18 @@ class SigGUI(QMainWindow):
                         process_names_list.append(process_name)
 
                         item_text = (
-                            f"{process_name} (PID: {pid}, User: {user}, Status: {status})"
+                            f"{process_name}      (PID: {pid}, User: {user}, Status: {status})"
                         )
                         item = QListWidgetItem(item_text)
-
-                        if status == psutil.STATUS_STOPPED:
-                            icon = QApplication.style().standardIcon(
-                                QStyle.StandardPixmap.SP_MediaPause
-                            )
-                        else:
-                            icon = QApplication.style().standardIcon(
-                                QStyle.StandardPixmap.SP_MediaPlay
-                            )
-
-                        item.setIcon(icon)
+                        if status in self.ICONS:
+                            icon = QApplication.style().standardIcon(self.ICONS[status])
+                            item.setIcon(icon)
                         self.process_list_widget.addItem(item)
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
             except Exception as e:
-                print(f"Error getting process info for {proc.pid}: {e}")
+                print(f"Error getting process info for {proc.pid} ({proc.info["name"]}): {e}")
 
         def sort_key(process_name):
             try:
@@ -269,54 +280,11 @@ class SigGUI(QMainWindow):
         process_names_list.sort(key=sort_key)
 
         self.all_process_names = process_names_list
-        self.filter_process_list(self.search_bar.text())
         self.status_bar.showMessage("Process list refreshed.", 3000)
 
     def filter_process_list(self, search_text):
         """Filter process list by search text, maintain sorting and uniqueness."""
-        self.process_list_widget.clear()
-        process_names_to_display_set = set()
-        process_names_to_display_list = []
-
-        if not search_text:
-            process_names_source = self.all_process_names
-        else:
-            process_names_source = [
-                name
-                for name in self.all_process_names
-                if search_text.lower() in name.lower()
-            ]
-
-        for name in process_names_source:
-            if name not in process_names_to_display_set:
-                process_names_to_display_set.add(name)
-                process_names_to_display_list.append(name)
-
-        def sort_key(process_name):
-            try:
-                return self.previous_selections.index(process_name)
-            except ValueError:
-                return len(self.previous_selections) + 1
-
-        process_names_to_display_list.sort(key=sort_key)
-
-        for process_name in process_names_to_display_list:
-            item_text_parts = process_name.split(" (PID: ")
-            name_part = item_text_parts[0] if item_text_parts else process_name
-            item = QListWidgetItem(process_name)
-            status_match = re.search(r"Status: (\w+)", process_name)
-            status_text = status_match.group(1) if status_match else ""
-
-            if status_text.lower() == psutil.STATUS_STOPPED.lower():
-                icon = QApplication.style().standardIcon(
-                    QStyle.StandardPixmap.SP_MediaPause
-                )
-            else:
-                icon = QApplication.style().standardIcon(
-                    QStyle.StandardPixmap.SP_MediaPlay
-                )
-            item.setIcon(icon)
-            self.process_list_widget.addItem(item)
+        self.populate_process_list(search_text)
 
     def toggle_process_selection(self, item):
         """Toggle selection state of process list item."""
