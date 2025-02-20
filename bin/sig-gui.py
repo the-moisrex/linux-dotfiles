@@ -6,6 +6,7 @@ import sys
 
 import psutil
 from PyQt6.QtCore import QProcess, QSettings, QTimer, Qt
+from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -16,14 +17,20 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QPushButton,
+    QStatusBar,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QListWidgetItem,
+    QStyle,
 )
+import re
+
 
 class SigGUI(QMainWindow):
-    """Main window for the Sig Script GUI application."""
+    """GUI application for sending signals to processes."""
 
     USELESS_PROCESS_NAMES = [
         "systemd",
@@ -78,9 +85,11 @@ class SigGUI(QMainWindow):
     SETTINGS_GROUP = "SigGUI"
     LAST_SELECTION_KEY = "last_selected_process"
     PREVIOUS_SELECTIONS_KEY = "previous_selections"
+    LAST_SIGNAL_KEY = "last_signal"
+    AUTO_REFRESH_KEY = "auto_refresh"
 
     def __init__(self):
-        """Initialize the SigGUI."""
+        """Initialize SigGUI."""
         super().__init__()
         self.setWindowTitle("Sig Script GUI")
         self.setGeometry(100, 100, 800, 600)
@@ -88,12 +97,31 @@ class SigGUI(QMainWindow):
         self.settings = QSettings("SigGUIApp", "SigGUI")
 
         self.process_list_widget = QListWidget()
+        self.process_list_widget.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.process_list_widget.customContextMenuRequested.connect(
+            self.show_process_context_menu
+        )
+
         self.signal_combo = QComboBox()
         self.signal_combo.addItems(
             ["toggle", "stop", "cont", "KILL", "TERM", "HUP", "INT", "QUIT", "USR1", "USR2"]
         )
-        self.pick_button = QPushButton("Pick Process (KWin)")
+
+        last_signal = self.settings.value(
+            self.SETTINGS_GROUP + "/" + self.LAST_SIGNAL_KEY, "toggle", type=str
+        )
+        self.signal_combo.setCurrentText(last_signal)
+
+        self.pick_button = QPushButton("Pick Process")
+        self.pick_button.setIcon(
+            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp)
+        )
         self.run_button = QPushButton("Run Sig")
+        self.run_button.setIcon(
+            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_CommandLink)
+        )
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
         self.output_checkbox = QCheckBox("Show Output")
@@ -101,9 +129,11 @@ class SigGUI(QMainWindow):
         self.output_text.setVisible(False)
         self.output_label = QLabel("Output:")
         self.output_label.setVisible(False)
-        self.refresh_button = QPushButton("Refresh Process List")
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("Search processes...")
+
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
 
         self.process = QProcess(self)
         self.process.readyReadStandardOutput.connect(self.read_output)
@@ -112,21 +142,21 @@ class SigGUI(QMainWindow):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.populate_process_list)
+        self.timer.start(5000)
 
         self.pick_button.clicked.connect(self.pick_process)
         self.run_button.clicked.connect(self.run_sig)
-        self.refresh_button.clicked.connect(self.populate_process_list)
         self.search_bar.textChanged.connect(self.filter_process_list)
         self.search_bar.returnPressed.connect(self.on_search_return_pressed)
-        self.process_list_widget.itemDoubleClicked.connect(self.on_process_double_clicked)
+        self.process_list_widget.itemDoubleClicked.connect(
+            self.on_process_double_clicked
+        )
         self.output_checkbox.stateChanged.connect(self.toggle_output_visibility)
 
         self.all_process_names = []
         self.previous_selections = self.load_previous_selections()
         self.populate_process_list()
-
         self.load_last_selection()
-
         self.close_on_finish = False
 
         # Layout setup
@@ -135,21 +165,16 @@ class SigGUI(QMainWindow):
         signal_layout.addWidget(self.signal_combo)
         signal_layout.addWidget(self.pick_button)
         signal_layout.addWidget(self.run_button)
-        signal_layout.addWidget(self.refresh_button)
 
         search_layout = QHBoxLayout()
         search_layout.addWidget(QLabel("Search:"))
         search_layout.addWidget(self.search_bar)
-
-        output_toggle_layout = QHBoxLayout()
-        output_toggle_layout.addWidget(self.output_checkbox)
 
         main_layout = QVBoxLayout()
         main_layout.addLayout(signal_layout)
         main_layout.addLayout(search_layout)
         main_layout.addWidget(QLabel("Processes:"))
         main_layout.addWidget(self.process_list_widget)
-        main_layout.addLayout(output_toggle_layout)
         main_layout.addWidget(self.output_label)
         main_layout.addWidget(self.output_text)
 
@@ -157,11 +182,35 @@ class SigGUI(QMainWindow):
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
+        # Menu Bar - File Menu
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("&File")
+
+        # Quit Action
+        quit_action = file_menu.addAction(
+            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton),
+            "Quit",
+        )
+        quit_action.triggered.connect(self.close)
+
+        # About Action
+        about_action = file_menu.addAction("About")
+        about_action.triggered.connect(self.show_about_dialog)
+
+        # Set Tab Order for Keyboard Navigation
+        self.setTabOrder(self.search_bar, self.process_list_widget)
+        self.setTabOrder(self.process_list_widget, self.signal_combo)
+        self.setTabOrder(self.signal_combo, self.pick_button)
+        self.setTabOrder(self.pick_button, self.run_button)
+        self.setTabOrder(self.run_button, self.search_bar)
+
     def populate_process_list(self):
         """Populate process list, filter useless, sort by previous selections."""
         self.process_list_widget.clear()
         current_user_uid = os.getuid()
-        processes = psutil.process_iter(["pid", "name", "uids", "ppid", "status", "terminal"]) # Corrected attributes - 'sid' removed
+        processes = psutil.process_iter(
+            ["pid", "name", "uids", "ppid", "status", "terminal"]
+        )
         process_names_set = set()
         process_names_list = []
 
@@ -171,21 +220,45 @@ class SigGUI(QMainWindow):
                 process_name = process_info["name"]
                 ppid = process_info["ppid"]
                 tty = process_info["terminal"]
+                status = process_info["status"]
+                pid = process_info["pid"]
+                user = proc.username()
 
-                # Simplified daemon check: PPID 1 or 0 and no controlling TTY
                 is_daemon = (ppid == 1 or ppid == 0) and tty is None
 
                 if (
                     process_info["uids"].real == current_user_uid
                     and process_name not in self.USELESS_PROCESS_NAMES
-                    and not any(prefix in process_name for prefix in ["gsd-", "gnome-session-"])
+                    and not any(
+                        prefix in process_name for prefix in ["gsd-", "gnome-session-"]
+                    )
                     and not is_daemon
                 ):
                     if process_name not in process_names_set:
                         process_names_set.add(process_name)
                         process_names_list.append(process_name)
+
+                        item_text = (
+                            f"{process_name} (PID: {pid}, User: {user}, Status: {status})"
+                        )
+                        item = QListWidgetItem(item_text)
+
+                        if status == psutil.STATUS_STOPPED:
+                            icon = QApplication.style().standardIcon(
+                                QStyle.StandardPixmap.SP_MediaPause
+                            )
+                        else:
+                            icon = QApplication.style().standardIcon(
+                                QStyle.StandardPixmap.SP_MediaPlay
+                            )
+
+                        item.setIcon(icon)
+                        self.process_list_widget.addItem(item)
+
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
+            except Exception as e:
+                print(f"Error getting process info for {proc.pid}: {e}")
 
         def sort_key(process_name):
             try:
@@ -196,9 +269,8 @@ class SigGUI(QMainWindow):
         process_names_list.sort(key=sort_key)
 
         self.all_process_names = process_names_list
-        self.process_list_widget.addItems(self.all_process_names)
-
         self.filter_process_list(self.search_bar.text())
+        self.status_bar.showMessage("Process list refreshed.", 3000)
 
     def filter_process_list(self, search_text):
         """Filter process list by search text, maintain sorting and uniqueness."""
@@ -227,7 +299,24 @@ class SigGUI(QMainWindow):
                 return len(self.previous_selections) + 1
 
         process_names_to_display_list.sort(key=sort_key)
-        self.process_list_widget.addItems(process_names_to_display_list)
+
+        for process_name in process_names_to_display_list:
+            item_text_parts = process_name.split(" (PID: ")
+            name_part = item_text_parts[0] if item_text_parts else process_name
+            item = QListWidgetItem(process_name)
+            status_match = re.search(r"Status: (\w+)", process_name)
+            status_text = status_match.group(1) if status_match else ""
+
+            if status_text.lower() == psutil.STATUS_STOPPED.lower():
+                icon = QApplication.style().standardIcon(
+                    QStyle.StandardPixmap.SP_MediaPause
+                )
+            else:
+                icon = QApplication.style().standardIcon(
+                    QStyle.StandardPixmap.SP_MediaPlay
+                )
+            item.setIcon(icon)
+            self.process_list_widget.addItem(item)
 
     def toggle_process_selection(self, item):
         """Toggle selection state of process list item."""
@@ -236,7 +325,7 @@ class SigGUI(QMainWindow):
     def pick_process(self):
         """Pick a process name from KWin and select it in the list."""
         try:
-            print("Running qdbus6 command...") # Debug print
+            print("Running qdbus6 command...")
             result = subprocess.run(
                 ["qdbus6", "org.kde.KWin", "/KWin", "queryWindowInfo"],
                 capture_output=True,
@@ -244,28 +333,28 @@ class SigGUI(QMainWindow):
                 check=True,
             )
             output = result.stdout
-            print("qdbus6 Output:", output) # Debug print
+            print("qdbus6 Output:", output)
             resource_name_line = next(
                 (line for line in output.splitlines() if "resourceName" in line), None
             )
-            print("Resource Name Line:", resource_name_line) # Debug print
+            print("Resource Name Line:", resource_name_line)
             if resource_name_line:
                 process_name = resource_name_line.split()[1]
+                self.search_bar.setText(process_name)
                 self.output_text.append(f"Picked process name from KWin: {process_name}")
-                self.search_bar.setText(process_name) # <----- ADDED THIS LINE: Fill search bar
                 self.select_process_in_list(process_name)
             else:
                 self.output_text.append("Could not extract process name from KWin output.")
         except FileNotFoundError as e:
-            print(f"FileNotFoundError: {e}") # Debug print
+            print(f"FileNotFoundError: {e}")
             QMessageBox.warning(self, "Error", "qdbus6 not found. Is KDE KWin running?")
         except subprocess.CalledProcessError as e:
-            print(f"CalledProcessError: {e}") # Debug print
+            print(f"CalledProcessError: {e}")
             QMessageBox.warning(
                 self, "Error", f"Error running qdbus6: {e.stderr or e.stdout or str(e)}"
             )
         except Exception as e:
-            print(f"Exception: {e}") # Debug print
+            print(f"Exception: {e}")
             QMessageBox.critical(
                 self, "Error", f"Unexpected error during pick process: {e}"
             )
@@ -274,15 +363,19 @@ class SigGUI(QMainWindow):
         """Select process in list widget by name."""
         for index in range(self.process_list_widget.count()):
             item = self.process_list_widget.item(index)
-            if item.text() == process_name:
+            if item.text().startswith(f"{process_name} (PID:"):
                 item.setSelected(True)
                 return
 
     def run_sig(self):
         """Run sig bash script with selected signal and processes."""
         selected_signal = self.signal_combo.currentText()
+        self.settings.setValue(
+            self.SETTINGS_GROUP + "/" + self.LAST_SIGNAL_KEY, selected_signal
+        )
         selected_processes = [
-            item.text() for item in self.process_list_widget.selectedItems()
+            item.text().split(" ")[0]
+            for item in self.process_list_widget.selectedItems()
         ]
 
         if selected_processes:
@@ -301,6 +394,7 @@ class SigGUI(QMainWindow):
         self.output_text.clear()
         self.output_text.setVisible(True)
         self.output_checkbox.setChecked(True)
+        self.status_bar.showMessage(f"Running command: {' '.join(command)}", 5000)
         self.output_text.append(f"Running command: {' '.join(command)}")
         self.process.start(command[0], command[1:])
 
@@ -324,9 +418,15 @@ class SigGUI(QMainWindow):
         """Handle process finished signal, display status, close if needed."""
         if exit_status == QProcess.ExitStatus.NormalExit:
             self.output_text.append(f"Process finished with exit code: {exit_code}")
+            self.status_bar.showMessage(
+                f"Process finished with exit code: {exit_code}", 5000
+            )
         else:
             self.output_text.append(
                 f"<span style='color: red;'>Process crashed with exit code: {exit_code}</span>"
+            )
+            self.status_bar.showMessage(
+                f"Process crashed with exit code: {exit_code}", 5000
             )
 
         if self.close_on_finish:
@@ -343,7 +443,9 @@ class SigGUI(QMainWindow):
         """Load last selected process name from QSettings and restore."""
         settings = self.settings
         settings.beginGroup(self.SETTINGS_GROUP)
-        last_selected_process = settings.value(self.LAST_SELECTION_KEY, "", type=str)
+        last_selected_process = settings.value(
+            self.LAST_SELECTION_KEY, "", type=str
+        )
         settings.endGroup()
 
         if last_selected_process:
@@ -360,7 +462,9 @@ class SigGUI(QMainWindow):
         if self.process_list_widget.count() > 0:
             if not self.process_list_widget.selectedItems():
                 self.process_list_widget.item(0).setSelected(True)
-            process_name = self.process_list_widget.selectedItems()[0].text()
+            process_name = self.process_list_widget.selectedItems()[0].text().split(
+                " "
+            )[0]
         else:
             process_name = self.search_bar.text()
 
@@ -368,18 +472,20 @@ class SigGUI(QMainWindow):
             QMessageBox.warning(self, "Warning", "No process selected or entered.")
             return
 
-        self._run_toggle_command() # Corrected to no argument call
+        self._run_toggle_command()
 
     def toggle_output_visibility(self, state):
         """Toggle visibility of output text area and label."""
-        self.output_text.setVisible(state) # Corrected attribute name
+        self.output_text.setVisible(state)
         self.output_label.setVisible(state)
 
     def load_previous_selections(self):
         """Load previous selections list from QSettings."""
         settings = self.settings
         settings.beginGroup(self.SETTINGS_GROUP)
-        previous_selections = settings.value(self.PREVIOUS_SELECTIONS_KEY, [], type=list)
+        previous_selections = settings.value(
+            self.PREVIOUS_SELECTIONS_KEY, [], type=list
+        )
         settings.endGroup()
         return previous_selections
 
@@ -405,28 +511,185 @@ class SigGUI(QMainWindow):
             self.on_search_return_pressed()
         elif event.key() == Qt.Key.Key_Escape:
             self.close()
+        elif event.key() == Qt.Key.Key_Space:
+            if self.process_list_widget.hasFocus():
+                items = self.process_list_widget.selectedItems()
+                if items:
+                    self.toggle_process_selection(items[0])
+
         super().keyPressEvent(event)
 
     def on_process_double_clicked(self, item):
         """Handle double click on process item to run toggle command."""
-        process_name = item.text()
-        self._run_toggle_command() # Corrected to no argument call
+        process_name = item.text().split(" ")[0]
+        self._run_toggle_command()
 
-    def _run_toggle_command(self): # Corrected to no argument definition
+    def _run_toggle_command(self):
         """Central function to run toggle command and close GUI."""
-        if (
-            not self.process_list_widget.selectedItems()
-            and self.process_list_widget.count() > 0
-        ):
+        if not self.process_list_widget.selectedItems() and self.process_list_widget.count() > 0:
             self.process_list_widget.item(0).setSelected(True)
         if self.process_list_widget.selectedItems():
-            process_name = self.process_list_widget.selectedItems()[0].text()
-        else: # Fallback to search bar if no selection in list
+            process_name = self.process_list_widget.selectedItems()[0].text().split(
+                " "
+            )[0]
+        else:
             process_name = self.search_bar.text()
 
         self.signal_combo.setCurrentText("toggle")
         self.close_on_finish = True
         self.run_sig()
+
+    def show_about_dialog(self):
+        """Show the About dialog."""
+        QMessageBox.about(
+            self,
+            "About SigGUI",
+            "SigGUI Application\n\n"
+            "Version 1.0\n"
+            "A PyQt6 GUI for sending signals to processes.\n\n"
+            "Created by moisrex",
+        )
+
+    def show_process_details_dialog(self, process_name_with_details):
+        """Show process details in a dialog."""
+        pid = None
+        process_name = process_name_with_details
+
+        if "PID:" in process_name_with_details:
+            try:
+                pid_str_parts = process_name_with_details.split("PID: ")
+                if len(pid_str_parts) < 2:
+                    QMessageBox.warning(
+                        self,
+                        "Error",
+                        f"Could not fetch details for process '{process_name_with_details}': Invalid process name format.",
+                    )
+                    return
+
+                pid_str_with_rest = pid_str_parts[1]
+                pid_str = pid_str_with_rest.split(",")[0]
+                pid = int(pid_str)
+            except (ValueError, IndexError):
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Could not fetch details for process '{process_name_with_details}': Error parsing PID.",
+                )
+                return
+        else:
+            found_processes = []
+            for proc in psutil.process_iter(["pid", "name"]):
+                if proc.info["name"] == process_name_with_details:
+                    found_processes.append(proc)
+
+            if not found_processes:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Could not fetch details for process '{process_name_with_details}': Process not found.",
+                )
+                return
+            elif len(found_processes) > 1:
+                QMessageBox.warning(
+                    self,
+                    "Warning",
+                    f"Multiple processes found with name '{process_name_with_details}'. Showing details for the first one.",
+                )
+            pid = found_processes[0].info["pid"]
+
+        try:
+            if pid is not None:
+                proc = psutil.Process(pid)
+
+                details_text = f"Name: {proc.name()}\n"  # Use proc.name()
+                details_text += f"PID: {proc.pid}\n"
+                details_text += f"User: {proc.username()}\n"
+                details_text += f"Status: {proc.status()}\n" # Use proc.status()
+                details_text += f"CPU %: {proc.cpu_percent()}%\n"
+                details_text += f"Memory %: {proc.memory_percent():.2f}%\n"
+                details_text += f"Command: {' '.join(proc.cmdline())}\n"
+
+                QMessageBox.information(
+                    self,
+                    f"Details for {process_name_with_details}",
+                    details_text,
+                    QMessageBox.StandardButton.Ok,
+                )
+            else:
+                 QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Could not fetch details for process '{process_name_with_details}': PID not found.",
+                )
+
+
+        except psutil.NoSuchProcess:
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"Could not fetch details for process '{process_name_with_details}': No such process (PID: {pid}).",
+            )
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"Could not fetch details for process '{process_name_with_details}': {e}",
+            )
+
+    def show_process_context_menu(self, position):
+        """Show context menu when right-clicking on a process in the list."""
+        menu = QMenu(self)
+        stop_action = menu.addAction(
+            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop), "Stop"
+        )
+        continue_action = menu.addAction(
+            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
+            "Continue",
+        )
+        kill_action = menu.addAction(
+            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogNoButton),
+            "Kill",
+        )
+        details_action = menu.addAction("Details")
+
+        selected_item = self.process_list_widget.itemAt(position)
+        if selected_item:
+            process_name_with_details = selected_item.text()
+            process_name = selected_item.text().split(" ")[0]
+
+            stop_action.triggered.connect(
+                lambda: self.send_signal_to_process("stop", process_name)
+            )
+            continue_action.triggered.connect(
+                lambda: self.send_signal_to_process("cont", process_name)
+            )
+            kill_action.triggered.connect(
+                lambda: self.confirm_kill_process(process_name)
+            )
+            details_action.triggered.connect(
+                lambda: self.show_process_details_dialog(process_name_with_details)
+            )
+
+            menu.exec(self.process_list_widget.viewport().mapToGlobal(position))
+
+    def send_signal_to_process(self, signal_name, process_name):
+        """Helper function to send a signal to a process."""
+        self.signal_combo.setCurrentText(signal_name.lower())
+        self.search_bar.setText(process_name)
+        self._run_toggle_command()
+
+    def confirm_kill_process(self, process_name):
+        """Show confirmation dialog before killing a process."""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Kill",
+            f"Are you sure you want to KILL process '{process_name}'?\nThis is a forceful termination.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.send_signal_to_process("KILL", process_name)
 
 
 if __name__ == "__main__":
