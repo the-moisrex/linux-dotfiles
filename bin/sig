@@ -9,6 +9,7 @@ function print_help {
     echo "      cont java           # works without any - in front of it as well"
     echo "      -cont proc1 proc2   # multiple processes"
     echo "      toggle proc1 proc2  # Pause/Resume the processes"
+    echo "      toggle pick         # Pick the software with KWin"
     echo "      --help|-h"
 }
 
@@ -84,6 +85,9 @@ killtree() {
 
 while [ -n "$1" ]; do
     name="$1"
+    if [ "$name" == "pick" ]; then
+        name=$(qdbus6 org.kde.KWin /KWin queryWindowInfo | grep resourceName | awk '{print $2}')
+    fi
     pidlist=$(pidof "$name")
     if [ -z "$pidlist" ]; then
         echo "Process '$name' not found; ignored."
