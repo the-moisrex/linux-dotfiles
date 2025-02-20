@@ -8,6 +8,7 @@ function print_help {
     echo "      -cont java          # resume the app"
     echo "      cont java           # works without any - in front of it as well"
     echo "      -cont proc1 proc2   # multiple processes"
+    echo "      toggle proc1 proc2  # Pause/Resume the processes"
     echo "      --help|-h"
 }
 
@@ -29,11 +30,13 @@ case $sig in
         ;;
 esac
 
-if ! killall -l | grep -wqsi $sig; then
-    echo "'$sig' is not a valid signal;"
-    echo "Use one of these signals: "
-    killall -l | xargs echo;
-    exit;
+if ! killall -l | grep -wqsi "$sig"; then
+    if [ "$sig" != "toggle" ] && [ "$sig" != "-toggle" ] && [ "$sig" != "--toggle" ]; then
+        echo "'$sig' is not a valid signal;"
+        echo "Use one of these signals: "
+        killall -l | xargs echo;
+        exit;
+    fi
 fi
 
 # while [ -n "$1" ]; do
@@ -43,30 +46,52 @@ fi
 #     shift;
 # done
 
+function is_running {
+    local pid=$1
+    # Process states: The most common state mappings are3:
+    #    R: Running or Runnable
+    #    S: Interruptible Sleep
+    #    T: Stopped
+    #    D: Uninterruptible Sleep
+    #    Z: Zombie
+    [ "$(ps -q "$pid" -o state --no-headers)" != "T" ];
+}
+
 space=""
 killtree() {
     local pid=$1
-    local name=$(ps -p $pid -o comm=)
+    local name;
+
+    name=$(ps -p "$pid" -o comm=)
+
+    if [ "$sig" == "toggle" ] || [ "$sig" == "-toggle" ] || [ "$sig" == "--toggle" ]; then
+        if is_running "$pid"; then
+            sig="STOP";
+        else
+            sig="CONT";
+        fi
+    fi
+
     # kill -stop ${_pid} # needed to stop quickly forking parent from producing children between child killing and parent killing
-    for child in $(ps -o pid --no-headers --ppid ${pid}); do
+    for child in $(ps -o pid --no-headers --ppid "${pid}"); do
         space="${space}  "
-        killtree ${child}
+        killtree "${child}"
         space="${space:2}"
     done
     echo "${space}Sending '$sig' to $pid ($name)"
-    kill -s $sig ${pid}
+    kill -s "$sig" "${pid}"
 }
 
 while [ -n "$1" ]; do
     name="$1"
-    pidlist=$(pidof $name)
+    pidlist=$(pidof "$name")
     if [ -z "$pidlist" ]; then
         echo "Process '$name' not found; ignored."
         shift;
         continue;
     fi
     for pid in $pidlist; do
-        killtree $pid "$name"
+        killtree "$pid" "$name"
     done
     shift;
 done
