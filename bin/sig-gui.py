@@ -6,7 +6,6 @@ import sys
 
 import psutil
 from PyQt6.QtCore import QProcess, QSettings, QTimer, Qt
-from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -26,7 +25,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QStyle,
 )
-import re
 
 
 class SigGUI(QMainWindow):
@@ -166,7 +164,7 @@ class SigGUI(QMainWindow):
         )
         self.output_checkbox.stateChanged.connect(self.toggle_output_visibility)
 
-        self.all_process_names = []
+        self.processes = []
         self.previous_selections = self.load_previous_selections()
         self.populate_process_list()
         self.load_last_selection()
@@ -228,7 +226,7 @@ class SigGUI(QMainWindow):
             ["pid", "name", "uids", "ppid", "status", "terminal"]
         )
         process_names_set = set()
-        process_names_list = []
+        self.processes = []  # clear the processes
 
         for proc in processes:
             try:
@@ -255,7 +253,6 @@ class SigGUI(QMainWindow):
                 ):
                     if process_name not in process_names_set:
                         process_names_set.add(process_name)
-                        process_names_list.append(process_name)
 
                         item_text = (
                             f"{process_name}      (PID: {pid}, User: {user}, Status: {status})"
@@ -264,22 +261,26 @@ class SigGUI(QMainWindow):
                         if status in self.ICONS:
                             icon = QApplication.style().standardIcon(self.ICONS[status])
                             item.setIcon(icon)
-                        self.process_list_widget.addItem(item)
+                        self.processes.append({
+                            'name': process_name,
+                            'text': item_text,
+                            'item': item
+                        })
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
             except Exception as e:
                 print(f"Error getting process info for {proc.pid} ({proc.info["name"]}): {e}")
 
-        def sort_key(process_name):
+        def sort_key(proc):
             try:
-                return self.previous_selections.index(process_name)
+                return self.previous_selections.index(proc['name'])
             except ValueError:
                 return len(self.previous_selections) + 1
 
-        process_names_list.sort(key=sort_key)
-
-        self.all_process_names = process_names_list
+        self.processes.sort(key=sort_key)
+        for proc in self.processes:
+            self.process_list_widget.addItem(proc['item'])
         self.status_bar.showMessage("Process list refreshed.", 3000)
 
     def filter_process_list(self, search_text):
@@ -449,20 +450,18 @@ class SigGUI(QMainWindow):
 
     def load_previous_selections(self):
         """Load previous selections list from QSettings."""
-        settings = self.settings
-        settings.beginGroup(self.SETTINGS_GROUP)
-        previous_selections = settings.value(
+        self.settings.beginGroup(self.SETTINGS_GROUP)
+        previous_selections = self.settings.value(
             self.PREVIOUS_SELECTIONS_KEY, [], type=list
         )
-        settings.endGroup()
+        self.settings.endGroup()
         return previous_selections
 
     def save_previous_selections(self):
         """Save previous selections list to QSettings."""
-        settings = self.settings
-        settings.beginGroup(self.SETTINGS_GROUP)
-        settings.setValue(self.PREVIOUS_SELECTIONS_KEY, self.previous_selections)
-        settings.endGroup()
+        self.settings.beginGroup(self.SETTINGS_GROUP)
+        self.settings.setValue(self.PREVIOUS_SELECTIONS_KEY, self.previous_selections)
+        self.settings.endGroup()
 
     def update_previous_selections(self, process_name):
         """Update previous selections list, ensuring uniqueness and order."""
@@ -489,20 +488,12 @@ class SigGUI(QMainWindow):
 
     def on_process_double_clicked(self, item):
         """Handle double click on process item to run toggle command."""
-        process_name = item.text().split(" ")[0]
         self._run_toggle_command()
 
     def _run_toggle_command(self):
         """Central function to run toggle command and close GUI."""
         if not self.process_list_widget.selectedItems() and self.process_list_widget.count() > 0:
             self.process_list_widget.item(0).setSelected(True)
-        if self.process_list_widget.selectedItems():
-            process_name = self.process_list_widget.selectedItems()[0].text().split(
-                " "
-            )[0]
-        else:
-            process_name = self.search_bar.text()
-
         self.signal_combo.setCurrentText("toggle")
         self.close_on_finish = True
         self.run_sig()
@@ -521,7 +512,6 @@ class SigGUI(QMainWindow):
     def show_process_details_dialog(self, process_name_with_details):
         """Show process details in a dialog."""
         pid = None
-        process_name = process_name_with_details
 
         if "PID:" in process_name_with_details:
             try:
