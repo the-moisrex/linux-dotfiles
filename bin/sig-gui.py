@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import psutil
+import hashlib
 from PyQt6.QtCore import QProcess, QSettings, QTimer, Qt
 from PyQt6.QtWidgets import (
     QApplication,
@@ -26,6 +27,75 @@ from PyQt6.QtWidgets import (
     QStyle,
 )
 
+
+def get_desktop_hash(limit=None):
+    """
+    Retrieves information from KWin and ActivityManager via qdbus6 and
+    generates a unique hash string based on the combined outputs.
+
+    Args:
+        limit (int, optional):  Maximum length of the hash string. If None, the full hash is returned.
+                                 A limit of 16 is suggested for a good balance of uniqueness and length.
+                                 Defaults to None.
+
+    Returns:
+        str: A hexadecimal hash string representing the combined information,
+             or None if there was an error retrieving the information.
+    """
+    try:
+        output_name_process = subprocess.run(
+            ["qdbus6", "org.kde.KWin", "/KWin", "activeOutputName"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        output_name = output_name_process.stdout.strip()
+
+        desktop_process = subprocess.run(
+            ["qdbus6", "org.kde.KWin", "/VirtualDesktopManager", "current"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        desktop_number = desktop_process.stdout.strip()
+
+        activity_process = subprocess.run(
+            ["qdbus6", "org.kde.ActivityManager", "/ActivityManager/Activities", "CurrentActivity"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        activity_uuid = activity_process.stdout.strip()
+
+        # Combine the outputs into a single string
+        combined_string = f"{output_name}-{desktop_number}-{activity_uuid}"
+
+        # Create a SHA256 hash object
+        hash_object = hashlib.sha256()
+
+        # Update the hash object with the combined string (encoded to bytes)
+        hash_object.update(combined_string.encode('utf-8'))
+
+        # Get the hexadecimal representation of the hash
+        full_hash_string = hash_object.hexdigest()
+
+        if limit is None:
+            return full_hash_string
+        elif isinstance(limit, int) and limit > 0:
+            return full_hash_string[:limit]
+        else:
+            print("Warning: Invalid limit value. Returning full hash.") # Or you could raise an exception
+            return full_hash_string
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing qdbus6 command: {e}")
+        return None
+    except FileNotFoundError:
+        print("Error: qdbus6 command not found. Make sure it is installed and in your PATH.")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return None
 
 class SigGUI(QMainWindow):
     """GUI application for sending signals to processes."""
@@ -405,7 +475,7 @@ class SigGUI(QMainWindow):
         """Save last selected process name to QSettings."""
         settings = self.settings
         settings.beginGroup(self.SETTINGS_GROUP)
-        settings.setValue(self.LAST_SELECTION_KEY, process_name)
+        settings.setValue(f"{self.LAST_SELECTION_KEY}-{get_desktop_hash(16)}", process_name)
         settings.endGroup()
 
     def load_last_selection(self):
@@ -413,7 +483,7 @@ class SigGUI(QMainWindow):
         settings = self.settings
         settings.beginGroup(self.SETTINGS_GROUP)
         last_selected_process = settings.value(
-            self.LAST_SELECTION_KEY, "", type=str
+            f"{self.LAST_SELECTION_KEY}-{get_desktop_hash(16)}", "", type=str
         )
         settings.endGroup()
 
