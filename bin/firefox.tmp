@@ -11,8 +11,8 @@ elif ! command -v firefox >/dev/null; then
 fi
 
 the_args="about:blank"
-if [ ! -z "$@" ]; then
-    the_args="$@"
+if [ -n "$*" ]; then
+    the_args="$*"
 fi
 dir=$(mktemp -d)
 echo "Firefox Config Directory: $dir"
