@@ -36,7 +36,7 @@ for _ in $(seq 1 "$len"); do
     fi
     (
         loc="$(curl -I -s -o /dev/null -w '%header{location}' "$url")"
-        echo "${loc%%?utm*}"
+        [ -n "$loc" ] && echo "${loc%%?utm*}";
     ) &
 done
 wait

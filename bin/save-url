@@ -1,0 +1,246 @@
+#!/bin/bash
+
+# Check if Chromium is installed
+if ! command -v chromium &> /dev/null; then
+    echo "Error: Chromium is not installed. Please install it first." >&2
+    exit 1
+fi
+
+# Function to display help message
+show_help() {
+    echo "Usage: $0 [options] [url1 url2 ...]"
+    echo "Options:"
+    echo "  --dir DIR        Save files in DIR"
+    echo "  --help           Show this help message"
+    echo "  --pdf            Create PDF file"
+    echo "  --html           Create HTML file (DOM)"
+    echo "  --mhtml          Create mHTML file"
+    echo "  --png            Take Screenshot"
+    echo "  --jpeg           Take Screenshot"
+    echo "  --output FILE    Specify output filename (only for single URL)"
+    echo "If no formats are specified, default to PDF."
+    echo "If no URLs are provided, read from stdin (one URL per line)."
+}
+
+# Parse options
+dir=""
+declare -a formats
+output=""
+declare -a urls
+
+# https://peter.sh/experiments/chromium-command-line-switches/
+chromium_default_opts=(
+    --headless
+    --no-sandbox
+    --no-remote
+    # --single-process
+    --disable-bundled-ppapi-flash
+    --disable-offline-load-stale-cache
+    --disk-cache-size=1
+    --media-cache-size=1
+    --disk-cache-dir=/dev/null
+    --no-first-run
+    --no-referrers
+    --save-page-as-mhtml
+    --no-default-browser-check
+    --deny-permission-prompts
+    --disable-sync
+    --ignore-certificate-errors
+
+    --disable-gpu
+    --disable-setuid-sandbox
+    --no-zygote
+    --window-size='1920,10000'
+    --run-all-compositor-stages-before-draw
+    --virtual-time-budget=7000
+
+    --disable-web-security
+    --disable-extensions
+    --ignore-urlfetcher-cert-requests
+    --ignore-certificate-errors
+    --ignore-ssl-errors
+    --disable-dev-shm-usage
+)
+
+
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dir)
+            dir=$2
+            shift 2
+            ;;
+        --help|-help|help)
+            show_help
+            exit 0
+            ;;
+        --pdf|-pdf|pdf)
+            formats+=("pdf")
+            shift
+            ;;
+        --html|-html|html)
+            formats+=("html")
+            shift
+            ;;
+        --mhtml|-mhtml|mhtml)
+            formats+=("mhtml")
+            shift
+            ;;
+        --jpg|-jpg|jpg)
+            formats+=("jpg")
+            shift
+            ;;
+        --jpeg|-jpeg|jpeg)
+            formats+=("jpeg")
+            shift
+            ;;
+        --png|-png|png|screenshot|--screenshot|-screenshot)
+            formats+=("png")
+            shift
+            ;;
+        --output|-o)
+            output=$2
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            urls+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Default to PDF if no formats specified
+if [ ${#formats[@]} -eq 0 ]; then
+    formats=("pdf")
+fi
+
+# If no URLs provided as arguments, read from stdin
+if [ "${#urls[@]}" -eq 0 ]; then
+    while IFS= read -r line; do
+        urls+=("$line")
+    done
+fi
+
+# Check if URLs are provided
+if [ "${#urls[@]}" -eq 0 ]; then
+    echo "Error: No URLs provided." >&2
+    exit 1
+fi
+
+# Function to get page title or sanitized URL
+get_title() {
+    local url=$1
+    local title;
+    title=$(curl -s "$url" | grep -m1 -oP '(?<=<title>).*(?=</title>)')
+    if [ -z "$title" ]; then
+        title=$(echo "$url" | sed 's|http[s]*://||g' | sed 's|/|_|g' | sed 's|[^a-zA-Z0-9_-]|_|g')
+    fi
+    echo "$title" | sed 's|[^a-zA-Z0-9_-]|_|g' | cut -c1-50
+}
+
+# Function to create file
+create_file() {
+    local url=$1
+    local format=$2
+    local filename=$3
+    case "$format" in
+        pdf)
+            chromium "${chromium_default_opts[@]}" --print-to-pdf="$filename" "$url" 2>/dev/null
+            ;;
+        html)
+            chromium "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
+            ;;
+        mhtml)
+            chromium "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
+            ;;
+        jpg|jpeg|png)
+            chromium "${chromium_default_opts[@]}" --screenshot="$filename" "$url" 2>/dev/null
+            ;;
+        *)
+            echo "Unknown format: $format" >&2
+            exit 1
+            ;;
+    esac
+    if [ -f "$filename" ] && [ -s "$filename" ]; then
+        echo "Saved $format to $filename"
+    else
+        echo "Warning: Failed to save $format for $url" >&2
+    fi
+}
+
+# Handle --output for single URL (sequential processing)
+if [ -n "$output" ]; then
+    if [ "${#urls[@]}" -ne 1 ]; then
+        echo "Error: --output can only be used with exactly one URL." >&2
+        exit 1
+    fi
+    if [ ${#formats[@]} -gt 1 ]; then
+        echo "Error: --output can only be used with one format." >&2
+        exit 1
+    fi
+    # Deduce format from output extension if not specified
+    if [ ${#formats[@]} -eq 0 ]; then
+        case "$output" in
+            *.pdf)
+                formats=("pdf")
+                ;;
+            *.html)
+                formats=("html")
+                ;;
+            *.mhtml)
+                formats=("mhtml")
+                ;;
+            *.png)
+                formats=("png")
+                ;;
+            *.jpg)
+                formats=("jpg")
+                ;;
+            *.jpeg)
+                formats=("jpeg")
+                ;;
+            *)
+                formats=("pdf")
+                echo "Warning: Could not deduce format from '$output', defaulting to PDF." >&2
+                ;;
+        esac
+    fi
+    format="${formats[0]}"
+    filename="$output"
+    create_file "${urls[0]}" "$format" "$filename"
+else
+    # Create directory if specified
+    if [ -n "$dir" ]; then
+        mkdir -p "$dir" || exit 1
+    fi
+
+    # Process multiple URLs in parallel
+    declare -A used_filenames
+    for url in "${urls[@]}"; do
+        if [ -z "$url" ]; then
+            continue;
+        fi
+        for format in "${formats[@]}"; do
+            base_filename=$(get_title "$url")
+            key="${format}_${base_filename}"
+            count=${used_filenames["$key"]:-0}
+            if [ "$count" -eq 0 ]; then
+                unique_base="$base_filename"
+            else
+                unique_base="${base_filename}_${count}"
+            fi
+            filename="${unique_base}.${format}"
+            if [ -n "$dir" ]; then
+                filename="$dir/$filename"
+            fi
+            used_filenames["$key"]=$((count + 1))
+            create_file "$url" "$format" "$filename" &
+        done
+    done
+    wait  # Wait for all background jobs to complete
+fi
+
