@@ -1,0 +1,141 @@
+#!/bin/bash
+
+# Script to get links from Hacker News
+
+# --- Help Function ---
+help_function() {
+  cat <<EOF
+Usage: $0 [OPTIONS] [PAGES]
+
+Options:
+  -h, --help          Display this help message and exit.
+  -p, --pages N       Fetch links from the first N pages of Hacker News.
+
+Arguments:
+  PAGES               If provided as a positional argument, sets the number of pages to fetch.
+                        Overrides the -p/--pages option if both are provided.
+                        Must be a positive integer.
+
+Examples:
+  # Get links from the first page of Hacker News:
+  $0
+
+  # Get links from the first 3 pages:
+  $0 3  # Using positional argument
+  $0 -p 3 # Using -p option
+EOF
+  exit 0
+}
+
+# --- Configuration ---
+PAGES=1
+
+# --- Include and Exclude patterns ---
+INCLUDE_PATTERNS=(
+  '^https?://'          # Include only absolute URLs
+)
+EXCLUDE_PATTERNS=(
+  'news\.ycombinator\.com'  # Exclude links to news.ycombinator.com
+  'ycombinator\.com'        # Exclude links to ycombinator.com
+  'hide\?id='               # Exclude "hide?id=" links
+  '^$'                      # Exclude empty lines
+  '^/'                      # Exclude relative URLs starting with "/" (like /show, /submit)
+)
+
+
+# --- Argument Parsing ---
+SHORT_OPTS="hp:"
+LONG_OPTS="help,pages:"
+
+# Check for positional argument first
+if [[ "$#" -ge 1 ]]; then
+  if [[ "$1" =~ ^[0-9]+$ ]]; then
+    PAGES="$1"
+    shift # Remove the positional argument from $@
+  fi
+fi
+
+OPTS=$(getopt --longoptions "$LONG_OPTS" --options "$SHORT_OPTS" --name "$0" -- "$@")
+
+if [[ $? -ne 0 ]]; then
+  help_function >&2
+fi
+
+eval set -- "$OPTS"
+
+while true; do
+  case "$1" in
+    -h|--help)
+      help_function
+      ;;
+    -p|--pages)
+      PAGES="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      echo "Internal error!" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if ! [[ "$PAGES" =~ ^[0-9]+$ ]]; then
+  echo "Error: --pages must be a positive integer." >&2
+  help_function >&2
+fi
+PAGES=$(printf "%d" "$PAGES") # Ensure PAGES is treated as integer
+
+if [[ "$PAGES" -lt 1 ]]; then
+  echo "Error: --pages must be at least 1." >&2
+  help_function >&2
+fi
+
+
+# --- Main Logic ---
+ALL_LINKS=""
+
+for ((page=1; page<=PAGES; page++)); do
+  PAGE_URL="https://news.ycombinator.com/?p=$page"
+  HN_HTML=$(curl -s "$PAGE_URL")
+
+  if [[ -z "$HN_HTML" ]]; then
+    echo "Error: Failed to fetch content from $PAGE_URL" >&2
+    break # Stop if fetching fails
+  fi
+
+  LINKS=$(grep -oE '<a href="([^"]*)"' <<< "$HN_HTML" | sed 's/<a href="//' | sed 's/"//')
+  ALL_LINKS="$ALL_LINKS"$'\n'"$LINKS"
+done
+
+
+# --- Filtering ---
+LINKS="$ALL_LINKS"
+
+# --- Include Filtering (grep) ---
+INCLUDED_LINKS=""
+for pattern in "${INCLUDE_PATTERNS[@]}"; do
+  INCLUDED_LINKS="$INCLUDED_LINKS"$'\n'"$(grep -E "$pattern" <<< "$LINKS")"
+done
+LINKS="$INCLUDED_LINKS"
+
+# --- Exclude Filtering (grep -v) ---
+for pattern in "${EXCLUDE_PATTERNS[@]}"; do
+  FILTERED_LINKS=$(grep -vE "$pattern" <<< "$LINKS")
+  LINKS="$FILTERED_LINKS"
+done
+
+# Remove empty lines after all filtering
+FILTERED_LINKS=$(grep -v '^$' <<< "$LINKS")
+LINKS="$FILTERED_LINKS"
+
+
+# --- Output ---
+if [ -n "$LINKS" ]; then
+  echo "$LINKS"
+fi
+
+exit 0
