@@ -27,8 +27,24 @@ chromium_based=(google-chrome chromium brave brave-browser microsoft-edge micros
 firefox_based=(firefox firefox-developer-edition firefox.tmp)
 
 # Default options for browser groups
-chromium_default_opts=()  # e.g., ("--no-first-run")
 firefox_default_opts=()   # e.g., ("--no-remote")
+
+# https://peter.sh/experiments/chromium-command-line-switches/
+chromium_default_opts=(
+    --disable-bundled-ppapi-flash
+    --disable-offline-load-stale-cache
+    --disk-cache-size=1
+    --media-cache-size=1
+    --disk-cache-dir=/dev/null
+    --no-first-run
+    --no-referrers
+    --save-page-as-mhtml
+    --no-default-browser-check
+    --deny-permission-prompts
+    --disable-sync
+    --disable-extensions
+)
+
 
 # Specific browser options (space-separated string)
 declare -A specific_browser_options
