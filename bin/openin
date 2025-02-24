@@ -61,13 +61,16 @@ build_options() {
         opts=("${firefox_default_opts[@]}")
     fi
     if [ -n "${specific_browser_options[$browser]}" ]; then
-        opts+=(${specific_browser_options[$browser]})
+        opts+=("${specific_browser_options[$browser]}")
     fi
-    if $is_new_instance; then
+    if [ "$is_new_instance" == "true" ]; then
         if [ "$group" = "firefox_based" ]; then
+            temp_dir="$(mktemp -d --suffix="-firefox-based")"
             opts+=("--new-instance")
+            opts+=("--no-remote")
+            opts+=("--profile $temp_dir")
         elif [ "$group" = "chromium_based" ]; then
-            temp_dir="$(mktemp -d --suffix="-chromium-based")"
+            temp_dir="$(mktemp -du --suffix="-chromium-based")"
             opts+=("--user-data-dir=$temp_dir")
         fi
     fi
@@ -86,6 +89,8 @@ if [ "$1" = "--help" ]; then
     echo "Example:"
     echo "  blogs 100 | openin brave.tmp"
     echo "  blogs | openin"
+    echo "  blogs 100 | openin --new firefox.tmp"
+    echo "  blogs 100 | openin edge"
     exit 0
 fi
 
@@ -132,7 +137,7 @@ echo "Selected browser: $selected_browser"
 echo "Logs: $log_file"
 
 # Determine whether to open all URLs at once
-if [ -n "$specified_browser" ] && [[ ! " ${one_by_one_browsers[@]} " =~ " $selected_browser " ]]; then
+if $new_instance || [ -n "$specified_browser" ] && [[ ! " ${one_by_one_browsers[@]} " =~ " $selected_browser " ]]; then
     open_all_at_once=true
 else
     open_all_at_once=false
@@ -142,23 +147,25 @@ if $open_all_at_once; then
     # Read all URLs into an array
     mapfile -t urls
     if [ ${#urls[@]} -gt 0 ]; then
+        options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
         echo "Opening all URLs at once in $selected_browser"
+        echo "setsid \"$selected_browser\" ${options[*]}";
         echo
         for url in "${urls[@]}"; do
             echo "$url";
         done
-        options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
-        setsid "$selected_browser" "${options[@]}" "${urls[@]}" >>"$log_file" 2>&1
+        setsid "$selected_browser" "${options[*]}" "${urls[@]}" >>"$log_file" 2>&1
     fi
 else
     # Open URLs one by one
+    options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
     echo "Opening in $selected_browser"
+    echo "setsid \"$selected_browser\" \"${options[*]}\"";
     echo
     while IFS= read -r url; do
         if [ -n "$url" ]; then
             echo "$url";
-            options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
-            setsid "$selected_browser" "${options[@]}" "$url" >>"$log_file" 2>&1
+            setsid "$selected_browser" "${options[*]}" "$url" >>"$log_file" 2>&1
         fi
     done
 fi
