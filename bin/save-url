@@ -27,6 +27,7 @@ dir=""
 declare -a formats
 output=""
 declare -a urls
+out_mode="ignore"
 
 # https://peter.sh/experiments/chromium-command-line-switches/
 chromium_default_opts=(
@@ -60,6 +61,8 @@ chromium_default_opts=(
     --ignore-certificate-errors
     --ignore-ssl-errors
     --disable-dev-shm-usage
+
+    --timeout=60000 # 60 seconds
 )
 
 
@@ -101,6 +104,18 @@ while [[ $# -gt 0 ]]; do
         --output|-o)
             output=$2
             shift 2
+            ;;
+        --replace)
+            out_mode="replace";
+            shift;
+            ;;
+        --unique)
+            out_mode="unique";
+            shift;
+            ;;
+        --ignore)
+            out_mode="ignore";
+            shift;
             ;;
         -*)
             echo "Unknown option: $1" >&2
@@ -219,28 +234,62 @@ else
     fi
 
     # Process multiple URLs in parallel
-    declare -A used_filenames
-    for url in "${urls[@]}"; do
-        if [ -z "$url" ]; then
-            continue;
-        fi
-        for format in "${formats[@]}"; do
-            base_filename=$(get_title "$url")
-            key="${format}_${base_filename}"
-            count=${used_filenames["$key"]:-0}
-            if [ "$count" -eq 0 ]; then
-                unique_base="$base_filename"
-            else
-                unique_base="${base_filename}_${count}"
+    if [ "$out_mode" == "unique" ]; then
+        declare -A used_filenames
+        for url in "${urls[@]}"; do
+            if [ -z "$url" ]; then
+                continue;
             fi
-            filename="${unique_base}.${format}"
-            if [ -n "$dir" ]; then
-                filename="$dir/$filename"
-            fi
-            used_filenames["$key"]=$((count + 1))
-            create_file "$url" "$format" "$filename" &
+            for format in "${formats[@]}"; do
+                base_filename=$(get_title "$url")
+                key="${format}_${base_filename}"
+                count=${used_filenames["$key"]:-0}
+                if [ "$count" -eq 0 ]; then
+                    unique_base="$base_filename"
+                else
+                    unique_base="${base_filename}_${count}"
+                fi
+                filename="${unique_base}.${format}"
+                if [ -n "$dir" ]; then
+                    filename="$dir/$filename"
+                fi
+                used_filenames["$key"]=$((count + 1))
+                create_file "$url" "$format" "$filename" &
+            done
         done
-    done
+    elif [ "$out_mode" == "replace" ]; then
+        for url in "${urls[@]}"; do
+            if [ -z "$url" ]; then
+                continue;
+            fi
+            for format in "${formats[@]}"; do
+                base_filename=$(get_title "$url")
+                filename="${base_filename}.${format}"
+                if [ -n "$dir" ]; then
+                    filename="$dir/$filename"
+                fi
+                create_file "$url" "$format" "$filename" &
+            done
+        done
+    elif [ "$out_mode" == "ignore" ]; then
+        for url in "${urls[@]}"; do
+            if [ -z "$url" ]; then
+                continue;
+            fi
+            for format in "${formats[@]}"; do
+                base_filename=$(get_title "$url")
+                filename="${base_filename}.${format}"
+                if [ -n "$dir" ]; then
+                    filename="$dir/$filename"
+                fi
+                if [ -f "$filename" ]; then
+                    echo "Ignored: $filename  (URL: $url)." >&2
+                    continue;
+                fi
+                create_file "$url" "$format" "$filename" &
+            done
+        done
+    fi
     wait  # Wait for all background jobs to complete
 fi
 
