@@ -1,0 +1,165 @@
+#!/bin/bash
+
+# List of known browsers in priority order (command names)
+browsers=(brave firefox firefox-developer-edition google-chrome chromium brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp firefox.tmp)
+
+# List of browsers that should always open URLs one by one
+one_by_one_browsers=(xdg-open)
+
+# Fallback chains
+declare -A fallbacks
+fallbacks[brave]=brave-browser
+fallbacks[brave-browser]=brave.tmp
+fallbacks[brave.tmp]=chromium
+fallbacks[chromium]=chromium.tmp
+fallbacks[firefox]=firefox-developer-edition
+fallbacks[firefox-developer-edition]=firefox.tmp
+fallbacks[edge]=microsoft-edge
+fallbacks[microsoft-edge]=microsoft-edge-stable
+fallbacks[microsoft-edge-stable]=edge.tmp
+
+fallbacks[firefox.tmp]=xdg-open
+fallbacks[chromium.tmp]=xdg-open
+fallbacks[edge.tmp]=xdg-open
+
+# Browser groups
+chromium_based=(google-chrome chromium brave brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp)
+firefox_based=(firefox firefox-developer-edition firefox.tmp)
+
+# Default options for browser groups
+chromium_default_opts=()  # e.g., ("--no-first-run")
+firefox_default_opts=()   # e.g., ("--no-remote")
+
+# Specific browser options (space-separated string)
+declare -A specific_browser_options
+# Example: specific_browser_options[brave.tmp]="--incognito"
+
+# Function to find the first existing browser in the fallback chain
+find_existing_browser() {
+    local browser=$1
+    while [ -n "$browser" ]; do
+        if command -v "$browser" > /dev/null; then
+            echo "$browser"
+            return
+        fi
+        browser=${fallbacks[$browser]}
+    done
+    echo ""
+}
+
+# Function to build options for the browser
+build_options() {
+    local browser=$1
+    local group=$2
+    local is_new_instance=$3
+    local opts=()
+    local temp_dir;
+
+    if [ "$group" = "chromium_based" ]; then
+        opts=("${chromium_default_opts[@]}")
+    elif [ "$group" = "firefox_based" ]; then
+        opts=("${firefox_default_opts[@]}")
+    fi
+    if [ -n "${specific_browser_options[$browser]}" ]; then
+        opts+=(${specific_browser_options[$browser]})
+    fi
+    if $is_new_instance; then
+        if [ "$group" = "firefox_based" ]; then
+            opts+=("--new-instance")
+        elif [ "$group" = "chromium_based" ]; then
+            temp_dir="$(mktemp -d --suffix="-chromium-based")"
+            opts+=("--user-data-dir=$temp_dir")
+        fi
+    fi
+    echo "${opts[@]}"
+}
+
+# Check for --help
+if [ "$1" = "--help" ]; then
+    echo "Usage: $0 [options] [browser]"
+    echo "Options:"
+    echo "  --new, -new, new: Force creation of a new browser instance"
+    echo "  --help: Show this help message"
+    echo "If no browser is specified, the first running browser from the known list is used."
+    echo "If no known browser is running, xdg-open is used."
+    echo
+    echo "Example:"
+    echo "  blogs 100 | openin brave.tmp"
+    echo "  blogs | openin"
+    exit 0
+fi
+
+# Check for --new option
+if [ "$1" = "--new" ] || [ "$1" = "-new" ] || [ "$1" = "new" ]; then
+    new_instance=true
+    shift
+else
+    new_instance=false
+fi
+
+# Determine the selected browser
+if [ $# -ge 1 ]; then
+    specified_browser="$1"
+    selected_browser=$(find_existing_browser "$specified_browser")
+    if [ -z "$selected_browser" ]; then
+        echo "Error: No existing browser found for '$specified_browser'." >&2
+        exit 1
+    fi
+else
+    for browser in "${browsers[@]}"; do
+        if pgrep -x "$browser" > /dev/null; then
+            selected_browser="$browser"
+            break
+        fi
+    done
+    if [ -z "$selected_browser" ]; then
+        selected_browser="xdg-open"
+    fi
+fi
+
+# Determine browser group
+if [[ " ${chromium_based[@]} " =~ " $selected_browser " ]]; then
+    browser_group="chromium_based"
+elif [[ " ${firefox_based[@]} " =~ " $selected_browser " ]]; then
+    browser_group="firefox_based"
+else
+    browser_group="other"
+fi
+
+# Create a log file
+log_file=$(mktemp --suffix="-$selected_browser")
+echo "Selected browser: $selected_browser"
+echo "Logs: $log_file"
+
+# Determine whether to open all URLs at once
+if [ -n "$specified_browser" ] && [[ ! " ${one_by_one_browsers[@]} " =~ " $selected_browser " ]]; then
+    open_all_at_once=true
+else
+    open_all_at_once=false
+fi
+
+if $open_all_at_once; then
+    # Read all URLs into an array
+    mapfile -t urls
+    if [ ${#urls[@]} -gt 0 ]; then
+        echo "Opening all URLs at once in $selected_browser"
+        echo
+        for url in "${urls[@]}"; do
+            echo "$url";
+        done
+        options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
+        setsid "$selected_browser" "${options[@]}" "${urls[@]}" >>"$log_file" 2>&1
+    fi
+else
+    # Open URLs one by one
+    echo "Opening in $selected_browser"
+    echo
+    while IFS= read -r url; do
+        if [ -n "$url" ]; then
+            echo "$url";
+            options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
+            setsid "$selected_browser" "${options[@]}" "$url" >>"$log_file" 2>&1
+        fi
+    done
+fi
+

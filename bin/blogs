@@ -1,0 +1,42 @@
+#!/bin/bash
+
+if [ "$1" = "--help" ]; then
+    echo "Usage: $0 [count=10]"
+    echo "  Print random blog posts"
+    echo
+    echo "Example:"
+    echo "  blogs 100 | openin brave.tmp"
+    echo "  blogs | openin"
+    exit 0
+fi
+
+len=$1;
+url="https://indieblog.page/random"
+
+if [ -z "$len" ]; then
+    len=10
+fi
+
+max_jobs=$len
+
+if [ "$max_jobs" -ge 100 ]; then
+    max_jobs=100;
+fi
+
+# Non-parallel version:
+#    for _ in $(seq 1 "$len"); do
+#        loc="$(curl -I -s -o /dev/null -w '%header{location}' https://indieblog.page/random)"
+#        echo "${loc%%?utm*}"
+#    done
+
+# Parallel version:
+for _ in $(seq 1 "$len"); do
+    if [ "$(jobs -p | wc -l)" -ge "$max_jobs" ]; then
+        wait -n
+    fi
+    (
+        loc="$(curl -I -s -o /dev/null -w '%header{location}' "$url")"
+        echo "${loc%%?utm*}"
+    ) &
+done
+wait
