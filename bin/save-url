@@ -169,7 +169,7 @@ get_title() {
     if [ -z "$title" ]; then
         title=$(echo "$url" | sed 's|http[s]*://||g' | sed 's|/|_|g' | sed 's|[^a-zA-Z0-9_-]|_|g')
     fi
-    echo "$title" | sed 's|[^a-zA-Z0-9_-]|_|g' | sed 's|__|_|g' | sed 's|__|_|g' | sed 's|_\.|.|g' | sed 's|_\-_|-|g' | sed 's|^_||g' | cut -c1-100
+    echo "$title" | sed 's|[^a-zA-Z0-9_-]|_|g' | sed -E 's|_+|_|g' | sed 's|_\.|.|g' | sed 's|_\-_|-|g' | sed 's|^_||g' | cut -c1-100
 }
 
 # Function to create file
