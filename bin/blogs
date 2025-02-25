@@ -10,6 +10,12 @@ if [ "$1" = "--help" ]; then
     exit 0
 fi
 
+function try() {
+    while ! "$@"; do
+        sleep 1s;
+    done
+}
+
 len=$1;
 url="https://indieblog.page/random"
 
@@ -35,7 +41,7 @@ for _ in $(seq 1 "$len"); do
         wait -n
     fi
     (
-        loc="$(curl -I -s -o /dev/null -w '%header{location}' "$url")"
+        loc="$(try curl -I -s -o /dev/null -w '%header{location}' "$url")"
         [ -n "$loc" ] && echo "${loc%%?utm*}";
     ) &
 done
