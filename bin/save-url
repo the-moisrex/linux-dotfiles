@@ -28,6 +28,8 @@ declare -a formats
 output=""
 declare -a urls
 out_mode="ignore"
+max_jobs=10
+TIMEOUT=60 # seconds
 
 # https://peter.sh/experiments/chromium-command-line-switches/
 chromium_default_opts=(
@@ -50,7 +52,7 @@ chromium_default_opts=(
 
     --disable-gpu
     --disable-setuid-sandbox
-    --no-zygote
+    # --no-zygote
     --window-size='1920,10000'
     --run-all-compositor-stages-before-draw
     --virtual-time-budget=7000
@@ -62,7 +64,8 @@ chromium_default_opts=(
     --ignore-ssl-errors
     --disable-dev-shm-usage
 
-    --timeout=60000 # 60 seconds
+    --timeout=55000 # 50 seconds
+    --network-quiet-timeout=50 # seconds
 )
 
 
@@ -146,15 +149,21 @@ if [ "${#urls[@]}" -eq 0 ]; then
     exit 1
 fi
 
+function try() {
+    while ! "$@"; do
+        sleep 1s;
+    done
+}
+
 # Function to get page title or sanitized URL
 get_title() {
     local url=$1
     local title;
-    title=$(curl -s "$url" | grep -m1 -oP '(?<=<title>).*(?=</title>)')
+    title=$(try curl -s "$url" | grep -m1 -oP '(?<=<title>).*(?=</title>)')
     if [ -z "$title" ]; then
         title=$(echo "$url" | sed 's|http[s]*://||g' | sed 's|/|_|g' | sed 's|[^a-zA-Z0-9_-]|_|g')
     fi
-    echo "$title" | sed 's|[^a-zA-Z0-9_-]|_|g' | cut -c1-50
+    echo "$title" | sed 's|[^a-zA-Z0-9_-]|_|g' | sed 's|__|_|g' | sed 's|__|_|g' | sed 's|_\.|.|g' | sed 's|_\-_|-|g' | sed 's|^_||g' | cut -c1-100
 }
 
 # Function to create file
@@ -162,18 +171,24 @@ create_file() {
     local url=$1
     local format=$2
     local filename=$3
+
+    # wait for the others to finish first
+    if [ "$(jobs -p | wc -l)" -ge "$max_jobs" ]; then
+        wait -n
+    fi
+
     case "$format" in
         pdf)
-            chromium "${chromium_default_opts[@]}" --print-to-pdf="$filename" "$url" 2>/dev/null
+            try timeout "${TIMEOUT}s" chromium "${chromium_default_opts[@]}" --print-to-pdf="$filename" "$url" 2>/dev/null
             ;;
         html)
-            chromium "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
+            try timeout "${TIMEOUT}s" chromium "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
             ;;
         mhtml)
-            chromium "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
+            try timeout "${TIMEOUT}s" chromium "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
             ;;
         jpg|jpeg|png)
-            chromium "${chromium_default_opts[@]}" --screenshot="$filename" "$url" 2>/dev/null
+            try timeout "${TIMEOUT}s" chromium "${chromium_default_opts[@]}" --screenshot="$filename" "$url" 2>/dev/null
             ;;
         *)
             echo "Unknown format: $format" >&2

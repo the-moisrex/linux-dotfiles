@@ -27,6 +27,12 @@ EOF
   exit 0
 }
 
+function try() {
+    while ! "$@"; do
+        sleep 1s;
+    done
+}
+
 # --- Configuration ---
 PAGES=1
 
@@ -100,7 +106,7 @@ ALL_LINKS=""
 
 for ((page=1; page<=PAGES; page++)); do
   PAGE_URL="https://news.ycombinator.com/?p=$page"
-  HN_HTML=$(curl -s "$PAGE_URL")
+  HN_HTML=$(try curl -s "$PAGE_URL")
 
   if [[ -z "$HN_HTML" ]]; then
     echo "Error: Failed to fetch content from $PAGE_URL" >&2
