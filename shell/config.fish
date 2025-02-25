@@ -84,16 +84,16 @@ end
 
 
 
-function try -d "try a command until it works."
-    while ! $argv
-        sleep 1s; # So we can cancel
-    end
-end
-
-# Usage: trynot isup facebook.com && nordvpn connect
-function trynot -d "Try a command until it doesn't work"
-    while $argv
-        sleep 1s; # So we can cancel
-    end
-end
+# function try -d "try a command until it works."
+#     while ! $argv
+#         sleep 1s; # So we can cancel
+#     end
+# end
+# 
+# # Usage: trynot isup facebook.com && nordvpn connect
+# function trynot -d "Try a command until it doesn't work"
+#     while $argv
+#         sleep 1s; # So we can cancel
+#     end
+# end
 

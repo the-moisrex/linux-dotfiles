@@ -33,9 +33,9 @@ firefox_default_opts=()   # e.g., ("--no-remote")
 chromium_default_opts=(
     --disable-bundled-ppapi-flash
     --disable-offline-load-stale-cache
-    --disk-cache-size=1
-    --media-cache-size=1
-    --disk-cache-dir=/dev/null
+    # --disk-cache-size=1
+    # --media-cache-size=1
+    # --disk-cache-dir=/dev/null
     --no-first-run
     --no-referrers
     --save-page-as-mhtml
