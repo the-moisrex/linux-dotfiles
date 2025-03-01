@@ -95,9 +95,11 @@ while [ -n "$1" ]; do
         continue;
     fi
     for pid in $pidlist; do
-        killtree "$pid" "$name"
+        killtree "$pid" "$name" &
     done
     shift;
 done
+
+wait -n
 
 
