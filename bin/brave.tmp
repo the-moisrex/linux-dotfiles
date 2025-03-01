@@ -5,6 +5,28 @@ if ! command -v brave >/dev/null; then
     exit 1;
 fi
 
+# https://peter.sh/experiments/chromium-command-line-switches/
+chromium_default_opts=(
+    --no-remote
+    # --no-sandbox
+    # --single-process
+    # --no-zygote
+    # --disable-setuid-sandbox
+    # --disk-cache-size=1
+    # --media-cache-size=1
+    # --disk-cache-dir=/dev/null
+    --no-first-run
+    --no-referrers
+    --save-page-as-mhtml
+    --no-default-browser-check
+    --disable-sync
+    --ignore-certificate-errors
+
+    --disable-extensions
+    # --incognito
+)
+
+
 tor_cmds=""
 case $1 in
 	--tor|tor)
@@ -21,7 +43,9 @@ case $1 in
 esac
 
 dir=$(mktemp -d)
+options="${chromium_default_opts[*]}"
 echo "Brave Config Directory: $dir"
-eval brave --incognito --user-data-dir="$dir" "$tor_cmds" $@
+brave "$options" --user-data-dir="$dir" "$tor_cmds" "$@"
 rm -rf "$dir"
 echo "Brave Config Directory $dir Deleted."
+wait -n
