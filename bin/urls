@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Regular expression to find URLs - Restoring forward slash matching, simpler regex structure
+url_regex='https?://([wW]{3}\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=%]*)'
+
+filter_keyword=""
+
+print_help() {
+  echo "Usage: $0 [OPTIONS]"
+  echo "Finds and prints links from stdin, one link per line."
+  echo ""
+  echo "Options:"
+  echo "  -f, --filter KEYWORD     Filter links to include only those containing the KEYWORD."
+  echo "      --help               Show this help message and exit."
+  echo ""
+  echo "Example:"
+  echo "  echo 'Text with https://www.example.com and http://test.org/path' | $0"
+  echo "  echo 'Text with links' | $0 --filter example"
+}
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -f|--filter)
+      if [[ "$2" ]]; then
+        filter_keyword="$2"
+        shift 2
+      else
+        echo "Error: --filter option requires a keyword." >&2
+        print_help
+        exit 1
+      fi
+      ;;
+    --help)
+      print_help
+      exit 0
+      ;;
+    *)
+      echo "Error: Unknown option: $1" >&2
+      print_help
+      exit 1
+      ;;
+  esac
+done
+
+# Read input from stdin
+input_text=$(cat)
+
+# Find links using grep
+found_links=$(grep -oE "$url_regex" <<< "$input_text")
+
+# Filter links if a keyword is provided
+if [[ -n "$filter_keyword" ]]; then
+  filtered_links=$(grep "$filter_keyword" <<< "$found_links")
+  links_to_print="$filtered_links"
+else
+  links_to_print="$found_links"
+fi
+
+# Print the links, one per line
+if [[ -n "$links_to_print" ]]; then
+  while IFS= read -r link; do
+    echo "$link"
+  done <<< "$links_to_print"
+fi
