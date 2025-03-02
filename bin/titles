@@ -1,0 +1,117 @@
+#!/bin/bash
+
+# Script name: titles
+# Description: Gets titles of webpages from URLs provided as arguments or stdin in parallel using & and wait -n.
+
+# ANSI color codes
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Maximum number of parallel jobs
+JOBS=30
+
+# User agent string for curl
+USER_AGENT="titles-bash-script/1.0"
+
+# Function to display help message
+help_message() {
+  cat <<EOF
+Usage: titles [OPTIONS] [URL1 URL2 ...]
+
+Get the titles of webpages in parallel.
+
+Options:
+  --help                     Display this help message.
+
+If no URLs are provided as arguments, URLs are read from stdin,
+one URL per line.
+EOF
+}
+
+# Function to get the title of a URL
+get_title() {
+  local url="$1"
+  if ! [[ "$url" =~ ^(http|https):// ]]; then
+    echo -e "${RED}Invalid URL:${NC} $url (must start with http:// or https://)"
+    echo "$url"
+    echo ""
+    return 1
+  fi
+
+  raw_title=$(curl -s -L -m 10 -A "$USER_AGENT" "$url" 2>/dev/null | grep -i '<title>')
+
+  if [ -n "$raw_title" ]; then
+    # Extract title content using sed more aggressively
+    title=$(echo "$raw_title" |
+      sed -E 's/.*<title[^>]*>//i' | # Remove everything before <title>
+      sed -E 's/<\/title>.*/ /i' |   # Remove everything after </title>
+      sed -E 's/<[^>]*>//g' |        # Remove any HTML tags within the title
+      sed -E 's/(^\s*)|(\s*$)//g')       # Trim whitespace
+
+    if [ -n "$title" ]; then
+      echo -e "${GREEN}$title${NC}"
+      echo -e "${BLUE}$url${NC}"
+      echo ""
+    else
+      echo -e "${YELLOW}Title not found or error parsing title.${NC}" # More specific message
+      echo -e "${BLUE}$url${NC}"
+      echo ""
+    fi
+  else
+    echo -e "${YELLOW}Title not found or error fetching page.${NC}"
+    echo -e "${BLUE}$url${NC}"
+    echo ""
+  fi
+}
+
+# Parse options (only --help now)
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)
+      help_message
+      exit 0
+      ;;
+    *) # URL argument
+      URLS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Process URLs
+if [[ ${#URLS[@]} -gt 0 ]]; then
+  # Process URLs from arguments in parallel using & and wait -n
+  running_jobs=0
+  for url in "${URLS[@]}"; do
+    get_title "$url" &
+    running_jobs=$((running_jobs + 1))
+    if [[ "$running_jobs" -ge "$JOBS" ]]; then
+      wait -n 1
+      running_jobs=$((running_jobs - 1))
+    fi
+  done
+  wait # Wait for any remaining background jobs
+else
+  # Read URLs from stdin and process in parallel using & and wait -n
+  running_jobs=0
+  while IFS= read -r url; do
+    # Remove leading/trailing whitespace using bash parameter expansion
+    url=$(printf '%s' "$url") # No trimming needed, read -r already mostly handles it
+
+    # Skip empty lines
+    if [ -n "$url" ]; then
+      get_title "$url" &
+      running_jobs=$((running_jobs + 1))
+      if [[ "$running_jobs" -ge "$JOBS" ]]; then
+        wait -n 1 2>/dev/null
+        running_jobs=$((running_jobs - 1))
+      fi
+    fi
+  done
+  wait # Wait for any remaining background jobs
+fi
+
+exit 0
