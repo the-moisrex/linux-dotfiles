@@ -4,6 +4,7 @@ nftables  # for firewall
 python
 dialog
 entr
+python-pydbus # for sig-gui.py
 
 # Media software
 vlc
@@ -58,6 +59,7 @@ lshw
 ripgrep      # grep foo . -R (rg foo)
 ripgrep-all
 fd           # find . -name '*foo*'
+jq           # JSON processor
 
 # Shells
 kitty

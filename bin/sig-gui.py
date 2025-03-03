@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 import os
-import subprocess
 import sys
+import fcntl
+import signal
+import atexit
 
+import subprocess
 import psutil
 import hashlib
 from PyQt6.QtCore import QProcess, QSettings, QTimer, Qt
@@ -26,6 +29,27 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QStyle,
 )
+
+# File paths for lock and PID
+LOCK_FILE = '/tmp/sig-daemon.lock'
+PID_FILE = '/tmp/sig-daemon.pid'
+
+SETTINGS_GROUP = "SigGUI"
+LAST_SELECTION_KEY = "last_selected_process"
+PREVIOUS_SELECTIONS_KEY = "previous_selections"
+LAST_SIGNAL_KEY = "last_signal"
+AUTO_TOGGLE_PROCESSES_LIST = "auto_toggles_proc_list"
+
+settings = QSettings("SigGUIApp", "SigGUI")
+
+
+def init_gui():
+    app = QApplication(sys.argv)
+    gui = SigGUI()
+    gui.show()
+    gui.search_bar.setFocus()
+    gui.search_bar.selectAll()
+    sys.exit(app.exec())
 
 
 def get_desktop_hash(limit=None):
@@ -84,7 +108,7 @@ def get_desktop_hash(limit=None):
         elif isinstance(limit, int) and limit > 0:
             return full_hash_string[:limit]
         else:
-            print("Warning: Invalid limit value. Returning full hash.") # Or you could raise an exception
+            print("Warning: Invalid limit value. Returning full hash.")  # Or you could raise an exception
             return full_hash_string
 
     except subprocess.CalledProcessError as e:
@@ -150,10 +174,6 @@ class SigGUI(QMainWindow):
         "Xorg",
         "Xwayland",
     ]
-    SETTINGS_GROUP = "SigGUI"
-    LAST_SELECTION_KEY = "last_selected_process"
-    PREVIOUS_SELECTIONS_KEY = "previous_selections"
-    LAST_SIGNAL_KEY = "last_signal"
     ICONS = {
         psutil.STATUS_STOPPED: QStyle.StandardPixmap.SP_MediaPause,
         psutil.STATUS_RUNNING: QStyle.StandardPixmap.SP_MediaPlay,
@@ -175,8 +195,6 @@ class SigGUI(QMainWindow):
         self.setWindowTitle("Sig Script GUI")
         self.setGeometry(100, 100, 600, 500)
 
-        self.settings = QSettings("SigGUIApp", "SigGUI")
-
         self.process_list_widget = QListWidget()
         self.process_list_widget.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu
@@ -190,8 +208,8 @@ class SigGUI(QMainWindow):
             ["toggle", "stop", "cont", "KILL", "TERM", "HUP", "INT", "QUIT", "USR1", "USR2"]
         )
 
-        last_signal = self.settings.value(
-            self.SETTINGS_GROUP + "/" + self.LAST_SIGNAL_KEY, "toggle", type=str
+        last_signal = settings.value(
+            SETTINGS_GROUP + "/" + LAST_SIGNAL_KEY, "toggle", type=str
         )
         self.signal_combo.setCurrentText(last_signal)
 
@@ -409,8 +427,8 @@ class SigGUI(QMainWindow):
     def run_sig(self):
         """Run sig bash script with selected signal and processes."""
         selected_signal = self.signal_combo.currentText()
-        self.settings.setValue(
-            self.SETTINGS_GROUP + "/" + self.LAST_SIGNAL_KEY, selected_signal
+        settings.setValue(
+            SETTINGS_GROUP + "/" + LAST_SIGNAL_KEY, selected_signal
         )
         selected_processes = [
             item.text().split(" ")[0]
@@ -473,17 +491,15 @@ class SigGUI(QMainWindow):
 
     def save_last_selection(self, process_name):
         """Save last selected process name to QSettings."""
-        settings = self.settings
-        settings.beginGroup(self.SETTINGS_GROUP)
-        settings.setValue(f"{self.LAST_SELECTION_KEY}-{get_desktop_hash(16)}", process_name)
+        settings.beginGroup(SETTINGS_GROUP)
+        settings.setValue(f"{LAST_SELECTION_KEY}-{get_desktop_hash(16)}", process_name)
         settings.endGroup()
 
     def load_last_selection(self):
         """Load last selected process name from QSettings and restore."""
-        settings = self.settings
-        settings.beginGroup(self.SETTINGS_GROUP)
+        settings.beginGroup(SETTINGS_GROUP)
         last_selected_process = settings.value(
-            f"{self.LAST_SELECTION_KEY}-{get_desktop_hash(16)}", "", type=str
+            f"{LAST_SELECTION_KEY}-{get_desktop_hash(16)}", "", type=str
         )
         settings.endGroup()
 
@@ -520,18 +536,18 @@ class SigGUI(QMainWindow):
 
     def load_previous_selections(self):
         """Load previous selections list from QSettings."""
-        self.settings.beginGroup(self.SETTINGS_GROUP)
-        previous_selections = self.settings.value(
-            self.PREVIOUS_SELECTIONS_KEY, [], type=list
+        settings.beginGroup(SETTINGS_GROUP)
+        previous_selections = settings.value(
+            PREVIOUS_SELECTIONS_KEY, [], type=list
         )
-        self.settings.endGroup()
+        settings.endGroup()
         return previous_selections
 
     def save_previous_selections(self):
         """Save previous selections list to QSettings."""
-        self.settings.beginGroup(self.SETTINGS_GROUP)
-        self.settings.setValue(self.PREVIOUS_SELECTIONS_KEY, self.previous_selections)
-        self.settings.endGroup()
+        settings.beginGroup(SETTINGS_GROUP)
+        settings.setValue(PREVIOUS_SELECTIONS_KEY, self.previous_selections)
+        settings.endGroup()
 
     def update_previous_selections(self, process_name):
         """Update previous selections list, ensuring uniqueness and order."""
@@ -632,7 +648,7 @@ class SigGUI(QMainWindow):
                 details_text = f"Name: {proc.name()}\n"  # Use proc.name()
                 details_text += f"PID: {proc.pid}\n"
                 details_text += f"User: {proc.username()}\n"
-                details_text += f"Status: {proc.status()}\n" # Use proc.status()
+                details_text += f"Status: {proc.status()}\n"  # Use proc.status()
                 details_text += f"CPU %: {proc.cpu_percent()}%\n"
                 details_text += f"Memory %: {proc.memory_percent():.2f}%\n"
                 details_text += f"Command: {' '.join(proc.cmdline())}\n"
@@ -666,24 +682,26 @@ class SigGUI(QMainWindow):
 
     def show_process_context_menu(self, position):
         """Show context menu when right-clicking on a process in the list."""
-        menu = QMenu(self)
-        stop_action = menu.addAction(
-            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop), "Stop"
-        )
-        continue_action = menu.addAction(
-            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
-            "Continue",
-        )
-        kill_action = menu.addAction(
-            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogNoButton),
-            "Kill",
-        )
-        details_action = menu.addAction("Details")
-
         selected_item = self.process_list_widget.itemAt(position)
         if selected_item:
             process_name_with_details = selected_item.text()
             process_name = selected_item.text().split(" ")[0]
+
+            menu = QMenu(self)
+            auto_toggle_opt = menu.addAction("Disable Auto Toggle" if process_name in get_auto_toggle_processes() else "Enable Auto Toggle")
+            stop_action = menu.addAction(
+                QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop), "Stop"
+            )
+            continue_action = menu.addAction(
+                QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
+                "Continue",
+            )
+            kill_action = menu.addAction(
+                QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogNoButton),
+                "Kill",
+            )
+            details_action = menu.addAction("Details")
+
 
             stop_action.triggered.connect(
                 lambda: self.send_signal_to_process("stop", process_name)
@@ -696,6 +714,9 @@ class SigGUI(QMainWindow):
             )
             details_action.triggered.connect(
                 lambda: self.show_process_details_dialog(process_name_with_details)
+            )
+            auto_toggle_opt.triggered.connect(
+                lambda: change_auto_toggle(process_name)
             )
 
             menu.exec(self.process_list_widget.viewport().mapToGlobal(position))
@@ -720,10 +741,229 @@ class SigGUI(QMainWindow):
             self.send_signal_to_process("KILL", process_name)
 
 
+def sig(sig_name, processes):
+    if len(processes) != 0:
+        subprocess.run(
+            ["sig", sig_name] + processes,
+            capture_output=False,
+            text=True,
+            check=True
+        )
+
+
+def get_auto_toggle_processes():
+    settings.beginGroup(SETTINGS_GROUP)
+    processes = settings.value(
+        AUTO_TOGGLE_PROCESSES_LIST, [], type=list
+    )
+    settings.endGroup()
+    return processes
+
+
+def change_auto_toggle(proc_name):
+    procs = get_auto_toggle_processes()
+    if proc_name in procs:
+        procs.remove(proc_name)
+    else:
+        procs.append(proc_name)
+    settings.beginGroup(SETTINGS_GROUP)
+    settings.setValue(AUTO_TOGGLE_PROCESSES_LIST, procs)
+    settings.endGroup()
+
+
+bus = None
+KWin = None
+
+
+def current_window():
+    global KWin
+    if KWin is None:
+        KWin = bus.get_object('org.kde.KWin', '/KWin')
+    return KWin.get_dbus_method("queryWindowInfo", "org.kde.KWin")()
+
+
+def virtual_desktop_changed(desktop_id):
+    """Virtual Desktop Changed
+    Args:
+        desktop_id (str): The ID of the new current virtual desktop.
+    """
+    return  # todo
+    win = current_window()
+    procs = get_auto_toggle_processes()
+    proc = win.get('resourceName')
+    stops = [item for item in procs if not item.startswith(proc)]
+    conts = [item for item in procs if item.startswith(proc)]
+    print(f"win: {proc}, stops: {stops}, conts: {conts}")
+    if len(stops) != 0:
+        sig("STOP", stops)
+        sig("CONT", conts)
+
+
+def running_daemon():
+    global KWin
+    global bus
+    import dbus
+    from dbus.mainloop.glib import DBusGMainLoop
+    import gi
+    from gi.repository import GLib
+    gi.require_version('GLib', '2.0')
+
+    # Set up the D-Bus main loop to use GLib
+    DBusGMainLoop(set_as_default=True)
+
+    # Connect to the session bus
+    bus = dbus.SessionBus()
+    # Get the VirtualDesktopManager object from the KWin service
+    obj = bus.get_object('org.kde.KWin', '/VirtualDesktopManager')
+    # Connect the handler to the currentChanged signal
+    obj.connect_to_signal(
+        'currentChanged',
+        virtual_desktop_changed,
+        dbus_interface='org.kde.KWin.VirtualDesktopManager'
+    )
+
+    print("Start the GLib main loop to listen for signals")
+    loop = GLib.MainLoop()
+    loop.run()
+
+
+def main():
+    """Main function containing the daemon/foreground logic."""
+
+    # Register cleanup for normal exit
+    atexit.register(remove_pid_file)
+    atexit.register(remove_lock_file)
+
+    try:
+        running_daemon()
+    except KeyboardInterrupt:
+        print(" Done.")
+    except Exception as err:
+        # In daemon mode, this ensures lock is released on failure
+        remove_lock_file()
+        remove_pid_file()
+        print(f"Error: {err}")
+
+
+def remove_pid_file():
+    """Remove PID file when daemon exits normally."""
+    if os.path.exists(PID_FILE):
+        os.remove(PID_FILE)
+        print(f"Removed PID file: {PID_FILE}")
+
+
+def remove_lock_file():
+    """Remove LOCK file when daemon exits normally."""
+    if os.path.exists(LOCK_FILE):
+        os.remove(LOCK_FILE)
+        print(f"Removed LOCK file: {LOCK_FILE}")
+
+
+def daemonize(should_return=False):
+    """Daemonize the process while keeping the lock file descriptor open."""
+    # First fork
+    pid = os.fork()
+    if pid > 0:
+        if should_return:
+            return True
+        else:
+            sys.exit(0)  # Parent exits
+
+    # Create new session
+    os.setsid()
+
+    # Second fork
+    pid = os.fork()
+    if pid > 0:
+        sys.exit(0)  # First child exits
+
+    # Daemon process setup
+    os.chdir('/')
+    os.umask(0)
+
+    # Write PID to file
+    try:
+        with open(PID_FILE, 'w') as f:
+            pid = str(os.getpid())
+            f.write(pid)
+            print(f"PID ({pid}) file at: {PID_FILE}")
+    except Exception as e:
+        print(f"Error writing PID file: {e}", file=sys.stderr)
+        remove_lock_file()
+        sys.exit(1)
+
+    # Redirect standard file descriptors
+    with open('/dev/null', 'r') as devnull:
+        os.dup2(devnull.fileno(), 0)  # stdin
+    with open('/dev/null', 'w') as devnull:
+        os.dup2(devnull.fileno(), 1)  # stdout
+        os.dup2(devnull.fileno(), 2)  # stderr
+
+    # Run main function
+    main()
+    return False
+
+
+def stop_daemon():
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, 'r') as f:
+                pid = int(f.read().strip())
+            os.kill(pid, signal.SIGTERM)
+            print("Daemon stopped")
+            # Remove lock and PID files
+            remove_lock_file()
+            remove_pid_file()
+        except (ValueError, ProcessLookupError, PermissionError):
+            print("Could not stop daemon or daemon not running")
+            # Clean up files anyway
+            remove_lock_file()
+            remove_pid_file()
+    elif os.path.exists(LOCK_FILE):
+        remove_lock_file()
+        print("Removed residual lock file")
+        print("No daemon known to us is running, if it's there, you have to manually kill it.")
+    else:
+        print("No daemon running")
+    sys.exit(0)
+
+
+def try_acquire_lock():
+    if os.path.exists(LOCK_FILE):
+        return False
+    try:
+        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            print(f"Lock file at: {LOCK_FILE}")
+            return True
+        except IOError:
+            print("Failed to acquire lock")
+            return False
+    except Exception as e:
+        print(f"Error with lock file: {e}")
+        sys.exit(1)
+    return False
+
+
+def check_args():
+    # Handle stop-daemon first
+    if '--stop-daemon' in sys.argv:
+        stop_daemon()
+    elif '--daemon' in sys.argv:
+        if try_acquire_lock():
+            main()
+        else:
+            print("Already running; to stop it, use --stop-daemon")
+    else:
+        # try running the daemon, and also opening up the GUI
+        if try_acquire_lock():
+            daemonize(True)
+        # Open up the GUI
+        return True
+    return False
+
+
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    gui = SigGUI()
-    gui.show()
-    gui.search_bar.setFocus()
-    gui.search_bar.selectAll()
-    sys.exit(app.exec())
+    if check_args():
+        init_gui()
