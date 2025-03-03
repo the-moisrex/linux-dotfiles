@@ -1,0 +1,188 @@
+#!/bin/bash
+
+# Script to scrape a URL, find RSS feeds, and print their links.
+
+# --- Options and Flags ---
+verbose_output=0
+
+# --- Help Function ---
+help_function() {
+  cat <<EOF
+Usage: $(basename "$0") [OPTIONS] [URL...]
+
+Finds RSS feeds on given URLs and prints only the RSS links by default.
+
+Options:
+  --help      Display this help message.
+  --verbose   Enable verbose output, showing detailed search steps.
+
+If no URLs are provided as arguments, the script reads URLs from stdin,
+one URL per line.
+EOF
+}
+
+# --- Find RSS Feed Function ---
+find_rss_feed() {
+  local url="$1"
+  if [[ "$verbose_output" -eq 1 ]]; then
+    echo "Checking URL: $url"
+  fi
+
+  # Fetch the HTML content of the URL
+  html_content=$(curl -s "$url" 2>/dev/null)
+
+  if [[ -z "$html_content" ]]; then
+    if [[ "$verbose_output" -eq 1 ]]; then
+      echo "  Error: Could not fetch URL."
+    fi
+    return 1
+  fi
+
+  found_feeds=0
+
+  # --- Look for <link> tags in <head> ---
+  if [[ "$verbose_output" -eq 1 ]]; then
+    echo "  Searching <link> tags in <head>..."
+  fi
+  head_links=$(grep -iE '<link[^>]*rel="alternate"[^>]*type="application/(rss|atom)\+xml"[^>]*href="([^"]*)"' <<< "$html_content" | sort -u)
+
+  if [[ "$verbose_output" -eq 1 ]]; then
+    echo "DEBUG: head_links: '$head_links'" # Debug output for head_links
+  fi
+
+  if [[ -n "$head_links" ]]; then
+    processed_head_links=() # Array to track processed head links to avoid loops
+    while IFS= read -r line <<< "$head_links"; do
+      rss_url=$(awk -F'"' '{for (i=1; i<=NF; i++) if ($i ~ /href=/) print $(i+1)}' <<< "$line") # Using awk for href extraction
+      if [[ -n "$rss_url" ]]; then # Check if rss_url is not empty
+        # Handle relative URLs for <link> tags
+        if ! [[ "$rss_url" =~ ^(http|https):// ]]; then
+          base_url=$(echo "$url" | sed 's/\/[^/]*$//') # Remove last part of URL to get base
+          rss_url="$base_url/${rss_url#./}" # Remove leading "./" if present and prepend base URL
+        fi
+
+        # Check if we've already processed this URL to prevent loops
+        already_processed=0
+        for processed_url in "${processed_head_links[@]}"; do
+          if [[ "$processed_url" == "$rss_url" ]]; then
+            already_processed=1
+            break
+          fi
+        done
+        if [[ "$already_processed" -eq 0 ]]; then
+          echo "$rss_url" # Only print the RSS URL, not verbose message
+          found_feeds=$((found_feeds + 1))
+          processed_head_links+=("$rss_url") # Add to processed array
+          if [[ "$verbose_output" -eq 1 ]]; then
+            echo "    (link tag): $rss_url" # Keep verbose message if enabled
+          fi
+        fi
+      fi
+    done
+  fi
+
+  # --- Look for common RSS link patterns in <a> tags within <body> (limited crawl) ---
+  if [[ "$found_feeds" -eq 0 ]]; then
+    if [[ "$verbose_output" -eq 1 ]]; then
+      echo "  No <link> tags found. Searching <a> tags in <body> (limited crawl)..."
+    fi
+    body_content=$(sed -n '/<body[^>]*>/,/<\/body>/p' <<< "$html_content" || echo "")
+
+    body_links=$(grep -iE '<a[^>]*href="([^"]*)"[^>]*>(.*(rss|feed|atom).*)</a' <<< "$body_content" | sort -u)
+
+    if [[ "$verbose_output" -eq 1 ]]; then
+      echo "DEBUG: body_links: '$body_links'" # Debug output for body_links
+    fi
+
+    if [[ -n "$body_links" ]]; then
+      processed_body_links=() # Array to track processed body links to avoid loops
+      while IFS= read -r line <<< "$body_links"; do
+        link_url=$(awk -F'"' '{for (i=1; i<=NF; i++) if ($i ~ /href=/) print $(i+1)}' <<< "$line") # Using awk for href extraction
+        link_text=$(sed -n 's/.*>\(.*\)<.*/\1/p' <<< "$line")
+
+        if [[ -n "$link_url" ]]; then # Check if link_url is not empty
+          # Handle relative URLs for <a> tags
+          if ! [[ "$link_url" =~ ^(http|https):// ]]; then
+            base_url=$(echo "$url" | sed 's/\/[^/]*$//') # Remove last part of URL to get base
+            link_url="$base_url/${link_url#./}" # Remove leading "./" if present and prepend base URL
+          fi
+          full_rss_url="$link_url" # Assign to full_rss_url after potential relative URL resolution
+
+          # Check if it seems like an RSS feed based on URL or text
+          if [[ "$full_rss_url" =~ \.(rss|atom|xml)$ ]] || [[ "$link_text" =~ (rss|feed|atom) ]]; then # Use full_rss_url for check
+            # Check if we've already processed this URL to prevent loops
+            already_processed=0
+            for processed_url in "${processed_body_links[@]}"; do
+              if [[ "$processed_url" == "$full_rss_url" ]]; then # Compare full URL
+                already_processed=1
+                break
+              fi
+            done
+            if [[ "$already_processed" -eq 0 ]]; then
+              echo "$full_rss_url" # Only print the RSS URL, not verbose message
+              found_feeds=$((found_feeds + 1))
+              processed_body_links+=("$full_rss_url") # Add to processed array
+              if [[ "$verbose_output" -eq 1 ]]; then
+                echo "    (body link): $full_rss_url (Text: $link_text)" # Keep verbose message if enabled
+              fi
+            fi
+          fi
+        fi
+      done
+    fi
+  fi
+
+  if [[ "$found_feeds" -eq 0 ]] && [[ "$verbose_output" -eq 1 ]]; then
+    echo "  No RSS feeds found."
+  fi
+  if [[ "$verbose_output" -eq 1 ]]; then
+    echo "" # Add an empty line for separation in verbose mode
+  fi
+}
+
+
+# --- Main Script Logic ---
+
+# Process command line options
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)
+      help_function
+      exit 0
+      ;;
+    --verbose)
+      verbose_output=1
+      shift
+      ;;
+    -*) # Unknown option
+      echo "Error: Unknown option: $1" >&2
+      help_function >&2
+      exit 1
+      ;;
+    *)  # URL argument
+      break # Stop processing options, treat remaining as URLs
+      ;;
+  esac
+done
+
+
+# Check if URLs are provided as arguments
+if [[ "$#" -gt 0 ]]; then
+  # Process URLs from arguments
+  for url in "$@"; do
+    find_rss_feed "$url"
+  done
+else
+  # Read URLs from stdin, one per line
+  if [[ -t 0 ]]; then # Check if stdin is a terminal (no input piped)
+    if [[ "$verbose_output" -eq 1 ]]; then
+      echo "Enter URLs to check for RSS feeds (one per line, press Enter after each, Ctrl+D to finish):"
+    fi
+  fi
+  while IFS= read -r url; do
+    find_rss_feed "$url" &
+  done
+fi
+
+wait -n
+exit 0
