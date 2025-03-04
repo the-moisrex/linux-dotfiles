@@ -859,15 +859,12 @@ def remove_lock_file():
         print(f"Removed LOCK file: {LOCK_FILE}")
 
 
-def daemonize(should_return=False):
+def daemonize():
     """Daemonize the process while keeping the lock file descriptor open."""
     # First fork
     pid = os.fork()
     if pid > 0:
-        if should_return:
-            return True
-        else:
-            sys.exit(0)  # Parent exits
+        return True
 
     # Create new session
     os.setsid()
@@ -948,20 +945,26 @@ def try_acquire_lock():
 
 def check_args():
     # Handle stop-daemon first
-    if '--stop-daemon' in sys.argv:
-        stop_daemon()
-    elif '--daemon' in sys.argv:
-        if try_acquire_lock():
-            main()
+    try:
+        if '--stop-daemon' in sys.argv:
+            stop_daemon()
+        elif '--daemon' in sys.argv:
+            if try_acquire_lock():
+                main()
+            else:
+                print("Already running; to stop it, use --stop-daemon")
         else:
-            print("Already running; to stop it, use --stop-daemon")
-    else:
-        # try running the daemon, and also opening up the GUI
-        if try_acquire_lock():
-            daemonize(True)
-        # Open up the GUI
-        return True
-    return False
+            # try running the daemon, and also opening up the GUI
+            if try_acquire_lock():
+                if not daemonize():
+                    return False
+            # Open up the GUI
+            return True
+        return False
+    except Exception as err:
+        print("Could not start the service:")
+        print(f"  {err}")
+        return False
 
 
 if __name__ == "__main__":
