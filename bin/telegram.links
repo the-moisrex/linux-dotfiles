@@ -1,0 +1,293 @@
+#!/bin/bash
+
+# Script to fetch URLs from Telegram channels, filter and extract them.
+# Manages history of IDs and links.
+# Uses the 'urls' script located in the same directory as this script.
+# Accepts Telegram channel URLs or IDs as input.
+# Prints only links to stdout, errors to stderr.
+
+set -euo pipefail
+
+# --- Configuration ---
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")" # Get the directory where this script is located
+URLS_SCRIPT="${SCRIPT_DIR}/urls" # Path to the 'urls' script, relative to this script's location
+CONFIG_DIR="$HOME/.config/telegram.links"
+IDS_FILE="${CONFIG_DIR}/ids.txt"
+LINKS_DIR="${CONFIG_DIR}/links" # Changed LINKS_DIR to be inside CONFIG_DIR
+MAX_HISTORY_PAGES_DEFAULT=2 # Default number of history pages to fetch
+MAX_HISTORY_PAGES="$MAX_HISTORY_PAGES_DEFAULT"
+
+# --- Functions ---
+
+usage() {
+  cat <<EOF
+Usage: $0 [OPTIONS] <telegram_channel_name_or_url> [<telegram_channel_name_or_url> ...]
+
+Fetches URLs from Telegram channels, extracts and filters them.
+Manages history of Telegram IDs and stores links.
+Accepts Telegram channel names (IDs) or full Telegram URLs as input.
+Prints only extracted links to standard output, errors to standard error.
+
+OPTIONS:
+  -h, --help                  Show this help message and exit.
+  --history <telegram-id>     Show history of links for a specific Telegram ID.
+  --all                       Show history of links for all Telegram IDs.
+  --clear-ids                 Clear the list of stored Telegram IDs.
+  --clear-links               Clear all stored Telegram links history.
+  --clear-all                 Clear both Telegram IDs and links history.
+  --list-ids                  List the stored Telegram IDs.
+  --max-history, -n <pages>   Maximum number of history pages to fetch (default: $MAX_HISTORY_PAGES_DEFAULT).
+
+EXAMPLES:
+  $0 telegram_channel_name
+  $0 https://t.me/telegram_channel_name
+  $0 https://t.me/s/telegram_channel_name
+  $0 channel1 channel2 channel3
+  $0 --history telegram_channel_name
+  $0 --all
+  $0 --clear-ids
+  $0 --clear-links
+  $0 --clear-all
+  $0 --list-ids
+  $0 --max-history 5 telegram_channel_name
+
+Requires:
+  - curl
+  - grep
+  - sort
+  - mkdir
+  - A script named 'urls' in the same directory as this script that extracts URLs from HTML.
+EOF
+  exit 1
+}
+
+extract_channel_id() {
+  local input="$1"
+  if [[ "$input" =~ ^https?://t\.me/(s/)?([a-zA-Z0-9_]+)$ ]]; then
+    printf "%s\n" "${BASH_REMATCH[2]}" # Corrected index to 2
+  else
+    printf "%s\n" "$input" # Assume it's already a channel ID if not a URL
+  fi
+}
+
+
+process_channel() {
+  local channel_input="$1"
+  local channel_name="$(extract_channel_id "$channel_input")"
+  local links_file="${LINKS_DIR}/telegram-${channel_name}.txt"
+  local before=""
+  local output="" # Initialize output to empty string
+  local page_count=0
+  local content;
+  local page_output;
+
+  # Ensure directories exist
+  mkdir -p "$CONFIG_DIR" "$LINKS_DIR" # Ensure both CONFIG_DIR and LINKS_DIR (now inside CONFIG_DIR) are created
+
+  while true; do
+    if [[ "$page_count" -ge "$MAX_HISTORY_PAGES" ]]; then # Check page limit
+      break
+    fi
+    local current_url="https://t.me/s/${channel_name}${before}"
+    content=$(curl -sL "$current_url" 2>/dev/null)
+    page_output=$(echo "$content" |  "$URLS_SCRIPT" | grep -v t.me | grep -v telegram | grep -v w3.org | sort -u)
+
+    if [[ -z "$page_output" ]]; then # No more links on this page, break the loop
+      break
+    fi
+    output+="$page_output"
+    page_count=$((page_count + 1))
+
+    before=$(echo "$content" | grep -oP 'href="([^"]*?before=([0-9]+))' | grep -oP 'before=([0-9]+)' | cut -d'=' -f2 | head -n 1) # Extract before value more reliably
+    if [[ -z "$before" ]]; then # No 'before' parameter in prev_link, break loop
+      break
+    fi
+    before="?before=${before}"
+  done
+
+  if [[ -n "$output" ]]; then
+    printf "%s\n" "$output" # Print URLs to stdout with a newline after each URL
+
+    # Ensure unique links are stored. Read existing, append, sort -u, write back
+    local existing_links=""
+    if [ -f "$links_file" ]; then
+      existing_links=$(cat "$links_file")
+    fi
+    combined_links="$existing_links"$'\n'"$output" # Append new output to existing, with newline separator
+    unique_links=$(printf "%s\n" "$combined_links" | sort -u) # Sort and get unique
+    printf "%s" "$unique_links" > "$links_file" # Save unique links to file
+  fi
+
+  # Store telegram ID on success - append and make unique
+  echo "$channel_name" >> "$IDS_FILE"
+  sort -u "$IDS_FILE" -o "$IDS_FILE" # Sort and overwrite to ensure unique IDs
+}
+
+show_history() {
+  local channel_input="$1"
+  local channel_name="$(extract_channel_id "$channel_input")"
+  local links_file="${LINKS_DIR}/telegram-${channel_name}.txt" # LINKS_DIR is used here
+
+  if [ ! -f "$links_file" ]; then
+    echo "Error: No history found for Telegram ID: $channel_name (input: $channel_input)" >&2
+    return 1
+  fi
+
+  cat "$links_file"
+}
+
+show_all_history() {
+  if [ ! -f "$IDS_FILE" ]; then
+    echo "No Telegram IDs stored yet." >&2
+    return 0
+  fi
+
+  while IFS= read -r telegram_id < "$IDS_FILE"; do
+    show_history "$telegram_id"
+  done < "$IDS_FILE"
+}
+
+clear_ids() {
+  if [ -f "$IDS_FILE" ]; then
+    echo "Clearing stored Telegram IDs..." >&2
+    > "$IDS_FILE" # Truncate the file
+    echo "Telegram IDs cleared." >&2
+  else
+    echo "No Telegram IDs file found to clear." >&2
+  fi
+}
+
+clear_links() {
+  if [ -d "$LINKS_DIR" ]; then # LINKS_DIR is used here
+    echo "Clearing stored Telegram links history..." >&2
+    find "$LINKS_DIR" -type f -name "telegram-*.txt" -delete
+    echo "Telegram links history cleared." >&2
+  else
+    echo "No Telegram links history directory found to clear." >&2
+  fi
+}
+
+clear_all() {
+  clear_ids
+  clear_links
+}
+
+list_ids() {
+  if [ -f "$IDS_FILE" ]; then
+    cat "$IDS_FILE" # Print only IDs to stdout
+  else
+    echo "No Telegram IDs stored yet." >&2
+  fi
+}
+
+
+# --- Main Script Logic ---
+
+# Handle command line arguments
+if [[ "$#" -eq 0 ]]; then
+  echo "Error: No arguments provided." >&2
+  usage
+fi
+
+channel_inputs=() # Changed variable name to reflect accepting URLs or IDs
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      ;;
+    --history)
+      if [[ -z "$2" ]]; then # Check if $2 is empty (no telegram-id provided)
+        echo "Error: --history option requires a Telegram ID or URL." >&2
+        usage
+      else
+        show_history "$2"
+        shift 2 # Consume --history and the telegram-id/url
+      fi
+      ;;
+    --all)
+      show_all_history
+      exit 0 # Exit after showing all history
+      ;;
+    --clear-ids)
+      clear_ids
+      exit 0
+      ;;
+    --clear-links)
+      clear_links
+      exit 0
+      ;;
+    --clear-all)
+      clear_all
+      exit 0
+      ;;
+    --list-ids)
+      list_ids
+      exit 0
+      ;;
+    --max-history|-n)
+      if [[ -z "$2" || ! "$2" =~ ^[0-9]+$ ]]; then
+        echo "Error: --max-history option requires a positive integer argument." >&2
+        usage
+      else
+        MAX_HISTORY_PAGES="$2"
+        shift 2 # Consume --max-history and the pages value
+      fi
+      ;;
+    -*) # Unknown option
+      echo "Error: Unknown option: $1" >&2
+      usage
+      ;;
+    *) # Assume it's a channel name or URL
+      channel_inputs+=("$1") # Store the input (URL or ID)
+      shift
+      ;;
+  esac
+done
+
+# Check if 'urls' script exists and is executable
+if ! [ -x "$URLS_SCRIPT" ]; then
+  echo "Error: '$URLS_SCRIPT' script not found or not executable at '$URLS_SCRIPT'." >&2
+  exit 1
+fi
+
+if [[ ${#channel_inputs[@]} -gt 0 ]]; then
+  # Process channels in parallel only if channel names are provided
+  declare -a channel_pids
+  for channel_input in "${channel_inputs[@]}"; do
+    process_channel "$channel_input" &
+    channel_pids+=("$!") # Store the process ID of the background job
+  done
+
+  # Wait for all background jobs to finish
+  wait "${channel_pids[@]}"
+fi
+
+exit 0
+
+# --- Fish Shell Completions ---
+# To use these completions, copy and paste the following commands into your Fish shell:
+###
+# Completion for options (help, history, etc.)
+# complete -c telegram.links -f -s h -l help -d "Show help message and exit"
+# complete -c telegram.links -f -l history -r -x -a "(__fish_complete_telegram_ids)" -d "Show history of links for a specific Telegram ID"
+# complete -c telegram.links -f -l all -d "Show history of links for all Telegram IDs"
+# complete -c telegram.links -f -l clear-ids -d "Clear the list of stored Telegram IDs"
+# complete -c telegram.links -f -l clear-links -d "Clear all stored Telegram links history"
+# complete -c telegram.links -f -l clear-all -d "Clear both Telegram IDs and links history"
+# complete -c telegram.links -f -l list-ids -d "List the stored Telegram IDs"
+# complete -c telegram.links -f -l max-history -r -x -d "Maximum number of history pages to fetch"
+
+# Completion for main arguments (Telegram IDs/URLs) - No condition for now, applies always when no option is given.
+# complete -c telegram.links -f -a "(telegram.links --list-ids)" -d "Telegram Channel ID"
+
+# To enable Telegram ID completion for --history and main arguments,
+# you need to add the following Fish function to your Fish config
+# (e.g., ~/.config/fish/functions/__fish_complete_telegram_ids.fish):
+
+# function __fish_complete_telegram_ids
+#     cat ~/.config/telegram.links/ids.txt
+# end
+
+# Then, reload your Fish configuration (e.g., `source ~/.config/fish/config.fish` or restart Fish).
+###

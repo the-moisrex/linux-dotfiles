@@ -38,3 +38,22 @@ end
 complete -x -c cdi -d "Subdirs" -a '(get_git_dirs)'
 complete -x -c cdproj -d "Project Dirs" -a '(get_dirs_of $projects_root)'
 complete -x -c proj   -d "Project Dirs" -a '(get_dirs_of $projects_root)'
+
+
+
+# telegram.links
+function __fish_complete_telegram_ids
+    cat ~/.config/telegram.links/ids.txt
+end
+complete -c telegram.links -f -s h -l help -d "Show help message and exit"
+complete -c telegram.links -f -l history -r -x -a "(__fish_complete_telegram_ids)" -d "Show history of links for a specific Telegram ID"
+complete -c telegram.links -f -l all -d "Show history of links for all Telegram IDs"
+complete -c telegram.links -f -l clear-ids -d "Clear the list of stored Telegram IDs"
+complete -c telegram.links -f -l clear-links -d "Clear all stored Telegram links history"
+complete -c telegram.links -f -l clear-all -d "Clear both Telegram IDs and links history"
+complete -c telegram.links -f -l list-ids -d "List the stored Telegram IDs"
+
+# Completion for main arguments (Telegram IDs/URLs) - No condition for now, applies always when no option is given.
+complete -c telegram.links -f -a "(telegram.links --list-ids)" -d "Telegram Channel ID"
+
+
