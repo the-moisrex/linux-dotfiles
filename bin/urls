@@ -1,32 +1,31 @@
 #!/bin/bash
 
-# Regular expression to find URLs - Restoring forward slash matching, simpler regex structure
-url_regex='https?://([wW]{3}\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=%]*)'
-
-filter_keyword=""
-
+# Help function to display usage information
 print_help() {
   echo "Usage: $0 [OPTIONS]"
-  echo "Finds and prints links from stdin, one link per line."
+  echo "Finds and prints URLs from stdin, including those in HTML <a> tags."
   echo ""
   echo "Options:"
-  echo "  -f, --filter KEYWORD     Filter links to include only those containing the KEYWORD."
-  echo "      --help               Show this help message and exit."
+  echo "  --base-url BASE_URL      Specify the base URL for resolving relative links."
+  echo "  --help                   Show this help message and exit."
   echo ""
-  echo "Example:"
-  echo "  echo 'Text with https://www.example.com and http://test.org/path' | $0"
-  echo "  echo 'Text with links' | $0 --filter example"
+  echo "Examples:"
+  echo "  echo '<a href=\"/path\">link</a>' | $0 --base-url http://example.com"
+  echo "  echo 'Text with https://www.example.com' | $0"
 }
 
-# Parse command line options
+# Initialize variables
+base_url=""
+
+# Parse command-line options
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -f|--filter)
+    --base-url)
       if [[ "$2" ]]; then
-        filter_keyword="$2"
+        base_url="$2"
         shift 2
       else
-        echo "Error: --filter option requires a keyword." >&2
+        echo "Error: --base-url option requires a URL." >&2
         print_help
         exit 1
       fi
@@ -46,20 +45,37 @@ done
 # Read input from stdin
 input_text=$(cat)
 
-# Find links using grep
-found_links=$(grep -oE "$url_regex" <<< "$input_text")
+# Regular expression for standalone URLs
+url_regex='https?://([wW]{3}\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=%]*)'
 
-# Filter links if a keyword is provided
-if [[ -n "$filter_keyword" ]]; then
-  filtered_links=$(grep "$filter_keyword" <<< "$found_links")
-  links_to_print="$filtered_links"
+# Extract href attributes from <a> tags
+# Matches <a ... href="..." ...> or <a ... href='...' ...>
+hrefs=$(grep -o '<a[^>]*href="[^"]*"\|<a[^>]*href='\''[^'\'']*'\''' <<< "$input_text" | \
+        sed -e 's/.*href="\([^"]*\)".*/\1/' -e "s/.*href='\([^']*\)'.*/\1/")
+
+# Extract standalone URLs from the input
+standalone_urls=$(grep -oE "$url_regex" <<< "$input_text")
+
+# Array to store all URLs
+declare -a all_urls
+
+# Process hrefs: resolve relative URLs if base_url is provided
+if [[ -n "$base_url" ]]; then
+  while IFS= read -r href; do
+    # Use Python's urljoin to resolve relative URLs
+    resolved=$(python3 -c "from urllib.parse import urljoin; import sys; print(urljoin(sys.argv[1], sys.argv[2]))" "$base_url" "$href")
+    all_urls+=("$resolved")
+  done <<< "$hrefs"
 else
-  links_to_print="$found_links"
+  # If no base_url, add hrefs as is
+  mapfile -t all_urls <<< "$hrefs"
 fi
 
-# Print the links, one per line
-if [[ -n "$links_to_print" ]]; then
-  while IFS= read -r link; do
-    echo "$link"
-  done <<< "$links_to_print"
-fi
+# Add standalone URLs to the array
+mapfile -t standalone_array <<< "$standalone_urls"
+all_urls=("${all_urls[@]}" "${standalone_array[@]}")
+
+# Print all URLs, one per line
+for url in "${all_urls[@]}"; do
+  echo "$url"
+done
