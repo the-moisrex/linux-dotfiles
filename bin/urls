@@ -2,16 +2,20 @@
 
 # Help function to display usage information
 print_help() {
-  echo "Usage: $0 [OPTIONS]"
+  echo "Usage: $0 [OPTIONS] [BASE_URL]"
   echo "Finds and prints URLs from stdin, including those in HTML <a> tags."
   echo ""
   echo "Options:"
   echo "  --base-url BASE_URL      Specify the base URL for resolving relative links."
   echo "  --help                   Show this help message and exit."
   echo ""
+  echo "If BASE_URL is provided as a positional argument, it will be used as the base URL."
+  echo "If not provided, the script will attempt to extract the base URL from the HTML."
+  echo ""
   echo "Examples:"
-  echo "  echo '<a href=\"/path\">link</a>' | $0 --base-url http://example.com"
-  echo "  echo 'Text with https://www.example.com' | $0"
+  echo "  curl -sL http://example.com | $0 http://example.com"
+  echo "  curl -sL x.com | $0 x.com"
+  echo "  echo '<a href=\"/path\">link</a>' | $0 --base-url x.com"
 }
 
 # Initialize variables
@@ -35,9 +39,14 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Error: Unknown option: $1" >&2
-      print_help
-      exit 1
+      # Treat as positional base URL if not already set
+      if [[ -n "$base_url" ]]; then
+        echo "Error: Cannot specify both --base-url and positional base URL." >&2
+        print_help
+        exit 1
+      fi
+      base_url="$1"
+      shift
       ;;
   esac
 done
@@ -45,11 +54,55 @@ done
 # Read input from stdin
 input_text=$(cat)
 
+# Function to extract base URL from HTML
+extract_base_url_from_html() {
+  local text="$1"
+  # First, check for <base> tag
+  base_tag=$(grep -o '<base[^>]*href="[^"]*"\|<base[^>]*href='\''[^'\'']*'\''' <<< "$text" | \
+             sed -e 's/.*href="\([^"]*\)".*/\1/' -e "s/.*href='\([^']*\)'.*/\1/" | head -n1)
+  if [[ -n "$base_tag" ]]; then
+    echo "$base_tag"
+    return
+  fi
+
+  # Check if relative URLs exist
+  if grep -q 'href="/\|href='\''/' <<< "$text"; then
+    # Look for "home" links with absolute URLs
+    home_url=$(grep -o '<a[^>]*href="https\?://[^"]*"[^>]*>[[:space:]]*Home[[:space:]]*<\/a>' <<< "$text" | \
+               sed 's/.*href="\([^"]*\)".*/\1/' | head -n1)
+    if [[ -n "$home_url" ]]; then
+      # Extract scheme and host
+      echo "$home_url" | sed 's|\(https\?://[^/]*\)/.*|\1|'
+    fi
+  fi
+}
+
+# If base_url is not provided, try to extract it from HTML
+if [[ -z "$base_url" ]]; then
+  base_url=$(extract_base_url_from_html "$input_text")
+fi
+
+# If base_url is still empty and relative URLs exist, warn the user
+if [[ -z "$base_url" && $(grep -q 'href="/\|href='\''/' <<< "$input_text"; echo $?) -eq 0 ]]; then
+  echo "Warning: Relative URLs found but no base URL provided or extracted." >&2
+fi
+
+# Preprocess base_url if provided
+if [[ -n "$base_url" ]]; then
+  # Prepend http:// if no scheme is present
+  if [[ ! "$base_url" =~ ^https?:// ]]; then
+    base_url="http://$base_url"
+  fi
+  # Ensure base_url ends with /
+  if [[ ! "$base_url" =~ /$ ]]; then
+    base_url="$base_url/"
+  fi
+fi
+
 # Regular expression for standalone URLs
 url_regex='https?://([wW]{3}\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=%]*)'
 
 # Extract href attributes from <a> tags
-# Matches <a ... href="..." ...> or <a ... href='...' ...>
 hrefs=$(grep -o '<a[^>]*href="[^"]*"\|<a[^>]*href='\''[^'\'']*'\''' <<< "$input_text" | \
         sed -e 's/.*href="\([^"]*\)".*/\1/' -e "s/.*href='\([^']*\)'.*/\1/")
 
@@ -62,8 +115,15 @@ declare -a all_urls
 # Process hrefs: resolve relative URLs if base_url is provided
 if [[ -n "$base_url" ]]; then
   while IFS= read -r href; do
-    # Use Python's urljoin to resolve relative URLs
-    resolved=$(python3 -c "from urllib.parse import urljoin; import sys; print(urljoin(sys.argv[1], sys.argv[2]))" "$base_url" "$href")
+    if [[ "$href" =~ ^/ ]]; then
+      # Absolute path, append to base_url
+      resolved="${base_url}${href#/}"
+    elif [[ "$href" =~ ^https?:// ]]; then
+      resolved="$href"
+    else
+      # Relative path, append to base_url
+      resolved="${base_url}${href}"
+    fi
     all_urls+=("$resolved")
   done <<< "$hrefs"
 else
