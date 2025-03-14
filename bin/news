@@ -21,7 +21,7 @@ GLOBAL_EXCLUDE_PATTERNS=(
     "google\\.com" "googletagmanager\\.com" "aparat\\.com"
     "rubika\\.ir" "splus\\.ir" "tamasha\\.com" "tapsi\\.ir"
     "javascript:void\\(0\\)" "gap\\.im" "w3\\.org" "ogp\\.me" "schema\\.org"
-    "ble\\.ir" "x\\.com"
+    "ble\\.ir" "x\\.com" "data:image"
 )
 
 # Combine global exclude patterns into a single regex
@@ -136,6 +136,29 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep "articles"'
+        )
+        ;;
+    msnbc|msnbc.com)
+        WEBSITE="msnbc.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep "msnbc.com/"'
+            'grep -vE "archive|author|subscribe|#|/live|search|transcripts|schedule|accounts"'
+            "grep -vE 'https?://www\.msnbc\.com/[^/]+(/[^/]+)?$'"
+        )
+        ;;
+    cnn|cnn.com)
+        WEBSITE="cnn.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep "cnn.com/"'
+            "grep -E 'cnn\\.com/[[:digit:]]{4}/[[:digit:]]{2}/[[:digit:]]{2}'"
         )
         ;;
     *)
