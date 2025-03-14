@@ -46,6 +46,7 @@ EXCLUDE_PATTERNS=(
   'hide\?id='               # Exclude "hide?id=" links
   '^$'                      # Exclude empty lines
   '^/'                      # Exclude relative URLs starting with "/" (like /show, /submit)
+  'HackerNews'              # Exclude github's API URL
 )
 
 
