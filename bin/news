@@ -1,0 +1,169 @@
+#!/bin/bash
+
+# Determine the directory of the script and set the path to the 'urls' command
+SCRIPT_DIR=$(dirname "$0")
+URLS_CMD="$SCRIPT_DIR/urls"
+
+# Default curl options with a user-agent to mimic a browser
+CURL_OPTIONS="-sL -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
+
+# Global exclude patterns for common file types and social media links
+GLOBAL_EXCLUDE_PATTERNS=(
+    "\\.jpg" "\\.png" "\\.gif" "\\.bmp" "\\.tiff" "\\.webp"
+    "\\.pdf" "\\.zip" "\\.tar" "\\.gz" "\\.rar" "\\.7z"
+    "\\.exe" "\\.dll" "\\.mp3" "\\.mp4" "\\.avi" "\\.mkv"
+    "\\.mov" "\\.wmv" "\\.flv" "\\.swf" "\\.css" "\\.js"
+    "\\.xml" "\\.json" "\\.txt" "\\.log" "\\.ico" "\\.svg"
+    "\\.woff" "\\.woff2" "\\.ttf" "\\.otf" "\\.eot"
+    "t\\.me" "facebook\\.com" "twitter\\.com" "instagram\\.com"
+    "linkedin\\.com" "pinterest\\.com" "reddit\\.com" "youtube\\.com"
+    "twitch\\.tv" "tiktok\\.com"
+    "google\\.com" "googletagmanager\\.com" "aparat\\.com"
+    "rubika\\.ir" "splus\\.ir" "tamasha\\.com" "tapsi\\.ir"
+    "javascript:void\\(0\\)" "gap\\.im" "w3\\.org" "ogp\\.me" "schema\\.org"
+    "ble\\.ir" "x\\.com"
+)
+
+# Combine global exclude patterns into a single regex
+EXCLUDE_REGEX=$(IFS='|'; echo "${GLOBAL_EXCLUDE_PATTERNS[*]}")
+
+# Function to display help information
+show_help() {
+    echo "Usage: $0 [options] <website>"
+    echo
+    echo "Options:"
+    echo "  --help       Display this help message"
+    echo "  --verbose    Enable verbose output"
+    echo
+    echo "Examples:"
+    echo "  $0 rt.com       # Fetch news URLs from rt.com"
+    echo "  $0 --verbose rt  # Fetch news URLs from rt.com with verbose output"
+}
+
+# Parse command-line arguments
+VERBOSE=false
+WEBSITE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help)
+            show_help
+            exit 0
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        *)
+            if [ -z "$WEBSITE" ]; then
+                WEBSITE=$1
+            else
+                echo "Error: Multiple websites specified."
+                show_help
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if a website was provided
+if [ -z "$WEBSITE" ]; then
+    echo "Error: No website specified."
+    show_help
+    exit 1
+fi
+
+BASE_URL="https://$WEBSITE"
+# Configure website-specific settings
+case $WEBSITE in
+    rt.com|rt)
+        WEBSITE="rt.com"
+        BASE_URL="https://rt.com"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/news"
+        )
+        FILTERS=(
+            "grep -E \"/news/[[:digit:]]+\""
+        )
+        ;;
+    sputnik|sputnikglobe.com|sput|sputnic)
+        WEBSITE="sputnikglobe.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/world/"
+        )
+        FILTERS=(
+            "grep -E \"/[[:digit:]]+\""
+            'grep -vE "privacy-policy"'
+            'grep -vE "yandex.ru"'
+        )
+        ;;
+    spnfa|spnfa.ir|sput-fa|sputnic-fa|sputnik-fa|sputnikfa|spntfa|spfa|spnt-fa)
+        WEBSITE="spnfa.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/world/"
+            "curl $CURL_OPTIONS $BASE_URL/iran/"
+            "curl $CURL_OPTIONS $BASE_URL/opinion/"
+            "curl $CURL_OPTIONS $BASE_URL/politics/"
+            "curl $CURL_OPTIONS $BASE_URL/russia/"
+            "curl $CURL_OPTIONS $BASE_URL/us/"
+            "curl $CURL_OPTIONS $BASE_URL/keyword_sputnik_iran_exclusive/"
+        )
+        FILTERS=(
+            "grep -E \"/[[:digit:]]+\""
+            'grep -vE "yandex.ru"'
+        )
+        ;;
+    iranintl|intl|iranintl.com)
+        WEBSITE="iranintl.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            "grep -E \"/[[:digit:]]+\""
+        )
+        ;;
+    bbc-farsi|bbcfarsi|bbcpersian|bbc-persian)
+        WEBSITE="bbc.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL/persian"
+        )
+        FILTERS=(
+            'grep "articles"'
+        )
+        ;;
+    *)
+        CURL_COMMANDS=("curl $CURL_OPTIONS $BASE_URL")
+        FILTERS=()
+        if $VERBOSE; then
+            echo "Website '$WEBSITE' not specifically configured. Using default settings."
+        fi
+        ;;
+esac
+
+# Build the pipeline
+PIPELINE="( "
+for cmd in "${CURL_COMMANDS[@]}"; do
+    PIPELINE+="$cmd; "
+done
+PIPELINE+=" ) | $URLS_CMD $BASE_URL | sort -u"
+for filter in "${FILTERS[@]}"; do
+    PIPELINE+=" | $filter"
+done
+PIPELINE+=" | grep -vE \"${EXCLUDE_REGEX}\""
+# PIPELINE+=" | grep -v \"${BASE_URL}\""
+PIPELINE+=" | grep -v \"://cdn.${WEBSITE}\""
+
+# Display the pipeline if verbose mode is enabled
+if $VERBOSE; then
+    echo "Executing: $PIPELINE"
+fi
+
+# Execute the pipeline
+eval "$PIPELINE"
