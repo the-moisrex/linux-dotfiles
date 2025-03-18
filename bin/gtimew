@@ -1,5 +1,10 @@
 #!/usr/bin/bash
 
+if ! command -v timew >/dev/null; then
+    echo "timew is not installed.";
+    exit 1;
+fi
+
 TIMEWARRIORDB=".timewarrior";
 
 until [ "$(realpath "$TIMEWARRIORDB")" = "/" -o -d "$TIMEWARRIORDB" ]; do
