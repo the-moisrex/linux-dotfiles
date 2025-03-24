@@ -86,6 +86,17 @@ function install {
 }
 
 
+function install_dir {
+    src="$1"
+    target="$2";
+    for file in "$src"/*; do
+        filename=$(basename "$file")
+        install "$src/$filename" "$target/$filename"
+    done
+}
+
+
+
 # chromium config files
 function chromium {
     if command -v chromium &>/dev/null; then
@@ -214,6 +225,12 @@ function setup_gdb {
     install "$src" "$target"
 }
 
+function setup_kservices {
+    src="$dir/configs/kservices5"
+    target="$HOME/.local/share/kservices5"
+    install_dir "$src" "$target";
+}
+
 function setup_nautilus_actions {
     nautilus_actions_dir="$HOME/.local/share/nautilus/scripts"
     install "$dir/nautilus/ffmpeg-to-mp3" "$nautilus_actions_dir/Convert To MP3 (ffmpeg)"
@@ -228,13 +245,13 @@ function install_jcal {
         echo "Temp Directory: $dir"
         working_dir=$PWD
         git clone --depth 1 $repo "$dir/jcal";
-        builtin cd "$dir/jcal/sources"
+        builtin cd "$dir/jcal/sources" || return;
         ./autogen.sh
         ./configure
         make -j
         sudo make install
         rm -rf "$dir";
-        builtin cd "$working_dir";
+        builtin cd "$working_dir" || return;
     fi
 }
 
@@ -258,6 +275,7 @@ for i in "$@"; do
             log "install.sh chromium"
             log "install.sh nautilus"
             log "install.sh codeshell"
+            log "install.sh kservices"
             log "install.sh --all"
             log "install.sh uninstall fish"
             log "install.sh uninstall all"
@@ -319,6 +337,11 @@ for i in "$@"; do
             shift;
             ;;
 
+        kservices|dolphin)
+            setup_kservices;
+            shift;
+            ;;
+
         uninstall|--uninstall|remove|rm|--remove|--rm)
             should_uninstall=true
             shift;
@@ -334,6 +357,7 @@ for i in "$@"; do
             firefox-policies;
             setup_fish;
             setup_gdb;
+            setup_kservices;
             exit;
             ;;
 
