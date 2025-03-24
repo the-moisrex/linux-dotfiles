@@ -2,12 +2,25 @@
 Type=Service
 Name=Set as Done
 ServiceTypes=KonqPopupMenu/Plugin
-MimeType=all/all
+# MimeType=all/all
+MimeType=video/*
 Actions=setAsDone
+X-KDE-Priority=TopLevel
+# X-KDE-Shortcut=Ctrl+Alt+D
 
 [Desktop Action setAsDone]
 Name=Set as Done
-Exec=bash -c 'mv "%f" "$(dirname "%f")/[done] $(basename "%f")"; kfilemetadata_addtag "%f" Done'
 Icon=document-edit
-X-KDE-Shortcut=Ctrl+Alt+D
+# Exec=bash -c 'mv "%f" "$(dirname "%f")/[done] $(basename "%f")"; kfilemetadata_addtag "%f" Done'
+# Exec=bash -c 'if [[ "$(basename "%f")" == "[done]"* ]]; then mv "%f" "$(dirname "%f")/${basename "%f"}"'
+# Exec=bash -c 'file="%%f"; \
+#   if [[ "$(basename "$file")" == "[done] "* ]]; then \
+#     newname="$(dirname "$file")/$(basename "$file" | sed "s/^\[done\] //")"; \
+#     mv "$file" "$newname"; \
+#     kfilemetadata_removetag "$newname" Done; \
+#   else \
+#     mv "$file" "$(dirname "$file")/[done] $(basename "$file")"; \
+#     kfilemetadata_addtag "$(dirname "$file")/[done] $(basename "$file")" Done; \
+#   fi'
+Exec=bash -c "~/cmd/bin/done %f"
 
