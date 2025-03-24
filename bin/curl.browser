@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if ! command -v chromium >/dev/null; then
+    echo "Chromium not found";
+    exit 1;
+fi
+
+chromium --headless --disable-gpu --window-size=1920,1000 --dump-dom "$@" 2>/dev/null
