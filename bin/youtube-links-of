@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# Help function
+usage() {
+    cat <<EOF
+Extract YouTube video IDs from filenames downloaded with yt-dlp and output their URLs.
+
+Usage: $0 [OPTIONS] [PATH...]
+
+Options:
+  -h, --help          Show this help message
+  -r, -R, --recursive Process directories recursively
+
+Examples:
+  $0 video.mp4                  # Process single file
+  $0 ~/Downloads                # Process directory non-recursively
+  $0 -r ./videos /mnt/media     # Process directories recursively
+EOF
+}
+
+# Initialize variables
+recursive=0
+paths=()
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        -r|-R|--recursive) recursive=1; shift ;;
+        --) shift; paths+=("$@"); break ;;
+        -*) echo "Invalid option: $1" >&2; exit 1 ;;
+        *) paths+=("$1"); shift ;;
+    esac
+done
+
+# Validate input paths
+if [[ ${#paths[@]} -eq 0 ]]; then
+    echo "Error: No paths specified" >&2
+    usage >&2
+    exit 1
+fi
+
+# Process files
+find_paths() {
+    local path="$1"
+    if (( recursive )); then
+        find "$path" -type f
+    else
+        find "$path" -maxdepth 1 -type f
+    fi
+}
+
+for path in "${paths[@]}"; do
+    if [[ -d "$path" ]]; then
+        find_paths "$path"
+    elif [[ -f "$path" ]]; then
+        echo "$path"
+    else
+        echo "Error: '$path' not found" >&2
+    fi
+done | while read -r file; do
+    filename=$(basename "$file")
+    [[ $filename =~ \[([A-Za-z0-9_-]{11})\] ]] || continue
+    echo "https://youtu.be/${BASH_REMATCH[1]}"
+done
+
