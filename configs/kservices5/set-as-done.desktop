@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Service
+Name=Set as Done
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=all/all
+Actions=setAsDone
+
+[Desktop Action setAsDone]
+Name=Set as Done
+Exec=bash -c 'mv "%f" "$(dirname "%f")/[done] $(basename "%f")"; kfilemetadata_addtag "%f" Done'
+Icon=document-edit
+X-KDE-Shortcut=Ctrl+Alt+D
+
