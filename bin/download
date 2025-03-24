@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of allowed websites for yt-dlp
-ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com" "t.me" "x.com" "twitter.com" "aparat.com" "telewebion.com")
+ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com" "t.me" "x.com" "twitter.com" "aparat.com" "telewebion.com" "odysee.com")
 
 default_list="$HOME/.config/download/default-list.txt"
 done_file="$HOME/.config/download/done.txt"
