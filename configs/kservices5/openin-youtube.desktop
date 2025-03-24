@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Service
+# MimeType=application/octet-stream;inode/directory;
+MimeType=video/*
+Actions=ExtractYoutubeLinks
+ServiceTypes=KonqPopupMenu/Plugin
+
+[Desktop Action ExtractYoutubeLinks]
+Name=Open in YouTube
+Icon=im-youtube
+Exec=youtube-links-of -r %F | openin
+

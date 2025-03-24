@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Check if a file is provided
+if [ -z "$1" ]; then
+    echo "Usage: done <file>"
+    exit 1
+fi
+
+file="$1"
+dir="$(dirname "$file")"
+filename="$(basename "$file")"
+
+# Check if the file starts with "[done] "
+if [[ "$filename" =~ ^\[done\] ]]; then
+    # Remove "[done] " prefix and remove "Done" tag (extended attribute)
+    newname="$dir/${filename#\[done\] }"
+    mv "$file" "$newname"
+    setfattr -x user.done "$newname" 2>/dev/null  # Remove extended attribute
+else
+    # Add "[done] " prefix and add "Done" tag (extended attribute)
+    newname="$dir/[done] $filename"
+    mv "$file" "$newname"
+    setfattr -n user.done -v 1 "$newname"  # Add extended attribute
+fi
+
