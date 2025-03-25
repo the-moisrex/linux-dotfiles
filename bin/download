@@ -1,7 +1,13 @@
 #!/bin/bash
 
 # List of allowed websites for yt-dlp
-ALLOWED_WEBSITES=("youtube.com" "youtu.be" "vimeo.com" "rumble.com" "t.me" "x.com" "twitter.com" "aparat.com" "telewebion.com" "odysee.com")
+ALLOWED_WEBSITES=(
+    "youtube.com" "youtu.be"
+    "vimeo.com" "rumble.com"
+    "t.me" "x.com" "twitter.com"
+    "aparat.com" "telewebion.com"
+    "odysee.com"
+)
 
 default_list="$HOME/.config/download/default-list.txt"
 done_file="$HOME/.config/download/done.txt"
@@ -13,9 +19,14 @@ if ! command -v yt-dlp >/dev/null; then
     exit;
 fi
 
+if ! command -v wget >/dev/null; then
+    echo "wget is not installed."
+    exit;
+fi
+
 # Function to display usage
 usage() {
-    echo "Usage: $0 <input_file1> [<input_file2> ...] [--360] [--480] [--720] [--1080]"
+    echo "Usage: $0 [options] <input_file1> [<input_file2> ...] "
     echo "Options:"
     echo "  <input_file>       Input file(s) containing YouTube links"
     echo "  [--240]            Download 240p resolution"
@@ -34,6 +45,11 @@ usage() {
     echo "  [--add]            Add to default download list"
     echo "  [--list-pendings]  List pendings"
     echo "  [--clear]          Clear download list"
+    echo
+    echo "  [--force-wget]     Forces the use of wget"
+    echo "  [--force-ytdlp]    Forces the use of yt-dlp"
+    echo
+    echo "There are also shortcuts for each of those arguments, like --force-ytdlp can simply be ytdlp."
     # echo "  [additional arguments]     Additional arguments to pass to yt-dlp"
     exit 1
 }
@@ -219,6 +235,7 @@ function download {
 
 function fix_link {
     link="$1";
+    # this is not needed anymore since yt-dlp now does whatever it does, but it's been fixed.
     # if [[ "$link" =~ .*?rumble.com.*?\.html ]]; then
     #     link_rp=$(curl -sL "$link" \
     #         -H 'accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8' \
@@ -250,6 +267,9 @@ downloader="auto"
 action="download";
 for file in "$@"; do
     case "$file" in
+        --help|help)
+            usage;
+            ;;
         --force-ytdlp|--force-yt-dlp|yt|ytdlp|yt-dlp|youtube|-force-yt-dlp|-force-ytdlp|force-ytdlp|force-yt-dlp|video|vid|movie|mov)
             downloader="ytdlp";
             ;;
