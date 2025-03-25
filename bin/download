@@ -50,7 +50,6 @@ usage() {
     echo "  [--force-ytdlp]    Forces the use of yt-dlp"
     echo
     echo "There are also shortcuts for each of those arguments, like --force-ytdlp can simply be ytdlp."
-    # echo "  [additional arguments]     Additional arguments to pass to yt-dlp"
     exit 1
 }
 
@@ -85,7 +84,7 @@ is_valid_url() {
     
     echo -ne "Checking: ${url}";
     # Use the built-in `curl` command to check the URL
-    if curl --silent --head --request GET "$url" 2>/dev/null | grep -q "HTTP/"; then
+    if try curl --silent --head --request GET "$url" 2>/dev/null | grep -q "HTTP/"; then
         echo -ne "\033[2K\033[1A\033[2K\r"
         return 0
     else
