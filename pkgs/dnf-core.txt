@@ -1,0 +1,64 @@
+# CMD requirements:
+lsof              # [1]
+nftables          # [2]
+python3           # Python 3 is default in Fedora
+dialog            # [4]
+entr
+python3-pydbus      # [5]
+
+# Utilities
+sudo dnf install
+xclip             # [6]
+wl-clipboard      # [7]
+which
+tree              # [8]
+sudo              # [9]
+neovim
+vim
+kernel-tools      # Contains cpupower
+criu
+whois
+parallel
+htop
+lshw
+ripgrep
+ripgrep-all
+fd-find           # 'fd' package renamed to fd-find
+jq
+
+# Shells
+sudo dnf install
+zsh
+zsh-completions
+fish
+bash-completion
+
+# Networking
+sudo dnf install
+nethogs
+wget
+ethtool
+dhcp-client       # dhclient in Fedora
+nftables          # Already installed above
+
+# Coding/Development (group install recommended)
+sudo dnf group install "Development Tools"
+sudo dnf install
+git
+curl
+ninja-build
+cmake
+boost-devel
+autoconf
+automake
+glog              # google-glog
+gtest
+fmt
+indent
+strace
+distcc
+ccache
+check
+perf
+lldb
+
