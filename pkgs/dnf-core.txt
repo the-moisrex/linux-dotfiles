@@ -41,6 +41,10 @@ nftables          # Already installed above
 # Coding/Development (group install recommended)
 git
 curl
+binutils
+mold
+g++
+clang
 ninja-build
 cmake
 boost-devel
