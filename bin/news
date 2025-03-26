@@ -161,6 +161,18 @@ case $WEBSITE in
             "grep -E 'cnn\\.com/[[:digit:]]{4}/[[:digit:]]{2}/[[:digit:]]{2}'"
         )
         ;;
+    cna.asia|cna|cna.com|channelnewsasia.com|channelnewsasia|channelnews)
+        WEBSITE="www.channelnewsasia.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            # "grep -E 'channelnewsasia\.com/(asia|cna-insider|commentary|east-asia|entertainment|singapore|sustainability|today|world)/'"
+            "grep -E 'https?://(www\.)?channelnewsasia\.com/(asia|cna-insider|commentary|east-asia|entertainment|singapore|sustainability|world|big-read|up-close|voices)/[^/]+-[0-9]+'"
+            "grep -v '/adulting'"
+        )
+        ;;
     *)
         CURL_COMMANDS=("curl $CURL_OPTIONS $BASE_URL")
         FILTERS=()
