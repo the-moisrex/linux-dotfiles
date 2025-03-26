@@ -21,13 +21,11 @@ parallel
 htop
 lshw
 ripgrep
-ripgrep-all
 fd-find           # 'fd' package renamed to fd-find
 jq
 
 # Shells
 zsh
-zsh-completions
 fish
 bash-completion
 
