@@ -7,7 +7,6 @@ entr
 python3-pydbus      # [5]
 
 # Utilities
-sudo dnf install
 xclip             # [6]
 wl-clipboard      # [7]
 which
@@ -27,14 +26,12 @@ fd-find           # 'fd' package renamed to fd-find
 jq
 
 # Shells
-sudo dnf install
 zsh
 zsh-completions
 fish
 bash-completion
 
 # Networking
-sudo dnf install
 nethogs
 wget
 ethtool
@@ -42,8 +39,6 @@ dhcp-client       # dhclient in Fedora
 nftables          # Already installed above
 
 # Coding/Development (group install recommended)
-sudo dnf group install "Development Tools"
-sudo dnf install
 git
 curl
 ninja-build
