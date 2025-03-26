@@ -118,7 +118,9 @@ normalize_path() {
 }
 
 # Regex for standalone URLs
-url_regex='https?://([wW]{3}\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=%]*)'
+# url_regex='https?://([wW]{3}\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=%]*)'
+url_regex='https?://[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9(@:%_+.~#?&/=%]*)'
+# url_regex='(http|ftp|https)://([\w_-]+(?:(?:\.[\w_-]+)+))([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])'
 
 # Extract href and src attributes from <a>, <link>, and <img> tags
 hrefs=$(grep -oE '<(a|link|img)[^>]* (href|src)=(["][^"]*["]|['\''][^'\'']*['\''])' <<< "$input_text" | \
@@ -185,5 +187,8 @@ all_urls=("${all_urls[@]}" "${standalone_array[@]}")
 
 # Print all URLs, one per line
 for url in "${all_urls[@]}"; do
+  if [ -z "$url" ]; then
+    continue;
+  fi
   echo "$url"
 done
