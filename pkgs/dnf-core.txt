@@ -1,3 +1,5 @@
+# cat dnf-core.txt | grep -v '#' | xargs sudo dnf install -y
+
 # CMD requirements:
 lsof              # [1]
 nftables          # [2]
