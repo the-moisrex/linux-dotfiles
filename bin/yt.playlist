@@ -4,28 +4,149 @@
 show_help() {
     echo "Usage: yt.playlist [OPTIONS] PLAYLIST_URL"
     echo "   or: yt.playlist [OPTIONS] --browser BROWSER --profile PROFILE"
+    echo "   or: yt.playlist [OPTIONS] --browser BROWSER --cookies COOKIES_FILE"
     echo ""
     echo "Options:"
     echo "  --help          Show this message and exit."
     echo "  --verbose       Enable verbose output."
     echo "  --output DIR    Specify the output directory for playlist files (default: current directory)."
+    echo "  --browser BROWSER  Specify the browser to use (e.g., brave, chromium, firefox, edge)."
+    echo "  --profile PROFILE  Specify the browser profile to use."
+    echo "  --cookies COOKIES_FILE  Specify the cookies file manually."
     echo ""
-    echo "For the browser mode, supported browsers are 'brave' and 'firefox'."
-    echo "The profile should be the name of the profile directory, e.g., 'Default' or 'Profile 1' for Brave."
+    echo "Description:"
+    echo "  - In playlist mode (when PLAYLIST_URL is provided), extracts video links from the given playlist."
+    echo "  - In browser mode (when --browser is specified), extracts all playlists from the user's YouTube account"
+    echo "    and saves them to text files named after the playlists."
+    echo ""
+    echo "Notes:"
+    echo "  - If --profile is not specified, the script attempts to find the default profile."
+    echo "  - If --cookies is specified, it uses the provided cookies file instead of determining it from the browser."
+    echo "  - Browser fallback is used if the specified browser's config directory is not found."
     echo ""
     echo "Examples:"
     echo "  yt.playlist https://www.youtube.com/playlist?list=PLat4GgaVK09caz8Q_9mElDVS-4nbRZtKU"
-    echo "  yt.playlist --browser brave --profile \"Profile 1\" --output playlists-directory/"
+    echo "  yt.playlist --browser brave --profile \"Profile 1\" --output playlists/"
+    echo "  yt.playlist --browser firefox --cookies /path/to/cookies.sqlite"
     echo ""
-    echo "Requirements: yt-dlp, pup, jq, and sqlite3 must be installed."
+    echo "Requirements: yt-dlp, sqlite3, and htmlq must be installed."
+    echo "  Install with pacman: sudo pacman -S yt-dlp sqlite htmlq"
+    echo ""
+    echo "How to Find Cookies File for Each Browser:"
+    echo "  - Brave:     \$HOME/.config/BraveSoftware/Brave-Browser/<profile>/Cookies (default profile: Default)"
+    echo "  - Chromium:  \$HOME/.config/chromium/<profile>/Cookies (default profile: Default)"
+    echo "  - Firefox:   \$HOME/.mozilla/firefox/<profile>/cookies.sqlite (default profile in profiles.ini)"
+    echo "  - Edge:      \$HOME/.config/microsoft-edge/<profile>/Cookies (default profile: Default)"
+    echo "  Replace <profile> with your profile name or use the default."
+    echo ""
+    echo "How to Extract Cookies Manually:"
+    echo "  1. Open your browser and log in to YouTube."
+    echo "  2. For Chromium-based browsers (Brave, Chromium, Edge):"
+    echo "     - Install a cookie export extension (e.g., 'Get cookies.txt')."
+    echo "     - Export cookies to a Netscape-format file (e.g., cookies.txt)."
+    echo "     - Use --cookies cookies.txt with this script."
+    echo "  3. For Firefox:"
+    echo "     - Use an add-on like 'Export Cookies' to save cookies in Netscape format."
+    echo "     - Use --cookies cookies.txt with this script."
+    echo "  Alternatively, locate the SQLite cookies file as above and use --cookies directly."
+}
+
+# Function to find the default Firefox profile
+find_firefox_default_profile() {
+    local profiles_ini="$HOME/.mozilla/firefox/profiles.ini"
+    if [[ -f "$profiles_ini" ]]; then
+        local default_path=$(awk '/\[Profile[0-9]+\]/ {block=0} /Default=1/ {block=1} block && /Path=/ {print $2; exit}' "$profiles_ini")
+        [[ -n "$default_path" ]] && echo "$default_path" || echo ""
+    else
+        echo ""
+    fi
+}
+
+# Browser config base directories
+declare -A base_dirs
+base_dirs[brave]="$HOME/.config/BraveSoftware/Brave-Browser"
+base_dirs[chromium]="$HOME/.config/chromium"
+base_dirs[firefox]="$HOME/.mozilla/firefox"
+base_dirs[edge]="$HOME/.config/microsoft-edge"
+
+# Fallback chains for browser names
+declare -A fallbacks
+fallbacks[brave]="brave-browser"
+fallbacks[brave-browser]="brave.tmp"
+fallbacks[brave.tmp]="chromium"
+fallbacks[chromium]="chromium.tmp"
+fallbacks[firefox]="firefox-developer-edition"
+fallbacks[firefox-developer-edition]="firefox.tmp"
+fallbacks[edge]="microsoft-edge"
+fallbacks[microsoft-edge]="microsoft-edge-stable"
+fallbacks[microsoft-edge-stable]="edge.tmp"
+
+# Function to find an existing browser config directory in the fallback chain
+find_existing_browser_config() {
+    local browser=$1
+    while [[ -n "$browser" ]]; do
+        local dir=${base_dirs[$browser]}
+        if [[ -d "$dir" ]]; then
+            echo "$browser"
+            return
+        fi
+        browser=${fallbacks[$browser]}
+    done
+    echo ""
+}
+
+# Function to get the cookies file based on browser and profile
+get_cookies_file() {
+    local browser=$1
+    local profile=$2
+    local base_dir=${base_dirs[$browser]}
+    if [[ -z "$base_dir" ]]; then
+        echo "Unsupported browser: $browser"
+        exit 1
+    fi
+
+    if [[ "$browser" == "firefox" || "$browser" == "firefox-developer-edition" || "$browser" == "firefox.tmp" ]]; then
+        if [[ -z "$profile" ]]; then
+            profile=$(find_firefox_default_profile)
+            if [[ -z "$profile" ]]; then
+                echo "Could not find default Firefox profile."
+                exit 1
+            fi
+        fi
+        cookies_file="$base_dir/$profile/cookies.sqlite"
+    else
+        if [[ -z "$profile" ]]; then
+            profile="Default"
+        fi
+        cookies_file="$base_dir/$profile/Cookies"
+    fi
+
+    if [[ ! -f "$cookies_file" ]]; then
+        echo "Cookies file not found: $cookies_file"
+        exit 1
+    fi
+    echo "$cookies_file"
+}
+
+# Function to extract cookies from the cookies file
+extract_cookies() {
+    local browser=$1
+    local cookies_file=$2
+    local cookie_string=""
+    if [[ "$browser" == "firefox" || "$browser" == "firefox-developer-edition" || "$browser" == "firefox.tmp" ]]; then
+        cookie_string=$(sqlite3 "$cookies_file" "SELECT name, value FROM moz_cookies WHERE host = '.youtube.com'" | awk '{printf "%s=%s; ", $1, $2}')
+    else
+        cookie_string=$(sqlite3 "$cookies_file" "SELECT name, value FROM cookies WHERE host_key = '.youtube.com'" | awk '{printf "%s=%s; ", $1, $2}')
+    fi
+    echo "$cookie_string"
 }
 
 # Initialize variables
 verbose=0
 output_dir="."
-mode=""
 browser=""
 profile=""
+cookies_file=""
 playlist_url=""
 
 # Parse command-line arguments
@@ -51,6 +172,10 @@ while [[ $# -gt 0 ]]; do
             profile="$2"
             shift 2
             ;;
+        --cookies)
+            cookies_file="$2"
+            shift 2
+            ;;
         http*)
             playlist_url="$1"
             shift
@@ -63,72 +188,75 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Determine mode based on arguments
+# Determine mode
 if [[ -n "$playlist_url" ]]; then
-    if [[ -n "$browser" || -n "$profile" ]]; then
-        echo "Error: Cannot specify both playlist URL and browser/profile."
+    if [[ -n "$browser" || -n "$profile" || -n "$cookies_file" ]]; then
+        echo "Error: Cannot specify both playlist URL and browser-related options."
         exit 1
     fi
     mode="playlist"
-elif [[ -n "$browser" && -n "$profile" ]]; then
+elif [[ -n "$browser" ]]; then
     mode="browser"
 else
-    echo "Error: Must specify either a playlist URL or --browser and --profile."
+    echo "Error: Must specify either a playlist URL or --browser."
     show_help
     exit 1
 fi
 
-# Check if yt-dlp is installed
+# Check dependencies
 if ! command -v yt-dlp &> /dev/null; then
-    echo "Error: yt-dlp is not installed. Please install it first."
+    echo "Error: yt-dlp is not installed. Install with 'sudo pacman -S yt-dlp'."
     exit 1
 fi
 
-# Playlist mode: Extract and print video links from a single playlist
+if [[ "$mode" == "browser" ]]; then
+    if ! command -v htmlq &> /dev/null; then
+        echo "Error: htmlq is not installed. Install with 'sudo pacman -S htmlq'."
+        exit 1
+    fi
+    if ! command -v sqlite3 &> /dev/null; then
+        echo "Error: sqlite3 is not installed. Install with 'sudo pacman -S sqlite'."
+        exit 1
+    fi
+fi
+
+# Playlist mode: Extract video links from a single playlist
 if [[ "$mode" == "playlist" ]]; then
     if [[ $verbose -eq 1 ]]; then
-        echo "Extracting links from playlist: $playlist_url"
+        yt-dlp --quiet --no-warnings --flat-playlist --skip-download --print "%(webpage_url)s  |  %(title)s" "$playlist_url"
+    else
+        yt-dlp --quiet --no-warnings --flat-playlist --skip-download --print url "$playlist_url"
     fi
-    yt-dlp --quiet --no-warnings --flat-playlist --print url "$playlist_url"
 fi
 
 # Browser mode: Extract playlists and save to files
 if [[ "$mode" == "browser" ]]; then
-    # Check additional dependencies
-    if ! command -v pup &> /dev/null; then
-        echo "Error: pup is not installed. Please install it first."
+    # Apply browser fallback if config directory not found
+    original_browser="$browser"
+    browser=$(find_existing_browser_config "$browser")
+    if [[ -z "$browser" ]]; then
+        echo "Error: No configuration found for browser '$original_browser' or its fallbacks."
         exit 1
     fi
-    if ! command -v jq &> /dev/null; then
-        echo "Error: jq is not installed. Please install it first."
-        exit 1
-    fi
-    if ! command -v sqlite3 &> /dev/null; then
-        echo "Error: sqlite3 is not installed. Please install it first."
-        exit 1
+    if [[ "$browser" != "$original_browser" && $verbose -eq 1 ]]; then
+        echo "Browser '$original_browser' not found; falling back to '$browser'."
     fi
 
-    # Determine cookies file location based on browser
-    if [[ "$browser" == "brave" ]]; then
-        cookies_file="$HOME/.config/BraveSoftware/Brave-Browser/$profile/Cookies"
-    elif [[ "$browser" == "firefox" ]]; then
-        cookies_file="$HOME/.mozilla/firefox/$profile/cookies.sqlite"
+    # Determine cookies file
+    if [[ -n "$cookies_file" ]]; then
+        if [[ ! -f "$cookies_file" ]]; then
+            echo "Specified cookies file not found: $cookies_file"
+            exit 1
+        fi
     else
-        echo "Unsupported browser: $browser"
-        exit 1
+        cookies_file=$(get_cookies_file "$browser" "$profile")
     fi
 
-    # Verify cookies file exists
-    if [[ ! -f "$cookies_file" ]]; then
-        echo "Cookies file not found: $cookies_file"
+    # Extract cookies
+    cookie_string=$(extract_cookies "$browser" "$cookies_file")
+    if [[ -z "$cookie_string" ]]; then
+        echo "No YouTube cookies found in the cookies file."
         exit 1
-    fi
-
-    # Extract YouTube cookies
-    if [[ "$browser" == "brave" ]]; then
-        cookie_string=$(sqlite3 "$cookies_file" "SELECT name, value FROM cookies WHERE host_key = '.youtube.com'" | awk '{printf "%s=%s; ", $1, $2}')
-    elif [[ "$browser" == "firefox" ]]; then
-        cookie_string=$(sqlite3 "$cookies_file" "SELECT name, value FROM moz_cookies WHERE host = '.youtube.com'" | awk '{printf "%s=%s; ", $1, $2}')
     fi
 
     # Fetch playlists page
@@ -139,18 +267,23 @@ if [[ "$mode" == "browser" ]]; then
     fi
 
     # Parse playlists from HTML
-    playlists=$(echo "$html" | pup 'a[href*="/playlist?list="] json{}' | jq -r '.[] | .text + "\t" + .href')
+    playlists=$(echo "$html" | htmlq 'a[href*="/playlist?list="]' | sed -n 's/.*href="\([^"]*\)".*>\(.*\)<.*/\2\t\1/p')
     if [[ -z "$playlists" ]]; then
         echo "Error: No playlists found on the page."
+        if [[ $verbose -eq 1 ]]; then
+            echo "Cookies File: $cookies_file";
+            echo "Cookies: $cookie_string";
+            # echo "$html";
+            echo "$html" | htmlq 'a[href]';
+        fi
         exit 1
     fi
 
-    # Create output directory if it doesn't exist
+    # Create output directory
     mkdir -p "$output_dir"
 
     # Process each playlist
     while IFS=$'\t' read -r name url; do
-        # Sanitize playlist name for file system (replace non-alphanumeric with underscores)
         file_name=$(echo "$name" | sed 's/[^a-zA-Z0-9]/_/g')
         file_path="$output_dir/$file_name.txt"
         if [[ $verbose -eq 1 ]]; then
@@ -160,3 +293,4 @@ if [[ "$mode" == "browser" ]]; then
         yt-dlp --quiet --no-warnings --flat-playlist --print url "$full_url" > "$file_path"
     done <<< "$playlists"
 fi
+
