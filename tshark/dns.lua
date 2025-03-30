@@ -65,7 +65,7 @@ do
     function tap.draw()
         print()
         print("DNS Packets captured: " .. dns_packets_count)
-        print("DNS lua script written by Mohammad Bahoosh")
+        print("DNS lua script written by The Moisrex")
     end
 
 end
