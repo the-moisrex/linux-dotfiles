@@ -6,8 +6,8 @@
 if set_plugin_info then
     local my_info = {
         version   = "1.0",
-        author    = "Mohammad Bahoosh",
-        email     = "moisrex at gmail",
+        author    = "Moisrex",
+        email     = "example at something dot com",
         copyright = "Copyright (c) 2023 The Moisrex",
         license   = "MIT license",
         details   = "This plugin will print out the dns queries",
