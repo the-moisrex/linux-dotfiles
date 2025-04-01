@@ -63,14 +63,29 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
         insert_position = line_num + 1  -- Insert after the command line
     end
 
+    -- Prompt for stdin input
+    -- local stdin_input = vim.fn.input("Enter stdin input: ")
+
     local job_id = vim.fn.jobstart(cmd, {
         stdout_buffered = false,
+        stderr_buffered = false,
         on_stdout = function(_, data, _)
             vim.schedule(function()
                 for _, line in ipairs(data) do
                     local cleaned_line = remove_ansi_colors(line)
                     if cleaned_line ~= "" then
                         vim.api.nvim_buf_set_lines(bufnr, insert_position - 1, insert_position - 1, false, { cleaned_line })
+                        insert_position = insert_position + 1
+                    end
+                end
+            end)
+        end,
+        on_stderr = function(_, data, _)
+            vim.schedule(function()
+                for _, line in ipairs(data) do
+                    local cleaned_line = remove_ansi_colors(line)
+                    if cleaned_line ~= "" then
+                        vim.api.nvim_buf_set_lines(bufnr, insert_position - 1, insert_position - 1, false, { "ERR: " .. cleaned_line })
                         insert_position = insert_position + 1
                     end
                 end
@@ -83,9 +98,15 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
             end)
         end
     })
+
+    -- Send stdin input if provided
+    -- if stdin_input ~= "" then
+    --     vim.fn.chansend(job_id, stdin_input .. "\n")
+    -- end
 end, {})
 
 -- Toggle mappings
 vim.api.nvim_set_keymap('n', '<F9>', ':lua toggle_cmdrunner()<CR>', { noremap = true, silent = true })
 vim.api.nvim_set_keymap('i', '<F9>', '<Esc>:lua toggle_cmdrunner()<CR>i', { noremap = true, silent = true })
 vim.api.nvim_set_keymap('v', '<F9>', ':<C-u>lua toggle_cmdrunner()<CR>', { noremap = true, silent = true })
+
