@@ -32,6 +32,11 @@ if vim.g.cmdrunner_enabled then
     setup_cmdrunner_mappings()
 end
 
+-- Function to remove ANSI color codes
+local function remove_ansi_colors(line)
+    return line:gsub("\27%[[%d;]*m", "")
+end
+
 -- Command definition
 vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
     local bufnr = vim.api.nvim_get_current_buf()
@@ -45,7 +50,7 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
         local end_ = vim.fn.getpos("'>")
         local lines = vim.api.nvim_buf_get_text(0, start[2] - 1, start[3] - 1, end_[2] - 1, end_[3], {})
         cmd = table.concat(lines, "\n")
-        insert_position = end_[2]
+        insert_position = end_[2] + 1  -- Insert after the last selected line
     else
         -- Normal mode: Clean up and modify the current line
         local line_num = vim.api.nvim_win_get_cursor(0)[1]
@@ -55,7 +60,7 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
         -- Modify the current line by prepending "$ " to the cleaned command
         local new_line = "$ " .. cleaned_cmd
         vim.api.nvim_buf_set_lines(bufnr, line_num - 1, line_num, false, { new_line })
-        insert_position = line_num
+        insert_position = line_num + 1  -- Insert after the command line
     end
 
     local job_id = vim.fn.jobstart(cmd, {
@@ -63,8 +68,9 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
         on_stdout = function(_, data, _)
             vim.schedule(function()
                 for _, line in ipairs(data) do
-                    if line ~= "" then
-                        vim.api.nvim_buf_set_lines(bufnr, insert_position, insert_position, false, { line })
+                    local cleaned_line = remove_ansi_colors(line)
+                    if cleaned_line ~= "" then
+                        vim.api.nvim_buf_set_lines(bufnr, insert_position - 1, insert_position - 1, false, { cleaned_line })
                         insert_position = insert_position + 1
                     end
                 end
@@ -72,8 +78,8 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
         end,
         on_exit = function(_, exit_code)
             vim.schedule(function()
-                vim.api.nvim_buf_set_lines(bufnr, insert_position, insert_position, false, { "", "" })
-                vim.api.nvim_win_set_cursor(0, { insert_position + 2, 0 })
+                vim.api.nvim_buf_set_lines(bufnr, insert_position - 1, insert_position - 1, false, { "", "" })
+                vim.api.nvim_win_set_cursor(0, { insert_position + 1, 0 })
             end)
         end
     })
