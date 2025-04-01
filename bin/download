@@ -81,16 +81,21 @@ is_valid_url() {
     if [ -z "$url" ]; then
         return 1
     fi
-    
-    echo -ne "Checking: ${url}";
-    # Use the built-in `curl` command to check the URL
-    if try curl --silent --head --request GET "$url" 2>/dev/null | grep -q "HTTP/"; then
-        echo -ne "\033[2K\033[1A\033[2K\r"
+    url_regex='^https?://[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9(@:%_+.~#?&/=%]*)$'
+    if grep -oE "$url_regex" <<< "$url" 2>/dev/null; then
         return 0
-    else
-        echo -ne "\033[2K\033[1A\033[2K\r"
-        return 1
     fi
+    return 1
+    
+    # echo -ne "Checking: ${url}";
+    # # Use the built-in `curl` command to check the URL
+    # if curl --silent --head --request GET "$url" 2>/dev/null | grep -q "HTTP/"; then
+    #     echo -ne "\033[2K\033[1A\033[2K\r"
+    #     return 0
+    # else
+    #     # echo -ne "\033[2K\033[1A\033[2K\r"
+    #     return 1
+    # fi
 }
 
 highlight_code() {
