@@ -5,11 +5,11 @@ import standard;
 
 using namespace std;
 
-static constexpr uint8_t worlds = 7;
-
 int main() {
 
-  println("Hello all {} worlds.", worlds);
+  println("Hello all {} worlds.", 2);
 
   return 0;
 }
+
+// view ./build/optimizations.txt
