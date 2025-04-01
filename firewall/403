@@ -6,8 +6,13 @@ excluded_domains_file="$HOME/.config/firewall/403-excluded-domains.txt"
 
 dnsmasq_config_file="/etc/dnsmasq.d/403.conf"
 
-dns1="10.202.10.202"
-dns2="10.202.10.102"
+# 403.online DNS:
+# dns1="10.202.10.202"
+# dns2="10.202.10.102"
+
+# Electrotm.org DNS:
+dns1="78.157.42.100"
+dns2="78.157.42.101"
 
 if ! command -v dig >/dev/null; then
     echo "The command 'dig' is not installed.";

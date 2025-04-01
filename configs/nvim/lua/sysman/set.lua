@@ -50,3 +50,12 @@ vim.filetype.add({
         cxx = 'cpp', -- C++20 modules implementation file
     }
 })
+
+-- Enable it permanently by entering :set ignorecase or :set ic.
+vim.opt.ignorecase = true
+
+-- Optionally, use :set smartcase to make searches case-sensitive only
+-- if uppercase letters are included in the search term.
+vim.opt.smartcase = true
+
+
