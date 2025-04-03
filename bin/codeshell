@@ -48,10 +48,15 @@ function move_and_restart {
         echo "The directory ($codeshells_dir/$name) already exists; use another name.";
         exit 1;
     fi
+    this_dir=$(realpath .);
+    cleaner_file="$this_dir/.cleaner";
+    if [ -f "$cleaner_file" ]; then
+        echo "Cleaning using $cleaner_file";
+        "$cleaner_file";
+    fi
     echo "Creating  $codeshells_dir/$name";
     mkdir -p "$codeshells_dir/$name";
     echo "Movint to $codeshells_dir/$name";
-    this_dir=$(realpath .);
     mv -T "$this_dir" "$codeshells_dir/$name";
     tmux kill-pane -a; # kill all the panes
     bash "$curfile" "$name"; # re-run the codeshell
