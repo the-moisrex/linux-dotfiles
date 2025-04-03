@@ -1,0 +1,12 @@
+#!/bin/bash
+
+curdir=$(realpath "$(dirname "$0")");
+
+trash_cmd="rm -rf"
+if ! command trash >/dev/null; then
+    trash_cmd="trash";
+fi
+
+# remove the build directory
+"$trash_cmd" "$curdir/build"
+
