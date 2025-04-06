@@ -1,0 +1,157 @@
+#!/bin/bash
+
+curdir="$(realpath "$(dirname "$0")")"
+
+# Function to display help message
+print_help() {
+    echo "Usage: crawl [options] URL [URL ...] [-- command]"
+    echo "Crawl web pages and extract links up to a specified depth."
+    echo "Options:"
+    echo "  --help              Display this help message and exit"
+    echo "  --depth N           Set maximum crawl depth (default: 0)"
+    echo "  --output-links FILE Save extracted URLs to the specified file"
+    echo "  --output-dir DIR    Save page contents to the specified directory"
+    echo "  --title TITLE       Prefix for output filenames"
+    echo "  --                  Pipe extracted URLs into the following command"
+}
+
+# Initialize variables
+depth=-1
+output_links=""
+output_dir=""
+title=""
+pipe_cmd=()
+urls=()
+
+# Parse command-line arguments
+while [ $# -gt 0 ]; do
+    if [ "$1" == "--" ]; then
+        shift
+        pipe_cmd=("$@")
+        break
+    fi
+    case "$1" in
+        --help)
+            print_help
+            exit 0
+            ;;
+        --depth)
+            depth="$2"
+            shift 2
+            ;;
+        --output-links)
+            output_links="$2"
+            shift 2
+            ;;
+        --output-dir)
+            output_dir="$2"
+            shift 2
+            ;;
+        --title)
+            title="$2"
+            shift 2
+            ;;
+        *)
+            urls+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Validate URLs
+if [ ${#urls[@]} -eq 0 ]; then
+    echo "Error: No URLs provided"
+    print_help
+    exit 1
+fi
+
+# Set default depth to 0
+if [ "$depth" == "-1" ]; then
+    depth=0
+fi
+
+echo
+echo "----------------- Depth: $depth --------------------"
+# echo "${urls[@]}"
+echo
+
+# Generate unique identifier if title is not provided
+if [ -z "$title" ]; then
+    title=$(uuidgen)  # Requires uuidgen to be installed
+fi
+
+if [ -z "$output_links" ]; then
+    output_links=$(mktemp --suffix=".crawl");
+fi
+
+# Main crawling logic
+if [ "$depth" -ge 0 ]; then
+    all_links=""
+    for url in "${urls[@]}"; do
+        if grep -q "$url" "$output_links"; then
+            continue;
+        fi
+        content=$(curl -L "$url" 2>/dev/null);
+
+        # Save page content if --output-dir is specified
+        if [ -n "$output_dir" ]; then
+            path=${url#*://}
+            path=${path#*/}
+            path=${path%\?*}
+            if [ -z "$path" ]; then
+                filename="index.html"
+            else
+                filename=${path%/}
+                filename=${filename//\//_}
+            fi
+            filename="${title}_${filename}"
+            full_path="$output_dir/$filename"
+            i=1
+            while [ -e "$full_path" ]; do
+                full_path="$output_dir/${filename}_$i"
+                i=$((i + 1))
+            done
+            echo -e "$content" > "$full_path"
+        fi
+
+        # Extract and filter links if depth allows recursion
+        if [ "$depth" -gt 0 ]; then
+            links=$(echo "$content" | "$curdir/urls" --base-url "$url" | sort -u | grep -v "^$url$")
+            if [ ${#pipe_cmd[@]} -gt 0 ]; then
+                links=$(echo -e "$links" | sort -u | eval "${pipe_cmd[@]}")
+            fi
+            all_links="$all_links
+$links"
+        fi
+    done
+
+    # Process links for the next depth layer
+    if [ "$depth" -gt 0 ]; then
+        all_links=$(echo "$all_links" | sed '/^$/d' | sort -u)
+        echo -e "$all_links";
+
+        if [ -n "$all_links" ]; then
+            cmd=("$curdir/crawl" "--depth" "$((depth - 1))")
+            if [ -n "$output_links" ]; then
+                cmd+=("--output-links" "$output_links")
+            fi
+            if [ -n "$output_dir" ]; then
+                cmd+=("--output-dir" "$output_dir")
+            fi
+            if [ -n "$title" ]; then
+                cmd+=("--title" "$title")
+            fi
+
+            # read -ra link_array <<< "${all_links[@]}"
+            if [ ${#pipe_cmd[@]} -gt 0 ]; then
+                "${cmd[@]}" ${all_links[@]} -- ${pipe_cmd[@]}
+            else
+                "${cmd[@]}" ${all_links[@]}
+            fi
+        fi
+
+    fi
+    if [ -n "$output_links" ]; then
+        echo -e "$all_links" >> "$output_links"
+    fi
+fi

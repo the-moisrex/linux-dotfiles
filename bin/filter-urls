@@ -1,0 +1,317 @@
+#!/bin/bash
+
+# Script name: filter-urls (Inference-based)
+# Description: Filters URLs from stdin based on inferred criteria from the first argument.
+
+# --- Configuration (Defaults - can be overridden by inference) ---
+DOMAIN_WHITELIST=""
+DOMAIN_BLACKLIST=""
+SUBDOMAIN_WHITELIST=""
+SUBDOMAIN_BLACKLIST=""
+PATH_KEYWORDS=""
+PATH_EXCLUDE_KEYWORDS=""
+QUERY_PARAMS_PRESENT=""
+QUERY_PARAMS_ABSENT=""
+FILE_EXTENSION_WHITELIST=""
+FILE_EXTENSION_BLACKLIST=""
+MIN_URL_LENGTH=0
+MAX_URL_LENGTH=0
+KEYWORD_IN_URL=""
+KEYWORD_NOT_IN_URL=""
+PROTOCOL_FILTER=""
+
+
+# --- Topic Inference Logic ---
+infer_options() {
+  local input="$1"
+
+  case "$input" in
+    "images"|"image"|"pics" )
+      FILE_EXTENSION_WHITELIST="jpg,jpeg,png,gif,webp,svg"
+      ;;
+    "documents"|"docs"|"files" )
+      FILE_EXTENSION_WHITELIST="pdf,doc,docx,xls,xlsx,ppt,pptx"
+      ;;
+    "news"|"articles"|"blog"|"stories" )
+      PATH_KEYWORDS="news,article,blog,story"
+      ;;
+    "security"|"secure" )
+      PROTOCOL_FILTER="https"
+      DOMAIN_BLACKLIST="suspicious-domain.com,malware-site.net" # Example
+      ;;
+    "ecommerce"|"shop"|"products"|"buy" )
+      PATH_KEYWORDS="product,shop,cart,checkout,buy"
+      ;;
+    "social"|"socialmedia"|"social-media" )
+      DOMAIN_WHITELIST="facebook.com,twitter.com,instagram.com,linkedin.com,youtube.com"
+      ;;
+    "short"|"shorturls"|"short-urls" )
+      MAX_URL_LENGTH=50
+      ;;
+    "long"|"longurls"|"long-urls" )
+      MIN_URL_LENGTH=200
+      ;;
+    "http"|"httponly"|"http-only" )
+      PROTOCOL_FILTER="http"
+      ;;
+    "https"|"httpsonly"|"https-only" )
+      PROTOCOL_FILTER="https"
+      ;;
+    "static"|"staticpages"|"static-pages" )
+      QUERY_PARAMS_ABSENT="any"
+      ;;
+    "dynamic"|"dynamicpages"|"dynamic-pages" )
+      QUERY_PARAMS_PRESENT="any"
+      ;;
+    "blogposts"|"blog-posts"|"blogging" )
+      PATH_KEYWORDS="blog,posts,articles"
+      ;;
+    "forums"|"forumthreads"|"forum-threads" )
+      PATH_KEYWORDS="forum,thread,topic,discussion"
+      ;;
+    "api"|"apiendpoints"|"api-endpoints" )
+      PATH_KEYWORDS="api,v1,v2,endpoint"
+      ;;
+    "downloads"|"downloadlinks"|"download-links" )
+      PATH_KEYWORDS="download,get,file"
+      ;;
+    "audio"|"audiofiles"|"audio-files" )
+      FILE_EXTENSION_WHITELIST="mp3,wav,ogg,flac,aac"
+      ;;
+    "video"|"videofiles"|"video-files" )
+      FILE_EXTENSION_WHITELIST="mp4,avi,mov,wmv,mkv"
+      ;;
+    "domain:"* ) # Starts with "domain:" - specific domain whitelist
+      DOMAIN_WHITELIST="${input#domain:}" # Remove "domain:" prefix
+      ;;
+    "exclude-domain:"* ) # Starts with "exclude-domain:" - specific domain blacklist
+      DOMAIN_BLACKLIST="${input#exclude-domain:}" # Remove "exclude-domain:" prefix
+      ;;
+    "path-contains:"* ) # Path must contain keyword
+      PATH_KEYWORDS="${input#path-contains:}"
+      ;;
+    "path-excludes:"* ) # Path must exclude keyword
+      PATH_EXCLUDE_KEYWORDS="${input#path-excludes:}"
+      ;;
+    "url-contains:"* ) # URL must contain keyword anywhere
+      KEYWORD_IN_URL="${input#url-contains:}"
+      ;;
+    "url-excludes:"* ) # URL must exclude keyword anywhere
+      KEYWORD_NOT_IN_URL="${input#url-excludes:}"
+      ;;
+    "extension:"* ) # Specific file extension
+      FILE_EXTENSION_WHITELIST="${input#extension:}"
+      ;;
+    "exclude-extension:"* ) # Exclude file extension
+      FILE_EXTENSION_BLACKLIST="${input#exclude-extension:}"
+      ;;
+    "min-length:"* ) # Minimum URL length
+      MIN_URL_LENGTH="${input#min-length:}"
+      ;;
+    "max-length:"* ) # Maximum URL length
+      MAX_URL_LENGTH="${input#max-length:}"
+      ;;
+    "help"|"-h"|"--help" )
+      show_help
+      exit 0
+      ;;
+    "" ) # No argument provided - no filtering, just pass through.  Or you could show help here.
+      ;;
+    * ) # Default case: if no match, treat as keyword to include in URL (anywhere) for basic keyword filtering
+      KEYWORD_IN_URL="$input"
+      ;;
+  esac
+}
+
+show_help() {
+  cat <<EOF
+Usage: filter-urls <filter_keyword>
+
+Filters URLs from stdin based on the provided keyword.
+
+Keywords for filtering:
+  images, documents, news, security, ecommerce, social, short, long,
+  http, https, static, dynamic, blogposts, forums, api, documentation,
+  downloads, audio, video
+
+Advanced keywords (with arguments):
+  domain:<domain.com>           Whitelist URLs from a specific domain.
+  exclude-domain:<domain.com>   Blacklist URLs from a specific domain.
+  path-contains:<keyword>       URLs must contain keyword in the path.
+  path-excludes:<keyword>       URLs must NOT contain keyword in the path.
+  url-contains:<keyword>        URLs must contain keyword anywhere in the URL.
+  url-excludes:<keyword>        URLs must NOT contain keyword anywhere.
+  extension:<ext1,ext2,...>     Whitelist specific file extensions.
+  exclude-extension:<ext1,ext2,...> Blacklist specific file extensions.
+  min-length:<number>           Filter URLs with minimum length.
+  max-length:<number>           Filter URLs with maximum length.
+
+  help, -h, --help             Show this help message.
+
+Examples:
+  cat urls.txt | ./filter-urls images         # Filter for image URLs
+  cat urls.txt | ./filter-urls https          # Filter for HTTPS URLs
+  cat urls.txt | ./filter-urls domain:example.com # Domain whitelist
+  cat urls.txt | ./filter-urls path-contains:blog # Path contains 'blog'
+  cat urls.txt | ./filter-urls "search term"  # URLs containing "search term" anywhere
+
+If no keyword is provided, URLs are passed through without filtering.
+If an unrecognized keyword is provided, it's treated as a keyword to search for in the URL.
+EOF
+}
+
+
+# --- Main Script Logic ---
+
+if [ -n "$1" ]; then
+  infer_options "$1"
+fi
+
+
+# --- Filtering Logic (same as before) ---
+while IFS= read -r url; do
+  pass=true
+
+  # Protocol Filter
+  if [ -n "$PROTOCOL_FILTER" ]; then
+    if [[ ! "$url" =~ ^"$PROTOCOL_FILTER":// ]]; then
+      pass=false
+    fi
+  fi
+
+  # Domain Whitelist
+  if [ -n "$DOMAIN_WHITELIST" ]; then
+    domain_regex=$( IFS=,; echo -E "^(${DOMAIN_WHITELIST//,/|})" )
+    if ! echo "$url" | grep -Eq "$domain_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Domain Blacklist
+  if [ -n "$DOMAIN_BLACKLIST" ]; then
+    domain_regex=$( IFS=,; echo -E "^(${DOMAIN_BLACKLIST//,/|})" )
+    if echo "$url" | grep -Eq "$domain_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Subdomain Whitelist
+  if [ -n "$SUBDOMAIN_WHITELIST" ]; then
+    subdomain_regex=$( IFS=,; echo -E "^([^.]+\.)?(${SUBDOMAIN_WHITELIST//,/|})\." )
+    if ! echo "$url" | grep -Eq "$subdomain_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Subdomain Blacklist
+  if [ -n "$SUBDOMAIN_BLACKLIST" ]; then
+    subdomain_regex=$( IFS=,; echo -E "^([^.]+\.)?(${SUBDOMAIN_BLACKLIST//,/|})\." )
+    if echo "$url" | grep -Eq "$subdomain_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Path Keywords (must contain)
+  if [ -n "$PATH_KEYWORDS" ]; then
+    path=$(echo "$url" | sed 's#^[^/]*//[^/]*##' | sed 's#\?.*##') # Extract path part
+    keyword_regex=$( IFS=,; echo -E "(${PATH_KEYWORDS//,/|})" )
+    if ! echo "$path" | grep -Eq "$keyword_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Path Exclude Keywords (must NOT contain)
+  if [ -n "$PATH_EXCLUDE_KEYWORDS" ]; then
+    path=$(echo "$url" | sed 's#^[^/]*//[^/]*##' | sed 's#\?.*##') # Extract path part
+    exclude_keyword_regex=$( IFS=,; echo -E "(${PATH_EXCLUDE_KEYWORDS//,/|})" )
+    if echo "$path" | grep -Eq "$exclude_keyword_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Query Parameters Present
+  if [ -n "$QUERY_PARAMS_PRESENT" ]; then
+    if [ "$QUERY_PARAMS_PRESENT" = "any" ]; then
+      if ! echo "$url" | grep -q '?'; then
+        pass=false
+      fi
+    else
+      params_regex=$( IFS=,; echo -E "(${QUERY_PARAMS_PRESENT//,/|})" )
+      for param in $(echo "$QUERY_PARAMS_PRESENT" | tr ',' '\n'); do
+        if ! echo "$url" | grep -q "[?&]$param="; then # Check for ?param= or ¶m=
+          pass=false
+          break # No need to check further params if one is missing
+        fi
+      done
+    fi
+  fi
+
+  # Query Parameters Absent
+  if [ -n "$QUERY_PARAMS_ABSENT" ]; then
+    if [ "$QUERY_PARAMS_ABSENT" = "any" ]; then
+      if echo "$url" | grep -q '?'; then
+        pass=false
+      fi
+    else
+      params_regex=$( IFS=,; echo -E "(${QUERY_PARAMS_ABSENT//,/|})" )
+      for param in $(echo "$QUERY_PARAMS_ABSENT" | tr ',' '\n'); do
+        if echo "$url" | grep -q "[?&]$param="; then # Check for ?param= or ¶m=
+          pass=false
+          break # No need to check further params if one is present
+        fi
+      done
+    fi
+  fi
+
+
+  # File Extension Whitelist
+  if [ -n "$FILE_EXTENSION_WHITELIST" ]; then
+    ext_regex=$( IFS=,; echo -E "\.(${FILE_EXTENSION_WHITELIST//,/|})\$" )
+    if ! echo "$url" | grep -Eq "$ext_regex"; then
+      pass=false
+    fi
+  fi
+
+  # File Extension Blacklist
+  if [ -n "$FILE_EXTENSION_BLACKLIST" ]; then
+    ext_regex=$( IFS=,; echo -E "\.(${FILE_EXTENSION_BLACKLIST//,/|})\$" )
+    if echo "$url" | grep -Eq "$ext_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Min URL Length
+  if [ "$MIN_URL_LENGTH" -gt 0 ]; then
+    if [ ${#url} -lt "$MIN_URL_LENGTH" ]; then
+      pass=false
+    fi
+  fi
+
+  # Max URL Length
+  if [ "$MAX_URL_LENGTH" -gt 0 ]; then
+    if [ ${#url} -gt "$MAX_URL_LENGTH" ]; then
+      pass=false
+    fi
+  fi
+
+  # Keyword in URL (anywhere)
+  if [ -n "$KEYWORD_IN_URL" ]; then
+    keyword_regex=$( IFS=,; echo -E "(${KEYWORD_IN_URL//,/|})" )
+    if ! echo "$url" | grep -Eq "$keyword_regex"; then
+      pass=false
+    fi
+  fi
+
+  # Keyword NOT in URL (anywhere)
+  if [ -n "$KEYWORD_NOT_IN_URL" ]; then
+    keyword_regex=$( IFS=,; echo -E "(${KEYWORD_NOT_IN_URL//,/|})" )
+    if echo "$url" | grep -Eq "$keyword_regex"; then
+      pass=false
+    fi
+  fi
+
+
+  if "$pass"; then
+    echo "$url"
+  fi
+done
