@@ -1,0 +1,48 @@
+#!/bin/bash
+
+curdir=$(dirname "$0")
+build_dir="$curdir/build"
+
+# Get the version of gcc
+gcc_version=$(gcc --version | grep -oP "(?<=gcc \(GCC\) )\d+\.\d+\.\d+")
+clang_version=$(clang --version | grep -oP "(?<=clang version )\d+\.\d+\.\d+")
+gcc_required_version="14.0.0"
+clang_required_version="16.0.0"
+
+use_intel=false;
+if [ -f "/opt/intel/oneapi/setvars.sh" ]; then
+    use_intel=true;
+    source "/opt/intel/oneapi/setvars.sh";
+fi
+
+
+
+if ! command -v entr &>/dev/null; then
+    echo "Please install 'entr' package for auto-reloading to work."
+else
+    # Compare the versions
+    if [[ "$(printf '%s\n' "$gcc_version" "$gcc_required_version" | sort -V | head -n1)" == "$gcc_required_version" ]]; then
+        cxx="g++";
+        cc="gcc";
+        echo "Using GCC.";
+    elif [[ "$(printf '%s\n' "$clang_version" "$clang_required_version" | sort -V | head -n1)" == "$clang_required_version" ]]; then
+        cxx="clang++";
+        cc="clang";
+        echo "Using Clang.";
+    else
+        echo "Compiler not supported.";
+    fi
+
+    if $use_intel; then
+        cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DKokkos_ENABLE_SYCL=ON -DCMAKE_CXX_COMPILER=icpx -B "$build_dir" -S "$curdir"
+    else
+        CXX=$cxx CC=$cc cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -B "$build_dir" -S "$curdir"
+    fi
+    find "$curdir" \
+            -name '*.cpp' \
+        -or -name '*.h'   \
+        -or -name '*.cxx' \
+        -or -name '*.hpp' \
+        -or -name '*.cmm' \
+        -or -name '*.txt' | entr -cs "ninja -C '$build_dir' && '$build_dir/a.out'";
+fi
