@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Main script logic
+case "$1" in
+    paste|--paste|p|pst|-p|--p)
+        if command_exists qdbus; then
+            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents
+        elif command_exists xclip; then
+            xclip -selection clipboard -o
+        elif command_exists xsel; then
+            xsel --clipboard --output
+        else
+            echo "No supported clipboard utility found for pasting."
+            exit 1
+        fi
+        ;;
+    copy|--copy|cp|c|--c|--cp|-cp)
+        if command_exists xclip; then
+            xclip -selection clipboard -i
+        elif command_exists xsel; then
+            xsel --clipboard --input
+        elif command_exists qdbus; then
+            xargs -0 qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}
+        else
+            echo "No supported clipboard utility found for copying."
+            exit 1
+        fi
+        ;;
+    history|--history)
+        if command_exists qdbus; then
+            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardHistoryMenu
+        else
+            echo "Clipboard history is only supported with klipper."
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {paste|--paste|copy|--copy|history|--history}"
+        exit 1
+        ;;
+esac
+
+exit 0
+

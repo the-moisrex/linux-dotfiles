@@ -184,9 +184,9 @@ end
 
 # DBUS
 
-alias clipboard.paste="qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents"
-alias clipboard.copy="xargs -0 qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}"
-alias clipboard.history="qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardHistoryMenu"
+alias clipboard.paste="clipboard paste"
+alias clipboard.copy="clipboard copy"
+alias clipboard.history="clipboard history"
 
 alias cb.paste="clipboard.paste"
 alias cb.cp="clipboard.copy"
