@@ -27,7 +27,10 @@ chromium_based=(google-chrome chromium brave brave-browser microsoft-edge micros
 firefox_based=(firefox firefox-developer-edition firefox.tmp)
 
 # Default options for browser groups
-firefox_default_opts=()   # e.g., ("--no-remote")
+firefox_default_opts=(
+    # --browser
+    # --new-window # must be last, I think
+)
 
 # https://peter.sh/experiments/chromium-command-line-switches/
 chromium_default_opts=(
@@ -43,6 +46,7 @@ chromium_default_opts=(
     --deny-permission-prompts
     --disable-sync
     --disable-extensions
+    --new-window
 )
 
 
