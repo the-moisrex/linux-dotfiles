@@ -29,6 +29,7 @@ jq           # JSON processor
 zsh
 zsh-completions
 fish
+nushell
 bash-completion
 
 # Networking
