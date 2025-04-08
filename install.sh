@@ -219,6 +219,17 @@ function setup_fish {
     install "$dir/assets/error.oga" "$fish_dir/assets/error.oga"
 }
 
+function setup_nushell {
+    nushell_dir="$HOME/.config/nushell"
+    shell_dir="$dir/shell"
+    install "$shell_dir/aliases.nu" "$nushell_dir/aliases.nu"
+    install "$shell_dir/config.nu" "$nushell_dir/config.nu"
+    install "$shell_dir/env.nu" "$nushell_dir/env.nu"
+    install "$shell_dir/completions.nu" "$nushell_dir/completions.nu"
+    install "$dir/assets/ok.oga" "$nushell_dir/assets/ok.oga"
+    install "$dir/assets/error.oga" "$nushell_dir/assets/error.oga"
+}
+
 function setup_gdb {
     src="$dir/configs/gdb/.gdbinit"
     target="$HOME/.gdbinit"
@@ -268,6 +279,7 @@ for i in "$@"; do
             log "install.sh [--forced]"
             log "install.sh --help"
             log "install.sh fish"
+            log "install.sh nushell"
             log "install.sh gdb"
             log "install.sh spacevim"
             log "install.sh nvim"
@@ -332,6 +344,11 @@ for i in "$@"; do
             shift;
             ;;
 
+        nushell|nu)
+            setup_nushell;
+            shift;
+            ;;
+
         gdb)
             setup_gdb;
             shift;
@@ -355,6 +372,7 @@ for i in "$@"; do
             codeshell_shortcut;
             tv_shortcuts;
             firefox-policies;
+            setup_nushell;
             setup_fish;
             setup_gdb;
             setup_kservices;
