@@ -89,10 +89,6 @@ let carapace_completer = {|spans: list<string>|
     | if ($in | default [] | where value =~ '^-.*ERR$' | is-empty) { $in } else { null }
 }
 
-# let carapace_completer = {|spans|
-#     carapace $spans.0 nushell ...$spans | from json
-# }
-
 # This completer will use carapace by default
 let external_completer = {|spans|
     let expanded_alias = scope aliases
