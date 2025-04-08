@@ -24,56 +24,6 @@ end
 vim.g.cmdrunner_enabled = false -- Start disabled
 vim.g.cmdrunner_cwd = vim.fn.getcwd()  -- Start with Vim's current working directory
 
--- Store mappings state separate from the global enabled flag for clarity
-local mappings_active = false
-
--- Set up key mappings
-local function setup_cmdrunner_mappings()
-    if not mappings_active then
-        vim.api.nvim_set_keymap('n', '<C-CR>', ':RunCMDUnderCursor<CR>', { noremap = true, silent = true, desc = "Run command under cursor" })
-        vim.api.nvim_set_keymap('i', '<C-CR>', '<Esc>:RunCMDUnderCursor<CR>i', { noremap = true, silent = true, desc = "Run command under cursor" })
-        vim.api.nvim_set_keymap('v', '<C-CR>', ':<C-u>RunCMDUnderCursor<CR>', { noremap = true, silent = true, desc = "Run selected command" })
-        mappings_active = true
-        vim.g.cmdrunner_enabled = true -- Reflect that mappings are now active
-    end
-end
-
--- Remove key mappings
-local function remove_cmdrunner_mappings()
-    if mappings_active then
-        pcall(vim.api.nvim_del_keymap, 'n', '<C-CR>')
-        pcall(vim.api.nvim_del_keymap, 'i', '<C-CR>')
-        pcall(vim.api.nvim_del_keymap, 'v', '<C-CR>')
-        mappings_active = false
-        vim.g.cmdrunner_enabled = false -- Reflect that mappings are now inactive
-    end
-end
-
--- Function to check filetype and set state accordingly
-local function update_cmdrunner_state_for_buffer()
-    local bufnr = vim.api.nvim_get_current_buf()
-    if not vim.api.nvim_buf_is_loaded(bufnr) or vim.api.nvim_buf_get_option(bufnr, 'buftype') ~= '' then
-        if vim.g.cmdrunner_enabled then
-             remove_cmdrunner_mappings()
-        end
-        return
-    end
-
-    local current_extension = vim.fn.expand('%:e')
-    if contains(enabled_extensions, current_extension) then
-        setup_cmdrunner_mappings()
-    else
-        remove_cmdrunner_mappings()
-    end
-end
-
--- Autocommand to update state when entering a buffer
-local cmdrunner_augroup = vim.api.nvim_create_augroup('CmdRunnerState', { clear = true })
-vim.api.nvim_create_autocmd('BufEnter', {
-    group = cmdrunner_augroup,
-    pattern = '*',
-    callback = update_cmdrunner_state_for_buffer,
-})
 
 -- Manual toggle function
 function _G.toggle_cmdrunner()
@@ -92,8 +42,87 @@ local function remove_ansi_colors(line)
     return line:gsub("\27%[[%d;]*m", "")
 end
 
+local function put_selection_on_newline()
+
+  local mode = vim.api.nvim_get_mode().mode
+  -- Check for v (visual), V (visual line)
+  if mode ~= 'v' and mode ~= 'V' then
+    return
+  end
+
+  local api = vim.api
+  local fn = vim.fn
+
+  -- 1. Get visual selection boundaries (1-based)
+  -- Using getpos is fine here. '< marks the start, '> marks the end.
+  local start_pos = fn.getpos(".")
+  local end_pos = fn.getpos("v")
+
+  -- Extract 1-based line and column numbers
+  local start_row, start_col = start_pos[2], start_pos[3]
+  local end_row, end_col = end_pos[2], end_pos[3]
+  local bufnr = api.nvim_get_current_buf() -- Use current buffer
+
+  if start_row ~= end_row then
+     vim.notify("Can't do multi-line cmd run yet.", vim.log.levels.INFO)
+     return
+  end
+  if start_col > end_col then
+      start_col, end_col = end_col, start_col
+  end
+
+  -- vim.notify("Selected text:" .. start_row .. " " .. start_col .. " " .. end_row .. " " .. end_col, vim.log.levels.INFO)
+
+  -- 2. Get the precise selected text using nvim_buf_get_text
+  -- This API requires 0-based indices.
+  -- The end column for get_text is exclusive.
+  local selected_lines_table = api.nvim_buf_get_text(
+    bufnr,
+    start_row - 1, -- 0-based start row
+    start_col - 1, -- 0-based start col
+    end_row - 1,   -- 0-based end row
+    end_col,       -- 0-based end col (exclusive)
+    {}             -- options table
+  )
+
+  -- Check if we actually got text
+  if #selected_lines_table == 0 or (#selected_lines_table == 1 and selected_lines_table[1] == '') then
+     vim.notify("Selected text is empty.", vim.log.levels.INFO)
+     return
+  end
+
+  -- 3. Reconstruct the selected text, preserving internal newlines
+  local selected_text = table.concat(selected_lines_table)
+  -- vim.notify("Selected text:" .. selected_text, vim.log.levels.INFO)
+
+  -- 4. Prepend the '$' sign
+  local text_to_insert = "$ " .. selected_text
+
+
+  -- 6. Insert the lines into the buffer *after* the original selection's end row.
+  -- The API uses 0-based indices. To insert *after* 1-based end_row, use 0-based end_row.
+  api.nvim_buf_set_lines(
+    bufnr,
+    end_row,  -- Start inserting AT this 0-based line index (effectively *after* the original end_row)
+    end_row,  -- End index for replacement (same as start means pure insertion)
+    false,    -- `strict_indexing = false`
+    {text_to_insert} -- Pass the *table* of lines
+  )
+
+  -- 7. (Optional but recommended) Exit visual mode and move cursor
+  api.nvim_feedkeys(api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
+  -- Move cursor to the start of the first newly inserted line (1-based row, 0-based col)
+  api.nvim_win_set_cursor(0, { end_row + 1, 0 }) -- 0 for current window
+
+
+  -- Clear visual selection and return to normal mode
+  -- vim.cmd("normal! <Esc>")
+
+end
+
+
 -- Main command execution function
-vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
+local function run_cmd_under_cursor()
     if not vim.g.cmdrunner_enabled then
         vim.notify_once("CMDRunner is disabled for this filetype. Press <F9> to enable manually.", vim.log.levels.WARN, { title = "CMDRunner" })
         return
@@ -102,40 +131,15 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
     local bufnr = vim.api.nvim_get_current_buf()
     local mode = vim.fn.visualmode()
     local cmd
+    local current_line_num = vim.api.nvim_win_get_cursor(0)[1]
     local start_insert_line -- 1-based line index where insertion should start
+    start_insert_line = current_line_num + 1
 
-    -- Determine the command and insertion point based on mode (Logic mostly unchanged)
-    if mode ~= '' then
-        local start_pos = vim.fn.getpos("'<")
-        local end_pos = vim.fn.getpos("'>")
-        local v_start_line, v_start_col, v_end_line, v_end_col
-        if start_pos[2] > end_pos[2] or (start_pos[2] == end_pos[2] and start_pos[3] > end_pos[3]) then
-            v_start_line, v_start_col = end_pos[2], end_pos[3]
-            v_end_line, v_end_col = start_pos[2], start_pos[3]
-        else
-            v_start_line, v_start_col = start_pos[2], start_pos[3]
-            v_end_line, v_end_col = end_pos[2], end_pos[3]
-        end
-        local lines = vim.api.nvim_buf_get_lines(bufnr, v_start_line - 1, v_end_line, false)
-        if #lines == 1 then
-            if v_end_col >= v_start_col then
-                lines[1] = lines[1]:sub(v_start_col, v_end_col)
-            else lines[1] = "" end
-        else
-             if v_end_col > 0 and v_end_col <= #lines[#lines] then lines[#lines] = lines[#lines]:sub(1, v_end_col) end
-             if v_start_col > 1 and v_start_col <= #lines[1] then lines[1] = lines[1]:sub(v_start_col) end
-        end
-        cmd = table.concat(lines, "\n")
-        start_insert_line = v_end_line + 1
-    else
-        local current_line_num = vim.api.nvim_win_get_cursor(0)[1]
-        local current_line = vim.api.nvim_get_current_line()
-        local cleaned_cmd = current_line:gsub("^%s*[$#>%s]*%s*", ""):gsub("%s*$", "")
-        cmd = cleaned_cmd
-        if not current_line:match("^%s*[$#>%s]") then
-             vim.api.nvim_buf_set_lines(bufnr, current_line_num - 1, current_line_num, false, { "$ " .. cleaned_cmd })
-        end
-        start_insert_line = current_line_num + 1
+    local current_line = vim.api.nvim_get_current_line()
+    local cleaned_cmd = current_line:gsub("^%s*[$#>%s]*%s*", ""):gsub("%s*$", "")
+    cmd = cleaned_cmd
+    if not current_line:match("^%s*[$#>%s]") then
+         vim.api.nvim_buf_set_lines(bufnr, current_line_num - 1, current_line_num, false, { "$ " .. cleaned_cmd })
     end
 
     cmd = cmd:match("^%s*(.-)%s*$")
@@ -276,7 +280,64 @@ vim.api.nvim_create_user_command('RunCMDUnderCursor', function()
             pty = true, -- Keep PTY for better interactive-like behavior
         })
     end
-end, {})
+end
+
+local function run_selected_cmd()
+  put_selection_on_newline()
+  run_cmd_under_cursor()
+end
+
+-- Set up key mappings
+local function setup_cmdrunner_mappings()
+    if not vim.g.cmdrunner_enabled then
+        vim.api.nvim_set_keymap('n', '<C-CR>', ':RunCMDUnderCursor<CR>', { noremap = true, silent = true, desc = "Run command under cursor" })
+        vim.api.nvim_set_keymap('i', '<C-CR>', '<Esc>:RunCMDUnderCursor<CR>i', { noremap = true, silent = true, desc = "Run command under cursor" })
+        -- vim.api.nvim_set_keymap('v', '<C-CR>', ':<C-u>RunCMDUnderCursor<CR>', { noremap = true, silent = true, desc = "Run selected command" })
+        -- vim.api.nvim_set_keymap('x', '<C-CR>', ':PutSelectionOnNewLine<CR>:RunCMDUnderCursor<CR>', { noremap = true, silent = true, desc = "Run selected command" })
+        vim.keymap.set('x', '<C-CR>', run_selected_cmd, { noremap = true, silent = true, desc = "Run selected command" })
+        vim.g.cmdrunner_enabled = true -- Reflect that mappings are now active
+    end
+end
+
+-- Remove key mappings
+local function remove_cmdrunner_mappings()
+    if vim.g.cmdrunner_enabled then
+        pcall(vim.api.nvim_del_keymap, 'n', '<C-CR>')
+        pcall(vim.api.nvim_del_keymap, 'i', '<C-CR>')
+        pcall(vim.api.nvim_del_keymap, 'v', '<C-CR>')
+        vim.g.cmdrunner_enabled = false -- Reflect that mappings are now inactive
+    end
+end
+
+-- Function to check filetype and set state accordingly
+local function update_cmdrunner_state_for_buffer()
+    local bufnr = vim.api.nvim_get_current_buf()
+    if not vim.api.nvim_buf_is_loaded(bufnr) or vim.api.nvim_buf_get_option(bufnr, 'buftype') ~= '' then
+        if vim.g.cmdrunner_enabled then
+             remove_cmdrunner_mappings()
+        end
+        return
+    end
+
+    local current_extension = vim.fn.expand('%:e')
+    if contains(enabled_extensions, current_extension) then
+        setup_cmdrunner_mappings()
+    else
+        remove_cmdrunner_mappings()
+    end
+end
+
+-- Autocommand to update state when entering a buffer
+local cmdrunner_augroup = vim.api.nvim_create_augroup('CmdRunnerState', { clear = true })
+vim.api.nvim_create_autocmd('BufEnter', {
+    group = cmdrunner_augroup,
+    pattern = '*',
+    callback = update_cmdrunner_state_for_buffer,
+})
+
+
+vim.api.nvim_create_user_command('RunCMDUnderCursor', run_cmd_under_cursor, {})
+vim.api.nvim_create_user_command('RunSelectedCMD', run_selected_cmd, {})
 
 -- Toggle key mappings with F9
 vim.api.nvim_set_keymap('n', '<F9>', ':lua _G.toggle_cmdrunner()<CR>', { noremap = true, silent = true, desc = "Toggle CMDRunner Mappings" })
