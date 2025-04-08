@@ -34,6 +34,8 @@ general.import = [
     # "~/.config/alacritty/alacritty-theme/themes/breeze.toml"
 ]
 
+[terminal]
+shell = "/usr/bin/nu"
 
 [font]
 normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
