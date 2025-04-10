@@ -7,9 +7,9 @@ using namespace std;
 
 int main() {
 
-  println("Hello all {} worlds.", 2);
+    println("Number: {}", 2);
 
-  return 0;
+    return 0;
 }
 
 // view ./build/optimizations.txt

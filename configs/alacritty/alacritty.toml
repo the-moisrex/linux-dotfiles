@@ -35,7 +35,7 @@ general.import = [
 ]
 
 [terminal]
-shell = "/usr/bin/nu"
+# shell = "/usr/bin/nu"
 
 [font]
 normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
