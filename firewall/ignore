@@ -94,8 +94,7 @@ function save_dnsmasq_file {
     echo | sudo tee "$dnsmasq_file"; # reset file
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
-            valid_ip "$domain";
-            if [[ $? -eq 0 ]]; then 
+            if valid_ip "$domain"; then 
                 # It's an ip address, let's ignore it
                 echo "Ignore adding IP ${domain} to dnsmasq file.";
             else
@@ -111,7 +110,7 @@ function nft_save {
     name="$1"
     ipset="$2"
     file="$nft_include_dir/$name.nft"
-    cat > $file <<-END
+    cat > "$file" <<-END
     set $name {
         type ipv4_addr
         flags interval # enable CIDR and ranges
@@ -133,7 +132,7 @@ function nft_create_country {
     input="$countries_repo/ipv4/$countryiso.cidr"
     ipset=$(tr '\n' ',' < "$input");
     ipset="${ipset::-1}"
-    nft_save $name "$ipset";
+    nft_save "$name" "$ipset";
 }
 
 function nft_add_country {
@@ -141,10 +140,10 @@ function nft_add_country {
     is_force="$2"
     file="$nft_include_dir/$name.nft"
     if [ ! -f "$file" ]; then
-        echo no such file: $file
+        echo "no such file: $file"
         return;
     fi
-    if sudo nft -t list set inet mangle $name &>/dev/null; then
+    if sudo nft -t list set inet mangle "$name" &>/dev/null; then
         echo "Already added";
         if [ "$is_force" != "--force" ]; then
             return;
@@ -160,11 +159,11 @@ table inet mangle {
 END
 
     if [ "$ignored_nftables_set_name" == "$never_ignored_nftables_set_name" ]; then
-        sudo nft add counter inet mangle skip.never.$name \{ comment \"Never Skip GeoIPs for $name country\" \};
-        sudo nft insert rule inet mangle skipper ip daddr @$name counter name skip.never.$name return;
+        sudo nft add counter inet mangle "skip.never.$name" \{ comment \"Never Skip GeoIPs for "$name" country\" \};
+        sudo nft insert rule inet mangle skipper ip daddr "@$name" counter name "skip.never.$name" return;
     else
-        sudo nft add counter inet mangle skip.$name \{ comment \"Skip GeoIPs for $name country\" \};
-        sudo nft add rule inet mangle skipper ip daddr @$name counter name skip.$name goto marker comment \"ignored country with code $name\";
+        sudo nft add counter inet mangle "skip.$name" \{ comment \"Skip GeoIPs for "$name" country\" \};
+        sudo nft add rule inet mangle skipper ip daddr "@$name" counter name "skip.$name" goto marker comment \"ignored country with code "$name"\";
     fi
 }
 
@@ -172,7 +171,7 @@ END
 function list_domains {
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
-            echo $domain;
+            echo "$domain";
         done < "$ignored_domains_file";
     fi;
 }
@@ -184,10 +183,10 @@ function list_ipset {
 function list_ips {
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
-            echo $domain;
+            echo "$domain";
             while IFS= read -r ip; do
                 echo  "  $ip"
-            done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+            done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
             echo
         done < "$ignored_domains_file";
     fi;
@@ -200,21 +199,20 @@ function ignore {
         return;
     fi;
     echo "Adding $domain to the ignored list."
-    echo $domain >> $ignored_domains_file;
+    echo "$domain" >> "$ignored_domains_file";
     sort -u "$ignored_domains_file" -o "$ignored_domains_file";
-    valid_ip "$domain";
-    if [[ $? -eq 0 ]]; then 
+    if valid_ip "$domain"; then 
         # It's an ip address
         ip="$domain"
         sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ip" \}
-        ipcount=$(( $ipcount + 1 ));
+        ipcount=$(( "$ipcount" + 1 ));
     else
         # It's a domain
         while IFS= read -r ip; do
             echo  "  Adding ip address $ip to the 'ignored' ip set."
             sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ip" \}
-            ipcount=$(( $ipcount + 1 ));
-        done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+            ipcount=$(( "$ipcount" + 1 ));
+        done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
     fi
     echo "  Added $ipcount IPs to the 'ignored' ipset.";
     echo
@@ -227,54 +225,104 @@ function unignore {
         return;
     fi;
     echo "Removing $domain from ignored list."
-    grep -v "$domain" $ignored_domains_file | sponge $ignored_domains_file
+    grep -v "$domain" "$ignored_domains_file" | sponge "$ignored_domains_file"
     while IFS= read -r ip; do
         echo  "  Removing ip address $ip from the 'ignored' ip set."
-        sudo nft delete element inet mangle $ignored_nftables_set_name \{ $ip \}
-        ipcount=$(( $ipcount + 1 ));
-    done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+        sudo nft delete element inet mangle $ignored_nftables_set_name \{ "$ip" \}
+        ipcount=$(( "$ipcount" + 1 ));
+    done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
     echo "  Deleted $ipcount IPs from the 'ignored' ipset.";
     echo
 }
 
 
+# function update_ignores {
+#     if [ -f "$ignored_domains_file" ]; then
+#         ips="";
+#         ip_cache_count=0;
+#         while read -r domain; do
+#             if valid_ip "$domain"; then 
+#                 # It's an ip address
+#                 ip="$domain";
+#                 ips="${ips}${ip}, ";
+#                 ip_cache_count=$(( "$ip_cache_count" + 1 ));
+#                 ipcount=$(( "$ipcount" + 1 ));
+#                 echo "Adding $ip to the ignored list.";
+#                 if [ $ip_cache_count -ge 30 ]; then
+#                     echo "Emptying $ip_cache_count IP cache, and adding them to nftables.";
+#                     sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ips" \}
+#                     ips="";
+#                     ip_cache_count=0;
+#                 fi
+#             else
+#                 echo "Adding $domain to the ignored list."
+#                 # It's a domain
+#                 while IFS= read -r ip; do
+#                     echo  "  Adding ip address $ip to the 'ignored' ip set."
+#                     sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ip" \}
+#                     ipcount=$(( "$ipcount" + 1 ));
+#                 done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
+#                 echo "  Added $ipcount IPs to the 'ignored' ipset.";
+#                 echo
+#             fi
+#         done < "$ignored_domains_file";
+#         if [ -n "$ips" ]; then
+#             echo "Adding all accumulated IPs.";
+#             sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ips" \}
+#         fi
+#     fi;
+# }
+
 function update_ignores {
     if [ -f "$ignored_domains_file" ]; then
-        ips="";
-        ip_cache_count=0;
-        while read -r domain; do
-            valid_ip "$domain";
-            if [[ $? -eq 0 ]]; then 
-                # It's an ip address
-                ip="$domain";
-                ips="${ips}${ip}, ";
-                ip_cache_count=$(( $ip_cache_count + 1 ));
-                ipcount=$(( $ipcount + 1 ));
-                echo "Adding $ip to the ignored list.";
-                if [ $ip_cache_count -ge 30 ]; then
-                    echo "Emptying $ip_cache_count IP cache, and adding them to nftables.";
-                    sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ips" \}
-                    ips="";
-                    ip_cache_count=0;
-                fi
+        # Separate domains and IPs into different arrays
+        domains=()
+        ips=()
+        while read -r line; do
+            if valid_ip "$line"; then
+                ips+=("$line")
             else
-                echo "Adding $domain to the ignored list."
-                # It's a domain
-                while IFS= read -r ip; do
-                    echo  "  Adding ip address $ip to the 'ignored' ip set."
-                    sudo nft add element inet mangle $ignored_nftables_set_name \{ $ip \}
-                    ipcount=$(( $ipcount + 1 ));
-                done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
-                echo "  Added $ipcount IPs to the 'ignored' ipset.";
-                echo
+                domains+=("$line")
             fi
-        done < "$ignored_domains_file";
-        if [ -n "$ips" ]; then
-            echo "Adding all accumulated IPs.";
-            sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ips" \}
+        done < "$ignored_domains_file"
+
+        # Process domains
+        echo "Resolving domains..."
+        resolved_ips=()
+        while IFS= read -r ip; do
+            resolved_ips+=("$ip")
+            # echo "  Adding ip address $ip to the 'ignored' ip set."
+        done < <(dig +short +timeout=5 "${domains[@]}" | grep '^[.0-9]*$')
+
+        # Add all resolved IPs and accumulated IPs to nftables in batches
+        all_ips=("${ips[@]}" "${resolved_ips[@]}")
+        ip_cache_count=0
+        ips_string=""
+        for ip in "${all_ips[@]}"; do
+            ips_string+="${ip}, "
+            ip_cache_count=$(( "$ip_cache_count" + 1 ))
+            ipcount=$(( "$ipcount" + 1 ))
+            # echo "Adding $ip to the ignored list."
+            if [ $ip_cache_count -ge 500 ]; then
+                echo "Emptying $ip_cache_count IP cache, and adding them to nftables."
+                echo "Adding IPs: ${ips_string%, }"
+                echo
+                sudo nft add element inet mangle $ignored_nftables_set_name "{ ${ips_string%, } }"
+                ips_string=""
+                ip_cache_count=0
+            fi
+        done
+
+        # Add any remaining IPs
+        if [ -n "$ips_string" ]; then
+            echo "Adding all accumulated IPs."
+            echo "Adding IPs: ${ips_string%, }"
+            echo
+            sudo nft add element inet mangle $ignored_nftables_set_name "{ ${ips_string%, } }"
         fi
-    fi;
+    fi
 }
+
 
 function update_countries {
     if [ -d "$countries_repo" ]; then
@@ -286,24 +334,60 @@ function update_countries {
     fi;
 }
 
+# function ignore_country {
+#     iso_code="$1";
+#     if [ -z "$iso_code" ]; then
+#         iso_code="$countryiso";
+#     fi
+# 
+# 
+#     input="$countries_repo/ipv4/$countryiso.cidr"
+# 
+#     ipcount=0
+#     while IFS= read -r ip; do
+#         echo -ne "\r\033[KAdding ip address $ip to the '$iso_code' ip set."
+#         sudo nft add element inet mangle $ignored_nftables_geoips4_set_name \{ "$ip" \};
+#         ipcount=$(( "$ipcount" + 1 ));
+#     done < "$input";
+#     echo -ne "\r\033[KAdded $ipcount ips for country code '$iso_code'.";
+#     echo
+# }
+
 function ignore_country {
     iso_code="$1";
     if [ -z "$iso_code" ]; then
         iso_code="$countryiso";
     fi
 
-
-    input="$countries_repo/ipv4/$countryiso.cidr"
+    input="$countries_repo/ipv4/$iso_code.cidr"
 
     ipcount=0
+    ip_batch=""
     while IFS= read -r ip; do
-        echo -ne "\r\033[KAdding ip address $ip to the '$iso_code' ip set."
-        sudo nft add element inet mangle $ignored_nftables_geoips4_set_name \{ $ip \};
-        ipcount=$(( $ipcount + 1 ));
-    done < "$input";
-    echo -ne "\r\033[KAdded $ipcount ips for country code '$iso_code'.";
+        ip_batch+="$ip, "
+        ipcount=$(( "$ipcount" + 1 ))
+        if [ "$ipcount" -ge 500 ]; then
+            echo -e "\033[KAdding batch of ${ipcount} IPs to the '$iso_code' ip set."
+            echo "${ip_batch%, }"
+            sudo nft add element inet mangle $ignored_nftables_geoips4_set_name \{ "${ip_batch%, }" \};
+            echo
+            ip_batch=""
+            ipcount=0
+        fi
+    done < "$input"
+
+    # Add any remaining IPs
+    if [ "$ipcount" -gt 0 ]; then
+        echo -e "Adding final batch of ${ipcount} IPs to the '$iso_code' ip set."
+        echo "${ip_batch%, }"
+        sudo nft add element inet mangle $ignored_nftables_geoips4_set_name \{ "${ip_batch%, }" \};
+        echo
+    fi
+
+    echo -e "Added $ipcount ips for country code '$iso_code'.";
     echo
 }
+
 
 function unignore_country {
     iso_code="$1";
@@ -316,8 +400,8 @@ function unignore_country {
     ipcount=0
     while IFS= read -r ip; do
         echo  "  Removing ip address $ip from the 'geoips4' ip set."
-        sudo nft delete element inet mangle $ignored_nftables_geoips4_set_name \{ $ip \}
-        ipcount=$(( $ipcount + 1 ));
+        sudo nft delete element inet mangle $ignored_nftables_geoips4_set_name \{ "$ip" \}
+        ipcount=$(( "$ipcount" + 1 ));
     done < "$input";
     echo "  Deleted $ipcount IPs from the 'geoips4' ipset.";
     echo
@@ -335,7 +419,7 @@ function list_country {
     echo "Listing IPs of country $iso_code:";
     while IFS= read -r ip; do
         echo "$ip";
-        ipcount=$(( $ipcount + 1 ));
+        ipcount=$(( "$ipcount" + 1 ));
     done < "$input";
     echo "Found $ipcount ips for country code '$iso_code'.";
 }
