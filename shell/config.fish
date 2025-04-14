@@ -18,6 +18,7 @@ if status is-interactive
     # set -gx TERM=kitty
     set -gx EDITOR "nvim"
     set -gx PATH ".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$PATH:$HOME/.local/bin:$JAVA_HOME/bin:$HOME/.cargo/bin:$HOME/Android/Sdk/platform-tools:$HOME/Android/Sdk/emulator"
+    set -gx XDG_DATA_DIRS "$HOME/.nix-profile/share:$XDG_DATA_DIRS"
     set -gx CPM_SOURCE_CACHE "$HOME/.cache/CPM"
     set -gx HISTSIZE "100000000"
     set -gx SAVEHIST "$HISTSIZE"
