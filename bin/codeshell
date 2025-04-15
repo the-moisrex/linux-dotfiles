@@ -279,22 +279,22 @@ echo "Template: ${template}"
 echo "Template directory: ${template_dir}"
 echo "Code directory: ${tmpdir}"
 
-if [ -f "${template_dir}/.init" ]; then
-    "${template_dir}/.init";
+if [ -f "${tmpdir}/.init" ]; then
+    "${tmpdir}/.init";
 fi
 
-if [ -f "${template_dir}/.init.main" ]; then
+if [ -f "${tmpdir}/.init.main" ]; then
     while read -r line; do
         tmux send-keys -t "${window}.${main}" "$line";
         tmux send-keys -t "${window}.${main}" C-m;
-    done < "${template_dir}/.init.main"
+    done < "${tmpdir}/.init.main"
 fi
 
-if [ -f "${template_dir}/.init.side" ]; then
+if [ -f "${tmpdir}/.init.side" ]; then
     while read -r line; do
         tmux send-keys -t "${window}.${side}" "$line";
         tmux send-keys -t "${window}.${side}" C-m;
-    done < "${template_dir}/.init.side"
+    done < "${tmpdir}/.init.side"
 fi
 
 

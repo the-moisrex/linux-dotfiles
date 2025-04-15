@@ -1,0 +1,15 @@
+#!/bin/bash
+
+curdir=$(realpath "$(dirname "$0")");
+
+page_title=$(basename "${curdir}")
+file="$curdir/main.ipynb"
+replace "{PageTitle}" "$page_title" -- "$file"
+
+if ! command -v uv >/dev/null; then
+    echo "uv is not installed." >&2;
+    exit 1;
+fi
+
+
+uv init --vcs none --no-readme --name "$page_title" "$curdir"
