@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# Detect available qdbus command
+QDBUS_CMD=$(command -v qdbus6 || command -v qdbus)
+
+if [ -z "$QDBUS_CMD" ]; then
+    echo "Error: qdbus/qdbus6 not found!" >&2
+    exit 1
+fi
+
+# Check for --system flag
+BUS_TYPE="--session"
+if [[ "$1" == "--system" ]]; then
+    BUS_TYPE="--system"
+    shift
+fi
+
+# If arguments are given, use them as bus names; otherwise, list all
+if [ "$#" -gt 0 ]; then
+    SERVICES=("$@")
+else
+    mapfile -t SERVICES < <($QDBUS_CMD $BUS_TYPE 2>/dev/null)
+fi
+
+for SERVICE in "${SERVICES[@]}"; do
+    echo "## Service: $SERVICE"
+    
+    # Get object paths
+    OBJECTS=$($QDBUS_CMD $BUS_TYPE "$SERVICE" 2>/dev/null)
+    
+    for OBJECT in $OBJECTS; do
+        echo "### Object: $OBJECT"
+        
+        # Get interface information
+        echo "#### Methods and Properties:"
+        $QDBUS_CMD $BUS_TYPE "$SERVICE" "$OBJECT" 2>/dev/null | \
+            while read -r line; do
+                echo "- $line"
+            done
+        echo
+    done
+    echo
+done
+
