@@ -1,0 +1,16 @@
+#!/bin/bash
+
+export CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+curdir=$(dirname "$0")
+
+file="$curdir/main.py"
+
+if ! command -v uv >/dev/null; then
+    echo "uv is not installed." >&2;
+    exit 1;
+fi
+
+find "$curdir" \
+        -name '*.py' \
+    -or -name '*.watch' | entr -cs "uv run \"$file\"";
+

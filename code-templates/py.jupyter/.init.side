@@ -1,0 +1,2 @@
+uv add jupyter
+".venv/bin/jupyter" lab .
