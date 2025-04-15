@@ -186,7 +186,7 @@ function list_ips {
             echo "$domain";
             while IFS= read -r ip; do
                 echo  "  $ip"
-            done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
+            done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
             echo
         done < "$ignored_domains_file";
     fi;
@@ -212,7 +212,7 @@ function ignore {
             echo  "  Adding ip address $ip to the 'ignored' ip set."
             sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ip" \}
             ipcount=$(( "$ipcount" + 1 ));
-        done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
+        done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
     fi
     echo "  Added $ipcount IPs to the 'ignored' ipset.";
     echo
@@ -230,7 +230,7 @@ function unignore {
         echo  "  Removing ip address $ip from the 'ignored' ip set."
         sudo nft delete element inet mangle $ignored_nftables_set_name \{ "$ip" \}
         ipcount=$(( "$ipcount" + 1 ));
-    done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
+    done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
     echo "  Deleted $ipcount IPs from the 'ignored' ipset.";
     echo
 }
