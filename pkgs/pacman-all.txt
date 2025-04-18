@@ -60,6 +60,7 @@ ripgrep      # grep foo . -R (rg foo)
 ripgrep-all
 fd           # find . -name '*foo*'
 jq           # JSON processor
+glow         # Markdown prettifier
 
 # Shells
 kitty
