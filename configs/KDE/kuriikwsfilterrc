@@ -1,0 +1,11 @@
+[General]
+DefaultWebShortcut=google
+EnableWebShortcuts=true
+KeywordDelimiter=\s
+PreferredWebShortcuts=youtube,yahoo,rumble,svgl,box,google,cplusplus,mdn,cppreference,wikipedia,aparat,qwant,doc,wikit,per
+UsePreferredWebShortcutsOnly=false
+
+[svgl]
+Keys=svgl,svg
+Name=SVGl
+Query=https://svgl.app/?search=\\{@}
