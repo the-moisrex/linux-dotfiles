@@ -266,6 +266,12 @@ function install_jcal {
     fi
 }
 
+
+function setup_kde {
+    install "$dir/configs/KDE/kuriikwsfilterrc" "$HOME/.config/kuriikwsfilterrc"
+}
+
+
 # default values;
 forced=false
 for i in "$@"; do
@@ -288,6 +294,7 @@ for i in "$@"; do
             log "install.sh nautilus"
             log "install.sh codeshell"
             log "install.sh kservices"
+            log "install.sh kde"
             log "install.sh --all"
             log "install.sh uninstall fish"
             log "install.sh uninstall all"
@@ -301,6 +308,11 @@ for i in "$@"; do
 
         jcal)
             install_jcal;
+            shift;
+            ;;
+
+        kde|KDE)
+            setup_kde;
             shift;
             ;;
 
@@ -376,6 +388,7 @@ for i in "$@"; do
             setup_fish;
             setup_gdb;
             setup_kservices;
+            setup_kde;
             exit;
             ;;
 
