@@ -11,6 +11,8 @@ redsocks_bin="$HOME/bin/redsocks2"
 redsocks_config="$curdir/tproxy2socks-redsocks.conf"
 redsocks_pid="/tmp/tproxy/redsocks2.pid"
 tproxy_type_file="/tmp/tproxy/tproxy-type.txt"
+
+tproxy_remote="127.0.0.1"
 tproxy_port="9550"
 
 # rp_filer = https://sysctl-explorer.net/net/ipv4/rp_filter/
@@ -92,11 +94,11 @@ function prepare_redsocks_proxy {
 
     sudo ip rule add fwmark $lo_socks_fwmark table $table_id
     sudo ip route add local default dev lo table $table_id
-    sudo tproxy_port="${tproxy_port}" bashify nft "$curdir/tproxy2socks.nft"
+    sudo tproxy_remote="$tproxy_remote" tproxy_port="${tproxy_port}" bashify nft "$curdir/tproxy2socks.nft"
     echo "redsocks" > "$tproxy_type_file"
 
     new_config="/tmp/tproxy/tproxy2socks-redsocks.conf";
-    tproxy_port="$tproxy_port" bashify "$redsocks_config" > $new_config;
+    tproxy_remote="$tproxy_remote" tproxy_port="$tproxy_port" bashify "$redsocks_config" > $new_config;
     redsocks_config="$new_config";
 
     touch /tmp/ipcache.txt
@@ -260,6 +262,10 @@ function disable_proxy {
 
 while [ -n "$1" ]; do
     case $1 in
+        --remote|-remote|remote)
+            tproxy_remote="$2";
+            shift;
+            ;;
         --port|-port|port)
             tproxy_port="$2";
             shift;

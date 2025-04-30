@@ -1,20 +1,53 @@
-#!/usr/bin/fish
+#!/bin/bash
 
+err_sound="$HOME/.config/fish/assets/error.oga"
+ok_sound="$HOME/.config/fish/assets/ok.oga"
 
-set err_sound $HOME/.config/fish/assets/error.oga
-set ok_sound $HOME/.config/fish/assets/ok.oga
+# Sound check functionality
+if [[ "$1" == "--is-possible" ]]; then
+    # test -f "$err_sound" && test -f "$ok_sound" && command -v paplay &>/dev/null
+    command -v play >/dev/null;
+    exit $?
+fi
 
-switch "$argv"
-    case --is-possible
-        test -f $err_sound && test -f $ok_sound && command -v paplay >/dev/null || exit 1
-        exit $status
-end
+# Sound generation code
+# synth_chain=""
+# for code in "$@"; do
+#     freq=$((200 + code * 500))
+#     synth_chain+=" pluck $freq 0.1 :"
+# done
+# 
+# play -qn synth $(echo "$synth_chain" | sed 's/:$//') remix - \
+#   fade 0.1 0 0.1 vol 0.2
 
-for pipe_status in $argv;
-    if [ "$pipe_status" != 0 ];
-        paplay --volume=65536 "$err_sound" &>/dev/null
+synth_chain=""
+for code in "$@"; do
+    # Frequency scaling: logarithmic compression
+    freq=$((200 + (code * 50) % 2000))  # Max 2200Hz, wraps every 40 codes
+    
+    # Style selection based on code ranges
+    if (( code == 0 )); then
+        # Success sound
+        sound="synth 0.1 triangle 900 vol 0.2 fade q 0.01"
+    elif (( code < 10 )); then
+        # Common errors (1-9)
+        sound="synth 0.08 sine $freq vol 0.2"
+    elif (( code < 100 )); then
+        # Mid-range errors (10-99)
+        sound="synth 0.06 pluck $freq vol 0.25"
     else
-        paplay --volume=55536 "$ok_sound" &>/dev/null
-    end
-end
+        # Critical errors (100+)
+        sound="synth 0.1 triangle $freq vol 0.3"
+    fi
+    
+    synth_chain+=" $sound :"
+done
+
+# Cleanup and play
+synth_chain=$(echo "$synth_chain" | sed 's/:$//')
+# echo "$synth_chain"
+
+if [ -n "$synth_chain" ]; then
+    play -nq $synth_chain
+fi
 

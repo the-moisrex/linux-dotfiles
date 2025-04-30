@@ -41,7 +41,7 @@ for i in "$@"; do
       ;;
 
     -nsn=*|--nsname|--namespacename)
-      nsname="${i#*=}"
+      nsn="${i#*=}"
       ;;
 
     -d=*|--device=*)

@@ -4,7 +4,7 @@
 #   $ journalctl -k -t kernel -g 'nft#' --follow
 
 define local_network   = { 192.168.0.0/16, 169.254.0.0/16, 127.0.0.0/8, 10.0.0.0/8 }
-define skip_vpn_mark   = 0xe1f1 # NordVPN default vpn mark used in iproute2
+define skip_vpn_mark   = 0xe1f1 # VPN default vpn mark used in iproute2
 define accepted_fwmark = 0xe5ff # Accepted packets' mark; used for tor load balancing scripts
 define lo_v2ray_fwmark = 0xff   # Directly connect SO_MARK to 0xff traffic (0xff is a hexadecimal number, numerically equivalent to 255), the purpose of this rule is to avoid proxy loopback with local (gateway) traffic
 define multicast_ips   = 224.0.0.0-239.255.255.255

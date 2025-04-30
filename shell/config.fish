@@ -59,7 +59,7 @@ if status is-interactive
         function precmd --on-event fish_postexec;
             set p_status "$pipestatus"
             echo -ne (set_color yellow)► [ "$p_status" ]
-            play_pipe_sound $p_status &
+            setsid play_pipe_sound $p_status >/dev/null 2>&1 </dev/null &
         end
     end
 
