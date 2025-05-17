@@ -4,7 +4,7 @@
 #  sudo -E USER=${USER} net.ns.exec
 
 curdir=$(dirname "$0")
-source $curdir/net
+source "$curdir/net"
 
 function print_help {
     echo "net.ns run [cmd]       # run cmd in namespace"

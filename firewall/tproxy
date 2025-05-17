@@ -7,10 +7,14 @@ curdir=$(dirname "$0")
 lo_v2ray_fwmark=0xff
 lo_socks_fwmark=0xff
 table_id=153
-redsocks_bin="$HOME/bin/redsocks2"
 redsocks_config="$curdir/tproxy2socks-redsocks.conf"
 redsocks_pid="/tmp/tproxy/redsocks2.pid"
 tproxy_type_file="/tmp/tproxy/tproxy-type.txt"
+if [ -f "/usr/bin/redsocks2" ]; then
+    redsocks_bin="/usr/bin/redsocks2"
+else
+    redsocks_bin="$HOME/bin/redsocks2"
+fi
 
 tproxy_remote="127.0.0.1"
 tproxy_port="9550"
