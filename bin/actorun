@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+# Run commands on KDE Plasma activity changes
+
 import os
 import re
 import sys
@@ -111,14 +114,14 @@ def buildin_command(cmd, toggle_state):
 
     return True
 
-def run_command(activit_id, cmd, toggle_state):
+def run_command(activity_id, cmd, toggle_state):
     """Run the command"""
     if buildin_command(cmd, toggle_state):
         return
 
     expanded_cmd = substitute_vars(cmd, activity_id, toggle_state)
     try:
-        log(f"🚀 Running {cmd_type} command: {expanded_cmd}")
+        log(f"🚀 Running {toggle_state} command: {expanded_cmd}")
         subprocess.run(
             expanded_cmd,
             shell=True,
