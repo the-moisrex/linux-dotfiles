@@ -1,21 +1,20 @@
-#include "pch.h"
+#include "pch.hpp"
 
-namespace beast = boost::beast;     // from <boost/beast.hpp>
-namespace http = beast::http;       // from <boost/beast/http.hpp>
-namespace net = boost::asio;        // from <boost/asio.hpp>
-using tcp = net::ip::tcp;           // from <boost/asio/ip/tcp.hpp>
-
+namespace beast = boost::beast; // from <boost/beast.hpp>
+namespace http = beast::http;   // from <boost/beast/http.hpp>
+namespace net = boost::asio;    // from <boost/asio.hpp>
+using tcp = net::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 
 // Performs an HTTP GET and prints the response
 int main(int argc, char** argv) {
     try {
         // Check command line arguments.
-        if(argc != 4 && argc != 5) {
-            std::cerr <<
-                "Usage: http-client-sync <host> <port> <target> [<HTTP version: 1.0 or 1.1(default)>]\n" <<
-                "Example:\n" <<
-                "    http-client-sync www.example.com 80 /\n" <<
-                "    http-client-sync www.example.com 80 / 1.0\n";
+        if (argc != 4 && argc != 5) {
+            std::cerr << "Usage: http-client-sync <host> <port> <target> "
+                         "[<HTTP version: 1.0 or 1.1(default)>]\n"
+                      << "Example:\n"
+                      << "    http-client-sync www.example.com 80 /\n"
+                      << "    http-client-sync www.example.com 80 / 1.0\n";
             return EXIT_FAILURE;
         }
         auto const host = argv[1];
@@ -63,14 +62,13 @@ int main(int argc, char** argv) {
         // not_connected happens sometimes
         // so don't bother reporting it.
         //
-        if(ec && ec != beast::errc::not_connected)
+        if (ec && ec != beast::errc::not_connected)
             throw beast::system_error{ec};
 
         // If we get here then the connection is closed gracefully
-    } catch(std::exception const& e) {
+    } catch (std::exception const& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
 }
-
