@@ -1,18 +1,11 @@
-#include "pch.h"
-
-using namespace boost;
-using namespace boost::asio;
-using namespace boost::asio::ip;
-
-using std::cout;
-using std::cerr;
-using std::endl;
-using std::string;
+#include "pch.hpp"
 
 auto main() -> int {
+    using boost::asio::io_context;
 
-  io_context io;
+    io_context io;
 
+    std::println("Hello World");
 
-  return 0;
+    return 0;
 }
