@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+import os
+import re
+import sys
+import json
+import argparse
+import subprocess
+import dbus
+import dbus.mainloop.glib
+from gi.repository import GLib
+from collections import defaultdict
+
+# Built-in command handlers
+BUILTIN_COMMANDS = {
+    'cpu-power': {
+        'get': lambda: get_cpu_governor(),
+        'set': lambda gov: set_cpu_governor(gov)
+    }
+}
+
+# Global state
+toggle_stacks = defaultdict(list)
+activity_info = {}
+activity_rules = defaultdict(list)
+current_activity = ""
+session_bus = None
+verbose = False
+
+def get_cpu_governor():
+    """Get current CPU governor using cpupower or sysfs"""
+    try:
+        output = subprocess.check_output(
+            ['cpupower', 'frequency-info'],
+            text=True,
+            stderr=subprocess.DEVNULL
+        )
+        match = re.search(r'governor "(\w+)"', output)
+        return match.group(1) if match else "unknown"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        try:
+            with open('/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor', 'r') as f:
+                return f.read().strip()
+        except IOError:
+            return "unknown"
+
+def set_cpu_governor(governor):
+    """Set CPU governor using cpupower or sysfs"""
+    try:
+        subprocess.run(
+            ['cpupower', 'frequency-set', '-g', governor],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        log(f"✅ Set CPU governor to {governor}")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        try:
+            subprocess.run(
+                ['sudo', 'cpupower', 'frequency-set', '-g', governor],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            log(f"✅ Set CPU governor to {governor} (with sudo)")
+        except subprocess.CalledProcessError:
+            try:
+                for cpu in range(os.cpu_count() or 1):
+                    path = f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor'
+                    with open(path, 'w') as f:
+                        f.write(governor)
+                log(f"✅ Set CPU governor to {governor} (via sysfs)")
+            except IOError:
+                log(f"⚠️ Failed to set CPU governor to {governor}", error=True)
+
+def substitute_vars(cmd, activity_id, toggle_state):
+    """Replace variables in command strings"""
+    activity_name = activity_info.get(activity_id, {}).get('name', '')
+    replacements = {
+        '$toggle_bool': '1' if toggle_state == 'in' else '0',
+        '$toggle_str': 'ON' if toggle_state == 'in' else 'OFF',
+        '$activity_id': activity_id,
+        '$activity_name': activity_name
+    }
+    for var, value in replacements.items():
+        cmd = cmd.replace(var, str(value))
+    return cmd
+
+def buildin_command(cmd, toggle_state):
+    """Check if cmd is a builtin command"""
+    parts = cmd.split(':', 1)
+    if len(parts) < 2:
+        return False
+        
+    cmd_name, cmd_value = parts
+    if cmd_name not in BUILTIN_COMMANDS:
+        log(f"⚠️ Unknown toggle command: {cmd_name}", error=True)
+        return False
+
+    builtin = BUILTIN_COMMANDS[cmd_name]
+    stack = toggle_stacks[cmd_name]
+    
+    if toggle_state == 'in':
+        current = builtin['get']()
+        stack.append(current)
+        log(f"💾 Saved {cmd_name} state: {current}")
+        builtin['set'](cmd_value)
+    elif stack:
+        previous = stack.pop()
+        builtin['set'](previous)
+        log(f"↩️ Restored {cmd_name} to previous state: {previous}")
+
+    return True
+
+def run_command(activit_id, cmd, toggle_state):
+    """Run the command"""
+    if buildin_command(cmd, toggle_state):
+        return
+
+    expanded_cmd = substitute_vars(cmd, activity_id, toggle_state)
+    try:
+        log(f"🚀 Running {cmd_type} command: {expanded_cmd}")
+        subprocess.run(
+            expanded_cmd,
+            shell=True,
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        log(f"⚠️ Command failed: {expanded_cmd} ({e})", error=True)
+
+def run_commands(activity_id, rules, toggle_state):
+    """Execute commands for activity state change"""
+    for rule in rules:
+        # Handle toggle commands
+        for toggle_cmd in rule.get('toggle', []):
+            run_command(activity_id, toggle_cmd, toggle_state)
+        
+        # Handle in/out commands
+        for cmd in rule.get(toggle_state, []):
+            run_command(activity_id, cmd, toggle_state)
+
+def on_activity_changed(new_activity_id):
+    """Handle activity change signal"""
+    global current_activity
+    
+    old_activity_id = current_activity
+    current_activity = new_activity_id
+    
+    old_name = activity_info.get(old_activity_id, {}).get('name', 'Unknown')
+    new_name = activity_info.get(new_activity_id, {}).get('name', 'Unknown')
+    
+    log(f"🔄 Activity changed: {old_name} ({old_activity_id}) → {new_name} ({new_activity_id})")
+    
+    # Run out commands for old activity
+    if old_activity_id and old_activity_id in activity_rules:
+        run_commands(old_activity_id, activity_rules[old_activity_id], 'out')
+    
+    # Run in commands for new activity
+    if new_activity_id and new_activity_id in activity_rules:
+        run_commands(new_activity_id, activity_rules[new_activity_id], 'in')
+
+def load_activities():
+    """Load current activities from D-Bus"""
+    global activity_info, session_bus
+    
+    obj = session_bus.get_object(
+        'org.kde.ActivityManager',
+        '/ActivityManager/Activities'
+    )
+    iface = dbus.Interface(obj, 'org.kde.ActivityManager.Activities')
+    
+    # Get all activities
+    activities = iface.ListActivitiesWithInformation()
+    for act in activities:
+        activity_id = str(act[0])
+        activity_info[activity_id] = {
+            'id': activity_id,
+            'name': str(act[1])
+        }
+    
+    # Get current activity
+    return str(iface.CurrentActivity())
+
+def setup_dbus():
+    """Set up D-Bus connection and signal handler"""
+    global session_bus
+    
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    session_bus = dbus.SessionBus()
+    
+    obj = session_bus.get_object(
+        'org.kde.ActivityManager',
+        '/ActivityManager/Activities'
+    )
+    iface = dbus.Interface(obj, 'org.kde.ActivityManager.Activities')
+    iface.connect_to_signal('CurrentActivityChanged', on_activity_changed)
+
+def parse_rules_file(filename):
+    """Parse rules from JSON file"""
+    with open(filename, 'r') as f:
+        data = json.load(f)
+    
+    rules = []
+    for item in data:
+        if 'on' not in item or not item['on']:
+            log(f"⚠️ Skipping rule with missing or empty 'on' field", error=True)
+            continue
+            
+        rules.append({
+            'on': item['on'],
+            'toggle': item.get('toggle', []),
+            'in': item.get('in', []),
+            'out': item.get('out', [])
+        })
+    return rules
+
+def parse_cli_rules(args):
+    """Parse rules from command line arguments"""
+    rules = []
+    current_rule = {}
+    
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '--on':
+            if current_rule:
+                rules.append(current_rule)
+            current_rule = {
+                'on': args[i+1],
+                'toggle': [],
+                'in': [],
+                'out': []
+            }
+            i += 2
+        elif arg == '--toggle':
+            if not current_rule:
+                raise ValueError("--toggle must follow --on")
+            current_rule['toggle'].append(args[i+1])
+            i += 2
+        elif arg == '--in':
+            if not current_rule:
+                raise ValueError("--in must follow --on")
+            current_rule['in'].append(args[i+1])
+            i += 2
+        elif arg == '--out':
+            if not current_rule:
+                raise ValueError("--out must follow --on")
+            current_rule['out'].append(args[i+1])
+            i += 2
+        else:
+            i += 1
+    
+    if current_rule:
+        rules.append(current_rule)
+    return rules
+
+def log(message, error=False):
+    """Log messages with timestamp"""
+    if verbose or error:
+        timestamp = GLib.DateTime.new_now_local().format("%H:%M:%S")
+        prefix = "[!] " if error else ""
+        print(f"{prefix}[{timestamp}] {message}", file=sys.stderr if error else sys.stdout)
+
+def match_activity(rule_pattern):
+    """Find activities matching pattern (name or ID)"""
+    # Handle empty pattern
+    if not rule_pattern:
+        log(f"⚠️ Skipping empty pattern", error=True)
+        return []
+    
+    # Escape pattern if it's not valid regex
+    try:
+        pattern = re.compile(rule_pattern, re.IGNORECASE)
+    except re.error:
+        # Escape special characters and use exact match
+        safe_pattern = re.escape(rule_pattern)
+        pattern = re.compile(f"^{safe_pattern}$", re.IGNORECASE)
+        log(f"⚠️ Invalid regex pattern '{rule_pattern}'. Using exact match instead.")
+    
+    matches = []
+    
+    for activity_id, info in activity_info.items():
+        if pattern.match(activity_id) or pattern.match(info['name']):
+            matches.append(activity_id)
+    
+    return matches
+
+def main():
+    global verbose
+    
+    # Create argument parser
+    parser = argparse.ArgumentParser(
+        description='Run commands on KDE Plasma activity changes',
+        epilog='Example: actorun --on work --toggle cpu-power:performance'
+    )
+    parser.add_argument(
+        '--file',
+        nargs='?',
+        help='JSON configuration file'
+    )
+    parser.add_argument(
+        '--dump-json',
+        action='store_true',
+        help='Print configuration as JSON and exit'
+    )
+    parser.add_argument(
+        '--verbose',
+        '-v',
+        action='store_true',
+        help='Enable verbose logging'
+    )
+    
+    # Parse known arguments first
+    args, remaining = parser.parse_known_args()
+    verbose = not args.dump_json and args.verbose
+    
+    # Parse CLI rules from remaining arguments
+    cli_rules = []
+    if remaining:
+        try:
+            cli_rules = parse_cli_rules(remaining)
+            log(f"📝 Parsed {len(cli_rules)} rule(s) from command line")
+        except Exception as e:
+            log(f"⚠️ Error parsing command line arguments: {e}", error=True)
+            sys.exit(1)
+    
+    # Load rules from file if specified
+    file_rules = []
+    if args.file:
+        try:
+            file_rules = parse_rules_file(args.file)
+            log(f"📄 Loaded {len(file_rules)} rule(s) from {args.file}")
+        except Exception as e:
+            log(f"⚠️ Error loading rules file: {e}", error=True)
+            sys.exit(1)
+    
+    # Combine rules (file rules first)
+    rules = file_rules + cli_rules
+    
+    # Dump JSON and exit if requested
+    if args.dump_json:
+        print(json.dumps(rules, indent=2))
+        return
+    
+    if not rules:
+        log("⚠️ No rules specified!", error=True)
+        parser.print_help()
+        sys.exit(1)
+    
+    # Set up D-Bus
+    try:
+        setup_dbus()
+    except dbus.exceptions.DBusException as e:
+        log(f"⚠️ D-Bus connection failed: {e}", error=True)
+        log("Make sure KDE Activity Manager is running", error=True)
+        sys.exit(1)
+    
+    # Load activities
+    global current_activity
+    try:
+        current_activity = load_activities()
+        log(f"🔍 Found {len(activity_info)} activities")
+    except dbus.exceptions.DBusException as e:
+        log(f"⚠️ Failed to load activities: {e}", error=True)
+        sys.exit(1)
+    
+    # Match rules to activities
+    matched_any = False
+    for rule in rules:
+        matches = match_activity(rule['on'])
+        if not matches:
+            log(f"⚠️ No activities match pattern: {rule['on']}", error=True)
+            continue
+        
+        for activity_id in matches:
+            activity_rules[activity_id].append({
+                'toggle': rule.get('toggle', []),
+                'in': rule.get('in', []),
+                'out': rule.get('out', [])
+            })
+            matched_any = True
+            log(f"🔗 Rule for '{rule['on']}' applied to activity: " + 
+                f"{activity_info[activity_id]['name']} ({activity_id})")
+    
+    if not matched_any:
+        log("⚠️ No rules matched any activities!", error=True)
+        sys.exit(1)
+    
+    # Run initial setup for current activity
+    if current_activity in activity_rules:
+        log(f"🏁 Initializing current activity: {activity_info[current_activity]['name']}")
+        run_commands(current_activity, activity_rules[current_activity], 'in')
+    
+    # Start main loop
+    try:
+        log("🚀 actorun started. Monitoring activity changes...")
+        GLib.MainLoop().run()
+    except KeyboardInterrupt:
+        log("\n👋 Exiting")
+
+if __name__ == '__main__':
+    main()
