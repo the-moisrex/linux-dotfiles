@@ -1,9 +1,11 @@
-#include "pch.h"
-
-using namespace std;
+#include "pch.hpp"
 
 auto main() -> int {
-  auto res = boost::algorithm::join(vector<string>({"one", "two"}), ", ");
-  cout << res << endl;
-  return 0;
+    using boost::algorithm::join;
+    using std::string;
+    using std::vector;
+
+    auto const res = join(vector<string>({"one", "two"}), ", ");
+    std::println("{}", res);
+    return 0;
 }
