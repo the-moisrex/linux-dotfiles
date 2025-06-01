@@ -26,7 +26,7 @@ verbose = False
 # Built-in command handlers
 BUILTIN_COMMANDS = {
     'cpu-power': {
-        'run': lambda state, gov: toggle_cpu_governor(state, gov)
+        'run': lambda state, gov: set_cpu_governor(gov)
     },
     'sig-toggle': {
         'run': lambda state, app: sig('cont' if state == 'in' else 'stop', app)
@@ -95,16 +95,75 @@ def set_cpu_governor(governor):
                 log(f"⚠️ Failed to set CPU governor to {governor}", error=True)
 
 
-prev_cpu_gov = get_cpu_governor()
-def toggle_cpu_governor(state, gov):
-    if state == 'in':
-        set_cpu_governor(gov)
-    else:
-        set_cpu_governor(prev_cpu_gov)
+def replace_function(func_name, action, text):
+    result = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        # Look for the $toggle( pattern
+        if text.startswith(f"{func_name}(", i):
+            start = i + len(f"{func_name}(")
+            depth = 1
+            j = start
+            # Find the matching closing parenthesis
+            while j < n and depth > 0:
+                if text[j] == '(':
+                    depth += 1
+                elif text[j] == ')':
+                    depth -= 1
+                j += 1
+
+            if depth != 0:
+                # No matching closing parenthesis found, treat as normal text
+                result.append(text[i])
+                i += 1
+                continue
+
+            # Extract the content inside parentheses
+            content = text[start:j-1]
+
+            # Now parse the two arguments separated by a comma at top level
+            arg1, arg2 = None, None
+            arg_start = 0
+            comma_index = -1
+            depth_arg = 0
+            for k, ch in enumerate(content):
+                if ch == '(':
+                    depth_arg += 1
+                elif ch == ')':
+                    depth_arg -= 1
+                elif ch == ',' and depth_arg == 0:
+                    comma_index = k
+                    break
+
+            if comma_index == -1:
+                # No comma found, treat as normal text
+                result.append(text[i])
+                i += 1
+                continue
+
+            arg1 = content[:comma_index].strip()
+            arg2 = content[comma_index+1:].strip()
+
+            # Call the function and append the result
+            replacement = action(arg1, arg2)
+            result.append(replacement)
+
+            # Move index past the entire $toggle(...) pattern
+            i = j
+        else:
+            # Normal character, just append
+            result.append(text[i])
+            i += 1
+
+    return ''.join(result)
 
 
-def substitute_vars(cmd, activity_id, toggle_state):
+def substitute_vars(cmd, info):
     """Replace variables in command strings"""
+    toggle_state = info['toggle_state']
+    activity_id = info['activity_id']
     activity_name = activity_info.get(activity_id, {}).get('name', '')
     replacements = {
         '$toggle_bool': '1' if toggle_state == 'in' else '0',
@@ -112,13 +171,20 @@ def substitute_vars(cmd, activity_id, toggle_state):
         '$activity_id': activity_id,
         '$activity_name': activity_name
     }
+    functions = {
+        '$toggle': lambda opt1, opt2: opt1 if toggle_state == 'in' else opt2
+    }
     for var, value in replacements.items():
         cmd = cmd.replace(var, str(value))
+    for func_name, func in functions.items():
+        cmd = replace_function(func_name, func, cmd)
     return cmd
 
 
-def buildin_command(cmd, toggle_state):
+def buildin_command(cmd, info):
     """Check if cmd is a builtin command"""
+    toggle_state = info['toggle_state']
+
     parts = cmd.split(':', 1)
     if len(parts) < 2:
         return False
@@ -129,16 +195,18 @@ def buildin_command(cmd, toggle_state):
         return False
 
     builtin = BUILTIN_COMMANDS[cmd_name]
-    builtin['run'](toggle_state, cmd_value)
+    cmd = substitute_vars(cmd_value, info)
+    builtin['run'](toggle_state, cmd)
     return True
 
 
-def run_command(activity_id, cmd, toggle_state):
+def run_command(cmd, info):
     """Run the command"""
-    if buildin_command(cmd, toggle_state):
+    toggle_state = info['toggle_state']
+    if buildin_command(cmd, info):
         return
 
-    expanded_cmd = substitute_vars(cmd, activity_id, toggle_state)
+    expanded_cmd = substitute_vars(cmd, info)
     try:
         log(f"🚀 Running {toggle_state} command: {expanded_cmd}")
         subprocess.run(
@@ -150,16 +218,17 @@ def run_command(activity_id, cmd, toggle_state):
         log(f"⚠️ Command failed: {expanded_cmd} ({e})", error=True)
 
 
-def run_commands(activity_id, rules, toggle_state):
+def run_commands(rules, info):
     """Execute commands for activity state change"""
+    toggle_state = info['toggle_state']
     for rule in rules:
         # Handle toggle commands
         for toggle_cmd in rule.get('toggle', []):
-            run_command(activity_id, toggle_cmd, toggle_state)
+            run_command(toggle_cmd, info)
         
         # Handle in/out commands
         for cmd in rule.get(toggle_state, []):
-            run_command(activity_id, cmd, toggle_state)
+            run_command(cmd, info)
 
 
 def on_activity_changed(new_activity_id):
@@ -171,16 +240,33 @@ def on_activity_changed(new_activity_id):
     
     old_name = activity_info.get(old_activity_id, {}).get('name', 'Unknown')
     new_name = activity_info.get(new_activity_id, {}).get('name', 'Unknown')
-    
+
+    print()
     log(f"🔄 Activity changed: {old_name} ({old_activity_id}) → {new_name} ({new_activity_id})")
-    
+
     # Run out commands for old activity
     if old_activity_id and old_activity_id in activity_rules:
-        run_commands(old_activity_id, activity_rules[old_activity_id], 'out')
+        info = {
+            'toggle_state': 'out',
+            'old_activity_id': old_activity_id,
+            'new_activity_id': new_activity_id,
+            'old_activity_name': old_name,
+            'new_activity_name': new_name,
+            'activity_id': old_activity_id,
+        }
+        run_commands(activity_rules[old_activity_id], info)
     
     # Run in commands for new activity
     if new_activity_id and new_activity_id in activity_rules:
-        run_commands(new_activity_id, activity_rules[new_activity_id], 'in')
+        info = {
+            'toggle_state': 'in',
+            'old_activity_id': old_activity_id,
+            'new_activity_id': new_activity_id,
+            'old_activity_name': old_name,
+            'new_activity_name': new_name,
+            'activity_id': new_activity_id,
+        }
+        run_commands(activity_rules[new_activity_id], info)
 
 
 def load_activities():
@@ -419,7 +505,15 @@ def main():
     # Run initial setup for current activity
     if current_activity in activity_rules:
         log(f"🏁 Initializing current activity: {activity_info[current_activity]['name']}")
-        run_commands(current_activity, activity_rules[current_activity], 'in')
+        info = {
+            'toggle_state': 'in',
+            'old_activity_id': current_activity,
+            'new_activity_id': current_activity,
+            'old_activity_name': activity_info[current_activity]['name'],
+            'new_activity_name': activity_info[current_activity]['name'],
+            'activity_id': current_activity,
+        }
+        run_commands(activity_rules[current_activity], info)
 
     # Start main loop
     try:
