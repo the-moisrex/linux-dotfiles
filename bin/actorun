@@ -13,13 +13,6 @@ import dbus.mainloop.glib
 from gi.repository import GLib
 from collections import defaultdict
 
-# Built-in command handlers
-BUILTIN_COMMANDS = {
-    'cpu-power': {
-        'get': lambda: get_cpu_governor(),
-        'set': lambda gov: set_cpu_governor(gov)
-    }
-}
 
 # Global state
 toggle_stacks = defaultdict(list)
@@ -28,6 +21,31 @@ activity_rules = defaultdict(list)
 current_activity = ""
 session_bus = None
 verbose = False
+
+
+# Built-in command handlers
+BUILTIN_COMMANDS = {
+    'cpu-power': {
+        'run': lambda state, gov: toggle_cpu_governor(state, gov)
+    },
+    'sig-toggle': {
+        'run': lambda state, app: sig('cont' if state == 'in' else 'stop', app)
+    }
+}
+
+
+def sig(cmd, app):
+    try:
+        subprocess.run(
+            ['sig', cmd, app],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        log(f"✅ sig {cmd} {app}")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        log(f"⚠️ Failed sig {cmd} {app}", error=True)
+
 
 def get_cpu_governor():
     """Get current CPU governor using cpupower or sysfs"""
@@ -45,6 +63,7 @@ def get_cpu_governor():
                 return f.read().strip()
         except IOError:
             return "unknown"
+
 
 def set_cpu_governor(governor):
     """Set CPU governor using cpupower or sysfs"""
@@ -75,6 +94,15 @@ def set_cpu_governor(governor):
             except IOError:
                 log(f"⚠️ Failed to set CPU governor to {governor}", error=True)
 
+
+prev_cpu_gov = get_cpu_governor()
+def toggle_cpu_governor(state, gov):
+    if state == 'in':
+        set_cpu_governor(gov)
+    else:
+        set_cpu_governor(prev_cpu_gov)
+
+
 def substitute_vars(cmd, activity_id, toggle_state):
     """Replace variables in command strings"""
     activity_name = activity_info.get(activity_id, {}).get('name', '')
@@ -88,6 +116,7 @@ def substitute_vars(cmd, activity_id, toggle_state):
         cmd = cmd.replace(var, str(value))
     return cmd
 
+
 def buildin_command(cmd, toggle_state):
     """Check if cmd is a builtin command"""
     parts = cmd.split(':', 1)
@@ -100,19 +129,9 @@ def buildin_command(cmd, toggle_state):
         return False
 
     builtin = BUILTIN_COMMANDS[cmd_name]
-    stack = toggle_stacks[cmd_name]
-    
-    if toggle_state == 'in':
-        current = builtin['get']()
-        stack.append(current)
-        log(f"💾 Saved {cmd_name} state: {current}")
-        builtin['set'](cmd_value)
-    elif stack:
-        previous = stack.pop()
-        builtin['set'](previous)
-        log(f"↩️ Restored {cmd_name} to previous state: {previous}")
-
+    builtin['run'](toggle_state, cmd_value)
     return True
+
 
 def run_command(activity_id, cmd, toggle_state):
     """Run the command"""
@@ -130,6 +149,7 @@ def run_command(activity_id, cmd, toggle_state):
     except subprocess.CalledProcessError as e:
         log(f"⚠️ Command failed: {expanded_cmd} ({e})", error=True)
 
+
 def run_commands(activity_id, rules, toggle_state):
     """Execute commands for activity state change"""
     for rule in rules:
@@ -140,6 +160,7 @@ def run_commands(activity_id, rules, toggle_state):
         # Handle in/out commands
         for cmd in rule.get(toggle_state, []):
             run_command(activity_id, cmd, toggle_state)
+
 
 def on_activity_changed(new_activity_id):
     """Handle activity change signal"""
@@ -160,6 +181,7 @@ def on_activity_changed(new_activity_id):
     # Run in commands for new activity
     if new_activity_id and new_activity_id in activity_rules:
         run_commands(new_activity_id, activity_rules[new_activity_id], 'in')
+
 
 def load_activities():
     """Load current activities from D-Bus"""
@@ -183,6 +205,7 @@ def load_activities():
     # Get current activity
     return str(iface.CurrentActivity())
 
+
 def setup_dbus():
     """Set up D-Bus connection and signal handler"""
     global session_bus
@@ -196,6 +219,7 @@ def setup_dbus():
     )
     iface = dbus.Interface(obj, 'org.kde.ActivityManager.Activities')
     iface.connect_to_signal('CurrentActivityChanged', on_activity_changed)
+
 
 def parse_rules_file(filename):
     """Parse rules from JSON file"""
@@ -215,6 +239,7 @@ def parse_rules_file(filename):
             'out': item.get('out', [])
         })
     return rules
+
 
 def parse_cli_rules(args):
     """Parse rules from command line arguments"""
@@ -256,12 +281,14 @@ def parse_cli_rules(args):
         rules.append(current_rule)
     return rules
 
+
 def log(message, error=False):
     """Log messages with timestamp"""
     if verbose or error:
         timestamp = GLib.DateTime.new_now_local().format("%H:%M:%S")
         prefix = "[!] " if error else ""
         print(f"{prefix}[{timestamp}] {message}", file=sys.stderr if error else sys.stdout)
+
 
 def match_activity(rule_pattern):
     """Find activities matching pattern (name or ID)"""
@@ -286,6 +313,7 @@ def match_activity(rule_pattern):
             matches.append(activity_id)
     
     return matches
+
 
 def main():
     global verbose
@@ -365,7 +393,7 @@ def main():
     except dbus.exceptions.DBusException as e:
         log(f"⚠️ Failed to load activities: {e}", error=True)
         sys.exit(1)
-    
+
     # Match rules to activities
     matched_any = False
     for rule in rules:
@@ -373,7 +401,7 @@ def main():
         if not matches:
             log(f"⚠️ No activities match pattern: {rule['on']}", error=True)
             continue
-        
+
         for activity_id in matches:
             activity_rules[activity_id].append({
                 'toggle': rule.get('toggle', []),
@@ -387,18 +415,19 @@ def main():
     if not matched_any:
         log("⚠️ No rules matched any activities!", error=True)
         sys.exit(1)
-    
+
     # Run initial setup for current activity
     if current_activity in activity_rules:
         log(f"🏁 Initializing current activity: {activity_info[current_activity]['name']}")
         run_commands(current_activity, activity_rules[current_activity], 'in')
-    
+
     # Start main loop
     try:
         log("🚀 actorun started. Monitoring activity changes...")
         GLib.MainLoop().run()
     except KeyboardInterrupt:
         log("\n👋 Exiting")
+
 
 if __name__ == '__main__':
     main()
