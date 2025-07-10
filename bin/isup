@@ -134,27 +134,25 @@ case $1 in
 
     *)
         # all information:
+        code=0
         if isup $@; then
             echo "Ping OK.";
-            if ishttpup $@; then
-                echo "HTTP OK.";
-                if ishttpsup $@; then
-                    echo "HTTPS OK.";
-                    exit 0;
-                else
-                    code=$?;
-                    echo "HTTPS Failed.";
-                    exit $code
-                fi
-            else
-                code=$?;
-                echo "HTTP Failed.";
-                exit $code
-            fi
         else
-            code=$?;
+            code=$(( $code + $? ));
             echo "Ping Failed.";
-            exit $code;
         fi
+        if ishttpup $@; then
+            echo "HTTP OK.";
+        else
+            code=$(( $code + $? ));
+            echo "HTTP Failed.";
+        fi
+        if ishttpsup $@; then
+            echo "HTTPS OK.";
+        else
+            code=$(( $code + $? ));
+            echo "HTTPS Failed.";
+        fi
+        exit $code;
         ;;
 esac

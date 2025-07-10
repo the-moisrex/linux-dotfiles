@@ -1,4 +1,4 @@
-set debuginfod enabled on
+set debuginfod enabled off
 set startup-with-shell off
 set breakpoint pending on
 
