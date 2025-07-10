@@ -1,12 +1,13 @@
 #!/bin/bash
 
+# Create a temporary named pipe
+pipe=$(mktemp -u)
+mkfifo "$pipe"
+
 # Function to get video duration
 get_duration() {
-    ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$1"
+    ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null
 }
-
-# Initialize total duration
-total_duration=0
 
 # Function to format duration
 format_duration() {
@@ -31,25 +32,57 @@ format_duration() {
     echo "$formatted"
 }
 
-# Process each file
-for video_file in "$@"; do
+# Function to process a single video file
+process_video() {
+    local video_file=$1
     if [ ! -f "$video_file" ]; then
         echo "Error: File '$video_file' not found!"
-        continue
+        return
     fi
 
-    duration=$(get_duration "$video_file")
+    local duration=$(get_duration "$video_file")
     if [ -z "$duration" ]; then
         echo "Error: Could not retrieve the duration of the video '$video_file'."
-        continue
+        return
     fi
 
-    total_duration=$(echo "$total_duration + $duration" | bc)
-
-    formatted_duration=$(format_duration "$duration")
-    # echo -e "$duration seconds ($formatted_duration): \t\t $video_file"
+    local formatted_duration=$(format_duration "$duration")
     echo -e "$formatted_duration: \t\t $video_file"
+
+    # Write the duration to the named pipe
+    echo "$duration" > "$pipe"
+}
+
+# Number of workers
+num_workers=50
+max_processes=0
+
+total_duration=0
+
+for video_file in "$@"; do
+    if [ $max_processes -ge $num_workers ]; then
+        while read -r duration; do
+            total_duration=$(echo "$total_duration + $duration" | bc)
+            wait -n
+            max_processes=$((max_processes - 1))
+        done < "$pipe"
+    fi
+    (process_video "$video_file") &
+    max_processes=$((max_processes + 1))
 done
+
+while true; do
+    while read -r duration; do
+        total_duration=$(echo "$total_duration + $duration" | bc)
+    done < "$pipe"
+    if test -z "$(jobs -l | grep -v Done)" ; then
+        break;
+    fi
+done
+wait
+
+# Close the named pipe
+rm "$pipe"
 
 # Output the total duration
 formatted_total_duration=$(format_duration "$total_duration")
