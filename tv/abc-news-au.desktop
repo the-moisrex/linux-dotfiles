@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=ABC Australia
-Exec=/usr/bin/vlc https://abc-iview-mediapackagestreams-2.akamaized.net/out/v1/6e1cc6d25ec0480ea099a5399d73bc4b/index.m3u8
+Exec=/usr/bin/mpv https://abc-iview-mediapackagestreams-2.akamaized.net/out/v1/6e1cc6d25ec0480ea099a5399d73bc4b/index.m3u8
 Icon=tv.abc.news.au
 Terminal=false
 Type=Application

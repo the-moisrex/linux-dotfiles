@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=euronews (Youtube)
-Exec=/usr/bin/vlc https://www.youtube.com/@euronews/live
+Exec=/usr/bin/mpv https://www.youtube.com/@euronews/live
 Icon=tv.euronews
 Terminal=false
 Type=Application

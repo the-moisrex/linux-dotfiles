@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=RT Global
-Exec=/usr/bin/vlc https://rt-glb.rttv.com/dvr/rtnews/playlist.m3u8
+Exec=/usr/bin/mpv https://rt-glb.rttv.com/dvr/rtnews/playlist.m3u8
 Icon=tv.rt
 Terminal=false
 Type=Application

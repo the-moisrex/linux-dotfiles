@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=BBC Persian (Youtube)
-Exec=/usr/bin/vlc https://www.youtube.com/@BBCNewsPersian/live
+Exec=/usr/bin/mpv https://www.youtube.com/@BBCNewsPersian/live
 Icon=tv.bbc-persian
 Terminal=false
 Type=Application

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=Arirang
-Exec=/usr/bin/vlc https://amdlive-ch01-ctnd-com.akamaized.net/arirang_1ch/smil:arirang_1ch.smil/playlist.m3u8
+Exec=/usr/bin/mpv https://amdlive-ch01-ctnd-com.akamaized.net/arirang_1ch/smil:arirang_1ch.smil/playlist.m3u8
 Icon=tv.arirang
 Terminal=false
 Type=Application
