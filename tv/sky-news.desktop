@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=Sky News (Youtube)
-Exec=/usr/bin/vlc https://youtu.be/9Auq9mYxFEE
+Exec=/usr/bin/mpv https://youtu.be/9Auq9mYxFEE
 Icon=tv.sky.news
 Terminal=false
 Type=Application

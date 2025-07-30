@@ -51,7 +51,7 @@ async function main(channels) {
             const content = `[Desktop Entry]
 Version=1.0
 Name=${name}
-Exec=/usr/bin/vlc https://ncdn.telewebion.com/${ch.descriptor}/live/playlist.m3u8
+Exec=/usr/bin/mpv https://ncdn.telewebion.com/${ch.descriptor}/live/playlist.m3u8
 Icon=tv.${ch.descriptor}
 Terminal=false
 Type=Application
