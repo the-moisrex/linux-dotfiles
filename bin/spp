@@ -147,8 +147,7 @@ for file in $cpp_files; do
         fi
         
         # Extract function using AST dump filter, suppressing stderr to hide "Printing" message
-        extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null)
-        extracted_code=$(echo "$extracted_code" | grep -v "Printing $qualified_name" | clang-format);
+        extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null | grep -v "Printing " | clang-format);
         
         if [[ ${PIPESTATUS[0]} -eq 0 && -n "$extracted_code" ]]; then
             echo "$extracted_code"
