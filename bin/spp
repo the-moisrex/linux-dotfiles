@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script name: extract.cpp
+# Script name: spp (Search C++)
 # Purpose: Extract a function's source code from a C++ file using clang-check AST tools
 
 # Default values
