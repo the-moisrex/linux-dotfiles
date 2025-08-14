@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# Display help if requested
+if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    echo "Usage: $0 <spp_arguments>"
+    echo ""
+    echo "This script runs the spp command with the provided arguments and pipes the output"
+    echo "through pygmentize and magick to display as an image."
+    echo ""
+    echo "Example:"
+    echo "  $0 sort_marks"
+    echo ""
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
+    exit 0
+fi
+
+# Check if spp command exists
+if ! command -v spp &> /dev/null; then
+    echo "Error: spp command not found"
+    exit 1
+fi
+
+# Check if required commands exist
+if ! command -v pygmentize &> /dev/null; then
+    echo "Error: pygmentize command not found"
+    exit 1
+fi
+
+if ! command -v magick &> /dev/null; then
+    echo "Error: magick command not found"
+    exit 1
+fi
+
+# If no arguments provided, show usage
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 <spp_arguments>"
+    echo "Example: $0 sort_marks"
+    echo "For help: $0 --help"
+    exit 1
+fi
+
+# Run spp with provided arguments, then pipe through pygmentize and magick
+spp "$@" | pygmentize -l cpp -f img | magick display -
