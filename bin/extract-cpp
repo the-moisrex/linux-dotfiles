@@ -1,0 +1,145 @@
+#!/bin/bash
+
+# Script name: extract.cpp
+# Purpose: Extract a function's source code from a C++ file using clang-check AST tools
+
+# Default values
+verbose=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            echo "Usage: extract.cpp [OPTIONS] FUNCTION_NAME"
+            echo "Extract a function's source code from a C++ file using clang-check AST tools."
+            echo ""
+            echo "Options:"
+            echo "  --help, -h          Display this help message and exit"
+            echo "  --verbose, -v       Enable verbose output"
+            echo ""
+            echo "Example:"
+            echo "  extract.cpp --verbose is_canonically_ordered"
+            exit 0
+            ;;
+        --verbose|-v)
+            verbose=true
+            shift
+            ;;
+        -*)
+            echo "Error: Unknown option $1" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "$function_name" ]]; then
+                function_name="$1"
+            else
+                echo "Error: Multiple function names specified" >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if function name is provided
+if [[ -z "$function_name" ]]; then
+    echo "Error: Missing function name" >&2
+    echo "Use 'extract.cpp --help' for usage information" >&2
+    exit 1
+fi
+
+# Check if we're in a git repository
+if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    echo "Error: Not in a git repository" >&2
+    exit 1
+fi
+
+# Get git root directory
+git_root=$(git rev-parse --show-toplevel)
+
+# Read extra compiler arguments from .clang file if it exists
+extra_args=()
+clang_file="$git_root/.clang"
+if [[ -f "$clang_file" ]]; then
+    if [[ "$verbose" = true ]]; then
+        echo "Using extra compiler arguments from $clang_file" >&2
+    fi
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$line" ]] && continue
+        # Add each argument individually
+        for arg in $line; do
+            extra_args+=("$arg")
+        done
+    done < "$clang_file"
+fi
+
+# Find C++ files in the repository that contain the function
+cpp_files=$(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hxx')
+
+if [[ -z "$cpp_files" ]]; then
+    echo "Error: No C++ files found containing function '$function_name'" >&2
+    exit 1
+fi
+
+if [[ "$verbose" = true ]]; then
+    echo "Found function in files:" >&2
+    for file in $cpp_files; do
+        echo "  $file" >&2
+    done
+fi
+
+# Try to extract the function from each file
+for file in $cpp_files; do
+    if [[ "$verbose" = true ]]; then
+        echo "Checking $file for function definition..." >&2
+    fi
+    
+    # Get AST list to find qualified function names
+    ast_list=$(clang-check -ast-list "$file" -- "${extra_args[@]}" 2>/dev/null)
+    
+    if [[ $? -ne 0 ]]; then
+        if [[ "$verbose" = true ]]; then
+            echo "Warning: Failed to get AST list for $file" >&2
+        fi
+        continue
+    fi
+    
+    # Find all qualified names that contain our function name
+    qualified_names=$(echo "$ast_list" | grep "$function_name" | sort -u)
+    
+    if [[ -z "$qualified_names" ]]; then
+        if [[ "$verbose" = true ]]; then
+            echo "Warning: Function '$function_name' not found in AST list for $file" >&2
+        fi
+        continue
+    fi
+    
+    if [[ "$verbose" = true ]]; then
+        echo "Found qualified names in $file:" >&2
+        echo "$qualified_names" >&2
+    fi
+    
+    # Try each qualified name
+    for qualified_name in $qualified_names; do
+        if [[ "$verbose" = true ]]; then
+            echo "Attempting to extract '$qualified_name' from $file..." >&2
+        fi
+        
+        # Extract function using AST dump filter
+        extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null | clang-format)
+        
+        if [[ $? -eq 0 && -n "$extracted_code" ]]; then
+            echo "$extracted_code"
+            exit 0
+        fi
+        
+        if [[ "$verbose" = true ]]; then
+            echo "Warning: Failed to extract function '$qualified_name' from $file" >&2
+        fi
+    done
+done
+
+echo "Error: Failed to extract function '$function_name' from any file" >&2
+exit 1
