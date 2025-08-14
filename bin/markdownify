@@ -27,6 +27,46 @@ show_help() {
     echo "  run-tests | clean.privacy | $0 --cpp | gh issue create 657 -F -"
 }
 
+# Function to check if we're in a git repository
+is_git_repo() {
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+# Function to infer project language from git repository
+infer_project_lang() {
+    if ! is_git_repo; then
+        echo ""
+        return
+    fi
+    
+    # Count file extensions in the repository using git ls-files (respects .gitignore)
+    local lang=$(git ls-files | grep -E "\.(cpp|cc|cxx|c\+\+|hpp|hxx|h|py|sh|bash|js|html|htm|css|json|xml|java|go|rs|swift|kt|kts|ts|tsx|php|rb|pl|pm)$" | \
+        sed 's/.*\.\(.*\)/\1/' | \
+        sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
+    
+    # Map file extensions to language identifiers
+    case "$lang" in
+        cpp|cc|cxx|c++|hpp|hxx|h) echo "cpp" ;;
+        py) echo "python" ;;
+        sh|bash) echo "bash" ;;
+        js) echo "javascript" ;;
+        html|htm) echo "html" ;;
+        css) echo "css" ;;
+        json) echo "json" ;;
+        xml) echo "xml" ;;
+        java) echo "java" ;;
+        go) echo "go" ;;
+        rs) echo "rust" ;;
+        swift) echo "swift" ;;
+        kt|kts) echo "kotlin" ;;
+        ts|tsx) echo "typescript" ;;
+        php) echo "php" ;;
+        rb) echo "ruby" ;;
+        pl|pm) echo "perl" ;;
+        *) echo "" ;;
+    esac
+}
+
 # Default language
 lang=""
 
@@ -132,7 +172,11 @@ if [[ ${#files[@]} -eq 0 ]]; then
     
     # Use default language if not specified
     if [[ -z "$lang" ]]; then
-        lang="text"
+        # Try to infer project language first, fallback to text
+        lang=$(infer_project_lang)
+        if [[ -z "$lang" ]]; then
+            lang="text"
+        fi
     fi
     
     format_markdown "$content" "$lang" ""
@@ -155,7 +199,11 @@ else
         if [[ -n "$lang" ]]; then
             file_lang="$lang"
         else
-            file_lang=$(infer_lang "$file")
+            # Try to infer project language first, then file-based language
+            file_lang=$(infer_project_lang)
+            if [[ -z "$file_lang" ]]; then
+                file_lang=$(infer_lang "$file")
+            fi
         fi
         
         format_markdown "$content" "$file_lang" "$file"
