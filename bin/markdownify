@@ -1,0 +1,163 @@
+#!/bin/bash
+
+# Script name: markdownify
+# Purpose: Convert text input or files to Markdown format with code blocks
+
+# Function to display help information
+show_help() {
+    echo "Usage: $0 [OPTIONS] [FILE...]"
+    echo "Convert text input or files to Markdown format with code blocks."
+    echo ""
+    echo "Options:"
+    echo "  --help               Display this help message and exit"
+    echo "  --lang=LANGUAGE      Specify language for code blocks (e.g., cpp, python, bash)"
+    echo "  --cpp                Shortcut for --lang=cpp"
+    echo "  --python             Shortcut for --lang=python"
+    echo "  --bash               Shortcut for --lang=bash"
+    echo "  --javascript         Shortcut for --lang=javascript"
+    echo "  --html               Shortcut for --lang=html"
+    echo "  --none               Don't wrap in code blocks"
+    echo ""
+    echo "If no FILE is specified, reads from stdin."
+    echo ""
+    echo "Examples:"
+    echo "  $0 --cpp file.cpp"
+    echo "  cat file.py | $0 --python"
+    echo "  $0 --bash script.sh > output.md"
+    echo "  run-tests | clean.privacy | $0 --cpp | gh issue create 657 -F -"
+}
+
+# Default language
+lang=""
+
+# Parse command line arguments
+files=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help)
+            show_help
+            exit 0
+            ;;
+        --lang=*)
+            lang="${1#*=}"
+            shift
+            ;;
+        --lang)
+            lang="$2"
+            shift 2
+            ;;
+        --cpp)
+            lang="cpp"
+            shift
+            ;;
+        --python)
+            lang="python"
+            shift
+            ;;
+        --bash)
+            lang="bash"
+            shift
+            ;;
+        --javascript)
+            lang="javascript"
+            shift
+            ;;
+        --html)
+            lang="html"
+            shift
+            ;;
+        --none)
+            lang="none"
+            shift
+            ;;
+        -*)
+            echo "Error: Unknown option $1" >&2
+            exit 1
+            ;;
+        *)
+            files+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Function to infer language from file extension
+infer_lang() {
+    local file="$1"
+    local ext="${file##*.}"
+    case "$ext" in
+        cpp|cc|cxx|c++|hpp|hxx|h) echo "cpp" ;;
+        py) echo "python" ;;
+        sh|bash) echo "bash" ;;
+        js) echo "javascript" ;;
+        html|htm) echo "html" ;;
+        css) echo "css" ;;
+        json) echo "json" ;;
+        xml) echo "xml" ;;
+        md) echo "markdown" ;;
+        txt) echo "text" ;;
+        *) echo "text" ;;
+    esac
+}
+
+# Function to format content as Markdown
+format_markdown() {
+    local content="$1"
+    local file_lang="$2"
+    local filename="$3"
+    
+    # If language is 'none', output content as-is
+    if [[ "$file_lang" == "none" ]]; then
+        echo "$content"
+        return
+    fi
+    
+    # Add filename header if provided
+    if [[ -n "$filename" ]]; then
+        echo "### $filename"
+        echo ""
+    fi
+    
+    # Add code block
+    echo "\`\`\`$file_lang"
+    echo "$content"
+    echo "\`\`\`"
+    echo ""
+}
+
+# Process input
+if [[ ${#files[@]} -eq 0 ]]; then
+    # Read from stdin
+    content=$(cat)
+    
+    # Use default language if not specified
+    if [[ -z "$lang" ]]; then
+        lang="text"
+    fi
+    
+    format_markdown "$content" "$lang" ""
+else
+    # Process each file
+    for file in "${files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            echo "Error: File '$file' not found." >&2
+            continue
+        fi
+        
+        if [[ ! -r "$file" ]]; then
+            echo "Error: File '$file' is not readable." >&2
+            continue
+        fi
+        
+        content=$(cat "$file")
+        
+        # Determine language for this file
+        if [[ -n "$lang" ]]; then
+            file_lang="$lang"
+        else
+            file_lang=$(infer_lang "$file")
+        fi
+        
+        format_markdown "$content" "$file_lang" "$file"
+    done
+fi
