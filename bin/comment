@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+# comment - Add comments to stdin input
+# Usage: echo "text" | comment [--begin|--end] "comment"
+
+set -euo pipefail
+
+# Default values
+comment=""
+position="begin"  # begin or end
+add_newline=true
+each_line=false
+help_requested=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --begin)
+      position="begin"
+      shift
+      ;;
+    --end)
+      position="end"
+      shift
+      ;;
+    --eachline|--each-line)
+      each_line=true
+      shift
+      ;;
+    --no-newline)
+      add_newline=false
+      shift
+      ;;
+    --help|-h)
+      help_requested=true
+      shift
+      ;;
+    *)
+      comment="$1"
+      shift
+      ;;
+  esac
+done
+
+# Display help if requested
+if [[ "$help_requested" == true ]]; then
+  echo "Usage: comment [--begin|--end] [--eachline] [--no-newline] \"comment\""
+  echo ""
+  echo "Add comments to stdin input."
+  echo ""
+  echo "Options:"
+  echo "  --begin       Prepend comment with newline after (default)"
+  echo "  --end         Append comment with newline before"
+  echo "  --eachline    Add comment to each line (instead of once)"
+  echo "  --no-newline  Don't add a newline at the end"
+  echo "  --help        Show this help message"
+  echo ""
+  echo "Examples:"
+  echo "  echo \"code\" | comment --begin \"TODO:\""
+  echo "  echo \"code\" | comment --end \"# end of line comment\""
+  echo "  echo -n \"no newline\" | comment --no-newline \"#\""
+  echo "  cat file.txt | comment --eachline \"#\""
+  exit 0
+fi
+
+# Check if comment is provided
+if [[ -z "$comment" ]]; then
+  echo "Error: Comment is required" >&2
+  echo "Usage: comment [--begin|--end] [--eachline] [--no-newline] \"comment\"" >&2
+  exit 1
+fi
+
+# Read all input
+input=$(cat)
+
+# If each_line is true, process line by line
+if [[ "$each_line" == true ]]; then
+  # Process line by line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$position" in
+      begin)
+        echo "$comment $line"
+        ;;
+      end)
+        echo "$line $comment"
+        ;;
+    esac
+  done <<< "$input"
+else
+  # Add comment once to the entire input
+  case "$position" in
+    begin)
+      if [[ "$add_newline" == true ]]; then
+        printf "%s\n\n%s" "$comment" "$input"
+      else
+        printf "%s %s" "$comment" "$input"
+      fi
+      ;;
+    end)
+      if [[ "$add_newline" == true ]]; then
+        printf "%s\n\n%s" "$input" "$comment"
+      else
+        printf "%s %s" "$input" "$comment"
+      fi
+      ;;
+  esac
+  
+  # Add final newline if requested
+  if [[ "$add_newline" == true ]]; then
+    echo
+  fi
+fi
