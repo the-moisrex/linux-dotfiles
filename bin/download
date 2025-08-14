@@ -61,7 +61,8 @@ function try {
 }
 
 
-yt="try yt-dlp --restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs 'en*,es,fa,-live_chat' --trim-filenames 200"
+#yt="try yt-dlp --restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs 'en*,es,fa,-live_chat' --trim-filenames 200"
+yt="try yt-dlp --restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs 'en*,-live_chat' --trim-filenames 200"
 yt_list="$yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'"
 yt_audio="$yt -x"
 yt_1440="$yt -f 'bestvideo[ext=mp4][width<3000][height<=1600]+bestaudio[ext=m4a]/bestvideo[ext=webm][width<3000][height<=1600]+bestaudio[ext=webm]/bestvideo[width<3000][height<=1600]+bestaudio/best[width<3000][height<=1600]/best'"

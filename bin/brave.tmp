@@ -23,6 +23,8 @@ chromium_default_opts=(
     --ignore-certificate-errors
 
     --disable-extensions
+    --no-startup-window
+    --disable-sync-preferences
     # --incognito
 )
 
