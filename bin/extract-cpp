@@ -5,20 +5,26 @@
 
 # Default values
 verbose=false
+files=()
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h)
-            echo "Usage: extract.cpp [OPTIONS] FUNCTION_NAME"
+            echo "Usage: extract.cpp [OPTIONS] [FILES...] FUNCTION_NAME"
             echo "Extract a function's source code from a C++ file using clang-check AST tools."
             echo ""
             echo "Options:"
             echo "  --help, -h          Display this help message and exit"
             echo "  --verbose, -v       Enable verbose output"
             echo ""
+            echo "Arguments:"
+            echo "  FILES               Optional list of files to search (default: all C++ files in repo)"
+            echo "  FUNCTION_NAME       Name of the function to extract"
+            echo ""
             echo "Example:"
             echo "  extract.cpp --verbose is_canonically_ordered"
+            echo "  extract.cpp file1.cpp file2.h calculate"
             exit 0
             ;;
         --verbose|-v)
@@ -30,11 +36,11 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            if [[ -z "$function_name" ]]; then
-                function_name="$1"
+            # If we have more than one argument left, treat as files
+            if [[ $# -gt 1 ]]; then
+                files+=("$1")
             else
-                echo "Error: Multiple function names specified" >&2
-                exit 1
+                function_name="$1"
             fi
             shift
             ;;
@@ -75,8 +81,21 @@ if [[ -f "$clang_file" ]]; then
     done < "$clang_file"
 fi
 
-# Find C++ files in the repository that contain the function
-cpp_files=$(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hxx')
+# Get list of files to search
+if [[ ${#files[@]} -eq 0 ]]; then
+    # Find C++ files in the repository that contain the function
+    cpp_files=$(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hxx')
+else
+    # Use provided files, checking they exist
+    cpp_files=()
+    for file in "${files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            echo "Error: File '$file' not found" >&2
+            exit 1
+        fi
+        cpp_files+=("$file")
+    done
+fi
 
 if [[ -z "$cpp_files" ]]; then
     echo "Error: No C++ files found containing function '$function_name'" >&2
@@ -84,7 +103,7 @@ if [[ -z "$cpp_files" ]]; then
 fi
 
 if [[ "$verbose" = true ]]; then
-    echo "Found function in files:" >&2
+    echo "Searching in files:" >&2
     for file in $cpp_files; do
         echo "  $file" >&2
     done
@@ -127,10 +146,16 @@ for file in $cpp_files; do
             echo "Attempting to extract '$qualified_name' from $file..." >&2
         fi
         
-        # Extract function using AST dump filter
-        extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null | clang-format)
+        # Extract function using AST dump filter, suppressing stderr to hide "Printing" message
+        if [[ "$verbose" = true ]]; then
+            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>&1)
+        else
+            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null)
+        fi
+
+        extracted_code=$(echo "$extracted_code" | grep -v "Printing $qualified_name" | clang-format);
         
-        if [[ $? -eq 0 && -n "$extracted_code" ]]; then
+        if [[ ${PIPESTATUS[0]} -eq 0 && -n "$extracted_code" ]]; then
             echo "$extracted_code"
             exit 0
         fi
