@@ -117,8 +117,8 @@ for file in $cpp_files; do
     
     # Get AST list to find qualified function names
     ast_list=$(clang-check -ast-list "$file" -- "${extra_args[@]}" 2>/dev/null)
-    
-    if [[ $? -ne 0 ]]; then
+
+    if [ -z "$ast_list" ]; then
         if [[ "$verbose" = true ]]; then
             echo "Warning: Failed to get AST list for $file" >&2
         fi
@@ -147,12 +147,7 @@ for file in $cpp_files; do
         fi
         
         # Extract function using AST dump filter, suppressing stderr to hide "Printing" message
-        if [[ "$verbose" = true ]]; then
-            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>&1)
-        else
-            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null)
-        fi
-
+        extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null)
         extracted_code=$(echo "$extracted_code" | grep -v "Printing $qualified_name" | clang-format);
         
         if [[ ${PIPESTATUS[0]} -eq 0 && -n "$extracted_code" ]]; then
