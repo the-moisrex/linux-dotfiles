@@ -1,0 +1,10 @@
+# If:
+#    PathMatch: webpp/.*
+CompileFlags:
+  Add: [-std=c++23, -I./, -I/webpp, -W, -Wall, -Wextra, -Wpedantic, -Wno-unused-variable,-Wno-infinite-recursion,-Werror=implicit-function-declaration,-Wshadow,-Wno-shadow-field-in-constructor-modified,-Wno-shadow-ivar,-Wuninitialized,-Wunused-label,-Wunused-lambda-capture]
+  CompilationDatabase: /webpp/cmake-build-clang
+Index:
+  Background: Build
+  StandardLibrary: Yes
+Hover:
+  ShowAKA: Yes
