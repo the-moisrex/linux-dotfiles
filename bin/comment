@@ -79,10 +79,10 @@ if [[ "$each_line" == true ]]; then
   while IFS= read -r line || [[ -n "$line" ]]; do
     case "$position" in
       begin)
-        echo "$comment $line"
+        echo "$comment$line"
         ;;
       end)
-        echo "$line $comment"
+        echo "$line$comment"
         ;;
     esac
   done <<< "$input"
@@ -93,14 +93,14 @@ else
       if [[ "$add_newline" == true ]]; then
         printf "%s\n\n%s" "$comment" "$input"
       else
-        printf "%s %s" "$comment" "$input"
+        printf "%s%s" "$comment" "$input"
       fi
       ;;
     end)
       if [[ "$add_newline" == true ]]; then
         printf "%s\n\n%s" "$input" "$comment"
       else
-        printf "%s %s" "$input" "$comment"
+        printf "%s%s" "$input" "$comment"
       fi
       ;;
   esac
