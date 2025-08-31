@@ -35,7 +35,7 @@ table inet socks {
         meta mark $accepted_fwmark return;
         meta mark $skip_vpn_mark return; # marked to be skiped already
         meta mark $outbound_socks_fwmark return; # socks itself generated this packet
-        meta mark $lo_socks_fwmark return; # for some reason already marked; it shouldn't happen
+        # meta mark $lo_socks_fwmark return; # for some reason already marked; it shouldn't happen
         ip daddr != $public_ipv4 return;
 
         tcp dport { 80, 443 } counter name socks redirect to :$tproxy_port;
@@ -43,7 +43,8 @@ table inet socks {
 
         # QUIC protocol; we t-proxy UDP here because we don't want to change the packet
         # udp dport { 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
-        udp dport { 80, 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
+        # udp dport { 80, 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
+        udp dport { 80, 443, 53 } counter name socks tproxy to :$tproxy_port;
     }
 
     chain output {
@@ -55,13 +56,14 @@ table inet socks {
         meta mark $accepted_fwmark return;
         meta mark $skip_vpn_mark return; # marked to be skiped already
         meta mark $outbound_socks_fwmark return; # socks itself generated this packet
-        meta mark $lo_socks_fwmark return; # for some reason already marked; it shouldn't happen
+        # meta mark $lo_socks_fwmark return; # for some reason already marked; it shouldn't happen
         ip daddr != $public_ipv4 return;
 
         tcp dport { 80, 443 } counter name socks redirect to :$tproxy_port;
         
         # QUIC Protocol; no t-proxying here; because our source address is already local
-        udp dport { 80, 443 } counter name socks mark set $lo_socks_fwmark accept;
+        # udp dport { 80, 443 } counter name socks mark set $lo_socks_fwmark accept;
+        udp dport { 80, 443, 53 } counter name socks redirect to :$tproxy_port;
         # udp dport { 443 } counter name socks mark set $lo_socks_fwmark redirect to :$tproxy_port;
     }
 }
