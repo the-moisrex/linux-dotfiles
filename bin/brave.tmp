@@ -25,6 +25,10 @@ chromium_default_opts=(
     --disable-extensions
     --no-startup-window
     --disable-sync-preferences
+    --disable-features=WebRTCUDPMasking
+    --disable-webrtc
+    --disable-webrtc-hw-encoding
+    --disable-webrtc-hw-decoding
     # --incognito
 )
 
