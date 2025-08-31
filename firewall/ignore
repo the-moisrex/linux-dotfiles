@@ -327,7 +327,7 @@ function update_ignores {
 function update_countries {
     if [ -d "$countries_repo" ]; then
         echo "Updateing the countries' IPs repository.";
-        git -C "$countries_repo" pull --rebase=true --prune --force --depth=1 --progress --no-ff --no-edit --no-commit
+        git -C "$countries_repo" pull origin master --rebase=true --prune --force --depth=1 --progress --no-ff --no-edit --no-commit
     else
         echo "Downloading the countries' IPs repository.";
         git clone --depth=1 -b master https://github.com/herrbischoff/country-ip-blocks.git "$countries_repo"
