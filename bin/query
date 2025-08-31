@@ -1,0 +1,169 @@
+#!/bin/bash
+
+# Function to display help
+show_help() {
+    cat << EOF
+Usage: $0 [ENGINE_SHORTCUTS...] <search query>
+
+Generate search URLs for multiple search engines.
+
+Engine Shortcuts:
+  g, google       Google Search
+  b, bing         Bing Search
+  d, ddg          DuckDuckGo
+  s, start        Startpage
+  p, per          Perplexity AI
+  y, yahoo        Yahoo Search
+  br, brave       Brave Search
+  q, qwant        Qwant
+  e, ecosia       Ecosia
+  w, wolfram      WolframAlpha
+  ya, yandex      Yandex
+  bd, baidu       Baidu
+  all             All search engines
+
+Examples:
+  $0 g "quantum physics"           # Search only Google
+  $0 g per "machine learning"      # Search Google and Perplexity
+  $0 all "black holes"             # Search all engines
+  $0 "simple query"                # Search basic engines (Google, Bing, DuckDuckGo, Startpage, Perplexity)
+EOF
+}
+
+# Check if no arguments were provided
+if [ $# -eq 0 ]; then
+    show_help
+    exit 1
+fi
+
+# Check for help option
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    show_help
+    exit 0
+fi
+
+# Define engine mappings
+declare -A engine_urls=(
+    ["google"]="https://www.google.com/search?q="
+    ["bing"]="https://www.bing.com/search?q="
+    ["duckduckgo"]="https://duckduckgo.com/?q="
+    ["startpage"]="https://www.startpage.com/sp/search?query="
+    ["perplexity"]="https://www.perplexity.ai/search?q="
+    ["yahoo"]="https://search.yahoo.com/search?p="
+    ["brave"]="https://search.brave.com/search?q="
+    ["qwant"]="https://www.qwant.com/?q="
+    ["ecosia"]="https://www.ecosia.org/search?q="
+    ["wolframalpha"]="https://www.wolframalpha.com/input/?i="
+    ["yandex"]="https://yandex.com/search/?text="
+    ["baidu"]="https://www.baidu.com/s?wd="
+)
+
+# Define shortcut mappings
+declare -A shortcuts=(
+    ["g"]="google"
+    ["b"]="bing"
+    ["d"]="duckduckgo"
+    ["ddg"]="duckduckgo"
+    ["s"]="startpage"
+    ["start"]="startpage"
+    ["p"]="perplexity"
+    ["per"]="perplexity"
+    ["y"]="yahoo"
+    ["yahoo"]="yahoo"
+    ["br"]="brave"
+    ["brave"]="brave"
+    ["q"]="qwant"
+    ["qwant"]="qwant"
+    ["e"]="ecosia"
+    ["ecosia"]="ecosia"
+    ["w"]="wolframalpha"
+    ["wolfram"]="wolframalpha"
+    ["ya"]="yandex"
+    ["yandex"]="yandex"
+    ["bd"]="baidu"
+    ["baidu"]="baidu"
+    ["all"]="all"
+)
+
+# Default engines (used when no specific engines are requested)
+default_engines=("google" "bing" "duckduckgo" "startpage" "perplexity")
+
+# URL-encode function
+encode_query() {
+    local string="$1"
+    local encoded=""
+    local length="${#string}"
+    
+    for ((i = 0; i < length; i++)); do
+        local c="${string:$i:1}"
+        case "$c" in
+            [a-zA-Z0-9.~_-])
+                encoded+="$c"
+                ;;
+            " ")
+                encoded+="%20"
+                ;;
+            *)
+                printf -v hex '%%%02X' "'$c"
+                encoded+="$hex"
+                ;;
+        esac
+    done
+    
+    echo "$encoded"
+}
+
+# Parse arguments to extract engines and query
+engines=()
+query_parts=()
+all_engines=false
+processing_engines=true
+
+for arg in "$@"; do
+    if [ "$processing_engines" = true ]; then
+        if [ -n "${shortcuts[$arg]}" ]; then
+            if [ "${shortcuts[$arg]}" = "all" ]; then
+                all_engines=true
+            else
+                engines+=("${shortcuts[$arg]}")
+            fi
+        else
+            # First non-engine argument, treat as start of query
+            processing_engines=false
+            query_parts+=("$arg")
+        fi
+    else
+        query_parts+=("$arg")
+    fi
+done
+
+# Combine query parts
+query="${query_parts[*]}"
+
+# Check if query is empty
+if [ -z "$query" ]; then
+    echo "Error: No search query provided"
+    show_help
+    exit 1
+fi
+
+# Set engines based on input
+if [ "$all_engines" = true ]; then
+    engines=("${!engine_urls[@]}")
+elif [ ${#engines[@]} -eq 0 ]; then
+    engines=("${default_engines[@]}")
+fi
+
+# URL-encode the query
+encoded_query=$(encode_query "$query")
+
+# Generate and print URLs
+# echo "Search URLs for: \"$query\""
+# echo "=========================================="
+
+for engine in "${engines[@]}"; do
+    if [ -n "${engine_urls[$engine]}" ]; then
+        # echo "[$engine] ${engine_urls[$engine]}$encoded_query"
+        echo "${engine_urls[$engine]}$encoded_query"
+    fi
+done
