@@ -21,7 +21,7 @@ GLOBAL_EXCLUDE_PATTERNS=(
     "google\\.com" "googletagmanager\\.com" "aparat\\.com"
     "rubika\\.ir" "splus\\.ir" "tamasha\\.com" "tapsi\\.ir"
     "javascript:void\\(0\\)" "gap\\.im" "w3\\.org" "ogp\\.me" "schema\\.org"
-    "ble\\.ir" "x\\.com" "data:image"
+    "ble\\.ir" "x\\.com" "data:image" "eitaa\\.com" "#" "\\.m3u8"
 )
 
 # Combine global exclude patterns into a single regex
