@@ -15,8 +15,8 @@ SHOW_IPS=false
 # Domain exclusion patterns (regex)
 EXCLUDE_PATTERNS=(
     ".*googlevideo\.com$"
-    "[a-zA-Z0-9]{12,}\..*"  # Long random-looking subdomains
-    "[0-9a-f]{16,}\..*"     # Hex-looking subdomains
+    # "[a-z0-9]{12,}\..*"  # Long random-looking subdomains
+    # "[0-9a-f]{16,}\..*"  # Hex-looking subdomains
 )
 
 # Colors for output
@@ -176,13 +176,6 @@ print_col() {
   # Strip ANSI escape sequences for length calc
   local clean_text=$(echo -ne "$text" | sed -r 's/\x1B\[[0-9;]*[mK]//g')
 
-  # Detect if first visible char is emoji (multi-byte) followed by space and remove it for length calc
-  local first_char=$(echo -ne "$clean_text" | head -c 4)
-  local after_first=${clean_text#$first_char}
-  if [[ $(echo -n "$first_char" | wc -c) -gt 1 && "$after_first" == " "* ]]; then
-    clean_text="${after_first# }"
-  fi
-
   # Calculate visible length
   local visible_len=$(echo -ne "$clean_text" | wc -m)
 
@@ -238,12 +231,15 @@ check_domain() {
     local manual="$2"
     
     # Normalize domain
+    domain="${domain,,}" # to lower case
     domain="${domain#http://}"
     domain="${domain#https://}"
     domain="${domain%%/*}"
+    domain="${domain#<root>}"
+
     
     # Skip invalid domains
-    [[ -z "$domain" || "$domain" =~ ^[0-9.]+$ || "$domain" == "<Root>" ]] && return
+    [[ -z "$domain" || "$domain" =~ ^[0-9.]+$ ]] && return
     
     # Check if domain should be excluded
     if should_exclude_domain "$domain"; then
@@ -293,7 +289,6 @@ check_domain() {
     fi
 }
 
-# Process multiple domains
 check_domains() {
     local domains="$1"
     local manual="$2"
@@ -556,7 +551,6 @@ fi
 
 # Main execution
 load_domains
-trap save_domains EXIT
 
 # Handle domain management commands
 case "$MODE" in
@@ -657,4 +651,3 @@ case "$MODE" in
         exit 1
         ;;
 esac
-
