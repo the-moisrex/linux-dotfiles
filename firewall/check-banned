@@ -2,32 +2,33 @@
 
 cached_file="/tmp/checked-domains";
 bad_dns_server="85.15.1.15";
-ipset="unfilter"
+# ipset="unfilter"
 
-sudo ipset -exist create $ipset hash:ip counters timeout 0;
+# sudo ipset -exist create $ipset hash:ip counters timeout 0;
 
 touch $cached_file;
 
 function add_ip {
-    ip="$1";
+    local ip="$1";
     case $ip in
         192.168.*|10.*|0.0.0.0)
-            continue;
+            return;
             ;;
         *)
+            sudo nft add element inet mangle ignored \{ "$ip" \};
+            # sudo ipset -exist add $ipset $ip;
+            echo "Added $ip to 'inet mangle ignored'.";
             ;;
     esac;
-    sudo ipset -exist add $ipset $ip;
-    echo "Added $ip to $ipset";
 }
 
 function add_domain {
-    domain="$1"
+    local domain="$1"
     domain="${domain/http:\/\//}"
     domain="${domain/https:\/\//}"
     while read -r ip; do
-        add_ip $ip;
-    done < <(dig +short +timeout=2 $domain | grep '^[.0-9]*$');
+        add_ip "$ip";
+    done < <(dig +short +timeout=2 "$domain" | grep '^[.0-9]*$');
 }
 
 function add_domains {
@@ -43,20 +44,20 @@ function add_domains {
             echo -n "For domains ";
             first_good_domain="$domain";
         fi
-        echo $domain >> $cached_file;
-        echo -n "\t$domain";
+        echo "$domain" >> $cached_file;
+        echo -en "\t$domain";
     done;
     
     # Domains have the same ip addresses, so one of them is enough
     if [ ! -z "$first_good_domain" ]; then
         echo;
-        add_domain $domain;
+        add_domain "$domain";
     fi;
 }
 
 function check_domain {
-    domain="$1";
-    ips="$2";
+    local domain="$1";
+    local ips="$2";
     domain="${domain/http:\/\//}"
     domain="${domain/https:\/\//}"
     # if [[ ! $domain =~ ^(([[:alpha:]](-?[[:alnum:]])*)\.)+[[:alpha:]]{2,}$ ]]; then
@@ -71,15 +72,15 @@ function check_domain {
         *)
             ;;
     esac;
-    if grep $domain $cached_file >/dev/null; then
+    if grep "$domain" "$cached_file" >/dev/null; then
         echo -ne "\r\033[KSkip $domain"
         return;
     fi
 
-    echo $domain >> $cached_file
+    echo "$domain" >> $cached_file
 
     echo -ne "\r\033[KChecking $domain"
-    dig +short +timeout=2 $domain @${bad_dns_server} | grep 10.10. >/dev/null
+    dig +short +timeout=2 "$domain" @${bad_dns_server} | grep 10.10. >/dev/null
     isbanned=$?
     if [ $isbanned != 0 ]; then
         echo -ne "\r\033[KIs not blocked: $domain"
@@ -87,10 +88,10 @@ function check_domain {
     fi;
     echo -ne "\r\033[KFor domain $domain\n";
     if [ -z "$ips" ]; then
-        add_domain $domain;
+        add_domain "$domain";
     else
         for ip in ${ips//,/ }; do
-            add_ip $ip;
+            add_ip "$ip";
         done;
     fi;
 }
@@ -120,7 +121,7 @@ fi;
 
 if [ "$1" = "check-dnsmasq" ]; then
     while read -r domain; do
-        domain=$(echo $domain | sed -e 's/[[:space:]]//');
+        domain=$(echo "$domain" | sed -e 's/[[:space:]]//');
         if [ "$domain" = "error" ] || [ "$domain" = "." ] || [ "$domain" = "https" ]; then
             continue;
         fi
