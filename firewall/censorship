@@ -10,6 +10,7 @@ NFT_IGNORED_SET="inet mangle ignored"
 NFT_RESTRICTED_SET="inet mangle restricted"
 VERBOSE=false
 TRUSTED_DNS="127.0.0.1"  # For getting real IPs
+SHOW_IPS=false
 
 # Domain exclusion patterns (regex)
 EXCLUDE_PATTERNS=(
@@ -48,10 +49,6 @@ blocked_domains=()
 allowed_domains=()
 
 load_domains() {
-    # Clear existing arrays
-    # blocked_domains=()
-    # allowed_domains=()
-    
     while read -r domain; do
         [[ -n "$domain" ]] && blocked_domains["$domain"]=1
     done < <([ -f "$BLOCKED_FILE" ] && cat "$BLOCKED_FILE" | sort -u)
@@ -171,7 +168,7 @@ check_domain_blocked() {
 
 print_col() {
   local text="$1"
-  local num_cols=3
+  local num_cols=$2
   (( num_cols < 1 )) && num_cols=1
   local term_width=$(tput cols)
   local col_width=$((term_width / num_cols))
@@ -180,7 +177,7 @@ print_col() {
   local clean_text=$(echo -ne "$text" | sed -r 's/\x1B\[[0-9;]*[mK]//g')
 
   # Detect if first visible char is emoji (multi-byte) followed by space and remove it for length calc
-  local first_char=$(echo -ne "$clean_text" | grep -oP '^.{1}')
+  local first_char=$(echo -ne "$clean_text" | head -c 4)
   local after_first=${clean_text#$first_char}
   if [[ $(echo -n "$first_char" | wc -c) -gt 1 && "$after_first" == " "* ]]; then
     clean_text="${after_first# }"
@@ -207,11 +204,14 @@ print_col() {
   fi
 }
 
-
 # Log IP addresses with appropriate colors and emojis
 log_ips() {
     local domain="$1"
     local status="$2" # blocked or allowed
+    
+    if ! $SHOW_IPS; then
+        return
+    fi
     
     # Get real and fake IPs
     local real_ips=($(get_real_ips "$domain"))
@@ -219,17 +219,16 @@ log_ips() {
     
     # Log real IPs
     if [[ ${#real_ips[@]} -gt 0 ]]; then
-        print_col "${GREEN}${REAL_IP_EMOJI} ${real_ips[*]}${NC}"
+        print_col "${GREEN}${REAL_IP_EMOJI} ${real_ips[*]}${NC}" 3
+    else
+        print_col "" 3
     fi
     
     # Log fake IPs (if any)
     if [[ ${#fake_ips[@]} -gt 0 ]]; then
-        print_col "${RED}${FAKE_IP_EMOJI} ${fake_ips[*]}${NC}"
-    fi
-    
-    # If no IPs found at all
-    if [[ ${#real_ips[@]} -eq 0 && ${#fake_ips[@]} -eq 0 ]]; then
-        print_col "${YELLOW}${INFO_EMOJI} No IP${NC}"
+        print_col "${RED}${FAKE_IP_EMOJI} ${fake_ips[*]}${NC}" 3
+    else
+        print_col "" 3
     fi
 }
 
@@ -266,23 +265,29 @@ check_domain() {
     
     # Check if domain is blocked
     if check_domain_blocked "$domain"; then
-        print_col "${RED}${BLOCKED_EMOJI} $domain${NC}"
+        if $SHOW_IPS; then
+            print_col "${RED}${BLOCKED_EMOJI} $domain${NC}" 3
+            log_ips "$domain" "blocked"
+            echo
+        else
+            echo -e "${RED}${BLOCKED_EMOJI} $domain${NC}"
+        fi
         blocked_domains["$domain"]=1
         add_domain_ips "$domain" "blocked"
-        # Log IP information
-        log_ips "$domain" "blocked"
-        echo
         # Save immediately for real-time updates
         save_domains
     else
-        print_col "${GREEN}${ALLOWED_EMOJI} $domain${NC}"
+        if $SHOW_IPS; then
+            print_col "${GREEN}${ALLOWED_EMOJI} $domain${NC}" 3
+            log_ips "$domain" "allowed"
+            echo
+        else
+            echo -e "${GREEN}${ALLOWED_EMOJI} $domain${NC}"
+        fi
         allowed_domains["$domain"]=1
         if [[ "$manual" == "manual" ]]; then
             add_domain_ips "$domain" "allowed"
         fi
-        # Log IP information
-        log_ips "$domain" "allowed"
-        echo
         # Save immediately for real-time updates
         save_domains
     fi
@@ -357,22 +362,16 @@ add_domain() {
                 unset allowed_domains["$domain"]
             fi
             blocked_domains["$domain"]=1
-            print_col "${RED}${ADD_EMOJI} Added $domain to blocked list${NC}"
+            echo -e "${RED}${ADD_EMOJI} Added $domain to blocked list${NC}"
             add_domain_ips "$domain" "blocked"
-            # Log IP information
-            log_ips "$domain" "blocked"
-            echo
             ;;
         allowed)
             if [[ -n "${blocked_domains[$domain]}" ]]; then
                 unset blocked_domains["$domain"]
             fi
             allowed_domains["$domain"]=1
-            print_col "${GREEN}${ADD_EMOJI} Added $domain to allowed list${NC}"
+            echo -e "${GREEN}${ADD_EMOJI} Added $domain to allowed list${NC}"
             add_domain_ips "$domain" "allowed"
-            # Log IP information
-            log_ips "$domain" "allowed"
-            echo
             ;;
     esac
     
@@ -424,11 +423,12 @@ Commands:
 
 Options:
   -d, --dns-server DNS_SERVERS  Specify DNS servers, comma separated (default: 85.15.1.15)
-  -t, --trusted-dns DNS_SERVER  Specify trusted DNS server for real IPs (default: 8.8.8.8)
+  -t, --trusted-dns DNS_SERVER  Specify trusted DNS server for real IPs (default: 127.0.0.1)
   -m, --mode MODE               Mode for multiple DNS servers: any or all (default: any)
   -a, --add-domains DOMAINS     Manually check domains (comma separated)
   -r, --recheck                 Recheck domains in both lists and update
   -v, --verbose                 Enable verbose output
+  -s, --show-ips                Show IP addresses for domains
   -h, --help                    Show this help message
 
 Domain lists are stored in:
@@ -443,8 +443,8 @@ Examples:
   # Monitor dnsmasq log in real-time
   sudo ${0##*/} monitor
 
-  # Check specific domains manually
-  sudo ${0##*/} -a "example.com,google.com"
+  # Check specific domains manually with IP display
+  sudo ${0##*/} -a "example.com,google.com" --show-ips
 
   # Use multiple DNS servers with "all" mode
   sudo ${0##*/} -d "85.15.1.15,8.8.8.8" -m all monitor
@@ -496,6 +496,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -v|--verbose)
             VERBOSE=true
+            shift
+            ;;
+        -s|--show-ips)
+            SHOW_IPS=true
             shift
             ;;
         -h|--help)
@@ -552,7 +556,7 @@ fi
 
 # Main execution
 load_domains
-# trap save_domains EXIT
+trap save_domains EXIT
 
 # Handle domain management commands
 case "$MODE" in
@@ -627,11 +631,18 @@ case "$MODE" in
         ;;
     "sniff")
         echo -e "${BLUE}${INFO_EMOJI} Sniffing DNS traffic with tshark...${NC}"
-        tshark -i any -l -f 'udp and (dst port 53 or src port 53)' -Y 'dns.qry.name' \
-               -T fields -E separator='|' -e dns.qry.name -e dns.resp.name -e dns.a 2>/dev/null | \
+        # Use more comprehensive tshark filter to capture all DNS queries
+        tshark -i any -l -f 'udp port 53' -Y 'dns' -T fields -E separator='|' \
+               -e dns.qry.name -e dns.resp.name -e dns.a 2>/dev/null | \
         while IFS='|' read -r queries responses ips; do
-            check_domains "$queries"
-            check_domains "$responses"
+            # Clean up the fields (remove any extra spaces or quotes)
+            queries=$(echo "$queries" | tr -d '"' | xargs)
+            responses=$(echo "$responses" | tr -d '"' | xargs)
+            ips=$(echo "$ips" | tr -d '"' | xargs)
+            
+            # Process all found domains
+            [[ -n "$queries" ]] && check_domains "$queries"
+            [[ -n "$responses" ]] && check_domains "$responses"
         done
         ;;
     "manual")
@@ -646,3 +657,4 @@ case "$MODE" in
         exit 1
         ;;
 esac
+
