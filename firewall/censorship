@@ -4,7 +4,7 @@
 CONFIG_DIR="$HOME/.config/firewall"
 BLOCKED_FILE="$CONFIG_DIR/blocked.txt"
 ALLOWED_FILE="$CONFIG_DIR/allowed.txt"
-DNS_SERVERS=("85.15.1.15")
+DNS_SERVERS=("85.15.1.15" "10.202.10.10")
 DNSMASQ_CONF="/etc/dnsmasq.conf"
 NFT_IGNORED_SET="inet mangle ignored"
 NFT_RESTRICTED_SET="inet mangle restricted"
@@ -44,11 +44,13 @@ mkdir -p "$CONFIG_DIR"
 
 # Load existing domain lists
 declare -A blocked_domains allowed_domains
+blocked_domains=()
+allowed_domains=()
 
 load_domains() {
     # Clear existing arrays
-    blocked_domains=()
-    allowed_domains=()
+    # blocked_domains=()
+    # allowed_domains=()
     
     while read -r domain; do
         [[ -n "$domain" ]] && blocked_domains["$domain"]=1
@@ -550,7 +552,7 @@ fi
 
 # Main execution
 load_domains
-trap save_domains EXIT
+# trap save_domains EXIT
 
 # Handle domain management commands
 case "$MODE" in
