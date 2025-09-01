@@ -1,0 +1,236 @@
+#!/bin/bash
+
+# sleep.until - Sleep until a specified time
+# Usage: sleep.until [time] [timezone] | [--help]
+
+# Default to not showing stopwatch
+SHOW_STOPWATCH=false
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --stopwatch|-s)
+            SHOW_STOPWATCH=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: sleep.until [options] [time] [timezone]"
+            echo "Sleep until the specified time, optionally in a specific timezone."
+            echo ""
+            echo "Options:"
+            echo "  -s, --stopwatch    Show a countdown timer while sleeping"
+            echo ""
+            echo "Examples:"
+            echo "  sleep.until 8am              Sleep until 8:00 AM today or tomorrow"
+            echo "  sleep.until -s 3:30pm        Sleep until 3:30 PM with countdown display"
+            echo "  sleep.until 14:00            Sleep until 2:00 PM today or tomorrow"
+            echo "  sleep.until 23:59:59         Sleep until 11:59:59 PM today or tomorrow"
+            echo "  sleep.until 3pm EST          Sleep until 3:00 PM in Eastern Standard Time"
+            echo "  sleep.until 11pm UTC         Sleep until 11:00 PM in UTC"
+            echo "  sleep.until 8am tomorrow     Sleep until 8:00 AM tomorrow"
+            echo "  sleep.until 10:30 PST        Sleep until 10:30 AM in Pacific Time"
+            echo ""
+            echo "If the specified time is in the past, it will sleep until that time the next day."
+            echo "Supported timezones include standard abbreviations (EST, PST, UTC, etc.)"
+            echo "For specific locations, use timezone names like 'America/New_York' or 'Asia/Tehran'"
+            exit 0
+            ;;
+        *)
+            # If we haven't set time_str yet, this is the time
+            if [[ -z "$time_str" ]]; then
+                time_str="$1"
+            # Otherwise it's the timezone
+            elif [[ -z "$timezone_str" ]]; then
+                timezone_str="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$time_str" ]; then
+    echo "Error: Time argument is required."
+    echo "Use --help for usage information."
+    exit 1
+fi
+
+# Use GNU date if possible as it's most likely to have better time parsing
+if hash gdate 2>/dev/null; then
+    GNU_DATE="gdate"
+elif date --version | grep 'GNU coreutils' >/dev/null; then
+    GNU_DATE="date"
+fi
+
+function datef {
+    # If TZ is set in the environment, we need to pass it to the date command
+    if [[ -z "$GNU_DATE" ]]; then
+        if [[ -n "$TZ" ]]; then
+            TZ="$TZ" date "$@"
+        else
+            date "$@"
+        fi
+    else
+        if [[ -n "$TZ" ]]; then
+            TZ="$TZ" $GNU_DATE "$@"
+        else
+            $GNU_DATE "$@"
+        fi
+    fi
+}
+
+# Get the target time in seconds since epoch
+# If the time format is invalid, date will output an error
+if [ -n "$timezone_str" ]; then
+    # If timezone is specified, use it
+    # Try different timezone formats that date might recognize
+    
+    # Convert common timezone names to proper identifiers
+    case "$timezone_str" in
+        tehran|Tehran)
+            timezone_str="Asia/Tehran"
+            ;;
+        newYork|new_york|"new york")
+            timezone_str="America/New_York"
+            ;;
+        losAngeles|los_angeles|"los angeles")
+            timezone_str="America/Los_Angeles"
+            ;;
+        london|London)
+            timezone_str="Europe/London"
+            ;;
+        tokyo|Tokyo)
+            timezone_str="Asia/Tokyo"
+            ;;
+    esac
+    
+    if [[ "$timezone_str" =~ ^[+-][0-9]{1,4}$ ]]; then
+        # Handle numeric timezones like +0500 or -0800
+        target_time=$(datef -d "$time_str $timezone_str" +%s 2>/dev/null)
+    else
+        # Handle named timezones like UTC, EST, PST, or region formats
+        TZ="$timezone_str" target_time=$(datef -d "$time_str" +%s 2>/dev/null)
+        
+        # If that failed, try appending timezone to time string
+        if [ $? -ne 0 ]; then
+            target_time=$(datef -d "$time_str $timezone_str" +%s 2>/dev/null)
+        fi
+    fi
+else
+    # Just use the time string
+    target_time=$(datef -d "$time_str" +%s 2>/dev/null)
+fi
+
+# Check if the time parsing was successful
+if [ $? -ne 0 ]; then
+    echo "Error: Invalid time format '$time_str' or timezone '$timezone_str'"
+    echo "Use --help for usage information."
+    exit 1
+fi
+
+# Get current time in seconds since epoch
+current_time=$(datef +%s)
+
+# Debug output
+# echo "DEBUG: current_time = $current_time, target_time = $target_time" >&2
+
+# If target time is in the past, add one day (86400 seconds)
+if [ $target_time -le $current_time ]; then
+    # Need to recalculate with +1 day
+    if [ -n "$timezone_str" ]; then
+        # Convert common timezone names to proper identifiers (for +1 day case)
+        tz_for_next_day="$timezone_str"
+        case "$tz_for_next_day" in
+            tehran|Tehran)
+                tz_for_next_day="Asia/Tehran"
+                ;;
+            newYork|new_york|"new york")
+                tz_for_next_day="America/New_York"
+                ;;
+            losAngeles|los_angeles|"los angeles")
+                tz_for_next_day="America/Los_Angeles"
+                ;;
+            london|London)
+                tz_for_next_day="Europe/London"
+                ;;
+            tokyo|Tokyo)
+                tz_for_next_day="Asia/Tokyo"
+                ;;
+        esac
+        
+        if [[ "$tz_for_next_day" =~ ^[+-][0-9]{1,4}$ ]]; then
+            # Handle numeric timezones like +0500 or -0800
+            target_time=$(datef -d "$time_str $tz_for_next_day +1 day" +%s 2>/dev/null)
+        else
+            # Handle named timezones like UTC, EST, PST, or region formats
+            TZ="$tz_for_next_day" target_time=$(datef -d "$time_str +1 day" +%s 2>/dev/null)
+            
+            # If that failed, try appending timezone to time string
+            if [ $? -ne 0 ]; then
+                target_time=$(datef -d "$time_str $tz_for_next_day +1 day" +%s 2>/dev/null)
+            fi
+        fi
+    else
+        target_time=$(datef -d "$time_str +1 day" +%s 2>/dev/null)
+    fi
+fi
+
+# Calculate the difference in seconds
+sleep_duration=$((target_time - current_time))
+
+# Debug output
+# echo "DEBUG: sleep_duration = $sleep_duration" >&2
+
+# Show stopwatch if requested
+if [ "$SHOW_STOPWATCH" = true ]; then
+    # Format the target time for display
+    if [ -n "$timezone_str" ]; then
+        # For the display, we need to handle timezone properly
+        # Convert common timezone names to proper identifiers for display
+        display_tz="$timezone_str"
+        case "$display_tz" in
+            tehran|Tehran)
+                display_tz="Asia/Tehran"
+                ;;
+            newYork|new_york|"new york")
+                display_tz="America/New_York"
+                ;;
+            losAngeles|los_angeles|"los angeles")
+                display_tz="America/Los_Angeles"
+                ;;
+            london|London)
+                display_tz="Europe/London"
+                ;;
+            tokyo|Tokyo)
+                display_tz="Asia/Tokyo"
+                ;;
+        esac
+        
+        formatted_target=$(TZ="$display_tz" datef -d "@$target_time" '+%Y-%m-%d %H:%M:%S %Z')
+    else
+        formatted_target=$(datef -d "@$target_time" '+%Y-%m-%d %H:%M:%S %Z')
+    fi
+    
+    echo "Sleeping until: $formatted_target"
+    echo "Duration: $sleep_duration seconds"
+    echo ""
+    
+    # Countdown loop
+    remaining=$sleep_duration
+    while [ $remaining -gt 0 ]; do
+        # Calculate hours, minutes, seconds
+        hours=$((remaining / 3600))
+        minutes=$(((remaining % 3600) / 60))
+        seconds=$((remaining % 60))
+        
+        # Format time components with leading zeros
+        printf "\r\033[KTime remaining: %02d:%02d:%02d" $hours $minutes $seconds
+        sleep 1
+        remaining=$((remaining - 1))
+    done
+    
+    # Clear the line and show completion message
+    printf "\r\033[KDone! Waking up now.\n"
+else
+    # Sleep until the target time
+    sleep $sleep_duration
+fi
