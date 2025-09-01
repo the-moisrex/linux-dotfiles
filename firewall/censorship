@@ -1,0 +1,543 @@
+#!/bin/bash
+
+# Configuration
+CONFIG_DIR="$HOME/.config/firewall"
+BLOCKED_FILE="$CONFIG_DIR/blocked.txt"
+ALLOWED_FILE="$CONFIG_DIR/allowed.txt"
+DNS_SERVERS=("85.15.1.15")
+DNSMASQ_CONF="/etc/dnsmasq.conf"
+NFT_IGNORED_SET="inet mangle ignored"
+NFT_RESTRICTED_SET="inet mangle restricted"
+VERBOSE=false
+
+# Domain exclusion patterns (regex)
+EXCLUDE_PATTERNS=(
+    ".*googlevideo\.com$"
+    "[a-zA-Z0-9]{12,}\..*"  # Long random-looking subdomains
+    "[0-9a-f]{16,}\..*"     # Hex-looking subdomains
+)
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Emojis
+BLOCKED_EMOJI="🚫"
+ALLOWED_EMOJI="✅"
+SKIP_EMOJI="⏭️"
+INFO_EMOJI="ℹ️"
+ERROR_EMOJI="❌"
+ADD_EMOJI="➕"
+REMOVE_EMOJI="➖"
+LIST_EMOJI="📋"
+
+# Create config directory if it doesn't exist
+mkdir -p "$CONFIG_DIR"
+
+# Load existing domain lists
+declare -A blocked_domains allowed_domains
+
+load_domains() {
+    # Clear existing arrays
+    blocked_domains=()
+    allowed_domains=()
+    
+    while read -r domain; do
+        [[ -n "$domain" ]] && blocked_domains["$domain"]=1
+    done < <([ -f "$BLOCKED_FILE" ] && cat "$BLOCKED_FILE" | sort -u)
+    
+    while read -r domain; do
+        [[ -n "$domain" ]] && allowed_domains["$domain"]=1
+    done < <([ -f "$ALLOWED_FILE" ] && cat "$ALLOWED_FILE" | sort -u)
+}
+
+save_domains() {
+    printf "%s\n" "${!blocked_domains[@]}" | sort -u > "$BLOCKED_FILE"
+    printf "%s\n" "${!allowed_domains[@]}" | sort -u > "$ALLOWED_FILE"
+}
+
+# Check if domain should be excluded
+should_exclude_domain() {
+    local domain="$1"
+    
+    for pattern in "${EXCLUDE_PATTERNS[@]}"; do
+        if [[ "$domain" =~ $pattern ]]; then
+            $VERBOSE && echo -e "${YELLOW}${SKIP_EMOJI} Excluding $domain (matches pattern: $pattern)${NC}"
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Find dnsmasq log file from config
+find_dnsmasq_log() {
+    if [[ -f "$DNSMASQ_CONF" ]]; then
+        local log_file=$(grep -E '^log-facility=' "$DNSMASQ_CONF" | cut -d= -f2)
+        if [[ -n "$log_file" && -f "$log_file" ]]; then
+            echo "$log_file"
+            return
+        fi
+    fi
+    echo -e "${ERROR_EMOJI} ${RED}Error: Could not find dnsmasq log file${NC}" >&2
+    exit 1
+}
+
+# Add IPs to appropriate NFT set in bulk
+add_ips() {
+    local ips=("$@")
+    local status="$1" # blocked or allowed
+    local ip_list=""
+    
+    # Filter out private IPs and format as nft list
+    for ip in "${ips[@]:1}"; do
+        if [[ $ip =~ ^10\. || $ip =~ ^192\.168\. || $ip == "0.0.0.0" ]]; then
+            continue
+        fi
+        [[ -n "$ip_list" ]] && ip_list+=", "
+        ip_list+="$ip"
+    done
+    
+    if [[ -z "$ip_list" ]]; then
+        return
+    fi
+    
+    case "$status" in
+        blocked)
+            sudo nft add element $NFT_RESTRICTED_SET "{ $ip_list }" 2>/dev/null && \
+                $VERBOSE && echo -e "${RED}${BLOCKED_EMOJI} Added IPs to restricted set: $ip_list${NC}"
+            ;;
+        allowed)
+            sudo nft add element $NFT_IGNORED_SET "{ $ip_list }" 2>/dev/null && \
+                $VERBOSE && echo -e "${GREEN}${ALLOWED_EMOJI} Added IPs to ignored set: $ip_list${NC}"
+            ;;
+    esac
+}
+
+# Resolve domain and add its IPs to appropriate set
+add_domain_ips() {
+    local domain="$1"
+    local status="$2" # blocked or allowed
+    local ips=()
+    
+    # Resolve domain to IPs
+    while read -r ip; do
+        [[ -n "$ip" ]] && ips+=("$ip")
+    done < <(dig +short +timeout=2 "$domain" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+    
+    # Add IPs in bulk
+    if [[ ${#ips[@]} -gt 0 ]]; then
+        add_ips "$status" "${ips[@]}"
+    fi
+}
+
+# Check if domain is blocked by any of the DNS servers
+check_domain_blocked() {
+    local domain="$1"
+    
+    for dns_server in "${DNS_SERVERS[@]}"; do
+        if dig +short +timeout=2 "$domain" @"$dns_server" | grep -q '^10\.'; then
+            return 0 # Domain is blocked
+        fi
+    done
+    
+    return 1 # Domain is not blocked
+}
+
+# Check domain and categorize it
+check_domain() {
+    local domain="$1"
+    local manual="$2"
+    
+    # Normalize domain
+    domain="${domain#http://}"
+    domain="${domain#https://}"
+    domain="${domain%%/*}"
+    
+    # Skip invalid domains
+    [[ -z "$domain" || "$domain" =~ ^[0-9.]+$ || "$domain" == "<Root>" ]] && return
+    
+    # Check if domain should be excluded
+    if should_exclude_domain "$domain"; then
+        return
+    fi
+    
+    # Check if already processed
+    if [[ -n "${blocked_domains[$domain]}" ]]; then
+        $VERBOSE && echo -e "${YELLOW}${SKIP_EMOJI} Skipping $domain (already in blocked list)${NC}"
+        return
+    fi
+    
+    if [[ -n "${allowed_domains[$domain]}" ]]; then
+        $VERBOSE && echo -e "${YELLOW}${SKIP_EMOJI} Skipping $domain (already in allowed list)${NC}"
+        return
+    fi
+    
+    $VERBOSE && echo -n "Checking $domain... "
+    
+    # Check if domain is blocked
+    if check_domain_blocked "$domain"; then
+        echo -e "${RED}${BLOCKED_EMOJI} $domain${NC}"
+        blocked_domains["$domain"]=1
+        add_domain_ips "$domain" "blocked"
+        # Save immediately for real-time updates
+        save_domains
+    else
+        echo -e "${GREEN}${ALLOWED_EMOJI} $domain${NC}"
+        allowed_domains["$domain"]=1
+        if [[ "$manual" == "manual" ]]; then
+            add_domain_ips "$domain" "allowed"
+        fi
+        # Save immediately for real-time updates
+        save_domains
+    fi
+}
+
+# Process multiple domains
+check_domains() {
+    local domains="$1"
+    local manual="$2"
+    for domain in ${domains//,/ }; do
+        check_domain "$domain" "$manual"
+    done
+}
+
+# Recheck existing domains
+recheck_domains() {
+    echo -e "${BLUE}${INFO_EMOJI} Rechecking blocked domains...${NC}"
+    for domain in "${!blocked_domains[@]}"; do
+        if ! check_domain_blocked "$domain"; then
+            echo -e "${GREEN}${ALLOWED_EMOJI} $domain is no longer blocked, moving to allowed list${NC}"
+            unset blocked_domains["$domain"]
+            allowed_domains["$domain"]=1
+        fi
+    done
+    
+    echo -e "${BLUE}${INFO_EMOJI} Rechecking allowed domains...${NC}"
+    for domain in "${!allowed_domains[@]}"; do
+        if check_domain_blocked "$domain"; then
+            echo -e "${RED}${BLOCKED_EMOJI} $domain is now blocked, moving to blocked list${NC}"
+            unset allowed_domains["$domain"]
+            blocked_domains["$domain"]=1
+            add_domain_ips "$domain" "blocked"
+        fi
+    done
+    
+    # Save changes
+    save_domains
+}
+
+# Domain management functions
+list_domains() {
+    local type="$1"
+    
+    case "$type" in
+        blocked)
+            echo -e "${RED}${LIST_EMOJI} Blocked domains:${NC}"
+            for domain in "${!blocked_domains[@]}"; do
+                echo "  $domain"
+            done
+            ;;
+        allowed)
+            echo -e "${GREEN}${LIST_EMOJI} Allowed domains:${NC}"
+            for domain in "${!allowed_domains[@]}"; do
+                echo "  $domain"
+            done
+            ;;
+    esac
+}
+
+add_domain() {
+    local domain="$1"
+    local type="$2"
+    
+    # Normalize domain
+    domain="${domain#http://}"
+    domain="${domain#https://}"
+    domain="${domain%%/*}"
+    
+    case "$type" in
+        blocked)
+            if [[ -n "${allowed_domains[$domain]}" ]]; then
+                unset allowed_domains["$domain"]
+            fi
+            blocked_domains["$domain"]=1
+            echo -e "${RED}${ADD_EMOJI} Added $domain to blocked list${NC}"
+            add_domain_ips "$domain" "blocked"
+            ;;
+        allowed)
+            if [[ -n "${blocked_domains[$domain]}" ]]; then
+                unset blocked_domains["$domain"]
+            fi
+            allowed_domains["$domain"]=1
+            echo -e "${GREEN}${ADD_EMOJI} Added $domain to allowed list${NC}"
+            add_domain_ips "$domain" "allowed"
+            ;;
+    esac
+    
+    # Save changes
+    save_domains
+}
+
+remove_domain() {
+    local domain="$1"
+    
+    # Normalize domain
+    domain="${domain#http://}"
+    domain="${domain#https://}"
+    domain="${domain%%/*}"
+    
+    if [[ -n "${blocked_domains[$domain]}" ]]; then
+        unset blocked_domains["$domain"]
+        echo -e "${RED}${REMOVE_EMOJI} Removed $domain from blocked list${NC}"
+    fi
+    
+    if [[ -n "${allowed_domains[$domain]}" ]]; then
+        unset allowed_domains["$domain"]
+        echo -e "${GREEN}${REMOVE_EMOJI} Removed $domain from allowed list${NC}"
+    fi
+    
+    # Save changes
+    save_domains
+}
+
+# Display help information
+show_help() {
+    cat << EOF
+Usage: ${0##*/} [OPTION] [COMMAND] [ARGUMENTS]
+
+This script checks domains against government censorship by querying DNS servers.
+Domains that return a 10.x.x.x IP are considered blocked and added to the blocked list.
+Other domains are added to the allowed list. These lists can be used for VPN routing.
+
+Commands:
+  batch           Check all domains from dnsmasq log
+  monitor         Monitor dnsmasq log in real-time
+  sniff           Monitor DNS traffic using tshark
+  manual          Manually check specified domains
+  list-blocked    List all blocked domains
+  list-allowed    List all allowed domains
+  add-blocked     Add domain to blocked list
+  add-allowed     Add domain to allowed list
+  remove          Remove domain from both lists
+
+Options:
+  -d, --dns-server DNS_SERVERS  Specify DNS servers, comma separated (default: 85.15.1.15)
+  -m, --mode MODE               Mode for multiple DNS servers: any or all (default: any)
+  -a, --add-domains DOMAINS     Manually check domains (comma separated)
+  -r, --recheck                 Recheck domains in both lists and update
+  -v, --verbose                 Enable verbose output
+  -h, --help                    Show this help message
+
+Domain lists are stored in:
+  Blocked: $BLOCKED_FILE
+  Allowed: $ALLOWED_FILE
+
+NFT sets used:
+  Ignored: $NFT_IGNORED_SET
+  Restricted: $NFT_RESTRICTED_SET
+
+Examples:
+  # Monitor dnsmasq log in real-time
+  sudo ${0##*/} monitor
+
+  # Check specific domains manually
+  sudo ${0##*/} -a "example.com,google.com"
+
+  # Use multiple DNS servers with "all" mode
+  sudo ${0##*/} -d "85.15.1.15,8.8.8.8" -m all monitor
+
+  # Recheck existing domains
+  sudo ${0##*/} --recheck
+
+  # Sniff DNS traffic with tshark (verbose)
+  sudo ${0##*/} --verbose sniff
+
+  # List blocked domains
+  ${0##*/} list-blocked
+
+  # Add domain to blocked list
+  sudo ${0##*/} add-blocked example.com
+
+  # Remove domain from both lists
+  ${0##*/} remove example.com
+EOF
+}
+
+# Process command line arguments
+MODE=""
+MANUAL_DOMAINS=""
+DNS_MODE="any"
+RECHECK=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -d|--dns-server)
+            IFS=',' read -ra DNS_SERVERS <<< "$2"
+            shift 2
+            ;;
+        -m|--mode)
+            DNS_MODE="$2"
+            shift 2
+            ;;
+        -a|--add-domains)
+            MANUAL_DOMAINS="$2"
+            shift 2
+            ;;
+        -r|--recheck)
+            RECHECK=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        batch|monitor|sniff|manual|list-blocked|list-allowed|add-blocked|add-allowed|remove)
+            MODE="$1"
+            shift
+            ;;
+        *)
+            # Additional arguments for commands
+            if [[ "$MODE" == "add-blocked" || "$MODE" == "add-allowed" || "$MODE" == "remove" ]]; then
+                DOMAIN_ARG="$1"
+                shift
+            else
+                echo "Unknown option: $1" >&2
+                show_help
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+# Update check_domain_blocked function based on DNS mode
+if [[ "$DNS_MODE" == "all" ]]; then
+    check_domain_blocked() {
+        local domain="$1"
+        local blocked_count=0
+        
+        for dns_server in "${DNS_SERVERS[@]}"; do
+            if dig +short +timeout=2 "$domain" @"$dns_server" | grep -q '^10\.'; then
+                ((blocked_count++))
+            fi
+        done
+        
+        # Domain is blocked only if all DNS servers report it as blocked
+        [[ $blocked_count -eq ${#DNS_SERVERS[@]} ]] && return 0 || return 1
+    }
+else
+    # Default mode: any DNS server reporting blocked means domain is blocked
+    check_domain_blocked() {
+        local domain="$1"
+        
+        for dns_server in "${DNS_SERVERS[@]}"; do
+            if dig +short +timeout=2 "$domain" @"$dns_server" | grep -q '^10\.'; then
+                return 0 # Domain is blocked
+            fi
+        done
+        
+        return 1 # Domain is not blocked
+    }
+fi
+
+# Main execution
+load_domains
+trap save_domains EXIT
+
+# Handle domain management commands
+case "$MODE" in
+    "list-blocked")
+        list_domains "blocked"
+        exit 0
+        ;;
+    "list-allowed")
+        list_domains "allowed"
+        exit 0
+        ;;
+    "add-blocked")
+        if [[ -z "$DOMAIN_ARG" ]]; then
+            echo -e "${ERROR_EMOJI} ${RED}Error: No domain specified${NC}" >&2
+            show_help
+            exit 1
+        fi
+        add_domain "$DOMAIN_ARG" "blocked"
+        exit 0
+        ;;
+    "add-allowed")
+        if [[ -z "$DOMAIN_ARG" ]]; then
+            echo -e "${ERROR_EMOJI} ${RED}Error: No domain specified${NC}" >&2
+            show_help
+            exit 1
+        fi
+        add_domain "$DOMAIN_ARG" "allowed"
+        exit 0
+        ;;
+    "remove")
+        if [[ -z "$DOMAIN_ARG" ]]; then
+            echo -e "${ERROR_EMOJI} ${RED}Error: No domain specified${NC}" >&2
+            show_help
+            exit 1
+        fi
+        remove_domain "$DOMAIN_ARG"
+        exit 0
+        ;;
+esac
+
+# Recheck if requested
+if [[ "$RECHECK" == true ]]; then
+    recheck_domains
+    exit 0
+fi
+
+# Manual domain checking
+if [[ -n "$MANUAL_DOMAINS" ]]; then
+    check_domains "$MANUAL_DOMAINS" "manual"
+    exit 0
+fi
+
+# Find dnsmasq log file
+DNSMASQ_LOG=$(find_dnsmasq_log)
+
+# Execute based on mode
+case "$MODE" in
+    "batch")
+        echo -e "${BLUE}${INFO_EMOJI} Processing all domains from dnsmasq log...${NC}"
+        while read -r domain; do
+            check_domain "$domain"
+        done < <(grep -Eo 'query\[[A-Z]+\] [^ ]+' "$DNSMASQ_LOG" | awk '{print $2}' | sort -u)
+        ;;
+    "monitor")
+        echo -e "${BLUE}${INFO_EMOJI} Monitoring dnsmasq log in real-time...${NC}"
+        tail -n0 -F "$DNSMASQ_LOG" | while read -r line; do
+            domain=$(echo "$line" | grep -Eo 'query\[[A-Z]+\] [^ ]+' | awk '{print $2}')
+            check_domain "$domain"
+        done
+        ;;
+    "sniff")
+        echo -e "${BLUE}${INFO_EMOJI} Sniffing DNS traffic with tshark...${NC}"
+        tshark -i any -l -f 'udp and (dst port 53 or src port 53)' -Y 'dns.qry.name' \
+               -T fields -E separator='|' -e dns.qry.name -e dns.resp.name -e dns.a 2>/dev/null | \
+        while IFS='|' read -r queries responses ips; do
+            check_domains "$queries"
+            check_domains "$responses"
+        done
+        ;;
+    "manual")
+        if [[ -z "$MANUAL_DOMAINS" ]]; then
+            echo -e "${ERROR_EMOJI} ${RED}Error: No domains specified for manual checking${NC}" >&2
+            show_help
+            exit 1
+        fi
+        ;;
+    *)
+        show_help
+        exit 1
+        ;;
+esac
