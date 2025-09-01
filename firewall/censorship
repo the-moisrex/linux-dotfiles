@@ -9,6 +9,7 @@ DNSMASQ_CONF="/etc/dnsmasq.conf"
 NFT_IGNORED_SET="inet mangle ignored"
 NFT_RESTRICTED_SET="inet mangle restricted"
 VERBOSE=false
+TRUSTED_DNS="127.0.0.1"  # For getting real IPs
 
 # Domain exclusion patterns (regex)
 EXCLUDE_PATTERNS=(
@@ -22,6 +23,8 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Emojis
@@ -33,6 +36,8 @@ ERROR_EMOJI="❌"
 ADD_EMOJI="➕"
 REMOVE_EMOJI="➖"
 LIST_EMOJI="📋"
+REAL_IP_EMOJI="🌐"
+FAKE_IP_EMOJI="🎭"
 
 # Create config directory if it doesn't exist
 mkdir -p "$CONFIG_DIR"
@@ -73,7 +78,7 @@ should_exclude_domain() {
     return 1
 }
 
-# Find dnsmasq log file from config
+# Find dnsmasq log file from config (only when needed)
 find_dnsmasq_log() {
     if [[ -f "$DNSMASQ_CONF" ]]; then
         local log_file=$(grep -E '^log-facility=' "$DNSMASQ_CONF" | cut -d= -f2)
@@ -86,14 +91,29 @@ find_dnsmasq_log() {
     exit 1
 }
 
+# Get real IPs from a trusted DNS server
+get_real_ips() {
+    local domain="$1"
+    dig +short +timeout=2 "$domain" @"$TRUSTED_DNS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+# Get fake IPs from blocked DNS servers
+get_fake_ips() {
+    local domain="$1"
+    for dns_server in "${DNS_SERVERS[@]}"; do
+        dig +short +timeout=2 "$domain" @"$dns_server" | grep -E '^10\.[0-9]+\.[0-9]+\.[0-9]+$'
+    done
+}
+
 # Add IPs to appropriate NFT set in bulk
 add_ips() {
-    local ips=("$@")
     local status="$1" # blocked or allowed
+    shift
+    local ips=("$@")
     local ip_list=""
     
     # Filter out private IPs and format as nft list
-    for ip in "${ips[@]:1}"; do
+    for ip in "${ips[@]}"; do
         if [[ $ip =~ ^10\. || $ip =~ ^192\.168\. || $ip == "0.0.0.0" ]]; then
             continue
         fi
@@ -147,6 +167,70 @@ check_domain_blocked() {
     return 1 # Domain is not blocked
 }
 
+print_col() {
+  local text="$1"
+  local num_cols=3
+  (( num_cols < 1 )) && num_cols=1
+  local term_width=$(tput cols)
+  local col_width=$((term_width / num_cols))
+
+  # Strip ANSI escape sequences for length calc
+  local clean_text=$(echo -ne "$text" | sed -r 's/\x1B\[[0-9;]*[mK]//g')
+
+  # Detect if first visible char is emoji (multi-byte) followed by space and remove it for length calc
+  local first_char=$(echo -ne "$clean_text" | grep -oP '^.{1}')
+  local after_first=${clean_text#$first_char}
+  if [[ $(echo -n "$first_char" | wc -c) -gt 1 && "$after_first" == " "* ]]; then
+    clean_text="${after_first# }"
+  fi
+
+  # Calculate visible length
+  local visible_len=$(echo -ne "$clean_text" | wc -m)
+
+  if (( visible_len > col_width )); then
+    # Truncate clean text to col_width-3 chars for ellipsis
+    local truncated=$(echo -ne "$clean_text" | cut -c1-$((col_width - 3)))
+    truncated="${truncated}..."
+
+    # Extract the trailing RESET code if present in original text, else empty
+    local reset_code=$(echo -ne "$text" | grep -o -P '\e\[0*m' | tail -1)
+    # If no explicit reset_code found, fallback to ANSI reset
+    [[ -z "$reset_code" ]] && reset_code=$'\e[0m'
+
+    # Print truncated original text preserving color with echo -ne
+    echo -ne "$(printf "%-${col_width}s" "$truncated ")$reset_code"
+  else
+    # Print original text padded
+    echo -ne "$(printf "%-${col_width}s" "$text ")"
+  fi
+}
+
+
+# Log IP addresses with appropriate colors and emojis
+log_ips() {
+    local domain="$1"
+    local status="$2" # blocked or allowed
+    
+    # Get real and fake IPs
+    local real_ips=($(get_real_ips "$domain"))
+    local fake_ips=($(get_fake_ips "$domain"))
+    
+    # Log real IPs
+    if [[ ${#real_ips[@]} -gt 0 ]]; then
+        print_col "${GREEN}${REAL_IP_EMOJI} ${real_ips[*]}${NC}"
+    fi
+    
+    # Log fake IPs (if any)
+    if [[ ${#fake_ips[@]} -gt 0 ]]; then
+        print_col "${RED}${FAKE_IP_EMOJI} ${fake_ips[*]}${NC}"
+    fi
+    
+    # If no IPs found at all
+    if [[ ${#real_ips[@]} -eq 0 && ${#fake_ips[@]} -eq 0 ]]; then
+        print_col "${YELLOW}${INFO_EMOJI} No IP${NC}"
+    fi
+}
+
 # Check domain and categorize it
 check_domain() {
     local domain="$1"
@@ -180,17 +264,23 @@ check_domain() {
     
     # Check if domain is blocked
     if check_domain_blocked "$domain"; then
-        echo -e "${RED}${BLOCKED_EMOJI} $domain${NC}"
+        print_col "${RED}${BLOCKED_EMOJI} $domain${NC}"
         blocked_domains["$domain"]=1
         add_domain_ips "$domain" "blocked"
+        # Log IP information
+        log_ips "$domain" "blocked"
+        echo
         # Save immediately for real-time updates
         save_domains
     else
-        echo -e "${GREEN}${ALLOWED_EMOJI} $domain${NC}"
+        print_col "${GREEN}${ALLOWED_EMOJI} $domain${NC}"
         allowed_domains["$domain"]=1
         if [[ "$manual" == "manual" ]]; then
             add_domain_ips "$domain" "allowed"
         fi
+        # Log IP information
+        log_ips "$domain" "allowed"
+        echo
         # Save immediately for real-time updates
         save_domains
     fi
@@ -265,16 +355,22 @@ add_domain() {
                 unset allowed_domains["$domain"]
             fi
             blocked_domains["$domain"]=1
-            echo -e "${RED}${ADD_EMOJI} Added $domain to blocked list${NC}"
+            print_col "${RED}${ADD_EMOJI} Added $domain to blocked list${NC}"
             add_domain_ips "$domain" "blocked"
+            # Log IP information
+            log_ips "$domain" "blocked"
+            echo
             ;;
         allowed)
             if [[ -n "${blocked_domains[$domain]}" ]]; then
                 unset blocked_domains["$domain"]
             fi
             allowed_domains["$domain"]=1
-            echo -e "${GREEN}${ADD_EMOJI} Added $domain to allowed list${NC}"
+            print_col "${GREEN}${ADD_EMOJI} Added $domain to allowed list${NC}"
             add_domain_ips "$domain" "allowed"
+            # Log IP information
+            log_ips "$domain" "allowed"
+            echo
             ;;
     esac
     
@@ -326,6 +422,7 @@ Commands:
 
 Options:
   -d, --dns-server DNS_SERVERS  Specify DNS servers, comma separated (default: 85.15.1.15)
+  -t, --trusted-dns DNS_SERVER  Specify trusted DNS server for real IPs (default: 8.8.8.8)
   -m, --mode MODE               Mode for multiple DNS servers: any or all (default: any)
   -a, --add-domains DOMAINS     Manually check domains (comma separated)
   -r, --recheck                 Recheck domains in both lists and update
@@ -377,6 +474,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -d|--dns-server)
             IFS=',' read -ra DNS_SERVERS <<< "$2"
+            shift 2
+            ;;
+        -t|--trusted-dns)
+            TRUSTED_DNS="$2"
             shift 2
             ;;
         -m|--mode)
@@ -502,8 +603,10 @@ if [[ -n "$MANUAL_DOMAINS" ]]; then
     exit 0
 fi
 
-# Find dnsmasq log file
-DNSMASQ_LOG=$(find_dnsmasq_log)
+# Only find dnsmasq log file if needed
+if [[ "$MODE" == "batch" || "$MODE" == "monitor" ]]; then
+    DNSMASQ_LOG=$(find_dnsmasq_log)
+fi
 
 # Execute based on mode
 case "$MODE" in
