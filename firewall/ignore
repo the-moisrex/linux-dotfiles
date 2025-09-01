@@ -91,17 +91,24 @@ function save_dnsmasq_file {
         return;
     fi
     sudo mkdir -p "$nft_include_dir";
-    echo | sudo tee "$dnsmasq_file"; # reset file
+    local content="";
+    local dns_ip;
+    dns_ip=$(nmcli dev show | grep 'IP4.DNS' | grep -vE "127.0.0.1|192.168." | head -n 1 | awk '{print $2}')
+    if [ -z "$dns_ip" ]; then
+        dns_ip="8.8.8.8";
+    fi
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
             if valid_ip "$domain"; then 
                 # It's an ip address, let's ignore it
                 echo "Ignore adding IP ${domain} to dnsmasq file.";
             else
-                echo "nftset=/$domain/inet#mangle#$ignored_nftables_set_name" | sudo tee -a "$dnsmasq_file";
+                content="$content\nnftset=/$domain/inet#mangle#$ignored_nftables_set_name";
+                content="$content\nserver=/$domain/$dns_ip";
             fi
         done < "$ignored_domains_file";
     fi;
+    echo -e "$content" | sudo tee "$dnsmasq_file";
     echo "Saved the domain's configs for dnsmasq in: $dnsmasq_file";
     sudo systemctl restart dnsmasq.service;
 }
@@ -201,20 +208,22 @@ function ignore {
     echo "Adding $domain to the ignored list."
     echo "$domain" >> "$ignored_domains_file";
     sort -u "$ignored_domains_file" -o "$ignored_domains_file";
+    local ips=""
     if valid_ip "$domain"; then 
         # It's an ip address
         ip="$domain"
-        sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ip" \}
+        ips="$ips$ip, "
         ipcount=$(( "$ipcount" + 1 ));
     else
         # It's a domain
         while IFS= read -r ip; do
-            echo  "  Adding ip address $ip to the 'ignored' ip set."
-            sudo nft add element inet mangle $ignored_nftables_set_name \{ "$ip" \}
+            # echo  "  Adding ip address $ip to the 'ignored' ip set."
+            ips="$ips$ip, "
             ipcount=$(( "$ipcount" + 1 ));
         done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
     fi
-    echo "  Added $ipcount IPs to the 'ignored' ipset.";
+    sudo nft add element inet mangle $ignored_nftables_set_name \{ "${ips%, }" \}
+    echo "  Added $ipcount ips to 'inet mangle $ignored_nftables_set_name': ${ips%, }";
     echo
 }
 
@@ -429,6 +438,7 @@ function list_countries_ipset {
 }
 
 function update_all {
+    save_dnsmasq_file;
     update_ignores
     update_countries
     # todo: update individual countries as well
