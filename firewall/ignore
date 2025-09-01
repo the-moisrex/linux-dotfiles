@@ -235,12 +235,22 @@ function unignore {
     fi;
     echo "Removing $domain from ignored list."
     grep -v "$domain" "$ignored_domains_file" | sponge "$ignored_domains_file"
-    while IFS= read -r ip; do
-        echo  "  Removing ip address $ip from the 'ignored' ip set."
-        sudo nft delete element inet mangle $ignored_nftables_set_name \{ "$ip" \}
+    local ips=""
+    if valid_ip "$domain"; then 
+        # It's an ip address
+        ip="$domain"
+        ips="$ips$ip, "
         ipcount=$(( "$ipcount" + 1 ));
-    done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
-    echo "  Deleted $ipcount IPs from the 'ignored' ipset.";
+    else
+        # It's a domain
+        while IFS= read -r ip; do
+            # echo  "  Adding ip address $ip to the 'ignored' ip set."
+            ips="$ips$ip, "
+            ipcount=$(( "$ipcount" + 1 ));
+        done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
+    fi
+    sudo nft delete element inet mangle $ignored_nftables_set_name \{ "${ip%, }" \}
+    echo "  Deleted $ipcount IPs from the 'inet mangle $ignored_nftables_set_name' ipset: ${ips%, }";
     echo
 }
 
