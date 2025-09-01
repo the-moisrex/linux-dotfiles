@@ -222,8 +222,10 @@ function ignore {
             ipcount=$(( "$ipcount" + 1 ));
         done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
     fi
-    sudo nft add element inet mangle $ignored_nftables_set_name \{ "${ips%, }" \}
-    echo "  Added $ipcount ips to 'inet mangle $ignored_nftables_set_name': ${ips%, }";
+    if [ ! -z "$ips" ]; then
+        sudo nft add element inet mangle $ignored_nftables_set_name \{ "${ips%, }" \}
+        echo "  Added $ipcount ips to 'inet mangle $ignored_nftables_set_name': ${ips%, }";
+    fi
     echo
 }
 
@@ -249,8 +251,10 @@ function unignore {
             ipcount=$(( "$ipcount" + 1 ));
         done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
     fi
-    sudo nft delete element inet mangle $ignored_nftables_set_name \{ "${ip%, }" \}
-    echo "  Deleted $ipcount IPs from the 'inet mangle $ignored_nftables_set_name' ipset: ${ips%, }";
+    if [ ! -z "$ips" ]; then
+        sudo nft delete element inet mangle $ignored_nftables_set_name \{ "${ips%, }" \}
+        echo "  Deleted $ipcount IPs from the 'inet mangle $ignored_nftables_set_name' ipset: ${ips%, }";
+    fi
     echo
 }
 
