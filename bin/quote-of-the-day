@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+
+# Fetch quotes from various APIs and display them
+# Usage: quote-of-the-day [--help] [source...]
+
+set -euo pipefail
+
+# ANSI color codes for styling
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# Default sources
+DEFAULT_SOURCES=("zen" "dad" "advice")
+
+# Help message
+show_help() {
+  cat << EOF
+Usage: quote-of-the-day [--help] [SOURCE...]
+
+Fetch quotes from various APIs. If no SOURCE is specified, picks one randomly.
+
+Sources:
+  zen      Zen Quotes (wisdom)
+  dad      Dad Jokes
+  advice   Life Advice
+  all      All sources
+
+Options:
+  --help   Show this help message
+
+Examples:
+  quote-of-the-day           # Random source
+  quote-of-the-day zen dad   # Specific sources
+  quote-of-the-day all       # All sources
+EOF
+}
+
+# Fetch from Zen Quotes API
+fetch_zen() {
+  local response
+  set +e
+  response=$(curl -s --max-time 5 "https://zenquotes.io/api/random")
+  CURL_EXIT_CODE=$?
+  set -e
+
+  if [ $CURL_EXIT_CODE -ne 0 ] || [ -z "$response" ]; then
+    echo -e "${RED}Error: Failed to fetch Zen quote.${NC}" >&2
+    return 1
+  fi
+
+  if ! command -v jq &> /dev/null; then
+    echo -e "${RED}Error: 'jq' is required but not installed.${NC}" >&2
+    return 1
+  fi
+
+  local quote author
+  quote=$(echo "$response" | jq -r '.[0].q')
+  author=$(echo "$response" | jq -r '.[0].a')
+  
+  echo -e "${BLUE}━━━━ Zen Quote ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "  ${GREEN}\"$quote\"${NC}"
+  echo -e "        — ${BLUE}$author${NC}"
+  echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo
+}
+
+# Fetch from icanhazdadjoke API
+fetch_dad() {
+  local response
+  set +e
+  response=$(curl -s --max-time 5 -H "Accept: text/plain" "https://icanhazdadjoke.com/")
+  CURL_EXIT_CODE=$?
+  set -e
+
+  if [ $CURL_EXIT_CODE -ne 0 ] || [ -z "$response" ]; then
+    echo -e "${RED}Error: Failed to fetch dad joke.${NC}" >&2
+    return 1
+  fi
+
+  echo -e "${BLUE}━━━━ Dad Joke ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "  ${GREEN}\"$response\"${NC}"
+  echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo
+}
+
+# Fetch from Advice Slip API
+fetch_advice() {
+  local response
+  set +e
+  response=$(curl -s --max-time 5 "https://api.adviceslip.com/advice")
+  CURL_EXIT_CODE=$?
+  set -e
+
+  if [ $CURL_EXIT_CODE -ne 0 ] || [ -z "$response" ]; then
+    echo -e "${RED}Error: Failed to fetch advice.${NC}" >&2
+    return 1
+  fi
+
+  if ! command -v jq &> /dev/null; then
+    echo -e "${RED}Error: 'jq' is required but not installed.${NC}" >&2
+    return 1
+  fi
+
+  local advice
+  advice=$(echo "$response" | jq -r '.slip.advice')
+
+  echo -e "${BLUE}━━━━ Life Advice ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "  ${GREEN}\"$advice\"${NC}"
+  echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo
+}
+
+# Main logic
+main() {
+  local sources=()
+  local use_all=false
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --help)
+        show_help
+        exit 0
+        ;;
+      all)
+        use_all=true
+        shift
+        ;;
+      zen|dad|advice)
+        sources+=("$1")
+        shift
+        ;;
+      *)
+        echo -e "${RED}Error: Unknown source '$1'. Use --help for options.${NC}" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  # Set sources if none specified
+  if [ ${#sources[@]} -eq 0 ] && [ "$use_all" = false ]; then
+    # Pick one random source
+    sources=("${DEFAULT_SOURCES[$RANDOM % ${#DEFAULT_SOURCES[@]}]}")
+  elif [ "$use_all" = true ]; then
+    sources=("zen" "dad" "advice")
+  fi
+
+  # Fetch quotes from selected sources
+  for source in "${sources[@]}"; do
+    case $source in
+      zen) fetch_zen ;;
+      dad) fetch_dad ;;
+      advice) fetch_advice ;;
+    esac
+  done
+}
+
+# Run main function with all arguments
+main "$@"
