@@ -486,7 +486,7 @@ while [[ $# -gt 0 ]]; do
             MANUAL_DOMAINS="$2"
             shift 2
             ;;
-        -r|--recheck)
+        -r|--recheck|--re-check)
             RECHECK=true
             shift
             ;;
