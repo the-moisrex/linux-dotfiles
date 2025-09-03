@@ -298,28 +298,79 @@ check_domains() {
     done
 }
 
-# Recheck existing domains
+# Recheck existing domains (parallelized with concurrency limit, in-memory)
 recheck_domains() {
-    echo -e "${BLUE}${INFO_EMOJI} Rechecking blocked domains...${NC}"
+    local max_jobs
+    max_jobs=$(nproc 2>/dev/null || echo 4)  # fallback to 4 if nproc not available
+
+    echo -e "${BLUE}${INFO_EMOJI} Rechecking blocked and allowed domains (parallel, max $max_jobs jobs)...${NC}"
+
+    local results=()  # will hold "blocked domain" or "allowed domain"
+
+    # Function for job control
+    run_with_limit() {
+        local job_count
+        while true; do
+            job_count=$(jobs -rp | wc -l)
+            if (( job_count < max_jobs )); then
+                break
+            fi
+            sleep 0.1
+        done
+        "$@" &
+    }
+
+    # Worker function
+    recheck_worker() {
+        local domain="$1"
+        local was_blocked="$2"
+
+        if check_domain_blocked "$domain"; then
+            if [[ "$was_blocked" == "yes" ]]; then
+                results+=("blocked $domain")
+            else
+                echo -e "${RED}${BLOCKED_EMOJI} $domain is now blocked, moving to blocked list${NC}"
+                results+=("blocked $domain")
+                add_domain_ips "$domain" "blocked"
+            fi
+        else
+            if [[ "$was_blocked" == "yes" ]]; then
+                echo -e "${GREEN}${ALLOWED_EMOJI} $domain is no longer blocked, moving to allowed list${NC}"
+                results+=("allowed $domain")
+            else
+                results+=("allowed $domain")
+            fi
+        fi
+    }
+
+    # Launch workers for blocked domains
     for domain in "${!blocked_domains[@]}"; do
-        if ! check_domain_blocked "$domain"; then
-            echo -e "${GREEN}${ALLOWED_EMOJI} $domain is no longer blocked, moving to allowed list${NC}"
-            unset blocked_domains["$domain"]
+        run_with_limit recheck_worker "$domain" "yes"
+    done
+
+    # Launch workers for allowed domains
+    for domain in "${!allowed_domains[@]}"; do
+        run_with_limit recheck_worker "$domain" "no"
+    done
+
+    wait  # wait for all jobs
+
+    # Reset arrays
+    blocked_domains=()
+    allowed_domains=()
+
+    # Rebuild arrays from results
+    for entry in "${results[@]}"; do
+        local type domain
+        type=$(awk '{print $1}' <<< "$entry")
+        domain=$(awk '{print $2}' <<< "$entry")
+        if [[ "$type" == "blocked" ]]; then
+            blocked_domains["$domain"]=1
+        else
             allowed_domains["$domain"]=1
         fi
     done
-    
-    echo -e "${BLUE}${INFO_EMOJI} Rechecking allowed domains...${NC}"
-    for domain in "${!allowed_domains[@]}"; do
-        if check_domain_blocked "$domain"; then
-            echo -e "${RED}${BLOCKED_EMOJI} $domain is now blocked, moving to blocked list${NC}"
-            unset allowed_domains["$domain"]
-            blocked_domains["$domain"]=1
-            add_domain_ips "$domain" "blocked"
-        fi
-    done
-    
-    # Save changes
+
     save_domains
 }
 
