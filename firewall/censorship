@@ -301,78 +301,82 @@ check_domains() {
 # Recheck existing domains (parallelized with concurrency limit, in-memory)
 recheck_domains() {
     local max_jobs
-    max_jobs=$(nproc 2>/dev/null || echo 4)  # fallback to 4 if nproc not available
+    max_jobs=$((($(nproc 2>/dev/null || echo 32) * 2)))
 
-    echo -e "${BLUE}${INFO_EMOJI} Rechecking blocked and allowed domains (parallel, max $max_jobs jobs)...${NC}"
+    # Collect results silently and correctly
+    local results=()
 
-    local results=()  # will hold "blocked domain" or "allowed domain"
-
-    # Function for job control
-    run_with_limit() {
-        local job_count
-        while true; do
-            job_count=$(jobs -rp | wc -l)
-            if (( job_count < max_jobs )); then
-                break
-            fi
-            sleep 0.1
-        done
-        "$@" &
-    }
-
-    # Worker function
-    recheck_worker() {
-        local domain="$1"
-        local was_blocked="$2"
-
-        if check_domain_blocked "$domain"; then
-            if [[ "$was_blocked" == "yes" ]]; then
-                results+=("blocked $domain")
-            else
-                echo -e "${RED}${BLOCKED_EMOJI} $domain is now blocked, moving to blocked list${NC}"
-                results+=("blocked $domain")
-                add_domain_ips "$domain" "blocked"
-            fi
-        else
-            if [[ "$was_blocked" == "yes" ]]; then
-                echo -e "${GREEN}${ALLOWED_EMOJI} $domain is no longer blocked, moving to allowed list${NC}"
-                results+=("allowed $domain")
-            else
-                results+=("allowed $domain")
-            fi
-        fi
-    }
-
-    # Launch workers for blocked domains
     for domain in "${!blocked_domains[@]}"; do
-        run_with_limit recheck_worker "$domain" "yes"
-    done
-
-    # Launch workers for allowed domains
-    for domain in "${!allowed_domains[@]}"; do
-        run_with_limit recheck_worker "$domain" "no"
-    done
-
-    wait  # wait for all jobs
-
-    # Reset arrays
-    blocked_domains=()
-    allowed_domains=()
-
-    # Rebuild arrays from results
-    for entry in "${results[@]}"; do
-        local type domain
-        type=$(awk '{print $1}' <<< "$entry")
-        domain=$(awk '{print $2}' <<< "$entry")
-        if [[ "$type" == "blocked" ]]; then
-            blocked_domains["$domain"]=1
-        else
-            allowed_domains["$domain"]=1
+        # Ensure domain is not empty before processing
+        if [[ -n "$domain" ]]; then
+            # Capture the result of recheck_worker directly
+            local result
+            result=$(recheck_worker "$domain" "yes")
+            if [[ -n "$result" ]]; then
+                results+=("$result")
+            fi
         fi
     done
 
+    for domain in "${!allowed_domains[@]}"; do
+        # Ensure domain is not empty before processing
+        if [[ -n "$domain" ]]; then
+            # Capture the result of recheck_worker directly
+            local result
+            result=$(recheck_worker "$domain" "no")
+            if [[ -n "$result" ]]; then
+                results+=("$result")
+            fi
+        fi
+    done
+
+    # Now we will process the results in memory and update the domains list
+    for result in "${results[@]}"; do
+        local type=${result%% *}  # 'blocked' or 'allowed'
+        local domain=${result#* }  # Domain name
+
+        # Ensure domain is not empty
+        if [[ -n "$domain" ]]; then
+            if [[ "$type" == "blocked" ]]; then
+                blocked_domains["$domain"]=1
+            else
+                allowed_domains["$domain"]=1
+            fi
+        fi
+    done
+
+    # Save the updated lists to the files
     save_domains
 }
+
+# Recheck worker: Processes each domain without printing logs
+recheck_worker() {
+    local domain="$1"
+    local was_blocked="$2"
+
+    # This will hold results in-memory instead of printing
+    local result=""
+
+    # Perform the domain check and update based on the result
+    if check_domain_blocked "$domain"; then
+        if [[ "$was_blocked" == "yes" ]]; then
+            add_domain_ips "$domain" "blocked"
+            result="blocked $domain"
+        else
+            add_domain_ips "$domain" "blocked"
+            result="blocked $domain"
+        fi
+    else
+        if [[ "$was_blocked" == "yes" ]]; then
+            add_domain_ips "$domain" "allowed"
+            result="allowed $domain"
+        fi
+    fi
+
+    # Return the result to the caller via stdout
+    echo "$result"
+}
+
 
 # Domain management functions
 list_domains() {
