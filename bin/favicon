@@ -1,0 +1,188 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Default values
+OUTPUT_MODE="datauri"
+VERBOSE=0
+SAVE_DIR=""
+URLS=()
+METHOD="google"  # Default to Google's service
+
+# Function to display usage
+usage() {
+    cat <<EOF
+Usage: $0 [OPTIONS] [URL...]
+
+Retrieve favicons from websites and output in various formats.
+
+INPUT:
+    URLs can be provided as arguments or via stdin (one per line).
+
+OUTPUT MODES:
+    Default: data URI format (ready for HTML/Markdown/JSON)
+    --base64  Only output base64-encoded data
+    --raw     Output raw binary data
+
+FETCHING METHODS:
+    --method TYPE   How to fetch the favicon:
+                    - google: Use Google's favicon service (default)
+                    - direct: Fetch directly from the domain
+
+OPTIONS:
+    -o, --out DIR   Save favicons to specified directory
+    -v, --verbose   Enable verbose output
+    -h, --help      Show this help message
+
+EXAMPLES:
+    $0 example.com
+    echo "example.com" | $0
+    $0 --raw example.com > favicon.ico
+    $0 --base64 example.com
+    $0 --out ./icons example.com github.com
+    $0 --method direct example.com
+EOF
+}
+
+# Function for verbose logging
+log() {
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "$@" >&2
+    fi
+}
+
+# Function to normalize URLs
+normalize_url() {
+    local url="$1"
+    # Remove protocol and authentication
+    url="${url#*://}"
+    url="${url#*@}"
+    # Remove path/query/fragment and port
+    url="${url%%/*}"
+    url="${url%:*}"
+    # Remove trailing slash and convert to lowercase
+    echo "$url" | tr '[:upper:]' '[:lower:]'
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --base64)
+            OUTPUT_MODE="base64"
+            shift
+            ;;
+        --raw)
+            OUTPUT_MODE="raw"
+            shift
+            ;;
+        -o|--out)
+            SAVE_DIR="$2"
+            shift 2
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        --method)
+            METHOD="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            URLS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Read URLs from stdin if none provided as arguments
+if [[ ${#URLS[@]} -eq 0 ]]; then
+    while read -r line; do
+        URLS+=("$line")
+    done
+fi
+
+# Create output directory if specified
+if [[ -n "$SAVE_DIR" ]]; then
+    mkdir -p "$SAVE_DIR"
+fi
+
+# Process each URL
+for url in "${URLS[@]}"; do
+    # Normalize URL
+    domain=$(normalize_url "$url")
+    log "Processing: $url (normalized: $domain)"
+    
+    # Determine favicon URL based on method
+    if [[ "$METHOD" == "direct" ]]; then
+        favicon_url="https://${domain}/favicon.ico"
+        log "Using direct method: $favicon_url"
+    else
+        favicon_url="https://www.google.com/s2/favicons?domain=${domain}&sz=256"
+        log "Using Google method: $favicon_url"
+    fi
+    
+    # Create temporary file for binary data
+    tmp_file=$(mktemp)
+    
+    # Get headers and content separately
+    if ! headers=$(curl -s -I -L "$favicon_url"); then
+        echo "Failed to retrieve favicon for: $url" >&2
+        rm -f "$tmp_file"
+        continue
+    fi
+    
+    # Extract MIME type from headers
+    content_type=$(echo "$headers" | grep -i "^content-type:" | tail -1 | tr -d '\r' | awk '{print $2}' | tr '[:upper:]' '[:lower:]')
+    
+    # Download binary data to temporary file
+    if ! curl -s -L -o "$tmp_file" "$favicon_url"; then
+        echo "Failed to download favicon for: $url" >&2
+        rm -f "$tmp_file"
+        continue
+    fi
+    
+    # Check if file is not empty
+    if [[ ! -s "$tmp_file" ]]; then
+        echo "Favicon is empty for: $url" >&2
+        rm -f "$tmp_file"
+        continue
+    fi
+    
+    # Handle output based on mode
+    case $OUTPUT_MODE in
+        datauri)
+            base64_data=$(base64 -w 0 < "$tmp_file")
+            echo "data:${content_type};base64,${base64_data}"
+            ;;
+        base64)
+            base64 -w 0 < "$tmp_file"
+            echo # Add newline
+            ;;
+        raw)
+            cat "$tmp_file"
+            ;;
+    esac
+    
+    # Save to file if requested
+    if [[ -n "$SAVE_DIR" ]]; then
+        extension="${content_type#image/}"
+        # Fallback to ico if extension is empty
+        if [[ -z "$extension" ]]; then
+            extension="ico"
+        fi
+        filename="${SAVE_DIR}/${domain}.${extension}"
+        cp "$tmp_file" "$filename"
+        log "Saved favicon for $domain to: $filename"
+    fi
+    
+    # Clean up temporary file
+    rm -f "$tmp_file"
+done
