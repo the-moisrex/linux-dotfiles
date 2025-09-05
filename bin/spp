@@ -1,223 +1,173 @@
 #!/usr/bin/env python3
 """
-spp.py - Fast search and extract full function source code from C++ using libclang
-
-Optimizations added:
-- Reduced file reading: only read files once for initial search
-- Reuse ThreadPoolExecutor with proper worker shutdown
-- Avoid repeated string operations in AST traversal
-- Limit libclang parsing arguments to reduce overhead
+Parallel Python replacement for `spp` using clang subprocess with:
+- .clang/.clangd flags support
+- Header TU handling
+- Parallel processing
+- Duplicate removal
 """
 
-from __future__ import annotations
 import argparse
-import concurrent.futures
-import os
 import subprocess
-import sys
-import tempfile
-import threading
 from pathlib import Path
-from typing import List, Optional, Tuple
+import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import shlex
 
-try:
-    from clang import cindex
-    LIBCLANG_AVAILABLE = True
-except Exception:
-    LIBCLANG_AVAILABLE = False
+# ----------------------------
+# Read valid clang flags from .clang/.clangd
+# ----------------------------
+def read_clang_flags(verbose=False):
+    git_root = Path(".").resolve()
+    while not (git_root / ".git").exists() and git_root.parent != git_root:
+        git_root = git_root.parent
+    flags = []
 
-
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
-
-
-def find_git_root() -> Optional[Path]:
-    try:
-        out = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL)
-        return Path(out.decode().strip())
-    except subprocess.CalledProcessError:
-        return None
-
-
-def read_clang_file_args(git_root: Path, verbose: bool) -> List[str]:
-    clang_file = git_root / ".clang"
-    args: List[str] = []
-    if clang_file.exists():
-        if verbose:
-            eprint(f"Using extra compiler arguments from {clang_file}")
-        for raw in clang_file.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            args.extend(line.split())
-    return args
-
-
-def clang_format_text(text: str) -> str:
-    try:
-        p = subprocess.Popen(["clang-format"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        out, _ = p.communicate(text.encode())
-        if p.returncode == 0:
-            return out.decode()
-    except FileNotFoundError:
-        pass
-    return text
-
-
-def extract_text_from_range(path: Path, start: Tuple[int, int], end: Tuple[int, int]) -> str:
-    lines = path.read_text(errors="ignore").splitlines()
-    sline, scol = max(1, start[0]), max(1, start[1])
-    eline, ecol = max(1, end[0]), max(1, end[1])
-    sline0, eline0 = sline - 1, eline - 1
-    if sline0 >= len(lines):
-        return ""
-    if eline0 >= len(lines):
-        eline0 = len(lines) - 1
-        ecol = len(lines[eline0]) + 1
-    if sline0 == eline0:
-        return lines[sline0][scol - 1:ecol - 1]
-    out_lines = [lines[sline0][scol - 1:]]
-    out_lines.extend(lines[sline0 + 1:eline0])
-    out_lines.append(lines[eline0][:ecol - 1])
-    return "\n".join(out_lines)
-
-
-def find_function_with_libclang(path: Path, function_name: str, args: List[str], verbose: bool) -> Optional[str]:
-    idx = cindex.Index.create()
-    try:
-        tu = idx.parse(str(path), args=args, options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
-    except Exception as e:
-        if verbose:
-            eprint(f"libclang failed parsing {path}: {e}")
-        return None
-
-    def cursor_matches(cursor):
-        return cursor.spelling == function_name and cursor.kind.is_declaration() and cursor.is_definition()
-
-    for cur in tu.cursor.walk_preorder():
-        if cursor_matches(cur) and cur.location.file and Path(cur.location.file.name) == path:
+    for file_name in [".clang", ".clangd"]:
+        path = git_root / file_name
+        if path.exists():
+            if verbose:
+                print(f"[verbose] Reading clang flags from {path}")
             try:
-                rng = cur.extent
-                start = (rng.start.line, rng.start.column)
-                end = (rng.end.line, rng.end.column)
-                snippet = extract_text_from_range(path, start, end)
-                if snippet.strip():
-                    if verbose:
-                        eprint(f"libclang: matched full function {function_name} at {path}:{start}..{end}")
-                    return clang_format_text(snippet)
-            except Exception:
-                pass
-    return None
+                text = path.read_text()
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    # Split by spaces
+                    for token in shlex.split(line):
+                        # Split comma-separated flags
+                        subtokens = [t.strip() for t in token.split(",") if t.strip()]
+                        for sub in subtokens:
+                            # Keep only valid clang CLI flags
+                            if sub.startswith("-") and not sub.startswith("--header-insertion") and not sub.startswith("--limit"):
+                                flags.append(sub)
+            except Exception as e:
+                if verbose:
+                    print(f"[verbose] Failed reading {path}: {e}")
+    return flags
 
+# ----------------------------
+# Find files using git grep
+# ----------------------------
+def git_grep_files(function_name, verbose=False):
+    cmd = ["git", "grep", "-l", function_name, "--", "*.cpp", "*.cxx", "*.cc", "*.h", "*.hpp"]
+    if verbose:
+        print(f"[verbose] Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    files = result.stdout.strip().splitlines()
+    if verbose:
+        print(f"[verbose] Found files: {files}")
+    return files
 
-def find_function_with_clang_check(path: Path, function_name: str, extra_args: List[str], verbose: bool) -> Optional[str]:
-    try:
-        ast_list = subprocess.check_output(["clang-check", "-ast-list", str(path), "--"] + extra_args, stderr=subprocess.DEVNULL).decode()
-    except Exception:
+# ----------------------------
+# Extract function from single file
+# ----------------------------
+def extract_file(function_name, file, include_dirs, extra_flags, verbose=False):
+    path = Path(file)
+    if not path.exists():
         if verbose:
-            eprint(f"clang-check -ast-list failed for {path}")
-        return None
+            print(f"[verbose] Skipping non-existent file: {file}")
+        return ""
 
-    if function_name not in ast_list:
-        return None
-
-    qnames = {line.strip() for line in ast_list.splitlines() if function_name in line}
-    for q in sorted(qnames):
+    # Handle headers with temporary TU
+    if path.suffix in ['.h', '.hpp', '.hh', '.hxx']:
+        tu_file = tempfile.NamedTemporaryFile(suffix=".cpp", delete=False)
+        tu_file.write(f'#include "{path}"\n'.encode())
+        tu_file.close()
+        target_file = tu_file.name
         if verbose:
-            eprint(f"clang-check: trying qualified name {q} in {path}")
-        try:
-            proc = subprocess.Popen(["clang-check", f"-ast-dump-filter={q}", "-ast-print", str(path), "--"] + extra_args,
-                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            out, _ = proc.communicate(timeout=15)
-            if proc.returncode == 0 and out:
-                text = "\n".join(l for l in out.decode().splitlines() if not l.startswith("Printing "))
-                if text.strip():
-                    return clang_format_text(text)
-        except Exception:
-            continue
-    return None
-
-
-def worker(path: Path, function_name: str, args: List[str], extra_args: List[str], verbose: bool) -> Optional[str]:
-    if LIBCLANG_AVAILABLE:
-        res = find_function_with_libclang(path, function_name, args + extra_args, verbose)
-        if res:
-            return res
-    return find_function_with_clang_check(path, function_name, extra_args, verbose)
-
-
-def main(argv: List[str]):
-    parser = argparse.ArgumentParser(prog="spp.py", description="Extract full function source code from C++ files")
-    parser.add_argument('--verbose', '-v', action='store_true')
-    parser.add_argument('files_or_name', nargs='+', help='Optional files followed by function name')
-    ns = parser.parse_args(argv)
-    verbose = ns.verbose
-
-    if len(ns.files_or_name) == 1:
-        files = []
-        function_name = ns.files_or_name[0]
+            print(f"[verbose] Created temporary TU: {tu_file.name}")
     else:
-        files = ns.files_or_name[:-1]
-        function_name = ns.files_or_name[-1]
+        tu_file = None
+        target_file = path
 
-    git_root = find_git_root()
-    if not git_root:
-        eprint("Error: Not in a git repository")
-        sys.exit(1)
+    # clang command
+    cmd = [
+        "clang",
+        "-Xclang", f"-ast-dump-filter={function_name}",
+        "-fsyntax-only",
+        "-Xclang", "-ast-print",
+        "-fno-color-diagnostics",
+        "-fno-caret-diagnostics",
+        "-fno-delayed-template-parsing",
+        str(target_file),
+        "-std=c++23"
+    ] + extra_flags
 
-    extra_args = read_clang_file_args(git_root, verbose)
-
-    if files:
-        candidates = [Path(f) for f in files if Path(f).exists()]
-        for p in files:
-            if not Path(p).exists():
-                eprint(f"Error: File '{p}' not found")
-                sys.exit(1)
-    else:
-        exts = {".cpp", ".cxx", ".cc", ".c++", ".h", ".hpp", ".hxx"}
-        candidates = [p for p in git_root.rglob('*') if p.suffix in exts and function_name in p.read_text(errors='ignore')]
+    for d in include_dirs:
+        cmd.extend(["-I", str(d)])
 
     if verbose:
-        eprint("Searching in files:")
-        for f in candidates:
-            eprint(" ", f)
+        print(f"[verbose] Running: {' '.join(cmd)}")
 
-    tmpfh, tmpname = tempfile.mkstemp(prefix="spp-", text=True)
-    os.close(tmpfh)
-    result_lock = threading.Lock()
-    found_event = threading.Event()
-
-    def task_wrapper(path: Path) -> Optional[Tuple[Path, str]]:
-        if found_event.is_set():
-            return None
+    output = ""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.stdout.strip():
+            # Strip "Printing ...:" lines
+            lines = result.stdout.splitlines()
+            filtered = [line for line in lines if not line.startswith("Printing ")]
+            if filtered:
+                output = "\n".join(filtered)
+    except Exception as e:
         if verbose:
-            eprint(f"Checking {path} for function definition...")
-        res = worker(path, function_name, [], extra_args, verbose)
-        if res:
-            return (path, res)
-        return None
+            print(f"[verbose] Error running clang on {file}: {e}")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(16, len(candidates))) as ex:
-        futures = {ex.submit(task_wrapper, p): p for p in candidates}
-        for fut in concurrent.futures.as_completed(futures):
-            out = fut.result()
-            if out:
-                path, snippet = out
-                with result_lock:
-                    Path(tmpname).write_text(snippet)
-                    found_event.set()
-                break
+    if tu_file:
+        Path(tu_file.name).unlink()
 
-    if Path(tmpname).stat().st_size > 0:
-        print(Path(tmpname).read_text(), end="")
-        Path(tmpname).unlink(missing_ok=True)
-        sys.exit(0)
-    else:
-        Path(tmpname).unlink(missing_ok=True)
-        eprint(f"Error: Failed to extract function '{function_name}' from any file")
-        sys.exit(1)
+    return output
 
+# ----------------------------
+# Parallel extraction and deduplication
+# ----------------------------
+def extract_function(function_name, files, include_dirs, extra_flags, verbose=False, max_workers=4):
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {executor.submit(extract_file, function_name, f, include_dirs, extra_flags, verbose): f for f in files}
+        for future in as_completed(future_to_file):
+            content = future.result()
+            if content:
+                results.append(content)
 
-if __name__ == '__main__':
-    main(sys.argv[1:])
+    # Deduplicate blocks by exact string match
+    seen_blocks = set()
+    final_blocks = []
+    for block in results:
+        # Split multi-line outputs into blocks by blank lines
+        candidate_blocks = [b.strip() for b in block.split("\n\n") if b.strip()]
+        for b in candidate_blocks:
+            if b not in seen_blocks:
+                seen_blocks.add(b)
+                final_blocks.append(b)
+
+    if final_blocks:
+        print("\n\n".join(final_blocks))
+
+# ----------------------------
+# CLI
+# ----------------------------
+def main():
+    parser = argparse.ArgumentParser(description="Extract full C++ function source using clang (parallel, deduplicated)")
+    parser.add_argument("function", help="Function name to extract")
+    parser.add_argument("files", nargs="*", help="C++ files to search (optional)")
+    parser.add_argument("-I", "--include", action="append", default=[], help="Include directories for clang")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    parser.add_argument("--jobs", "-j", type=int, default=4, help="Number of parallel workers")
+    args = parser.parse_args()
+
+    files = args.files
+    if not files:
+        files = git_grep_files(args.function, verbose=args.verbose)
+        if not files:
+            if args.verbose:
+                print(f"[verbose] No files found containing function '{args.function}'")
+            return
+
+    extra_flags = read_clang_flags(verbose=args.verbose)
+    extract_function(args.function, files, args.include, extra_flags, verbose=args.verbose, max_workers=args.jobs)
+
+if __name__ == "__main__":
+    main()
 
