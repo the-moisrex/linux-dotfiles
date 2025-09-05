@@ -1,0 +1,201 @@
+#!/bin/bash
+
+# Default template
+DEFAULT_TEMPLATE="cpp.simple"
+
+# Verbose flag
+VERBOSE=0
+
+# Function to show help
+show_help() {
+    cat << EOF
+Usage: code.tmp [OPTIONS] [FILES_OR_DIRS...]
+
+Creates a temporary directory with the specified template and files/directories, then opens a new shell in that directory.
+
+Arguments:
+  FILES_OR_DIRS         Files or directories to copy to the new directory. If a directory path ends with /.,
+                        its contents are copied instead of the directory itself.
+
+Options:
+  -h, --help            Show this help message and exit.
+  -m, --main MAIN_FILE  Specify the main file in the template (only used when no files are provided).
+  -d, --dir DIR         Use DIR instead of creating a temporary directory.
+  -t, --template TEMPLATE
+                        Specify the template to use. Defaults to $DEFAULT_TEMPLATE.
+  -v, --verbose         Enable verbose output.
+
+If files or directories are provided, they are copied into the new directory.
+If no files are provided, stdin is written to the main file.
+
+Examples:
+  code.tmp file1.cpp file2.cpp
+    Copies the default template to a temp directory, then copies file1.cpp and file2.cpp
+
+  code.tmp --template cpp.simple file1.cpp file2.cpp
+    Same as above but explicitly specifies the template
+
+  code.tmp .
+    Copies the default template, then copies the contents of the current directory
+
+  code.tmp dir1/. dir2/. dir3/
+    Copies the default template, then copies the contents of dir1 and dir2, and copies dir3 as a subdirectory
+
+  code.tmp --template .
+    Uses the current directory as the template (no additional files copied)
+EOF
+}
+
+# Determine script directory and template base path
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATES_DIR="${SCRIPT_DIR}/../code-templates"
+
+# Parse arguments
+files=()
+main_file=""
+template=""
+custom_dir=""
+explicit_template=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -m|--main)
+            main_file="$2"
+            shift 2
+            ;;
+        -d|--dir)
+            custom_dir="$2"
+            shift 2
+            ;;
+        -t|--template)
+            explicit_template="$2"
+            shift 2
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+        *)
+            files+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Determine template
+if [[ -n "$explicit_template" ]]; then
+    # Use explicitly specified template
+    template="$explicit_template"
+    
+    # Check if it's a built-in template or a custom directory
+    if [[ -d "${TEMPLATES_DIR}/${template}" ]]; then
+        template_dir="${TEMPLATES_DIR}/${template}"
+        template_name="$template"
+        [[ $VERBOSE -eq 1 ]] && echo "Using built-in template: $template"
+    elif [[ -d "$template" ]]; then
+        template_dir="$template"
+        template_name=$(basename "$template")
+        [[ $VERBOSE -eq 1 ]] && echo "Using custom template directory: $template"
+    else
+        echo "Error: Template '$template' does not exist." >&2
+        exit 1
+    fi
+else
+    # Use default template
+    template="$DEFAULT_TEMPLATE"
+    template_dir="${TEMPLATES_DIR}/${template}"
+    template_name="$template"
+    [[ $VERBOSE -eq 1 ]] && echo "Using default template: $template"
+fi
+
+# Check if template directory exists
+if [[ ! -d "$template_dir" ]]; then
+    echo "Error: Template directory '$template_dir' does not exist." >&2
+    exit 1
+fi
+
+# Create or use directory
+if [[ -n "$custom_dir" ]]; then
+    target_dir="$custom_dir"
+    mkdir -p "$target_dir"
+    [[ $VERBOSE -eq 1 ]] && echo "Using custom directory: $target_dir"
+else
+    # Use the template name (not path) for the temporary directory
+    target_dir=$(mktemp -p /tmp -d "code.${template_name}.XXXXX")
+    [[ $VERBOSE -eq 1 ]] && echo "Created temporary directory: $target_dir"
+fi
+
+# Copy template contents
+[[ $VERBOSE -eq 1 ]] && echo "Copying template contents from $template_dir"
+cp -r "$template_dir"/* "$target_dir/"
+
+# Only determine main file if we need to (when no files provided)
+if [[ ${#files[@]} -eq 0 && -z "$main_file" ]]; then
+    # Check for .main file
+    if [[ -f "${template_dir}/.main" ]]; then
+        main_file=$(cat "${template_dir}/.main")
+        [[ $VERBOSE -eq 1 ]] && echo "Using main file from .main: $main_file"
+    else
+        # Search for common main file patterns
+        potential_main_files=()
+        while IFS= read -r -d '' file; do
+            potential_main_files+=("$(basename "$file")")
+        done < <(find "$template_dir" -maxdepth 1 -type f \( -name "main.*" -o -name "Main.*" \) -print0)
+        
+        if [[ ${#potential_main_files[@]} -eq 0 ]]; then
+            echo "Error: Could not determine main file. Use --main to specify it." >&2
+            exit 1
+        fi
+        main_file="${potential_main_files[0]}"
+        [[ $VERBOSE -eq 1 ]] && echo "Using auto-detected main file: $main_file"
+    fi
+fi
+
+# Handle file/directory copying or stdin
+if [[ ${#files[@]} -gt 0 ]]; then
+    # Copy provided files and directories
+    for item in "${files[@]}"; do
+        if [[ -e "$item" ]]; then
+            [[ $VERBOSE -eq 1 ]] && echo "Copying: $item"
+            
+            # Check if the path ends with /. (copy contents, not the directory itself)
+            if [[ "$item" == *"/." ]]; then
+                # Remove the trailing /. to get the directory path
+                dir_path="${item%/.}"
+                if [[ -d "$dir_path" ]]; then
+                    # Copy directory contents
+                    cp -r "$dir_path"/* "$target_dir/"
+                else
+                    echo "Warning: '$dir_path' is not a directory and will be skipped." >&2
+                fi
+            elif [[ -d "$item" ]]; then
+                # Copy entire directory
+                cp -r "$item" "$target_dir/"
+            else
+                # Copy file
+                cp "$item" "$target_dir/"
+            fi
+        else
+            echo "Warning: '$item' does not exist and will be skipped." >&2
+        fi
+    done
+else
+    # Read from stdin and write to main file
+    [[ $VERBOSE -eq 1 ]] && echo "Writing stdin to main file: $main_file"
+    cat > "$target_dir/$main_file"
+    echo "$target_dir";
+fi
+
+# Open a new shell in the target directory
+[[ $VERBOSE -eq 1 ]] && echo "Opening new shell in directory: $target_dir"
+cd "$target_dir" || exit
+exec "${SHELL:-bash}" -i
