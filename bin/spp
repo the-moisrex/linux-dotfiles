@@ -7,11 +7,13 @@
 verbose=false
 files=()
 
+cur_file=$(basename "$0");
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h)
-            echo "Usage: extract.cpp [OPTIONS] [FILES...] FUNCTION_NAME"
+            echo "Usage: $cur_file [OPTIONS] [FILES...] FUNCTION_NAME"
             echo "Extract a function's source code from a C++ file using clang-check AST tools."
             echo ""
             echo "Options:"
@@ -23,8 +25,8 @@ while [[ $# -gt 0 ]]; do
             echo "  FUNCTION_NAME       Name of the function to extract"
             echo ""
             echo "Example:"
-            echo "  extract.cpp --verbose is_canonically_ordered"
-            echo "  extract.cpp file1.cpp file2.h calculate"
+            echo "  $cur_file --verbose is_canonically_ordered"
+            echo "  $cur_file file1.cpp file2.h calculate"
             exit 0
             ;;
         --verbose|-v)
@@ -50,7 +52,7 @@ done
 # Check if function name is provided
 if [[ -z "$function_name" ]]; then
     echo "Error: Missing function name" >&2
-    echo "Use 'extract.cpp --help' for usage information" >&2
+    echo "Use '$cur_file --help' for usage information" >&2
     exit 1
 fi
 
@@ -110,55 +112,70 @@ if [[ "$verbose" = true ]]; then
 fi
 
 # Try to extract the function from each file
-for file in $cpp_files; do
-    if [[ "$verbose" = true ]]; then
-        echo "Checking $file for function definition..." >&2
-    fi
-    
-    # Get AST list to find qualified function names
-    ast_list=$(clang-check -ast-list "$file" -- "${extra_args[@]}" 2>/dev/null)
+found_file=$(mktemp)
 
-    if [ -z "$ast_list" ]; then
+cleanup() {
+    rm -f "$found_file"
+}
+trap cleanup EXIT
+
+for file in $cpp_files; do
+    (
         if [[ "$verbose" = true ]]; then
-            echo "Warning: Failed to get AST list for $file" >&2
+            echo "Checking $file for function definition..." >&2
         fi
-        continue
-    fi
-    
-    # Find all qualified names that contain our function name
-    qualified_names=$(echo "$ast_list" | grep "$function_name" | sort -u)
-    
-    if [[ -z "$qualified_names" ]]; then
-        if [[ "$verbose" = true ]]; then
-            echo "Warning: Function '$function_name' not found in AST list for $file" >&2
+
+        ast_list=$(clang-check -ast-list "$file" -- "${extra_args[@]}" 2>/dev/null)
+        if [ -z "$ast_list" ]; then
+            [[ "$verbose" = true ]] && echo "Warning: Failed to get AST list for $file" >&2
+            exit 1
         fi
-        continue
-    fi
-    
-    if [[ "$verbose" = true ]]; then
-        echo "Found qualified names in $file:" >&2
-        echo "$qualified_names" >&2
-    fi
-    
-    # Try each qualified name
-    for qualified_name in $qualified_names; do
-        if [[ "$verbose" = true ]]; then
-            echo "Attempting to extract '$qualified_name' from $file..." >&2
+
+        qualified_names=$(echo "$ast_list" | grep "$function_name" | sort -u)
+        if [[ -z "$qualified_names" ]]; then
+            [[ "$verbose" = true ]] && echo "Warning: Function '$function_name' not found in AST list for $file" >&2
+            exit 1
         fi
-        
-        # Extract function using AST dump filter, suppressing stderr to hide "Printing" message
-        extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null | grep -v "Printing " | clang-format);
-        
-        if [[ ${PIPESTATUS[0]} -eq 0 && -n "$extracted_code" ]]; then
-            echo "$extracted_code"
-            exit 0
-        fi
-        
-        if [[ "$verbose" = true ]]; then
-            echo "Warning: Failed to extract function '$qualified_name' from $file" >&2
-        fi
-    done
+
+        [[ "$verbose" = true ]] && {
+            echo "Found qualified names in $file:" >&2
+            echo "$qualified_names" >&2
+        }
+
+        for qualified_name in $qualified_names; do
+            [[ "$verbose" = true ]] && echo "Attempting to extract '$qualified_name' from $file..." >&2
+            
+            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null \
+                | grep -v "Printing " | clang-format)
+
+            if [[ ${PIPESTATUS[0]} -eq 0 && -n "$extracted_code" ]]; then
+                # Write result once, avoiding race condition
+                (
+                    flock 200
+                    if [[ ! -s "$found_file" ]]; then
+                        echo "$extracted_code" > "$found_file"
+                    fi
+                ) 200>"$found_file.lock"
+                exit 0
+            fi
+        done
+
+        [[ "$verbose" = true ]] && echo "Warning: Failed to extract function(s) from $file" >&2
+        exit 1
+    ) &
 done
+
+# Wait for first success
+wait
+
+# Print result if any
+if [[ -s "$found_file" ]]; then
+    cat "$found_file"
+    exit 0
+else
+    exit 1
+fi
+
 
 echo "Error: Failed to extract function '$function_name' from any file" >&2
 exit 1
