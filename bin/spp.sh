@@ -1,0 +1,181 @@
+#!/bin/bash
+
+# Script name: spp (Search C++)
+# Purpose: Extract a function's source code from a C++ file using clang-check AST tools
+
+# Default values
+verbose=false
+files=()
+
+cur_file=$(basename "$0");
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            echo "Usage: $cur_file [OPTIONS] [FILES...] FUNCTION_NAME"
+            echo "Extract a function's source code from a C++ file using clang-check AST tools."
+            echo ""
+            echo "Options:"
+            echo "  --help, -h          Display this help message and exit"
+            echo "  --verbose, -v       Enable verbose output"
+            echo ""
+            echo "Arguments:"
+            echo "  FILES               Optional list of files to search (default: all C++ files in repo)"
+            echo "  FUNCTION_NAME       Name of the function to extract"
+            echo ""
+            echo "Example:"
+            echo "  $cur_file --verbose is_canonically_ordered"
+            echo "  $cur_file file1.cpp file2.h calculate"
+            exit 0
+            ;;
+        --verbose|-v)
+            verbose=true
+            shift
+            ;;
+        -*)
+            echo "Error: Unknown option $1" >&2
+            exit 1
+            ;;
+        *)
+            # If we have more than one argument left, treat as files
+            if [[ $# -gt 1 ]]; then
+                files+=("$1")
+            else
+                function_name="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if function name is provided
+if [[ -z "$function_name" ]]; then
+    echo "Error: Missing function name" >&2
+    echo "Use '$cur_file --help' for usage information" >&2
+    exit 1
+fi
+
+# Check if we're in a git repository
+if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    echo "Error: Not in a git repository" >&2
+    exit 1
+fi
+
+# Get git root directory
+git_root=$(git rev-parse --show-toplevel)
+
+# Read extra compiler arguments from .clang file if it exists
+extra_args=()
+clang_file="$git_root/.clang"
+if [[ -f "$clang_file" ]]; then
+    if [[ "$verbose" = true ]]; then
+        echo "Using extra compiler arguments from $clang_file" >&2
+    fi
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$line" ]] && continue
+        # Add each argument individually
+        for arg in $line; do
+            extra_args+=("$arg")
+        done
+    done < "$clang_file"
+fi
+
+# Get list of files to search
+if [[ ${#files[@]} -eq 0 ]]; then
+    # Find C++ files in the repository that contain the function
+    cpp_files=$(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hxx')
+else
+    # Use provided files, checking they exist
+    cpp_files=()
+    for file in "${files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            echo "Error: File '$file' not found" >&2
+            exit 1
+        fi
+        cpp_files+=("$file")
+    done
+fi
+
+if [[ -z "$cpp_files" ]]; then
+    echo "Error: No C++ files found containing function '$function_name'" >&2
+    exit 1
+fi
+
+if [[ "$verbose" = true ]]; then
+    echo "Searching in files:" >&2
+    for file in $cpp_files; do
+        echo "  $file" >&2
+    done
+fi
+
+# Try to extract the function from each file
+found_file=$(mktemp)
+
+cleanup() {
+    rm -f "$found_file"
+}
+trap cleanup EXIT
+
+for file in $cpp_files; do
+    (
+        if [[ "$verbose" = true ]]; then
+            echo "Checking $file for function definition..." >&2
+        fi
+
+        ast_list=$(clang-check -ast-list "$file" -- "${extra_args[@]}" 2>/dev/null)
+        if [ -z "$ast_list" ]; then
+            [[ "$verbose" = true ]] && echo "Warning: Failed to get AST list for $file" >&2
+            exit 1
+        fi
+
+        qualified_names=$(echo "$ast_list" | grep "$function_name" | sort -u)
+        if [[ -z "$qualified_names" ]]; then
+            [[ "$verbose" = true ]] && echo "Warning: Function '$function_name' not found in AST list for $file" >&2
+            exit 1
+        fi
+
+        [[ "$verbose" = true ]] && {
+            echo "Found qualified names in $file:" >&2
+            echo "$qualified_names" >&2
+        }
+
+        for qualified_name in $qualified_names; do
+            [[ "$verbose" = true ]] && echo "Attempting to extract '$qualified_name' from $file..." >&2
+            
+            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null \
+                | grep -v "Printing " | clang-format)
+
+            if [[ ${PIPESTATUS[0]} -eq 0 && -n "$extracted_code" ]]; then
+                # Write result once, avoiding race condition
+                (
+                    flock 200
+                    if [[ ! -s "$found_file" ]]; then
+                        echo "$extracted_code" > "$found_file"
+                    fi
+                ) 200>"$found_file.lock"
+                exit 0
+            fi
+        done
+
+        [[ "$verbose" = true ]] && echo "Warning: Failed to extract function(s) from $file" >&2
+        exit 1
+    ) &
+done
+
+# Wait for first success
+wait
+
+# Print result if any
+if [[ -s "$found_file" ]]; then
+    cat "$found_file"
+    exit 0
+else
+    exit 1
+fi
+
+
+echo "Error: Failed to extract function '$function_name' from any file" >&2
+exit 1

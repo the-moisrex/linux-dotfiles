@@ -1,35 +1,90 @@
-#!/usr/bin/env bash
-#
-# find_includes.sh — suggest missing headers for undeclared symbols
-# using clang-tidy diagnostics.
-#
-# Usage:
-#   ./find_includes.sh [file.cpp] [clang compile flags...]
-#
-# If no file is provided, source is read from stdin.
+#!/usr/bin/env python3
+"""
+Check for undeclared identifiers in C++ source files using libclang.
+"""
 
-set -euo pipefail
+import sys
+import argparse
+from clang import cindex
+from colorama import Fore, Style, init
 
-TMPFILE=""
-if [[ $# -gt 0 && -f "$1" ]]; then
-  FILE="$1"
-  shift
-else
-  TMPFILE="$(mktemp --suffix=.cpp)"
-  cat > "$TMPFILE"
-  FILE="$TMPFILE"
-fi
+# Initialize colorama (works on Windows & UNIX)
+init(autoreset=True)
 
-FLAGS=("$@")
 
-# Run clang-tidy with only the "undeclared identifier" diagnostic enabled
-clang-tidy -checks=-clang-diagnostic-undeclared-identifier "$FILE" -- "${FLAGS[@]}" 2>&1 \
-  | grep "\[clang-diagnostic-error\]" \
-  | grep "use of undeclared identifier" \
-  | sed -E "s/.*?'([^']+)'.*/\1/" \
-  | sort -u
+def find_undeclared_identifiers(file_path):
+    index = cindex.Index.create()
+    args = ["-x", "c++", "-std=c++2b"]
 
-if [[ -n "$TMPFILE" ]]; then
-  rm -f "$TMPFILE"
-fi
+    tu = index.parse(
+        file_path,
+        args=args,
+        options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+    )
+
+    results = []
+    for diag in tu.diagnostics:
+        msg = diag.spelling
+        if "use of undeclared identifier" in msg:
+            ident = msg.split("'")[1] if "'" in msg else msg
+            results.append(
+                {
+                    "identifier": ident,
+                    "message": msg,
+                    "line": diag.location.line,
+                    "col": diag.location.column,
+                    "severity": diag.severity,
+                }
+            )
+    return results
+
+
+def format_severity(sev: int) -> str:
+    """Map Clang severity levels to readable, colored text."""
+    if sev == 0:
+        return Fore.GREEN + "Ignored" + Style.RESET_ALL
+    if sev == 1:
+        return Fore.CYAN + "Note" + Style.RESET_ALL
+    if sev == 2:
+        return Fore.YELLOW + "Warning" + Style.RESET_ALL
+    if sev == 3:
+        return Fore.RED + "Error" + Style.RESET_ALL
+    if sev == 4:
+        return Fore.MAGENTA + "Fatal" + Style.RESET_ALL
+    return str(sev)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Detect undeclared identifiers in C++ source files using libclang."
+    )
+    parser.add_argument("file", help="Path to source file to check")
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Print detailed diagnostics"
+    )
+
+    args = parser.parse_args()
+
+    results = find_undeclared_identifiers(args.file)
+
+    if not results:
+        print(Fore.GREEN + "✓ No undeclared identifiers found." + Style.RESET_ALL)
+        return
+
+    if args.verbose:
+        print(Fore.RED + Style.BRIGHT + "Undeclared identifiers found:" + Style.RESET_ALL)
+        for r in results:
+            print(
+                f"  {Fore.YELLOW}{r['identifier']}{Style.RESET_ALL} "
+                f"at {Fore.CYAN}line {r['line']}, col {r['col']}{Style.RESET_ALL} "
+                f"[{format_severity(r['severity'])}]"
+            )
+            print(f"    {Fore.LIGHTBLACK_EX}{r['message']}{Style.RESET_ALL}")
+    else:
+        for r in results:
+            print(r["identifier"])
+
+
+if __name__ == "__main__":
+    main()
 
