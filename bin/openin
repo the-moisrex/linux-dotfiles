@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of known browsers in priority order (command names)
-browsers=(brave firefox firefox-developer-edition google-chrome chromium brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp firefox.tmp)
+browsers=(vivaldi vivaldi-stable brave firefox firefox-developer-edition google-chrome chromium brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp firefox.tmp)
 
 # List of browsers that should always open URLs one by one
 one_by_one_browsers=(xdg-open)
@@ -23,7 +23,7 @@ fallbacks[chromium.tmp]=xdg-open
 fallbacks[edge.tmp]=xdg-open
 
 # Browser groups
-chromium_based=(google-chrome chromium brave brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp)
+chromium_based=(google-chrome vivaldi vivaldi-stable chromium brave brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp)
 firefox_based=(firefox firefox-developer-edition firefox.tmp)
 
 # Default options for browser groups
@@ -132,7 +132,7 @@ if [ $# -ge 1 ]; then
     fi
 else
     for browser in "${browsers[@]}"; do
-        if pgrep -x "$browser" > /dev/null; then
+        if pgrep -f "$browser" > /dev/null; then
             selected_browser="$browser"
             break
         fi
