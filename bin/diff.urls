@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [options] <url1> <url2>
+
+Options:
+  --help       Show this help message and exit
+  --vscode     Force using VS Code diff regardless of DIFF_EDITOR
+
+Environment variables:
+  DIFF_EDITOR  Set your preferred diff editor command.
+               Example: "meld", "diffuse", "code --diff", etc.
+               Default: "code --diff"
+
+Examples:
+  $(basename "$0") https://example.com/a https://example.com/b
+  DIFF_EDITOR=meld $(basename "$0") https://example.com/a https://example.com/b
+EOF
+}
+
+# Default editor
+DIFF_EDITOR="${DIFF_EDITOR:-code --diff}"
+
+# Parse flags
+FORCE_VSCODE=false
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)
+      show_help
+      exit 0
+      ;;
+    --vscode)
+      FORCE_VSCODE=true
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      echo "Try --help for usage."
+      exit 1
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+set -- "${POSITIONAL[@]}"
+
+if [[ $# -ne 2 ]]; then
+  echo "Error: You must provide exactly two URLs."
+  echo "Try --help for usage."
+  exit 1
+fi
+
+URL1="$1"
+URL2="$2"
+
+# Force vscode if requested
+if $FORCE_VSCODE; then
+  DIFF_EDITOR="code --diff"
+fi
+
+# Create temporary files with readable names
+FILE1=$(mktemp "/tmp/diffurl_$(basename "$URL1" | tr -cd '[:alnum:]._-').XXXXXX")
+FILE2=$(mktemp "/tmp/diffurl_$(basename "$URL2" | tr -cd '[:alnum:]._-').XXXXXX")
+
+# Download contents safely
+if ! curl -fsSL "$URL1" -o "$FILE1"; then
+  echo "Error: Failed to download $URL1"
+  rm -f "$FILE1" "$FILE2"
+  exit 1
+fi
+
+if ! curl -fsSL "$URL2" -o "$FILE2"; then
+  echo "Error: Failed to download $URL2"
+  rm -f "$FILE1" "$FILE2"
+  exit 1
+fi
+
+# Launch diff tool
+$DIFF_EDITOR "$FILE1" "$FILE2"
+
