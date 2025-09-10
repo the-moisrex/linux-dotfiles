@@ -6,17 +6,26 @@
 #   ./http.curl [options] file.http
 #
 # Options:
-#   --help         Show this help message
-#   --verbose      Print the curl command before running
-#   --request N    Only run the Nth request (1-based index)
+#   --help            Show this help message
+#   --verbose         Print the curl command before running
+#   --request N       Only run the Nth request (1-based index)
+#   --directory DIR   Save responses into files in DIR
+#
+# Notes:
+#   - Requests are separated by "###" in the .http file
+#   - A request can be named with "### @name"
+#   - Filenames: if named → @name; otherwise → <basename>-<hash>
+#   - Extension inferred from Content-Type
+#   - Without --directory, responses are printed to stdout
 
 show_help() {
-    sed -n '2,12p' "$0"
+    sed -n '2,20p' "$0"
 }
 
 VERBOSE=0
 REQNUM=0
 FILE=""
+OUTDIR=""
 
 # Parse args in any order
 while [[ $# -gt 0 ]]; do
@@ -35,6 +44,15 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             REQNUM=$1
+        ;;
+        --directory)
+            shift
+            if [[ -z "$1" ]]; then
+                echo "Error: --directory requires a path"
+                exit 1
+            fi
+            OUTDIR="$1"
+            mkdir -p "$OUTDIR"
         ;;
         -*)
             echo "Unknown option: $1"
@@ -59,16 +77,46 @@ if [[ ! -f "$FILE" ]]; then
     exit 1
 fi
 
-awk -v RS="###" -v verbose="$VERBOSE" -v only="$REQNUM" '
+BASENAME=$(basename "$FILE" .http)
+
+awk -v RS="###" \
+-v verbose="$VERBOSE" \
+-v only="$REQNUM" \
+-v outdir="$OUTDIR" \
+-v base="$BASENAME" '
+function sha1short(str,   cmd, hash) {
+  cmd = "printf %s \"" str "\" | sha1sum | cut -c1-8"
+  cmd | getline hash
+  close(cmd)
+  gsub(/\n/,"",hash)
+  return hash
+}
+function ext_from_type(ct) {
+  if (ct ~ /json/) return "json"
+  if (ct ~ /html/) return "html"
+  if (ct ~ /xml/)  return "xml"
+  if (ct ~ /plain/) return "txt"
+  return "bin"
+}
 BEGIN { reqIndex=0 }
 {
-  gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", $0)
-  if ($0 == "") next
+  raw=$0
+  gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", raw)
+  if (raw == "") next
 
   reqIndex++
   if (only > 0 && reqIndex != only) next
 
-  n = split($0, lines, "\n")
+  n = split(raw, lines, "\n")
+
+  # Check for request name
+  reqName=""
+  if (match(lines[1], /^@([A-Za-z0-9._-]+)/, m)) {
+    reqName=m[1]
+    for (i=1; i<n; i++) lines[i]=lines[i+1]
+    n--
+  }
+
   split(lines[1], parts, " ")
   method = parts[1]
   url    = parts[2]
@@ -90,15 +138,45 @@ BEGIN { reqIndex=0 }
     }
   }
 
-  cmd = "curl -s -X " method " \"" url "\"" headers
+  # Base curl command: include headers in output
+  baseCmd = "curl -s -i -X " method " \"" url "\"" headers
   if (body != "") {
     gsub(/\n/, "", body)
-    cmd = cmd " -d \047" body "\047"
+    baseCmd = baseCmd " -d \047" body "\047"
   }
 
   if (verbose == 1) {
-    print ">>> Request " reqIndex ": " cmd
+    print ">>> Request " reqIndex ": " baseCmd
   }
 
-  system(cmd)
+  if (outdir != "") {
+    h = sha1short(raw)
+    if (reqName != "") {
+      fname = outdir "/" reqName
+    } else {
+      fname = outdir "/" base "-" h
+    }
+
+    # Run curl and save directly to file
+    # Use a temporary file first
+    tmpfile = fname ".tmp"
+    system(baseCmd " > \"" tmpfile "\"")
+
+    # Try to detect Content-Type from the response headers
+    ext="txt"
+    while ((getline line < tmpfile) > 0) {
+      if (match(line, /^Content-Type:[ \t]*([^;]+)/, m)) {
+        ext = ext_from_type(m[1])
+        break
+      }
+    }
+    close(tmpfile)
+
+    finalFile = fname "." ext
+    system("mv \"" tmpfile "\" \"" finalFile "\"")
+
+    if (verbose == 1) print "Saved response to " finalFile
+  } else {
+    system(baseCmd)
+  }
 }' "$FILE"
