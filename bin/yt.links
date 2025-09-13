@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# Extract video URLs (YouTube and others) from filenames or metadata using ffprobe+jq.
+
+PROG=$(basename "$0")
+METHOD="both"
+CHECK=false
+CHECK_TIMEOUT=5
+VERBOSE=false
+
+show_help() {
+  cat <<EOF
+Usage: $PROG [OPTIONS] [FILES...]
+
+Extract YouTube (or other) video links from filenames or metadata.
+
+Options:
+  -h, --help            Show this help and exit.
+  -m, --method METHOD   Extraction method:
+                          file        Only from filename.
+                          meta        Only from metadata (requires ffprobe+jq).
+                          both        Filename first, then metadata (default).
+                          meta-first  Metadata first, then filename.
+  -c, --check           For YouTube links: check if the video actually exists.
+  --timeout SEC         Timeout for --check (default: $CHECK_TIMEOUT).
+  -v, --verbose         Print warnings for skipped/missing files.
+
+Examples:
+  $PROG video1.mp4
+  find . -type f | $PROG --method=meta
+EOF
+}
+
+# -------- Validation helpers --------
+is_valid_yt_id() {
+    local id="$1"
+    [[ "$id" =~ ^[A-Za-z0-9_-]{11}$ && "$id" =~ [A-Za-z] ]]
+}
+
+extract_id_from_url() {
+    local url="$1"
+    if [[ "$url" =~ (\?|&)v=([A-Za-z0-9_-]{11}) ]]; then
+        echo "${BASH_REMATCH[2]}"
+        return 0
+        elif [[ "$url" =~ youtu\.be/([A-Za-z0-9_-]{11}) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# -------- Extractors --------
+extract_from_filename() {
+    local file="$1"
+    local base
+    base=$(basename "$file")
+    
+    local candidate
+    
+    # [ID]
+    if [[ $base =~ \[([A-Za-z0-9_-]{11})\] ]]; then
+        candidate="${BASH_REMATCH[1]}"
+        is_valid_yt_id "$candidate" && { echo "https://youtu.be/$candidate"; return 0; }
+    fi
+    
+    # (ID)
+    if [[ $base =~ \(([A-Za-z0-9_-]{11})\) ]]; then
+        candidate="${BASH_REMATCH[1]}"
+        is_valid_yt_id "$candidate" && { echo "https://youtu.be/$candidate"; return 0; }
+    fi
+    
+    # -ID.ext
+    if [[ $base =~ -([A-Za-z0-9_-]{11})\.[^.]+$ ]]; then
+        candidate="${BASH_REMATCH[1]}"
+        is_valid_yt_id "$candidate" && { echo "https://youtu.be/$candidate"; return 0; }
+    fi
+    
+    return 1
+}
+
+extract_from_ffprobe() {
+    local file="$1"
+    
+    if ! command -v ffprobe >/dev/null 2>&1; then
+        [[ "$VERBOSE" == true ]] && echo "ffprobe not found, skipping metadata" >&2
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        [[ "$VERBOSE" == true ]] && echo "jq not found, skipping metadata" >&2
+        return 1
+    fi
+    
+    local json urls
+    json=$(ffprobe -v error -print_format json -show_format -show_streams "$file" 2>/dev/null) || return 1
+    
+    # Collect all string values under tags
+    urls=$(echo "$json" | jq -r '
+    [
+      (.format.tags // {} | .[]),
+      (.streams[].tags? // {} | .[])
+    ] | map(select(type=="string")) | .[]' | grep -Eo 'https?://[^ ]+')
+    
+    [[ -z "$urls" ]] && return 1
+    
+    # Prefer YouTube links, otherwise return the first URL
+    local yt_url
+    yt_url=$(echo "$urls" | grep -m1 -E 'https?://(www\.)?(youtube\.com|youtu\.be)/')
+    if [[ -n "$yt_url" ]]; then
+        echo "$yt_url"
+        return 0
+    fi
+    
+    # fallback: first URL
+    echo "$urls" | head -n1
+    return 0
+}
+
+# -------- Existence check --------
+check_video_exists() {
+    local url="$1"
+    local id
+    id=$(extract_id_from_url "$url") || return 2  # not a YouTube link
+    
+    local oembed="https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -s -f --max-time "$CHECK_TIMEOUT" "$oembed" >/dev/null 2>&1 && return 0 || return 1
+        elif command -v wget >/dev/null 2>&1; then
+        wget -q --timeout="$CHECK_TIMEOUT" --spider "$oembed" >/dev/null 2>&1 && return 0 || return 1
+    else
+        [[ "$VERBOSE" == true ]] && echo "curl/wget not found, cannot check video existence" >&2
+        return 2
+    fi
+}
+
+# -------- Main processing --------
+process_file() {
+    local file="$1"
+    local url=""
+    
+    if [[ ! -f "$file" ]]; then
+        [[ "$VERBOSE" == true ]] && echo "Skipping non-file: $file" >&2
+        return 0
+    fi
+    
+    case "$METHOD" in
+        file)       url=$(extract_from_filename "$file") ;;
+        meta)       url=$(extract_from_ffprobe "$file") ;;
+        both)       url=$(extract_from_filename "$file") || url=$(extract_from_ffprobe "$file") ;;
+        meta-first) url=$(extract_from_ffprobe "$file") || url=$(extract_from_filename "$file") ;;
+    esac
+    
+    if [[ -z "$url" ]]; then
+        [[ "$VERBOSE" == true ]] && echo "No URL found for: $file" >&2
+        return 1
+    fi
+    
+    if [[ "$CHECK" == true ]]; then
+        check_video_exists "$url"
+        case $? in
+            0) echo "$url  [exists]";;
+            1) echo "$url  [not found]";;
+            2) echo "$url  [unchecked]";;
+        esac
+    else
+        echo "$url"
+    fi
+}
+
+# -------- Args parsing --------
+args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help; exit 0;;
+        -m|--method) METHOD="$2"; shift;;
+        --method=*) METHOD="${1#*=}";;
+        -c|--check) CHECK=true;;
+        --timeout) CHECK_TIMEOUT="$2"; shift;;
+        --timeout=*) CHECK_TIMEOUT="${1#*=}";;
+        -v|--verbose) VERBOSE=true;;
+        --) shift; args+=("$@"); break;;
+        -*) echo "Unknown option: $1" >&2; exit 2;;
+        *) args+=("$1");;
+    esac
+    shift
+done
+
+files=()
+if [[ ${#args[@]} -gt 0 ]]; then
+    files=("${args[@]}")
+else
+    if ! tty -s && ! [ -t 0 ]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" ]] && continue
+            files+=("$line")
+        done
+    fi
+fi
+
+if [[ ${#files[@]} -eq 0 ]]; then
+    echo "No files provided. Use --help for usage." >&2
+    exit 2
+fi
+
+exit_code=0
+for f in "${files[@]}"; do
+    process_file "$f" || exit_code=1
+done
+
+exit "$exit_code"
