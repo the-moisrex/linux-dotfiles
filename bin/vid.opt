@@ -37,6 +37,8 @@
 # - Before converting, run the estimate on the file so at the end we know how we estimated and how it ended up being.
 # - Make sure the estimation algorithm takes a lot of things into account.
 # - Make sure the video's metadata is not changed after ffmpeg.
+# - Add --dry-run
+# - Add --trash-original which uses trash-cli to remove the original file after optimized.
 # 
 # Make sure the code is clean.
 
@@ -53,6 +55,8 @@ QUIET=true
 VERBOSE=false
 ESTIMATE_ONLY=false
 LIST_CATEGORIES=false
+DRY_RUN=false
+TRASH_ORIGINAL=false
 
 # common ffmpeg options we might watch for in passthrough args to avoid duplicate defaults
 FFMPEG_VIDEO_OPTS_KEYWORDS=(" -c:v " " -c:v=" "-x265-params" " -crf " " -crf=" " -preset " " -preset=" "-b:v" "-maxrate" "-bufsize" "-vf " "-filter:v" "-map " "-s " "-vf=")
@@ -101,7 +105,7 @@ declare -A CATEGORIES=(
   [news_piece]=1
   [lecture_recording]=1
   [gaming]=1
-  [camera_b-roll]=1
+  [camera_b_roll]=1
   [social_short]=1
   [high_quality_cinema]=1
   [mobile_recording]=1
@@ -244,6 +248,8 @@ Options:
   --list-categories         Print available categories with aliases and reasons.
   --estimate                Only estimate outcome (no encoding). One-file-per-line output.
   --verbose                 Print ffmpeg command and ffmpeg's output.
+  --dry-run                Show what would be done, print ffmpeg commands, do not run them.
+  --trash-original         After successful optimization, move original file to trash (requires trash-cli).
   --                        Everything after -- is passed to ffmpeg and will replace defaults.
 
 How the estimate algorithm works:
@@ -292,6 +298,8 @@ while (( $# )); do
     --list-categories) LIST_CATEGORIES=true; shift ;;
     --estimate) ESTIMATE_ONLY=true; shift ;;
     --verbose) VERBOSE=true; QUIET=false; shift ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --trash-original) TRASH_ORIGINAL=true; shift ;;
     --) shift; PASSTHROUGH_ARGS=("$@"); break ;;
     -*)
       # allow -cat as alias etc: accept -cat and --cat same as --category
@@ -477,7 +485,9 @@ estimate_file() {
     pct=$(awk -v o="$size" -v e="$est_bytes" 'BEGIN{ if (o==0) print 0; else printf("%.1f", (o-e)/o*100) }')
   fi
 
-  printf "%s %d %d %s %s\n" "$file" "$size" "$est_bytes" "$pct" "$reason"
+  # printf "%s %d %d %s %s\n" "$file" "$size" "$est_bytes" "$pct" "$reason"
+  # print tab-delimited so filenames with spaces are safe
+  printf "%s\t%d\t%d\t%s\t%s\n" "$file" "$size" "$est_bytes" "$pct" "$reason"
 }
 
 # Check if passthrough contains video options - to avoid adding duplicates.
@@ -571,7 +581,7 @@ if $ESTIMATE_ONLY; then
   # Format per-line: <file> <orig_bytes> <est_bytes> <pct> <reason>
   for line in "${ESTIMATES[@]}"; do
     # print in human-readable columns
-    read -r file orig est pct reason <<<"$line"
+    IFS=$'\t' read -r file orig est pct reason <<<"$line"
     printf "%s\t%s\t%s\t%s%%\t%s\n" "$file" "$(hr_bytes "$orig")" "$(hr_bytes "$est")" "$pct" "$reason"
   done
   exit 0
@@ -579,7 +589,7 @@ fi
 
 # Now process each file: run estimate, maybe encode
 for line in "${ESTIMATES[@]}"; do
-  read -r file orig est pct reason <<<"$line"
+  IFS=$'\t' read -r file orig est pct reason <<<"$line"
   if [[ ! -f "$file" ]]; then
     echo -e "${COLOR_YELLOW}Skipping missing file:${COLOR_RESET} $file" >&2
     ((FILES_SKIPPED++))
@@ -609,6 +619,15 @@ for line in "${ESTIMATES[@]}"; do
     i=1
     while [[ -e "${outfile%.${ext}}.${i}.${ext}" ]]; do ((i++)); done
     outfile="${dir}/${name_no_ext}.opt.${i}.${ext}"
+  fi
+
+  if $DRY_RUN; then
+    # Just show what would be done
+    echo -e "  ${COLOR_YELLOW}DRY RUN:${COLOR_RESET} ffmpeg command:"
+    echo "    $(build_ffmpeg_cmd "\"$file\"" "\"$outfile\"")"
+    TOTAL_ORIG=$((TOTAL_ORIG + orig))
+    ((FILES_SKIPPED++))
+    continue
   fi
 
   # run ffmpeg command: but we need to run command string carefully (array)
@@ -649,6 +668,14 @@ for line in "${ESTIMATES[@]}"; do
     TOTAL_ORIG=$((TOTAL_ORIG + orig))
     TOTAL_NEW=$((TOTAL_NEW + new_size))
     ((FILES_PROCESSED++))
+    if $TRASH_ORIGINAL; then
+      if command -v trash-put >/dev/null 2>&1; then
+        trash-put -- "$file"
+        echo -e "  ${COLOR_YELLOW}Original moved to trash:${COLOR_RESET} $file"
+      else
+        echo -e "  ${COLOR_RED}Warning:${COLOR_RESET} --trash-original requested but trash-put not found." >&2
+      fi
+    fi
   else
     echo -e "${COLOR_RED}ERROR:${COLOR_RESET} expected output file not found: $outfile" >&2
     ((FILES_SKIPPED++))
