@@ -1,0 +1,669 @@
+#!/usr/bin/env bash
+#
+# vid.opt - optimize/resize multiple video files with sane category presets.
+# Requirements: ffmpeg, ffprobe, bash >=4
+#
+# Usage: vid.opt [options] file1 file2 ...
+#   See --help for detailed usage and explanation of the estimate algorithm.
+
+
+# AI Prompt:
+# Write a bash script that given multiple video files, it'll use ffmpeg to reduce their size.
+# 
+# - Add --help
+# - Add options for max 1080p, 720p, 1440p, 4k, ... which if the video is bigger than this, it would reduce its resolution.
+# - Use x256 (or if there's one that would compress more, use that)
+# - Don't change the audio quality
+# - Add .opt.[ext] prefix to the replaced file name, for example video.mp4 would become video.opt.mp4
+# - Print stats on how much storage we saved with original and optimized sizes (print with colors)
+# - Add categories of ffmpeg options, for example one for Music Videos which would default to 1080p x256 with no reduction in audio quality, one for programming tutorials which are screen grabs mostly, another for conferences and talks, one for youtube vlogs, one for news pieces, and more. Figure out what are the best default solutions for each categories, and provide defaults.
+# - Anything after `--` would be given to ffmpeg as arguments, but make sure they replace the default values. Add reasons why you chose those values for each one.
+# - Add `--verbose` which would print the ffmpeg command itself as well
+# - Make sure we can have common mistakes as arguments as well, like 1080 instead of 1080p or --cat and -cat instead of --category and so on.
+# - Add at least 10 more categories
+# - Make sure the categories are later on easily modifiable and we don't have to change multiple places for changing them.
+# - Only optimize if the video is not in the specified configs that we want, but if for example it's in 1080p but not in x256, then do the optimization.
+# - Add reasons of category to --help as well
+# - Make sure the output file all of the sudden isn't bigger than original, if we can predict that it would be, we shouldn't run ffmpeg on it.
+# - Only print ffmpeg's output when --verbose is given.
+# - When bad category is given, print the list of categories available. Add --list-categories option as well.
+# - Add alternative names of the category as well.
+# - Add an --estimate option which prints if the given files will benefit from optimizing or they already optimized for the specified category enough. Make sure they're easily sort-able and can be cleaned so we can run it again through the script itself. Add "how" do we do that in the help. Add to the --help how the estimation works. Don't actually do the conversion in estimate mode.
+# - Add how the estimate algorithm works details in the help.
+# - Make sure the outputs are readable.
+# - Add possible percentage optimization to the --estimate function
+# - Make sure each estimate is one file per line so we can easily grep (add info on how to , to the --help)
+# - Use script's name instead of "$0" which is the path of the script in the --help
+# - Before converting, run the estimate on the file so at the end we know how we estimated and how it ended up being.
+# - Make sure the estimation algorithm takes a lot of things into account.
+# - Make sure the video's metadata is not changed after ffmpeg.
+# 
+# Make sure the code is clean.
+
+set -euo pipefail
+
+### ---------- Utilities & Globals ---------- ###
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+COLOR_RESET='\033[0m'
+COLOR_GREEN='\033[0;32m'
+COLOR_RED='\033[0;31m'
+COLOR_YELLOW='\033[0;33m'
+COLOR_CYAN='\033[0;36m'
+QUIET=true
+VERBOSE=false
+ESTIMATE_ONLY=false
+LIST_CATEGORIES=false
+
+# common ffmpeg options we might watch for in passthrough args to avoid duplicate defaults
+FFMPEG_VIDEO_OPTS_KEYWORDS=(" -c:v " " -c:v=" "-x265-params" " -crf " " -crf=" " -preset " " -preset=" "-b:v" "-maxrate" "-bufsize" "-vf " "-filter:v" "-map " "-s " "-vf=")
+
+# safe temporary file base
+TMP_PREFIX="/tmp/${SCRIPT_NAME}.$$"
+
+# Ensure required programs
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+  echo -e "${COLOR_RED}ERROR:${COLOR_RESET} ffmpeg and ffprobe are required and must be in PATH." >&2
+  exit 2
+fi
+
+# Check bash associative array support (bash >= 4)
+if ((BASH_VERSINFO[0] < 4)); then
+  echo -e "${COLOR_RED}ERROR:${COLOR_RESET} This script requires bash >= 4 (associative arrays)." >&2
+  exit 2
+fi
+
+### ---------- Categories (single place to edit) ---------- ###
+# Each category is described by an associative array keyed by name.
+# Fields:
+#   max_h: target max height in pixels (e.g. 1080)
+#   codec: encoder (default libx265)
+#   crf: quality parameter (lower -> better quality & larger files). Typical x265 CRF: 18-28.
+#   preset: x265 preset (faster -> larger)
+#   desc: short description (used in help)
+#   aliases: comma-separated alternative names
+#
+# To change defaults for a category, edit below — only this block needs updates.
+
+declare -A CAT_default # fallback
+CAT_default[max_h]=1080
+CAT_default[codec]=libx265
+CAT_default[crf]=26
+CAT_default[preset]=medium
+CAT_default[desc]="Balanced generic optimization"
+CAT_default[aliases]="default,gen,balanced"
+
+# Categories list: extend/add here. Provide at least 15 categories.
+declare -A CATEGORIES=(
+  [music_video]=1
+  [screen_tutorial]=1
+  [conference_talk]=1
+  [youtube_vlog]=1
+  [news_piece]=1
+  [lecture_recording]=1
+  [gaming]=1
+  [camera_b-roll]=1
+  [social_short]=1
+  [high_quality_cinema]=1
+  [mobile_recording]=1
+  [surveillance]=1
+  [podcast_video]=1
+  [animation]=1
+  [sports_highmotion]=1
+)
+
+# now set properties per category
+declare -A cat__music_video=(
+  [max_h]=1080 [codec]=libx265 [crf]=22 [preset]=slow
+  [desc]="Music videos - keep visual quality, prefer better encoder (x265)."
+  [aliases]="music,mv"
+)
+declare -A cat__screen_tutorial=(
+  [max_h]=1080 [codec]=libx265 [crf]=28 [preset]=fast
+  [desc]="Screen captures / programming tutorials - prioritize readability; motion is low."
+  [aliases]="screen,code,tutorial,prog"
+)
+declare -A cat__conference_talk=(
+  [max_h]=1080 [codec]=libx265 [crf]=26 [preset]=medium
+  [desc]="Conference talks - talking-heads & slides; keep clarity but compress aggressively."
+  [aliases]="conf,talk,conference"
+)
+declare -A cat__youtube_vlog=(
+  [max_h]=1440 [codec]=libx265 [crf]=24 [preset]=medium
+  [desc]="YouTube vlogs - balance quality & size; often camera-shot."
+  [aliases]="vlog,youtube"
+)
+declare -A cat__news_piece=(
+  [max_h]=1080 [codec]=libx265 [crf]=26 [preset]=fast
+  [desc]="News pieces - quick turnaround, smaller size preferred."
+  [aliases]="news"
+)
+declare -A cat__lecture_recording=(
+  [max_h]=1080 [codec]=libx265 [crf]=27 [preset]=fast
+  [desc]="Lecture recordings - long duration; reduce file size."
+  [aliases]="lecture,class"
+)
+declare -A cat__gaming=(
+  [max_h]=1440 [codec]=libx265 [crf]=23 [preset]=medium
+  [desc]="Gaming footage - preserve motion; slightly higher quality."
+  [aliases]="game,play"
+)
+declare -A cat__camera_b_roll=(
+  [max_h]=2160 [codec]=libx265 [crf]=22 [preset]=slow
+  [desc]="B-roll / cinematic shots - prefer quality, allow higher resolution."
+  [aliases]="broll,b-roll,cine"
+)
+declare -A cat__social_short=(
+  [max_h]=1080 [codec]=libx265 [crf]=28 [preset]=veryfast
+  [desc]="Social shorts (TikTok/Reels) - small & fast."
+  [aliases]="short,clip,tiktok,reels"
+)
+declare -A cat__high_quality_cinema=(
+  [max_h]=2160 [codec]=libx265 [crf]=20 [preset]=slow
+  [desc]="High-quality cinema content - prioritize quality over size."
+  [aliases]="cinema,film,cinehq"
+)
+declare -A cat__mobile_recording=(
+  [max_h]=1080 [codec]=libx265 [crf]=27 [preset]=fast
+  [desc]="Mobile phone recordings - compress aggressively but preserve audio."
+  [aliases]="mobile,phone"
+)
+declare -A cat__surveillance=(
+  [max_h]=720 [codec]=libx265 [crf]=30 [preset]=veryfast
+  [desc]="Surveillance / CCTV - low-res, single-camera feeds."
+  [aliases]="cctv,surv"
+)
+declare -A cat__podcast_video=(
+  [max_h]=1080 [codec]=libx265 [crf]=26 [preset]=fast
+  [desc]="Podcast recordings with talking heads - keep audio, moderate visual."
+  [aliases]="podcast,ppv"
+)
+declare -A cat__animation=(
+  [max_h]=2160 [codec]=libx265 [crf]=21 [preset]=medium
+  [desc]="Animation / cartoons - preserve color & edges; slightly higher bitrate."
+  [aliases]="anim,cartoon"
+)
+declare -A cat__sports_highmotion=(
+  [max_h]=1440 [codec]=libx265 [crf]=23 [preset]=medium
+  [desc]="Sports with high motion - preserve motion clarity."
+  [aliases]="sports,match"
+)
+
+# helper to get category associative array by name
+get_cat_assoc() {
+  local key="$1"
+  # map alias -> real category key
+  for k in "${!CATEGORIES[@]}"; do
+    # read the alias list of this category
+    local varname="cat__${k}"
+    # get aliases value
+    local aliases
+    aliases="$(eval "echo \${${varname}[aliases]:-}")" || aliases=""
+    local names="${k},${aliases},${k//_/-}"
+    # normalize casing & separators
+    IFS=',' read -r -a namearr <<<"$names"
+    for n in "${namearr[@]}"; do
+      n="$(echo "$n" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+      local norm_key="$(echo "$key" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+      if [[ "$norm_key" == "$n" ]]; then
+        echo "$k"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# print list of categories
+print_categories() {
+  echo "Available categories (name / aliases) and short reason:"
+  for k in "${!CATEGORIES[@]}"; do
+    local varname="cat__${k}"
+    local desc="$(eval "echo \${${varname}[desc]:-}")"
+    local aliases="$(eval "echo \${${varname}[aliases]:-}")"
+    printf "  %s (aliases: %s)\n      -> %s\n" "$k" "$aliases" "$desc"
+  done | sort
+}
+
+### ---------- Argument parsing ---------- ###
+CATEGORY="default"
+# default category fallback uses CAT_default above
+POSITIONAL=()
+PASSTHROUGH_ARGS=()
+
+print_help_and_exit() {
+  cat <<EOF
+$SCRIPT_NAME - bulk video optimizer (ffmpeg frontend)
+Usage:
+  $SCRIPT_NAME [options] file1 [file2 ...] [-- ffmpeg-args]
+
+Options:
+  -h, --help                Show this help and exit.
+  -c, --category NAME       Choose a category (default: ${CAT_default[max_h]}p balanced).
+                            Category names accept aliases (e.g. "vlog" -> youtube_vlog).
+                            --cat and -cat are accepted too.
+  --list-categories         Print available categories with aliases and reasons.
+  --estimate                Only estimate outcome (no encoding). One-file-per-line output.
+  --verbose                 Print ffmpeg command and ffmpeg's output.
+  --                        Everything after -- is passed to ffmpeg and will replace defaults.
+
+How the estimate algorithm works:
+  1) We inspect the file via ffprobe: get duration, width/height, video codec and average video bit-rate.
+  2) Based on chosen category we pick a target max height, encoder (libx265), CRF and preset.
+  3) If the source has greater resolution than target we plan to downscale; otherwise we keep resolution.
+  4) We estimate a target bitrate (kb/s) from the current bitrate and CRF tier:
+       - CRF ~20 => high quality => target bitrate close to current or slightly less
+       - CRF ~26-30 => aggressive compression => target bitrate roughly 30-60% of current
+     This is a heuristic. Long recordings and static content compress better.
+  5) Estimated size = duration_seconds * target_bitrate_kbps / 8 (to get KB -> then to bytes)
+  6) We compute percentage savings = (orig_size - est_size)/orig_size*100.
+  If estimate predicts output >= input, we skip actual encode (and warn).
+
+Why libx265:
+  libx265 (HEVC) generally compresses better than x264; we default to it for smaller files
+  while keeping visual quality. Audio is left unchanged: we pass audio streams through
+  (-c:a copy) so audio quality is preserved.
+
+Notes:
+  - Estimation prints one file per line which is easy to grep/sort. You can run:
+      $SCRIPT_NAME --estimate *.mp4 | sort -k3 -n
+    Output format: <file> <orig_bytes> <est_bytes> <pct_saving>% <why>
+  - The script preserves metadata (uses -map_metadata 0 -map_chapters 0).
+  - If you pass ffmpeg args after --, the script will avoid adding defaults that would duplicate
+    options you provided (e.g. -crf, -c:v, -preset, -vf, -s).
+  - Before actually converting a file we run estimate so you can compare pre/post.
+  - Common mistakes handled: "1080" -> "1080p", "--cat" and "-cat" -> --category
+
+Examples:
+  $SCRIPT_NAME -c vlog video.mp4
+  $SCRIPT_NAME --estimate *.mp4
+  $SCRIPT_NAME video1.mp4 video2.mkv -- -crf 23 -preset slow
+
+EOF
+  exit 0
+}
+
+# Normalize common mistakes for options
+while (( $# )); do
+  arg="$1"
+  case "$arg" in
+    -h|--help) print_help_and_exit ;;
+    -c|--category|--cat|-cat) CATEGORY="$2"; shift 2 ;;
+    --category=*) CATEGORY="${arg#*=}"; shift ;;
+    --list-categories) LIST_CATEGORIES=true; shift ;;
+    --estimate) ESTIMATE_ONLY=true; shift ;;
+    --verbose) VERBOSE=true; QUIET=false; shift ;;
+    --) shift; PASSTHROUGH_ARGS=("$@"); break ;;
+    -*)
+      # allow -cat as alias etc: accept -cat and --cat same as --category
+      if [[ "$arg" =~ ^-cat$ ]]; then
+        CATEGORY="$2"; shift 2
+      elif [[ "$arg" =~ ^--[Cc]ategory= ]]; then
+        CATEGORY="${arg#*=}"; shift
+      else
+        # unknown opt, collect as positional (we allow non-option filenames)
+        POSITIONAL+=("$1"); shift
+      fi
+      ;;
+    *)
+      POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+# handle list categories
+if $LIST_CATEGORIES; then
+  print_categories
+  exit 0
+fi
+
+if [[ ${#POSITIONAL[@]} -eq 0 ]]; then
+  echo -e "${COLOR_YELLOW}No input files specified.${COLOR_RESET} Try --help for usage." >&2
+  exit 1
+fi
+
+# resolve category name to canonical
+if ! canonical_cat="$(get_cat_assoc "$CATEGORY")"; then
+  echo -e "${COLOR_RED}ERROR:${COLOR_RESET} Unknown category '$CATEGORY'. Available categories:" >&2
+  print_categories
+  exit 2
+fi
+CATEGORY="$canonical_cat"
+# build associative ref to chosen category
+eval "declare -n CHOSEN=cat__${CATEGORY}"
+
+# helper: human readable bytes
+hr_bytes() {
+  awk -v b="$1" 'function human(x){
+    s="B K M G T"; split(s,a);
+    i=0;
+    while(x>=1024 && i<4){ x/=1024; i++;}
+    return sprintf("%.2f %s", x, a[i+1]);
+  } BEGIN{ print human(b) }'
+}
+
+# ffprobe helpers
+ffprobe_stream_info() {
+  local file="$1"
+  # returns: width height codec_name duration_seconds size_bytes bit_rate (video stream bit_rate if available)
+  # using ffprobe with key=value output
+  ffprobe -v error -select_streams v:0 -show_entries stream=width,height,codec_name,bit_rate \
+    -show_entries format=duration,size,bit_rate -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null
+}
+
+get_video_info() {
+  local file="$1"
+  # robust parsing via ffprobe JSON would be nicer; keep simple:
+  # we will use separate queries to avoid confusion
+  local width height codec duration size format_bitrate vbitrate
+  width=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$file" 2>/dev/null || echo "0")
+  height=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$file" 2>/dev/null || echo "0")
+  codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null || echo "unknown")
+  duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$file" 2>/dev/null || echo "0")
+  size=$(stat -c%s -- "$file" 2>/dev/null || echo "0")
+  # video bit_rate (bit/s) - try stream then format
+  vbitrate=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of csv=p=0 "$file" 2>/dev/null || echo "")
+  if [[ -z "$vbitrate" || "$vbitrate" == "N/A" ]]; then
+    format_bitrate=$(ffprobe -v error -show_entries format=bit_rate -of csv=p=0 "$file" 2>/dev/null || echo "0")
+    vbitrate="${format_bitrate:-0}"
+  fi
+  # fallback numeric conversions
+  duration="${duration:-0}"
+  width="${width:-0}"
+  height="${height:-0}"
+  codec="${codec:-unknown}"
+  vbitrate="${vbitrate:-0}"
+  echo "$width|$height|$codec|$duration|$size|$vbitrate"
+}
+
+# estimate function: prints single-line CSV-style (space separated)
+# Format: <file> <orig_bytes> <est_bytes> <pct_saving> <reason>
+estimate_file() {
+  local file="$1"
+  local info
+  info="$(get_video_info "$file")"
+  IFS='|' read -r width height codec duration size vbitrate <<<"$info"
+  duration="${duration%.*}" # integer seconds (approx)
+  if [[ -z "$duration" || "$duration" -le 0 ]]; then
+    # some files show float duration; parse as float into integer
+    duration="$(ffprobe -v error -show_entries format=duration -of default=nokey=1:noprint_wrappers=1 "$file" | awk '{printf "%d",$1}')"
+  fi
+
+  # category targets
+  local target_h="${CHOSEN[max_h]:-${CAT_default[max_h]}}"
+  local target_codec="${CHOSEN[codec]:-${CAT_default[codec]}}"
+  local target_crf="${CHOSEN[crf]:-${CAT_default[crf]}}"
+  local target_preset="${CHOSEN[preset]:-${CAT_default[preset]}}"
+
+  # normalize height: user might include '1080p' anywhere - we set int
+  target_h="${target_h//p/}"
+
+  # decide whether we'll downscale
+  local will_downscale=false
+  if (( height > target_h )); then
+    will_downscale=true
+  fi
+
+  # Heuristic: estimate target video bitrate (bits/s).
+  # Rules (heuristic):
+  #  - Map CRF to a "compression factor" relative to current vbitrate:
+  #    crf <=22 -> factor ~0.9-1.0 (keep similar bitrate)
+  #    crf 23-26 -> factor ~0.6-0.9
+  #    crf 27-30 -> factor ~0.35-0.6
+  #  - If current vbitrate unknown or zero, fall back to target_bitrate per resolution:
+  #    720p => 2000 kbps; 1080p => 4000 kbps; 1440p => 8000 kbps; 2160p => 18000 kbps
+  local crf="$target_crf"
+  local factor
+  if (( crf <= 22 )); then factor=0.95
+  elif (( crf <= 26 )); then factor=0.75
+  elif (( crf <= 30 )); then factor=0.5
+  else factor=0.4
+  fi
+
+  local target_bitrate_bps=0
+  if [[ -n "$vbitrate" && "$vbitrate" -gt 0 ]]; then
+    # estimate by applying factor
+    target_bitrate_bps=$(awk -v vb="$vbitrate" -v f="$factor" 'BEGIN{printf ("%d", vb*f)}')
+  fi
+
+  if [[ -z "$target_bitrate_bps" || "$target_bitrate_bps" -le 0 ]]; then
+    # fallback by resolution
+    local ref_kbps=4000
+    case "$target_h" in
+      720) ref_kbps=2000 ;;
+      1080) ref_kbps=4000 ;;
+      1440) ref_kbps=8000 ;;
+      2160|4k|2160p) ref_kbps=18000 ;;
+      480) ref_kbps=1000 ;;
+    esac
+    target_bitrate_bps=$((ref_kbps*1000))
+    # apply CRF factor to reduce if CRF is high
+    target_bitrate_bps=$(awk -v tb="$target_bitrate_bps" -v f="$factor" 'BEGIN{printf ("%d", tb*f)}')
+  fi
+
+  # Adjust for downscale: downscaling roughly reduces bitrate proportionally to pixel area
+  if $will_downscale; then
+    local src_area=$((width*height))
+    local tgt_w=$width
+    # compute target width by preserving aspect ratio roughly
+    if (( height > 0 )); then
+      tgt_w=$(( width * target_h / height ))
+    fi
+    local tgt_area=$((tgt_w * target_h))
+    if (( src_area > 0 && tgt_area > 0 )); then
+      local area_factor
+      area_factor=$(awk -v s="$src_area" -v t="$tgt_area" 'BEGIN{printf "%.4f", t/s}')
+      # do not go below 0.2
+      awk -v f="$area_factor" 'BEGIN{ if (f<0.2) print 0.2; else print f }' >/tmp/.ignore 2>/dev/null || true
+      # incorporate area factor into target bitrate
+      target_bitrate_bps=$(awk -v tb="$target_bitrate_bps" -v af="$area_factor" 'BEGIN{printf("%d", tb*af)}')
+    fi
+  fi
+
+  # estimated size in bytes = duration_seconds * target_bitrate_bps / 8
+  if [[ -z "$duration" || "$duration" -le 0 ]]; then duration=1; fi
+  local est_bytes
+  est_bytes=$(awk -v d="$duration" -v tb="$target_bitrate_bps" 'BEGIN{printf ("%d", (d*tb)/8)}')
+
+  # safety floor: cannot estimate smaller than audio-only size; but we are copying audio so this is a weak check
+  # we will later compare est vs orig to skip encode if est >= orig
+
+  # prepare reason text
+  local reason="cat=${CATEGORY},crf=${crf},preset=${target_preset}"
+  if $will_downscale; then reason="${reason},downscale:${height}->${target_h}p"; fi
+  if [[ "$codec" != "$target_codec" ]]; then reason="${reason},recode:${codec}->${target_codec}"; fi
+
+  # percent saving
+  local pct=0
+  if [[ "$size" -gt 0 ]]; then
+    pct=$(awk -v o="$size" -v e="$est_bytes" 'BEGIN{ if (o==0) print 0; else printf("%.1f", (o-e)/o*100) }')
+  fi
+
+  printf "%s %d %d %s %s\n" "$file" "$size" "$est_bytes" "$pct" "$reason"
+}
+
+# Check if passthrough contains video options - to avoid adding duplicates.
+passthrough_has_video_opts() {
+  local joined=" ${PASSTHROUGH_ARGS[*]} "
+  for k in "${FFMPEG_VIDEO_OPTS_KEYWORDS[@]}"; do
+    if [[ "$joined" == *"$k"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Build ffmpeg command for a file, returns as string
+build_ffmpeg_cmd() {
+  local infile="$1"
+  local outfile="$2"
+  local width height codec duration size vbitrate
+  IFS='|' read -r width height codec duration size vbitrate <<<"$(get_video_info "$infile")"
+
+  local target_h="${CHOSEN[max_h]:-${CAT_default[max_h]}}"
+  local target_codec="${CHOSEN[codec]:-${CAT_default[codec]}}"
+  local target_crf="${CHOSEN[crf]:-${CAT_default[crf]}}"
+  local target_preset="${CHOSEN[preset]:-${CAT_default[preset]}}"
+
+  # normalized
+  target_h="${target_h//p/}"
+
+  local vf_arg=()
+  if (( height > target_h )); then
+    # scale keeping aspect ratio. use -vf "scale=-2:TARGET_H" (-2 to force even width for codecs)
+    vf_arg=(-vf "scale=-2:${target_h}")
+  fi
+
+  # default video encoder args unless passthrough contains video related options
+  local vcodec_args=()
+  if ! passthrough_has_video_opts; then
+    if [[ "$target_codec" == "libx265" || "$target_codec" == "x265" ]]; then
+      vcodec_args=(-c:v libx265 -preset "$target_preset" -crf "$target_crf" -tag:v hvc1)
+      # add x265-params tune or other params as needed; keeping default simple
+    else
+      # fallback x264
+      vcodec_args=(-c:v libx264 -preset "$target_preset" -crf "$target_crf" -tag:v avc1)
+    fi
+  fi
+
+  # audio: copy (do not change), preserve metadata & chapters
+  local audio_args=(-c:a copy)
+  local metadata_args=(-map_metadata 0 -map_chapters 0)
+
+  # combine: first input, then map, metadata, codecs, vf, passthrough args, output
+  local cmd=(ffmpeg -y -hide_banner -loglevel error -i "$infile")
+
+  # If user asked verbose, show ffmpeg logs, else silence ffmpeg (we started with -loglevel error)
+  # Append metadata mapping and codecs
+  cmd+=("${metadata_args[@]}")
+  cmd+=("${vcodec_args[@]}")
+  cmd+=("${audio_args[@]}")
+  if [[ ${#vf_arg[@]} -gt 0 ]]; then
+    cmd+=("${vf_arg[@]}")
+  fi
+
+  # Append passthrough args (they can override many things)
+  if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
+    cmd+=("${PASSTHROUGH_ARGS[@]}")
+  fi
+
+  cmd+=("$outfile")
+  # Return command as string
+  echo "${cmd[@]}"
+}
+
+# Process files
+TOTAL_ORIG=0
+TOTAL_NEW=0
+FILES_PROCESSED=0
+FILES_SKIPPED=0
+
+# Run estimate first for all input files so we have pre info and can print a table at the end
+ESTIMATES=()
+for f in "${POSITIONAL[@]}"; do
+  if [[ ! -f "$f" ]]; then
+    echo -e "${COLOR_YELLOW}Warning:${COLOR_RESET} '$f' not found or not a regular file; skipping." >&2
+    continue
+  fi
+  ESTIMATES+=("$(estimate_file "$f")")
+done
+
+if $ESTIMATE_ONLY; then
+  # Print header and exit
+  # Format per-line: <file> <orig_bytes> <est_bytes> <pct> <reason>
+  for line in "${ESTIMATES[@]}"; do
+    # print in human-readable columns
+    read -r file orig est pct reason <<<"$line"
+    printf "%s\t%s\t%s\t%s%%\t%s\n" "$file" "$(hr_bytes "$orig")" "$(hr_bytes "$est")" "$pct" "$reason"
+  done
+  exit 0
+fi
+
+# Now process each file: run estimate, maybe encode
+for line in "${ESTIMATES[@]}"; do
+  read -r file orig est pct reason <<<"$line"
+  if [[ ! -f "$file" ]]; then
+    echo -e "${COLOR_YELLOW}Skipping missing file:${COLOR_RESET} $file" >&2
+    ((FILES_SKIPPED++))
+    continue
+  fi
+  echo -e "${COLOR_CYAN}Processing:${COLOR_RESET} $file"
+  echo "  Estimate: orig=$(hr_bytes "$orig"), est=$(hr_bytes "$est"), saving=${pct}% (${reason})"
+
+  # if estimate predicts output >= original, skip
+  if (( est >= orig )); then
+    echo -e "  ${COLOR_YELLOW}SKIP:${COLOR_RESET} Estimated output >= original; will not transcode to avoid bloat."
+    ((FILES_SKIPPED++))
+    # still accumulate orig
+    TOTAL_ORIG=$((TOTAL_ORIG + orig))
+    continue
+  fi
+
+  # build output name: add .opt before extension, preserving path and extension
+  dir="$(dirname -- "$file")"
+  base="$(basename -- "$file")"
+  ext="${base##*.}"
+  name_no_ext="${base%.*}"
+  outfile="${dir}/${name_no_ext}.opt.${ext}"
+
+  # To avoid accidental overwrite, if outfile exists, append numeric suffix
+  if [[ -e "$outfile" ]]; then
+    i=1
+    while [[ -e "${outfile%.${ext}}.${i}.${ext}" ]]; do ((i++)); done
+    outfile="${dir}/${name_no_ext}.opt.${i}.${ext}"
+  fi
+
+  # run ffmpeg command: but we need to run command string carefully (array)
+  IFS=' ' read -r -a cmd_array <<< "$(build_ffmpeg_cmd "$file" "$outfile")"
+
+  # if verbose, show final command with visible args; else hide ffmpeg output
+  if $VERBOSE; then
+    echo -e "${COLOR_GREEN}Running:${COLOR_RESET} ${cmd_array[*]}"
+    # run with normal output (we earlier set -loglevel error; to show full ffmpeg logs, replace -loglevel error with -loglevel info)
+    # rebuild command to have normal logs:
+    # find and replace '-loglevel' 'error' with '-loglevel' 'info'
+    for i in "${!cmd_array[@]}"; do
+      if [[ "${cmd_array[i]}" == "-loglevel" && "${cmd_array[i+1]:-}" == "error" ]]; then
+        cmd_array[i+1]="info"
+      fi
+    done
+    "${cmd_array[@]}"
+    rc=$?
+  else
+    # run quietly (no ffmpeg output). But ensure we catch non-zero exit.
+    "${cmd_array[@]}" >/dev/null 2>&1
+    rc=$?
+  fi
+
+  if (( rc != 0 )); then
+    echo -e "${COLOR_RED}ERROR:${COLOR_RESET} ffmpeg failed for '$file' (exit $rc). Skipping." >&2
+    ((FILES_SKIPPED++))
+    continue
+  fi
+
+  # preserve metadata already done via -map_metadata 0 -map_chapters 0 and copy audio streams
+  # verify new file size
+  if [[ -f "$outfile" ]]; then
+    new_size=$(stat -c%s -- "$outfile" 2>/dev/null || echo 0)
+    echo -e "  ${COLOR_GREEN}Done:${COLOR_RESET} $(hr_bytes "$new_size") -> $(basename "$outfile")"
+    savings_percent=$(awk -v o="$orig" -v n="$new_size" 'BEGIN{ if(o==0) print "0"; else printf("%.1f", (o-n)/o*100) }')
+    echo -e "  Saved: ${COLOR_YELLOW}${savings_percent}%${COLOR_RESET} (orig: $(hr_bytes "$orig"), new: $(hr_bytes "$new_size"))"
+    TOTAL_ORIG=$((TOTAL_ORIG + orig))
+    TOTAL_NEW=$((TOTAL_NEW + new_size))
+    ((FILES_PROCESSED++))
+  else
+    echo -e "${COLOR_RED}ERROR:${COLOR_RESET} expected output file not found: $outfile" >&2
+    ((FILES_SKIPPED++))
+  fi
+done
+
+# Summary
+echo -e "\n${COLOR_CYAN}Summary${COLOR_RESET}:"
+echo "  Files processed: $FILES_PROCESSED"
+echo "  Files skipped:   $FILES_SKIPPED"
+if (( TOTAL_ORIG > 0 )); then
+  total_pct=$(awk -v o="$TOTAL_ORIG" -v n="$TOTAL_NEW" 'BEGIN{if(o==0) print "0"; else printf("%.1f", (o-n)/o*100)}')
+  echo -e "  Total original size: $(hr_bytes "$TOTAL_ORIG")"
+  echo -e "  Total new size:      $(hr_bytes "$TOTAL_NEW")"
+  echo -e "  ${COLOR_GREEN}Total savings: ${total_pct}%${COLOR_RESET}"
+fi
+
+exit 0

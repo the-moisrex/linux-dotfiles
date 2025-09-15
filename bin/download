@@ -6,7 +6,7 @@ ALLOWED_WEBSITES=(
     "vimeo.com" "rumble.com"
     "t.me" "x.com" "twitter.com"
     "aparat.com" "telewebion.com"
-    "odysee.com"
+    "odysee.com" "twitch.tv" "www.twitch.tv"
 )
 
 default_list="$HOME/.config/download/default-list.txt"
