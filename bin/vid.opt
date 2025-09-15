@@ -592,7 +592,7 @@ for line in "${ESTIMATES[@]}"; do
   IFS=$'\t' read -r file orig est pct reason <<<"$line"
   if [[ ! -f "$file" ]]; then
     echo -e "${COLOR_YELLOW}Skipping missing file:${COLOR_RESET} $file" >&2
-    ((FILES_SKIPPED++))
+    ((++FILES_SKIPPED))
     continue
   fi
   echo -e "${COLOR_CYAN}Processing:${COLOR_RESET} $file"
@@ -601,7 +601,7 @@ for line in "${ESTIMATES[@]}"; do
   # if estimate predicts output >= original, skip
   if (( est >= orig )); then
     echo -e "  ${COLOR_YELLOW}SKIP:${COLOR_RESET} Estimated output >= original; will not transcode to avoid bloat."
-    ((FILES_SKIPPED++))
+    ((++FILES_SKIPPED))
     # still accumulate orig
     TOTAL_ORIG=$((TOTAL_ORIG + orig))
     continue
@@ -626,7 +626,7 @@ for line in "${ESTIMATES[@]}"; do
     echo -e "  ${COLOR_YELLOW}DRY RUN:${COLOR_RESET} ffmpeg command:"
     echo "    $(build_ffmpeg_cmd "\"$file\"" "\"$outfile\"")"
     TOTAL_ORIG=$((TOTAL_ORIG + orig))
-    ((FILES_SKIPPED++))
+    ((++FILES_SKIPPED))
     continue
   fi
 
@@ -654,7 +654,7 @@ for line in "${ESTIMATES[@]}"; do
 
   if (( rc != 0 )); then
     echo -e "${COLOR_RED}ERROR:${COLOR_RESET} ffmpeg failed for '$file' (exit $rc). Skipping." >&2
-    ((FILES_SKIPPED++))
+    ((++FILES_SKIPPED))
     continue
   fi
 
@@ -678,7 +678,7 @@ for line in "${ESTIMATES[@]}"; do
     fi
   else
     echo -e "${COLOR_RED}ERROR:${COLOR_RESET} expected output file not found: $outfile" >&2
-    ((FILES_SKIPPED++))
+    ((++FILES_SKIPPED))
   fi
 done
 
