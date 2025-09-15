@@ -100,6 +100,7 @@ CAT_default[aliases]="default,gen,balanced"
 declare -A CATEGORIES=(
   [music_video]=1
   [screen_tutorial]=1
+  [screen_tutorial_720]=1
   [conference_talk]=1
   [youtube_vlog]=1
   [news_piece]=1
@@ -120,6 +121,11 @@ declare -A cat__music_video=(
   [max_h]=1080 [codec]=libx265 [crf]=22 [preset]=slow
   [desc]="Music videos - keep visual quality, prefer better encoder (x265)."
   [aliases]="music,mv"
+)
+declare -A cat__screen_tutorial_720=(
+  [max_h]=720 [codec]=libx265 [crf]=28 [preset]=fast
+  [desc]="Screen captures / programming tutorials - prioritize readability; motion is low. 720p version."
+  [aliases]="screen720p,screen720,screen-720,screen-720p,code720p,code-720p,code-720,code720,code720p,tutorial-720p,tutorial-720,prog720"
 )
 declare -A cat__screen_tutorial=(
   [max_h]=1080 [codec]=libx265 [crf]=28 [preset]=fast
@@ -359,28 +365,28 @@ ffprobe_stream_info() {
 
 get_video_info() {
   local file="$1"
-  # robust parsing via ffprobe JSON would be nicer; keep simple:
-  # we will use separate queries to avoid confusion
-  local width height codec duration size format_bitrate vbitrate
-  width=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$file" 2>/dev/null || echo "0")
-  height=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$file" 2>/dev/null || echo "0")
-  codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null || echo "unknown")
-  duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$file" 2>/dev/null || echo "0")
-  size=$(stat -c%s -- "$file" 2>/dev/null || echo "0")
-  # video bit_rate (bit/s) - try stream then format
-  vbitrate=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of csv=p=0 "$file" 2>/dev/null || echo "")
-  if [[ -z "$vbitrate" || "$vbitrate" == "N/A" ]]; then
-    format_bitrate=$(ffprobe -v error -show_entries format=bit_rate -of csv=p=0 "$file" 2>/dev/null || echo "0")
-    vbitrate="${format_bitrate:-0}"
-  fi
-  # fallback numeric conversions
-  duration="${duration:-0}"
-  width="${width:-0}"
-  height="${height:-0}"
-  codec="${codec:-unknown}"
-  vbitrate="${vbitrate:-0}"
-  echo "$width|$height|$codec|$duration|$size|$vbitrate"
+  ffprobe -v error -print_format json -show_streams -show_format -- "$file" \
+    | jq -r '
+      . as $root
+      | ($root.streams[] | select(.codec_type=="video") | {
+          width: (.width // 0),
+          height: (.height // 0),
+          codec: (.codec_name // "unknown"),
+          vbitrate: (.bit_rate // 0)
+        }) as $v
+      | [
+          $v.width,
+          $v.height,
+          $v.codec,
+          ($root.format.duration // 0),
+          ($root.format.size // 0),
+          ($v.vbitrate // $root.format.bit_rate // 0)
+        ]
+      | @csv
+    ' 2>/dev/null \
+    | tr -d '"' | tr ',' '|'
 }
+
 
 # estimate function: prints single-line CSV-style (space separated)
 # Format: <file> <orig_bytes> <est_bytes> <pct_saving> <reason>
@@ -624,7 +630,7 @@ for line in "${ESTIMATES[@]}"; do
   if $DRY_RUN; then
     # Just show what would be done
     echo -e "  ${COLOR_YELLOW}DRY RUN:${COLOR_RESET} ffmpeg command:"
-    echo "    $(build_ffmpeg_cmd "\"$file\"" "\"$outfile\"")"
+    echo "    $(build_ffmpeg_cmd "$file" "$outfile")"
     TOTAL_ORIG=$((TOTAL_ORIG + orig))
     ((++FILES_SKIPPED))
     continue
