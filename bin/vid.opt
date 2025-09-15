@@ -623,7 +623,7 @@ for line in "${ESTIMATES[@]}"; do
   # To avoid accidental overwrite, if outfile exists, append numeric suffix
   if [[ -e "$outfile" ]]; then
     i=1
-    while [[ -e "${outfile%.${ext}}.${i}.${ext}" ]]; do ((i++)); done
+    while [[ -e "${outfile%.${ext}}.${i}.${ext}" ]]; do ((++i)); done
     outfile="${dir}/${name_no_ext}.opt.${i}.${ext}"
   fi
 
@@ -673,7 +673,7 @@ for line in "${ESTIMATES[@]}"; do
     echo -e "  Saved: ${COLOR_YELLOW}${savings_percent}%${COLOR_RESET} (orig: $(hr_bytes "$orig"), new: $(hr_bytes "$new_size"))"
     TOTAL_ORIG=$((TOTAL_ORIG + orig))
     TOTAL_NEW=$((TOTAL_NEW + new_size))
-    ((FILES_PROCESSED++))
+    ((++FILES_PROCESSED))
     if $TRASH_ORIGINAL; then
       if command -v trash-put >/dev/null 2>&1; then
         trash-put -- "$file"
