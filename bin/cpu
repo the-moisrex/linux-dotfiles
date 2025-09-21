@@ -2,6 +2,18 @@
 
 governor="$1"
 
+case "$governor" in
+    perf|per|performance|--perf|--performance|-performance|-performance)
+        governor="performance";
+        ;;
+    powersave|pwoersave|save|power)
+        governor="powersave";
+        ;;
+    *)
+        ;;
+esac
+
+
 if [ "$governor" == "" ]; then
   cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
   if command cpupower --version >/dev/null; then
