@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# srt2txt - Convert SRT subtitles into cleaned text
+#
+# Usage:
+#   ./srt2txt.sh file.srt
+#   cat file.srt | ./srt2txt.sh
+#
+# Options:
+#   --help   Show this help and exit
+#
+
+show_help() {
+    sed -n '2,12p' "$0"
+    exit 0
+}
+
+# Handle --help
+if [[ "$1" == "--help" ]]; then
+    show_help
+fi
+
+# Input: file or stdin
+if [[ -n "$1" ]]; then
+    input="$1"
+else
+    input="/dev/stdin"
+fi
+
+awk '
+# Function to convert HH:MM:SS,mmm to seconds
+function hms_to_sec(hms,   h,m,s,ms) {
+    split(hms, a, /[:,]/)
+    h = a[1]; m = a[2]; s = a[3]; ms = a[4]
+    return h*3600 + m*60 + s + ms/1000.0
+}
+
+# Match timing lines
+/^[0-9]+:[0-9][0-9]:[0-9][0-9],[0-9]+ -->/ {
+    split($1, t1, ",")
+    gsub(",",".",$1)
+    start = hms_to_sec($1)
+
+    split($3, t2, ",")
+    gsub(",",".",$3)
+    end = hms_to_sec($3)
+
+    if (last_end && start - last_end > 2.0) {
+        printf "\n\n"   # Long pause -> new paragraph
+    } else if (last_end) {
+        printf " "      # Normal continuation
+    }
+    last_end = end
+    next
+}
+
+# Skip index lines (just numbers)
+/^[0-9]+$/ { next }
+
+# Skip empty lines
+/^$/ { next }
+
+# Otherwise, it’s subtitle text
+{
+    gsub(/<\/?[^>]+>/, "")   # strip HTML tags (e.g. <i>)
+    printf "%s", $0
+}
+END {
+    print ""  # Final newline
+}
+' "$input"
+
