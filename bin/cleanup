@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+
+# AI Prompt:
+#
+#   Write a bash script named `cleanup` that given a topic on what to cleanup, it'll go and remove those directories and files.
+#    - Add --help
+#    - Add --verbose
+#    - Those categories are file names bash script stored in `../cleanup` directory relative to the current bash script file's location.
+#    - Also those categories are stored in `$HOME/.cleanup` as well. `$HOME/.cleanup` has precedence over the default `../cleanup` categories if the `$HOME/.cleanup` exists in the first place.
+#    - For example `cleanup vs-code` will find `vs-code.sh` file in those directories and run it.
+#    - There are some environment variables that will be available to those shell files.
+#    - Add `--info category` or `info category` which prints what those category does (environment variables are replaces correctly, the shebang is removed, trim, but the code is not being run). For example if the file contains `trash "$share/gnome-box"` it would show `trash "/home/user/.local/share/gnome-box"`.
+#    - Add `--list|-l|list` that lists the available categories
+#    - Don't give error if the file doesn't exist unless --verbose is given
+#    - Make sure it's easy to later on add more functions and environment variables to this file.
+#    - Add available environment variables and functions to the `--help` (make sure when we add a new one, it is automatically updated)
+#    - Don't print useless information unless --verbose is given.
+#    - Show category directories in the --help as well.
+#    - The `trash` function should print (with pretty colors) what has removed and what has not. (short with emoji and color)
+#    - Add --dry-run or `dry-run` that does not actually remove anything, but runs those files.
+#    - Before removing each file, find out the size of those directories and number of files and directories, and at the end, show how many have been removed and the size.
+#    - If a category is specified in the `list` command, run dry-run on that category and list the files that will be removed.
+#    - Add --all or `all` that runs cleanup on all the categories.
+#  
+#  The available environment variables and functions available to bash scripts:
+#    - $share which points to `$XDG_DATA_HOME` (or `$HOME/.local/share` if not available)
+#    - $trash which points to command trash-cli if it exists, or `rm -rf` if it doesn't
+#    - trash function which does exactly the same as $trash would do but also logs
+#    - Log functions and environment variables should be available as well
+#    - $cache which points to XDG cache home
+#    - and other shortcuts for known config and cache directories common in linux
+
+# Get the directory of the script
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_CLEANUP_DIR="$DIR/../cleanup"
+USER_CLEANUP_DIR="$HOME/.cleanup"
+
+# Define environment variables
+declare -A ENV_DESCS
+ENV_VARS=("share" "cache" "config" "state" "runtime" "desktop" "downloads")
+share="${XDG_DATA_HOME:-$HOME/.local/share}"
+ENV_DESCS[share]="User data directory (XDG_DATA_HOME or ~/.local/share)"
+cache="${XDG_CACHE_HOME:-$HOME/.cache}"
+ENV_DESCS[cache]="User cache directory (XDG_CACHE_HOME or ~/.cache)"
+config="${XDG_CONFIG_HOME:-$HOME/.config}"
+ENV_DESCS[config]="User config directory (XDG_CONFIG_HOME or ~/.config)"
+state="${XDG_STATE_HOME:-$HOME/.local/state}"
+ENV_DESCS[state]="User state directory (XDG_STATE_HOME or ~/.local/state)"
+runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+ENV_DESCS[runtime]="Runtime directory (XDG_RUNTIME_DIR or /run/user/UID)"
+desktop="${XDG_DESKTOP_DIR:-$HOME/Desktop}"
+ENV_DESCS[desktop]="Desktop directory (XDG_DESKTOP_DIR or ~/Desktop)"
+downloads="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"
+ENV_DESCS[downloads]="Downloads directory (XDG_DOWNLOAD_DIR or ~/Downloads)"
+
+# Export them for envsubst
+export share cache config state runtime desktop downloads
+
+# Determine trash command
+if command -v trash-put >/dev/null 2>&1; then
+  trash_cmd="trash-put"
+else
+  trash_cmd="rm -rf"
+fi
+export trash="$trash_cmd"  # $trash points to the command
+
+# Global totals
+TOTAL_BYTES=0
+TOTAL_FILES=0
+TOTAL_DIRS=0
+
+# Functions
+function trash() {
+  for path in "$@"; do
+    if [ ! -e "$path" ]; then
+      echo -e "\e[33m? Not found: $path\e[0m"
+      continue
+    fi
+
+    bytes=$(du -sb "$path" 2>/dev/null | awk '{print $1}' || echo 0)
+    human_size=$(du -sh "$path" 2>/dev/null | awk '{print $1}' || echo "unknown")
+    if [ -d "$path" ]; then
+      files=$(find "$path" -type f 2>/dev/null | wc -l)
+      dirs=$(($(find "$path" -type d 2>/dev/null | wc -l) - 1))
+    else
+      files=1
+      dirs=0
+    fi
+
+    if [ $DRY_RUN -eq 1 ]; then
+      echo -e "\e[34m→ Would trash: $path ($files files, $dirs subdirs, $human_size)\e[0m"
+      TOTAL_BYTES=$((TOTAL_BYTES + bytes))
+      TOTAL_FILES=$((TOTAL_FILES + files))
+      TOTAL_DIRS=$((TOTAL_DIRS + dirs))
+    else
+      "$trash_cmd" "$path"
+      if [ $? -eq 0 ]; then
+        echo -e "\e[32m✔ Trashed: $path ($human_size)\e[0m"
+        TOTAL_BYTES=$((TOTAL_BYTES + bytes))
+        TOTAL_FILES=$((TOTAL_FILES + files))
+        TOTAL_DIRS=$((TOTAL_DIRS + dirs))
+      else
+        echo -e "\e[31m✘ Failed to trash: $path\e[0m"
+      fi
+    fi
+  done
+}
+
+function verbose() {
+  if [ $VERBOSE -eq 1 ]; then
+    echo "$@"
+  fi
+}
+
+function error() {
+  echo "Error: $@" >&2
+  exit 1
+}
+
+function human_bytes() {
+  numfmt --to=iec-i --suffix=B --padding=7 "$1" 2>/dev/null || echo "$1 bytes"
+}
+
+function find_category_file() {
+  local cat="$1"
+  local user_file="$USER_CLEANUP_DIR/$cat.sh"
+  local default_file="$DEFAULT_CLEANUP_DIR/$cat.sh"
+  if [ -f "$user_file" ]; then
+    echo "$user_file"
+  elif [ -f "$default_file" ]; then
+    echo "$default_file"
+  else
+    return 1
+  fi
+}
+
+function list_categories() {
+  (ls "$USER_CLEANUP_DIR"/*.sh 2>/dev/null; ls "$DEFAULT_CLEANUP_DIR"/*.sh 2>/dev/null) | \
+    xargs -n1 basename | sed 's/\.sh$//' | sort -u
+}
+
+function show_help() {
+  echo "Usage: cleanup [options] [command] [category]"
+  echo ""
+  echo "Commands:"
+  echo "  <category>       Run cleanup for the specified category"
+  echo "  all | --all      Run cleanup for all categories"
+  echo "  list | -l | --list [category]  List available categories or files for a specific category (dry-run)"
+  echo "  info | --info <category>  Show what the category does (expanded code)"
+  echo ""
+  echo "Options:"
+  echo "  --help           Show this help message"
+  echo "  --verbose        Print more information"
+  echo "  --dry-run | dry-run  Simulate without removing anything"
+  echo ""
+  echo "Category directories:"
+  echo "  User: $USER_CLEANUP_DIR"
+  echo "  Default: $DEFAULT_CLEANUP_DIR"
+  echo ""
+  echo "Available environment variables:"
+  for var in "${ENV_VARS[@]}"; do
+    echo "  \$$var: ${ENV_DESCS[$var]} (current: ${!var})"
+  done
+  echo "  \$trash: Command for trashing (current: $trash)"
+  echo ""
+  echo "Available functions:"
+  echo "  trash <paths...>  Trash paths with logging (respects --dry-run, uses \$trash)"
+  echo "  verbose <msg>     Print message if --verbose is set"
+  echo "  error <msg>       Print error and exit"
+}
+
+function do_info() {
+  local cat="$1"
+  local file
+  file=$(find_category_file "$cat") || {
+    if [ $VERBOSE -eq 1 ]; then error "Category '$cat' not found"; else exit 0; fi
+  }
+  # Remove shebang, expand vars, trim leading/trailing blank lines
+  local content
+  content=$(tail -n +2 "$file" | envsubst | sed '/./,$!d' | tac | sed '/./,$!d' | tac)
+  echo "$content"
+}
+
+function do_list() {
+  echo "Available categories:"
+  list_categories | sed 's/^/  - /'
+}
+
+function do_list_specific() {
+  local cat="$1"
+  DRY_RUN=1  # Force dry-run for list specific
+  do_cleanup "$cat"
+}
+
+function reset_totals() {
+  TOTAL_BYTES=0
+  TOTAL_FILES=0
+  TOTAL_DIRS=0
+}
+
+function show_summary() {
+  local prefix="Removed"
+  if [ $DRY_RUN -eq 1 ]; then
+    prefix="Would remove"
+  fi
+  echo "$prefix: $TOTAL_FILES files, $TOTAL_DIRS dirs, $(human_bytes $TOTAL_BYTES)"
+}
+
+function do_cleanup() {
+  local cat="$1"
+  local file
+  file=$(find_category_file "$cat") || {
+    error "Category '$cat' not found";
+  }
+  verbose "Running cleanup for '$cat' from $file"
+  reset_totals
+  source "$file"
+  show_summary
+}
+
+function do_all() {
+  reset_totals
+  local cats
+  cats=$(list_categories)
+  if [ -z "$cats" ]; then
+    echo "No categories available"
+    exit 0
+  fi
+  for cat in $cats; do
+    verbose "Processing category: $cat"
+    local file
+    file=$(find_category_file "$cat")
+    if [ -n "$file" ]; then
+      source "$file"
+    fi
+  done
+  show_summary
+}
+
+# Main logic
+VERBOSE=0
+DRY_RUN=0
+ACTION_TAKEN=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help)
+      show_help
+      exit 0
+      ;;
+    --verbose)
+      VERBOSE=1
+      shift
+      ;;
+    --dry-run|dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --info|info)
+      shift
+      if [ $# -eq 0 ]; then error "info requires a category"; fi
+      do_info "$1"
+      ACTION_TAKEN=1
+      shift
+      ;;
+    --list|-l|list)
+      shift
+      if [ $# -gt 0 ]; then
+        do_list_specific "$1"
+        ACTION_TAKEN=1
+        shift
+      else
+        do_list
+        ACTION_TAKEN=1
+      fi
+      ;;
+    --all|all)
+      do_all
+      ACTION_TAKEN=1
+      shift
+      ;;
+    *)
+      do_cleanup "$1"
+      ACTION_TAKEN=1
+      shift
+      ;;
+  esac
+done
+
+if [ $ACTION_TAKEN -eq 0 ]; then
+  show_help
+  exit 1
+fi
