@@ -6,6 +6,7 @@ trim=false;
 update=false;
 empty_trash=false;
 remove_update_cache=false;
+go_cache=false;
 
 function print_help {
     echo "Clean useless things."
@@ -15,6 +16,7 @@ function print_help {
     echo "    -b|--bleach         # remove useless files using bleachbit"
     echo "    -e|--empty-trash    # empty all user's trashes"
     echo "    -c|--clean-update   # remove update cache"
+    echo "    -g|--clean-go       # remove go language cache"
     echo "    --no-bleaching      # don't run bleachbit"
     echo "    --no-trim           # don't trim"
     echo "    --no-update         # don't update"
@@ -22,13 +24,14 @@ function print_help {
     exit 0;
 }
 
-while getopts ":hbetuc-:" opt; do
+while getopts ":hbetucg-:" opt; do
   case $opt in
     t) trim=true;;
     e) empty_trash=true;;
     u) update=true;;
     b) bleaching=true;;
     c) remove_update_cache=true;;
+    g) go_cache=true;;
     h) print_help;;
     -)
       case "$OPTARG" in
@@ -36,6 +39,7 @@ while getopts ":hbetuc-:" opt; do
         bleaching|bleach|clean|clear) bleaching=true;;
         trim) trim=true;;
         empty-trash|empty|trash|clear-trash|clean-trash) empty_trash=true;;
+        go-cache|clean-go|go-clean) go_cache=true;;
         no-trash|no-empty-trash|no-empty-trashes) empty_trash=false;;
         update) update=true;;
         no-trim) trim=false;;
@@ -110,5 +114,14 @@ if $remove_update_cache; then
         yes | yay -Scc 2>&1 | tee "$cache_dir/update-clean.log";
     elif command -v pacman >/dev/null; then
         yes | sudo pacman -Scc 2>&1 | tee "$cache_dir/update-clean.log";
+    fi
+fi
+
+if $go_cache; then
+    if command -v go >/dev/null; then
+        go clean -cache
+        go clean -modcache
+        sudo go clean -cache
+        sudo go clean -modcache
     fi
 fi
