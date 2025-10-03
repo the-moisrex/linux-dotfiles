@@ -1,25 +1,50 @@
 {
+    // Disabling Telemetry:
     "telemetry.feedback.enabled": false,
     "telemetry.telemetryLevel": "off",
     "gitlens.telemetry.enabled": false,
     "rest-client.enableTelemetry": false,
     "code-runner.enableAppInsights": false,
+    // Editor:
     "vim.handleKeys": {
         "<C-p>": false,
         "<C-d>": false,
         "<C-s>": false,
         "<C-z>": false,
-        "<C-b>":false,
+        "<C-b>": false,
+        "<C-k>": false,
     },
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "ms-vscode.cpptools-extension-pack",
     "editor.mouseWheelZoom": true,
-    "[cpp]": {
-        "editor.defaultFormatter": "ms-vscode.cpptools"
-    },
+    "editor.lineNumbers": "relative",
+    // git:
     "git.confirmSync": false,
     "git.enableSmartCommit": true,
     "workbench.colorTheme": "Default Dark+",
-    "workbench.sideBar.location": "right",
+    // language specific settings:
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools"
+    },
+    // Layout settings:
     "breadcrumbs.enabled": false,
+    "workbench.sideBar.location": "right",
+    "editor.minimap.enabled": false,
+    "editor.smoothScrolling": true,
+    "workbench.settings.editor": "json",
+    "window.menuBarVisibility": "compact",
+    "window.closeWhenEmpty": true,
+    "window.confirmBeforeClose": "never",
+    "window.autoDetectColorScheme": true,
+    "window.commandCenter": false,
+    "workbench.layoutControl.enabled": false,
+    "workbench.statusBar.visible": false,
+    "zenMode.showTabs": "none",
+    "terminal.integrated.tabs.enabled": false,
+    "[json]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
 }
