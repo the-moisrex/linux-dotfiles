@@ -152,6 +152,12 @@ function firefox-policies {
     install "$cmd_config" "$sp_config";
 }
 
+# VSCode
+function vscode-configs {
+    cmd_config="$configs_dir/vscode/settings.json";
+    sp_config="$HOME/.config/Code/User/settings.json";
+    install "$cmd_config" "$sp_config";
+}
 
 
 # TV Shortcuts
@@ -331,6 +337,11 @@ for i in "$@"; do
             shift;
             ;;
 
+        vscode|code|vs-code|vs_code|vscode-configs)
+            vscode-configs;
+            shift;
+            ;;
+
         tv|television|tv-shortcuts)
             tv_shortcuts;
             shift;
@@ -381,6 +392,7 @@ for i in "$@"; do
             install_nvim;
             # spacevim;
             alacritty;
+            vscode-configs;
             codeshell_shortcut;
             tv_shortcuts;
             firefox-policies;
