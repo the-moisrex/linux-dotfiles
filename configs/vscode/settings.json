@@ -1,0 +1,25 @@
+{
+    "telemetry.feedback.enabled": false,
+    "telemetry.telemetryLevel": "off",
+    "gitlens.telemetry.enabled": false,
+    "rest-client.enableTelemetry": false,
+    "code-runner.enableAppInsights": false,
+    "vim.handleKeys": {
+        "<C-p>": false,
+        "<C-d>": false,
+        "<C-s>": false,
+        "<C-z>": false,
+        "<C-b>":false,
+    },
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-vscode.cpptools-extension-pack",
+    "editor.mouseWheelZoom": true,
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools"
+    },
+    "git.confirmSync": false,
+    "git.enableSmartCommit": true,
+    "workbench.colorTheme": "Default Dark+",
+    "workbench.sideBar.location": "right",
+    "breadcrumbs.enabled": false,
+}
