@@ -92,29 +92,9 @@ declare -A shortcuts=(
 # Default engines (used when no specific engines are requested)
 default_engines=("google" "bing" "duckduckgo" "startpage" "perplexity" "chatgpt")
 
-# URL-encode function
+# URL-encode function using python3 for better encoding
 encode_query() {
-    local string="$1"
-    local encoded=""
-    local length="${#string}"
-    
-    for ((i = 0; i < length; i++)); do
-        local c="${string:$i:1}"
-        case "$c" in
-            [a-zA-Z0-9.~_-])
-                encoded+="$c"
-            ;;
-            " ")
-                encoded+="%20"
-            ;;
-            *)
-                printf -v hex '%%%02X' "'$c"
-                encoded+="$hex"
-            ;;
-        esac
-    done
-    
-    echo "$encoded"
+    python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "$1"
 }
 
 # Parse arguments to extract engines and query
@@ -144,7 +124,17 @@ done
 # Combine query parts
 query="${query_parts[*]}"
 
-# Check if query is empty
+# Check if query is empty and try to read from stdin
+if [ -z "$query" ]; then
+    # Check if there is piped input by testing if stdin is not a terminal
+    if [ ! -t 0 ]; then
+        # Read from stdin if available
+        query=$(cat)
+        query=$(echo "$query" | xargs)  # Trim leading/trailing whitespace
+    fi
+fi
+
+# Check if query is still empty
 if [ -z "$query" ]; then
     echo "Error: No search query provided"
     show_help

@@ -3,5 +3,16 @@
 # Get the directory where this script is located
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Run query with all arguments and pipe to openin
-"$DIR/query" "$@" | "$DIR/openin"
+# Run query with all arguments and pipe to openin only if query succeeds
+if output=$("$DIR/query" "$@" 2>&1); then
+    # Only pipe to openin if output contains URLs (not help text)
+    if echo "$output" | grep -q "http"; then
+        echo "$output" | "$DIR/openin"
+    else
+        # If output doesn't contain URLs, just display it (likely help text)
+        echo "$output"
+    fi
+else
+    # Display error message
+    echo "$output"
+fi
