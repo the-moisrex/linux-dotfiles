@@ -47,4 +47,6 @@
     "[json]": {
         "editor.defaultFormatter": "vscode.json-language-features"
     },
+    "containers.containerClient": "com.microsoft.visualstudio.containers.podman",
+    "containers.orchestratorClient": "com.microsoft.visualstudio.orchestrators.podmancompose",
 }

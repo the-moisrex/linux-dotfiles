@@ -48,6 +48,24 @@ extract_id_from_url() {
     return 1
 }
 
+# Clean YouTube URL by removing extra parameters
+clean_youtube_url() {
+    local url="$1"
+    local id
+    
+    # Extract the video ID from the URL
+    id=$(extract_id_from_url "$url")
+    if [[ -n "$id" ]]; then
+        # Create clean URL with just the video ID
+        echo "https://youtu.be/$id"
+        return 0
+    fi
+    
+    # If it's not a recognizable YouTube URL, return as is
+    echo "$url"
+    return 1
+}
+
 # -------- Extractors --------
 extract_from_filename() {
     local file="$1"
@@ -133,35 +151,57 @@ check_video_exists() {
 
 # -------- Main processing --------
 process_file() {
-    local file="$1"
+    local input="$1"
     local url=""
     
-    if [[ ! -f "$file" ]]; then
-        [[ "$VERBOSE" == true ]] && echo "Skipping non-file: $file" >&2
-        return 0
-    fi
-    
-    case "$METHOD" in
-        file)       url=$(extract_from_filename "$file") ;;
-        meta)       url=$(extract_from_ffprobe "$file") ;;
-        both)       url=$(extract_from_filename "$file") || url=$(extract_from_ffprobe "$file") ;;
-        meta-first) url=$(extract_from_ffprobe "$file") || url=$(extract_from_filename "$file") ;;
-    esac
-    
-    if [[ -z "$url" ]]; then
-        [[ "$VERBOSE" == true ]] && echo "No URL found for: $file" >&2
-        return 1
-    fi
-    
-    if [[ "$CHECK" == true ]]; then
-        check_video_exists "$url"
-        case $? in
-            0) echo "$url  [exists]";;
-            1) echo "$url  [not found]";;
-            2) echo "$url  [unchecked]";;
-        esac
+    # Check if input is a URL (starts with http)
+    if [[ "$input" =~ ^https?:// ]]; then
+        # Input is a URL - try to extract YouTube ID and clean it
+        local id
+        id=$(extract_id_from_url "$input")
+        if [[ -n "$id" ]]; then
+            # It's a YouTube URL, clean and return it
+            url="https://youtu.be/$id"
+        else
+            # Not a YouTube URL, return as is
+            url="$input"
+        fi
     else
-        echo "$url"
+        # Input is a file path
+        if [[ ! -f "$input" ]]; then
+            [[ "$VERBOSE" == true ]] && echo "Skipping non-file: $input" >&2
+            return 0
+        fi
+        
+        case "$METHOD" in
+            file)       url=$(extract_from_filename "$input") || return 1 ;;
+            meta)       url=$(extract_from_ffprobe "$input") ;;
+            both)       url=$(extract_from_filename "$input") || url=$(extract_from_ffprobe "$input") ;;
+            meta-first) url=$(extract_from_ffprobe "$input") || url=$(extract_from_filename "$input") ;;
+        esac
+        
+        if [[ -z "$url" ]]; then
+            [[ "$VERBOSE" == true ]] && echo "No URL found for: $input" >&2
+            return 1
+        fi
+    fi
+    
+    # If we have a URL to work with
+    if [[ -n "$url" ]]; then
+        # Clean the URL by removing extra parameters (like list, index, etc.)
+        local clean_url
+        clean_url=$(clean_youtube_url "$url")
+        
+        if [[ "$CHECK" == true ]]; then
+            check_video_exists "$clean_url"
+            case $? in
+                0) echo "$clean_url  [exists]";;
+                1) echo "$clean_url  [not found]";;
+                2) echo "$clean_url  [unchecked]";;
+            esac
+        else
+            echo "$clean_url"
+        fi
     fi
 }
 
