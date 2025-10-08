@@ -27,7 +27,7 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "[cpp]": {
-        "editor.defaultFormatter": "ms-vscode.cpptools"
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
     },
     // Layout settings:
     "breadcrumbs.enabled": false,
@@ -49,4 +49,5 @@
     },
     "containers.containerClient": "com.microsoft.visualstudio.containers.podman",
     "containers.orchestratorClient": "com.microsoft.visualstudio.orchestrators.podmancompose",
+    "C_Cpp.intelliSenseEngine": "disabled",
 }
