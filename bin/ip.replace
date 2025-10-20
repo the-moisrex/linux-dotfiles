@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$(id -u)" -eq 0 ]; then
+  NFT="nft"
+else
+  NFT="sudo nft"
+fi
+
+TABLE="ip_replace"
+FAMILY="ip"
+PREROUTING_CHAIN="prerouting"
+OUTPUT_CHAIN="output"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+show_help() {
+  cat <<EOF
+ip.replace - use nftables to route one IPv4 address to another
+
+Usage:
+  ip.replace <from-ip> <to-ip>
+  ip.replace list
+  ip.replace undo <id>
+  ip.replace undo
+  ip.replace --help
+EOF
+}
+
+ensure_table_and_chains() {
+  if ! $NFT list table "$FAMILY" "$TABLE" >/dev/null 2>&1; then
+    $NFT add table "$FAMILY" "$TABLE" || die "failed to add table $TABLE"
+  fi
+
+  if ! $NFT list chain "$FAMILY" "$TABLE" "$PREROUTING_CHAIN" >/dev/null 2>&1; then
+    $NFT add chain "$FAMILY" "$TABLE" "$PREROUTING_CHAIN" "{ type nat hook prerouting priority 0 ; }" \
+      || die "failed to add prerouting chain"
+  fi
+
+  if ! $NFT list chain "$FAMILY" "$TABLE" "$OUTPUT_CHAIN" >/dev/null 2>&1; then
+    $NFT add chain "$FAMILY" "$TABLE" "$OUTPUT_CHAIN" "{ type nat hook output priority 0 ; }" \
+      || die "failed to add output chain"
+  fi
+}
+
+parse_rules() {
+  IDS=()
+  declare -A FROM_BY_KEY
+  declare -A TO_BY_KEY
+  declare -A HANDLES_BY_KEY
+
+  for chain in "$PREROUTING_CHAIN" "$OUTPUT_CHAIN"; do
+    chain_out="$($NFT list chain "$FAMILY" "$TABLE" "$chain" -a 2>/dev/null || true)"
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      if [[ $line =~ ip[[:space:]]+daddr[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+).*dnat[[:space:]]+to[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+        from="${BASH_REMATCH[1]}"
+        to="${BASH_REMATCH[2]}"
+        handle=""
+        if [[ $line =~ handle[[:space:]]+([0-9]+) ]]; then
+          handle="${BASH_REMATCH[1]}"
+        fi
+        key="${from}_${to}"
+        FROM_BY_KEY[$key]="$from"
+        TO_BY_KEY[$key]="$to"
+        if [ -z "${HANDLES_BY_KEY[$key]-}" ]; then
+          if [ -n "$handle" ]; then
+            HANDLES_BY_KEY[$key]="${chain}:${handle}"
+          else
+            HANDLES_BY_KEY[$key]="${chain}:"
+          fi
+        else
+          if [ -n "$handle" ]; then
+            HANDLES_BY_KEY[$key]="${HANDLES_BY_KEY[$key]} ${chain}:${handle}"
+          else
+            HANDLES_BY_KEY[$key]="${HANDLES_BY_KEY[$key]} ${chain}:"
+          fi
+        fi
+      fi
+    done <<<"$chain_out"
+  done
+
+  keys=()
+  for k in "${!FROM_BY_KEY[@]}"; do keys+=("$k"); done
+  if [ "${#keys[@]}" -eq 0 ]; then
+    return 0
+  fi
+  IFS=$'\n' keys=($(printf "%s\n" "${keys[@]}" | sort)); unset IFS
+
+  idx=0
+  for k in "${keys[@]}"; do
+    ((idx++))
+    IDS+=("$idx")
+    eval "FROM_${idx}=\"${FROM_BY_KEY[$k]}\""
+    eval "TO_${idx}=\"${TO_BY_KEY[$k]}\""
+    eval "HANDLES_${idx}=\"${HANDLES_BY_KEY[$k]}\""
+  done
+}
+
+next_id() {
+  parse_rules
+  max=0
+  for id in "${IDS[@]:-}"; do
+    if [[ $id =~ ^[0-9]+$ ]]; then
+      (( id > max )) && max=$id
+    fi
+  done
+  echo $((max + 1))
+}
+
+add_mapping() {
+  src="$1"; dst="$2"
+  if ! [[ $src =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && $dst =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    die "invalid IPv4 address format"
+  fi
+  ensure_table_and_chains
+  id=$(next_id)
+  $NFT add rule "$FAMILY" "$TABLE" "$PREROUTING_CHAIN" ip daddr "$src" dnat to "$dst" \
+    || die "failed to add prerouting rule"
+  $NFT add rule "$FAMILY" "$TABLE" "$OUTPUT_CHAIN" ip daddr "$src" dnat to "$dst" \
+    || die "failed to add output rule"
+  echo "Added mapping id=$id : $src -> $dst"
+}
+
+list_mappings() {
+  parse_rules
+#   if [ "${#IDS[@]:-0}" -eq 0 ]; then
+#     echo "No ip.replace mappings found."
+#     return
+#   fi
+  IFS=$'\n' sorted=($(sort -n <<<"${IDS[*]}")); unset IFS
+  for id in "${sorted[@]}"; do
+    eval "from_val=\${FROM_$id-}"
+    eval "to_val=\${TO_$id-}"
+    eval "handles_val=\${HANDLES_$id-}"
+    echo "[$id] $from_val -> $to_val"
+    if [ -n "$handles_val" ]; then
+      echo "     rules: $handles_val"
+    fi
+  done
+}
+
+undo_id() {
+  id="$1"
+  if ! [[ $id =~ ^[0-9]+$ ]]; then die "undo expects a numeric id"; fi
+  parse_rules
+  if ! [[ " ${IDS[*]:-} " == *" $id "* ]]; then die "no mapping with id $id found"; fi
+  eval "handles=\${HANDLES_$id-}"
+  deleted_any=0
+  if [ -n "$handles" ]; then
+    for rec in $handles; do
+      IFS=':' read -r chain handle <<<"$rec"
+      if [ -n "$handle" ]; then
+        echo "Deleting rule in chain '$chain' handle $handle"
+        $NFT delete rule "$FAMILY" "$TABLE" "$chain" handle "$handle" \
+          || echo "  warning: failed to delete $chain handle $handle" >&2
+        deleted_any=1
+      else
+        eval "from_val=\${FROM_$id-}"; eval "to_val=\${TO_$id-}"
+        if [ -n "$from_val" ] && [ -n "$to_val" ]; then
+          echo "Attempting delete by exact specification in chain $chain"
+          $NFT delete rule "$FAMILY" "$TABLE" "$chain" ip daddr "$from_val" dnat to "$to_val" >/dev/null 2>&1 \
+            && deleted_any=1 || true
+        fi
+      fi
+    done
+  else
+    eval "from_val=\${FROM_$id-}"; eval "to_val=\${TO_$id-}"
+    if [ -n "$from_val" ] && [ -n "$to_val" ]; then
+      for chain in "$PREROUTING_CHAIN" "$OUTPUT_CHAIN"; do
+        echo "Attempting delete by exact specification in chain $chain"
+        $NFT delete rule "$FAMILY" "$TABLE" "$chain" ip daddr "$from_val" dnat to "$to_val" >/dev/null 2>&1 \
+          && deleted_any=1 || true
+      done
+    fi
+  fi
+
+  if [ "$deleted_any" -eq 0 ]; then
+    echo "No rules deleted for id $id (maybe none exist anymore)."
+  else
+    echo "Deleted mapping id=$id."
+  fi
+
+  remaining="$($NFT list table "$FAMILY" "$TABLE" -a 2>/dev/null || true)"
+  if ! grep -q -E 'dnat[[:space:]]+to' <<<"$remaining"; then
+    echo "No nft rules remain in table ${TABLE} — deleting empty table."
+    $NFT delete table "$FAMILY" "$TABLE" >/dev/null 2>&1 || true
+  fi
+}
+
+undo_all() {
+  parse_rules
+  if [ "${#IDS[@]:-0}" -eq 0 ]; then
+    echo "No ip.replace mappings to undo."
+    return
+  fi
+  ids_copy=( "${IDS[@]}" )
+  for id in "${ids_copy[@]}"; do
+    undo_id "$id" || true
+  done
+  echo "All ip.replace mappings removed."
+}
+
+main() {
+  if [ "${#@}" -eq 0 ]; then show_help; exit 0; fi
+  case "$1" in
+    -h|--help) show_help; exit 0 ;;
+    list) list_mappings; exit 0 ;;
+    undo)
+      if [ "${#}" -eq 2 ]; then
+        undo_id "$2"
+      else
+        undo_all
+      fi
+      exit 0
+      ;;
+    *)
+      if [ "${#}" -ne 2 ]; then show_help; exit 2; fi
+      add_mapping "$1" "$2"
+      exit 0
+      ;;
+  esac
+}
+
+main "$@"
