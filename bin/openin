@@ -66,6 +66,19 @@ find_existing_browser() {
     echo ""
 }
 
+# Global variables to store temp directories for cleanup
+firefox_temp_dir=""
+chromium_temp_dir=""
+
+# Function to cleanup temp directories on exit
+cleanup() {
+    [ -n "$firefox_temp_dir" ] && [ -d "$firefox_temp_dir" ] && rm -rf "$firefox_temp_dir"
+    [ -n "$chromium_temp_dir" ] && [ -d "$chromium_temp_dir" ] && rm -rf "$chromium_temp_dir"
+}
+
+# Set trap to clean up temp directories on exit
+trap cleanup EXIT
+
 # Function to build options for the browser
 build_options() {
     local browser=$1
@@ -73,7 +86,6 @@ build_options() {
     local is_new_instance=$3
     local is_new_window=$4
     local opts=()
-    local temp_dir;
 
     if [ "$group" = "chromium_based" ]; then
         opts=("${chromium_default_opts[@]}")
@@ -81,29 +93,23 @@ build_options() {
         opts=("${firefox_default_opts[@]}")
     fi
     if [ -n "${specific_browser_options[$browser]}" ]; then
-        opts+=("${specific_browser_options[$browser]}")
+        # Properly handle multiple options from string
+        IFS=' ' read -ra browser_opts <<< "${specific_browser_options[$browser]}"
+        opts+=("${browser_opts[@]}")
     fi
     if [ "$is_new_instance" == "true" ]; then
         if [ "$group" = "firefox_based" ]; then
-            temp_dir="$(mktemp -d --suffix="-firefox-based")"
-            opts+=("--new-instance")
-            opts+=("--no-remote")
-            opts+=("--profile $temp_dir")
+            firefox_temp_dir="$(mktemp -d --suffix="-firefox-based")"
+            opts+=("--new-instance" "--no-remote" "--profile" "$firefox_temp_dir")
         elif [ "$group" = "chromium_based" ]; then
-            temp_dir="$(mktemp -du --suffix="-chromium-based")"
-            opts+=("--user-data-dir=$temp_dir")
+            chromium_temp_dir="$(mktemp -d --suffix="-chromium-based")"
+            opts+=("--user-data-dir=$chromium_temp_dir" "--new-window")
         fi
     elif [ "$is_new_window" == "true" ]; then
         if [ "$group" = "firefox_based" ]; then
-            # Check if --new-window is not already in the default options
-            if [[ ! " ${firefox_default_opts[*]} " =~ " --new-window " ]]; then
-                opts+=("--new-window")
-            fi
+            opts+=("--new-window")
         elif [ "$group" = "chromium_based" ]; then
-            # Check if --new-window is not already in the default options
-            if [[ ! " ${chromium_default_opts[*]} " =~ " --new-window " ]]; then
-                opts+=("--new-window")
-            fi
+            opts+=("--new-window")
         fi
     fi
     echo "${opts[@]}"
@@ -131,9 +137,11 @@ fi
 # Check for --new option
 if [ "$1" = "--new" ] || [ "$1" = "-new" ] || [ "$1" = "new" ]; then
     new_instance=true
+    new_window=false
     shift
 elif [ "$1" = "--new-window" ] || [ "$1" = "--newwindow" ] || [ "$1" = "-n" ] || [ "$1" = "-newwin" ] || [ "$1" = "-newwindow" ]; then
     new_window=true
+    new_instance=false
     shift
 else
     new_instance=false
@@ -191,7 +199,7 @@ if $open_all_at_once; then
         for url in "${urls[@]}"; do
             echo "$url";
         done
-        setsid "$selected_browser" "${options[*]}" "${urls[@]}" >>"$log_file" 2>&1
+        setsid "$selected_browser" "${options[@]}" "${urls[@]}" >>"$log_file" 2>&1
     fi
 else
     # Open URLs one by one
@@ -202,7 +210,7 @@ else
     while IFS= read -r url; do
         if [ -n "$url" ]; then
             echo "$url";
-            setsid "$selected_browser" "${options[*]}" "$url" >>"$log_file" 2>&1
+            setsid "$selected_browser" "${options[@]}" "$url" >>"$log_file" 2>&1
         fi
     done
 fi
