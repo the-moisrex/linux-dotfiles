@@ -20,6 +20,9 @@ Engine Shortcuts:
   w, wolfram      WolframAlpha
   ya, yandex      Yandex
   bd, baidu       Baidu
+  sw, swisscows   Swisscows
+  m, mojeek       Mojeek
+  sx, searxng     SearXNG
   all             All search engines
 
 Examples:
@@ -57,6 +60,9 @@ declare -A engine_urls=(
     ["yandex"]="https://yandex.com/search/?text="
     ["baidu"]="https://www.baidu.com/s?wd="
     ["chatgpt"]="https://chatgpt.com/?q="
+    ["swisscows"]="https://swisscows.com/en/web?query="
+    ["mojeek"]="https://www.mojeek.com/search?q="
+    ["searxng"]="http://localhost:8080/search?q="
 )
 
 # Define shortcut mappings
@@ -86,11 +92,14 @@ declare -A shortcuts=(
     ["yandex"]="yandex"
     ["bd"]="baidu"
     ["baidu"]="baidu"
+    ["sw"]="swisscows"
+    ["m"]="mojeek"
+    ["sx"]="searxng"
     ["all"]="all"
 )
 
 # Default engines (used when no specific engines are requested)
-default_engines=("google" "bing" "duckduckgo" "startpage" "perplexity" "chatgpt")
+default_engines=("google" "bing" "duckduckgo" "startpage" "swisscows" "mojeek" "searxng")
 
 # URL-encode function using python3 for better encoding
 encode_query() {
