@@ -13,6 +13,7 @@ Engine Shortcuts:
   d, ddg          DuckDuckGo
   s, start        Startpage
   p, per          Perplexity AI
+  c, chat, gpt    ChatGPT
   y, yahoo        Yahoo Search
   br, brave       Brave Search
   q, qwant        Qwant
@@ -25,9 +26,21 @@ Engine Shortcuts:
   sx, searxng     SearXNG
   all             All search engines
 
+Categories:
+  ai              AI category (Perplexity, ChatGPT)
+  news            News category (Google, Bing, Yahoo, Yandex)
+  tech            Tech category (Google, TechCrunch, Ars Technica)
+  hacker-news, hn Hacker News category (Hacker News, Reddit, TechCrunch, Ars Technica)
+  academic        Academic category (Google Scholar, WolframAlpha)
+  privacy         Privacy category (DuckDuckGo, Startpage, Brave, Ecosia, SearXNG, Mojeek)
+  social          Social category (Reddit, Twitter, Facebook)
+  code            Code category (GitHub, Stack Overflow)
+
 Examples:
   $0 g "quantum physics"           # Search only Google
   $0 g per "machine learning"      # Search Google and Perplexity
+  $0 ai "machine learning"         # Search AI category (Perplexity and ChatGPT)
+  $0 news "election results"       # Search news category
   $0 all "black holes"             # Search all engines
   $0 "simple query"                # Search basic engines (Google, Bing, DuckDuckGo, Startpage, Perplexity)
 EOF
@@ -63,6 +76,27 @@ declare -A engine_urls=(
     ["swisscows"]="https://swisscows.com/en/web?query="
     ["mojeek"]="https://www.mojeek.com/search?q="
     ["searxng"]="http://localhost:8080/search?q="
+    ["hackernews"]="https://hn.algolia.com/?query="
+    ["reddit"]="https://www.reddit.com/search/?q="
+    ["techcrunch"]="https://techcrunch.com/search/?s="
+    ["arstechnica"]="https://arstechnica.com/search/"
+    ["scholar"]="https://scholar.google.com/scholar?q="
+    ["twitter"]="https://twitter.com/search?q="
+    ["facebook"]="https://www.facebook.com/search/top/?q="
+    ["github"]="https://github.com/search?q="
+    ["stackoverflow"]="https://stackoverflow.com/search?q="
+)
+
+# Define category mappings
+declare -A categories=(
+    ["ai"]="perplexity chatgpt"
+    ["news"]="google bing yahoo yandex"
+    ["tech"]="google techcrunch arstechnica"
+    ["hacker-news"]="hackernews reddit techcrunch arstechnica"
+    ["academic"]="google scholar wolframalpha"
+    ["privacy"]="duckduckgo startpage brave ecosia searxng mojeek"
+    ["social"]="reddit twitter facebook"
+    ["code"]="github stackoverflow"
 )
 
 # Define shortcut mappings
@@ -75,6 +109,8 @@ declare -A shortcuts=(
     ["c"]="chatgpt"
     ["gpt"]="chatgpt"
     ["chat"]="chatgpt"
+    ["ai"]="ai"
+    ["hn"]="hackernews"
     ["start"]="startpage"
     ["p"]="perplexity"
     ["per"]="perplexity"
@@ -88,6 +124,7 @@ declare -A shortcuts=(
     ["ecosia"]="ecosia"
     ["w"]="wolframalpha"
     ["wolfram"]="wolframalpha"
+    ["wa"]="wolframalpha"
     ["ya"]="yandex"
     ["yandex"]="yandex"
     ["bd"]="baidu"
@@ -96,6 +133,15 @@ declare -A shortcuts=(
     ["m"]="mojeek"
     ["sx"]="searxng"
     ["all"]="all"
+    ["news"]="news"
+    ["tech"]="tech"
+    ["hacker-news"]="hacker-news"
+    ["hacker"]="hacker-news"
+    ["hn"]="hacker-news"
+    ["academic"]="academic"
+    ["privacy"]="privacy"
+    ["social"]="social"
+    ["code"]="code"
 )
 
 # Function to check if searXNG is running
@@ -135,10 +181,22 @@ processing_engines=true
 for arg in "$@"; do
     if [ "$processing_engines" = true ]; then
         if [ -n "${shortcuts[$arg]}" ]; then
-            if [ "${shortcuts[$arg]}" = "all" ]; then
+            shortcut_target="${shortcuts[$arg]}"
+            if [ "$shortcut_target" = "all" ]; then
                 all_engines=true
+            elif [ -n "${categories[$shortcut_target]}" ]; then
+                # Expand category to its constituent engines
+                category_engines=(${categories[$shortcut_target]})
+                for cat_engine in "${category_engines[@]}"; do
+                    if [[ ! " ${engines[@]} " =~ " ${cat_engine} " ]]; then  # Avoid duplicates
+                        engines+=("$cat_engine")
+                    fi
+                done
             else
-                engines+=("${shortcuts[$arg]}")
+                # Add the individual engine if not already present
+                if [[ ! " ${engines[@]} " =~ " ${shortcut_target} " ]]; then
+                    engines+=("$shortcut_target")
+                fi
             fi
         else
             # First non-engine argument, treat as start of query
