@@ -46,7 +46,6 @@ chromium_default_opts=(
     --deny-permission-prompts
     --disable-sync
     --disable-extensions
-    --new-window
 )
 
 
@@ -72,6 +71,7 @@ build_options() {
     local browser=$1
     local group=$2
     local is_new_instance=$3
+    local is_new_window=$4
     local opts=()
     local temp_dir;
 
@@ -93,6 +93,18 @@ build_options() {
             temp_dir="$(mktemp -du --suffix="-chromium-based")"
             opts+=("--user-data-dir=$temp_dir")
         fi
+    elif [ "$is_new_window" == "true" ]; then
+        if [ "$group" = "firefox_based" ]; then
+            # Check if --new-window is not already in the default options
+            if [[ ! " ${firefox_default_opts[*]} " =~ " --new-window " ]]; then
+                opts+=("--new-window")
+            fi
+        elif [ "$group" = "chromium_based" ]; then
+            # Check if --new-window is not already in the default options
+            if [[ ! " ${chromium_default_opts[*]} " =~ " --new-window " ]]; then
+                opts+=("--new-window")
+            fi
+        fi
     fi
     echo "${opts[@]}"
 }
@@ -102,8 +114,9 @@ if [ "$1" = "--help" ]; then
     echo "Usage: $0 [options] [browser]"
     echo "Options:"
     echo "  --new, -new, new: Force creation of a new browser instance"
+    echo "  --new-window, --newwindow, -n, -newwin, -newwindow: Open URLs in a new window"
     echo "  --help: Show this help message"
-    echo "If no browser is specified, the first running browser from the known list is used."
+    echo "If no browser is specified, the first running browser from known list is used."
     echo "If no known browser is running, xdg-open is used."
     echo
     echo "Example:"
@@ -111,6 +124,7 @@ if [ "$1" = "--help" ]; then
     echo "  blogs | openin"
     echo "  blogs 100 | openin --new firefox.tmp"
     echo "  blogs 100 | openin edge"
+    echo "  blogs 100 | openin --new-window"
     exit 0
 fi
 
@@ -118,8 +132,12 @@ fi
 if [ "$1" = "--new" ] || [ "$1" = "-new" ] || [ "$1" = "new" ]; then
     new_instance=true
     shift
+elif [ "$1" = "--new-window" ] || [ "$1" = "--newwindow" ] || [ "$1" = "-n" ] || [ "$1" = "-newwin" ] || [ "$1" = "-newwindow" ]; then
+    new_window=true
+    shift
 else
     new_instance=false
+    new_window=false
 fi
 
 # Determine the selected browser
@@ -166,7 +184,7 @@ if $open_all_at_once; then
     # Read all URLs into an array
     mapfile -t urls
     if [ ${#urls[@]} -gt 0 ]; then
-        options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
+        options=($(build_options "$selected_browser" "$browser_group" "$new_instance" "$new_window"))
         echo "Opening all URLs at once in $selected_browser"
         echo "setsid \"$selected_browser\" ${options[*]}";
         echo
@@ -177,7 +195,7 @@ if $open_all_at_once; then
     fi
 else
     # Open URLs one by one
-    options=($(build_options "$selected_browser" "$browser_group" "$new_instance"))
+    options=($(build_options "$selected_browser" "$browser_group" "$new_instance" "$new_window"))
     echo "Opening URLs one by one in $selected_browser"
     echo "setsid \"$selected_browser\" \"${options[*]}\"";
     echo
