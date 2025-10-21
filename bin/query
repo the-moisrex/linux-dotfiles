@@ -36,6 +36,10 @@ Categories:
   privacy         Privacy category (DuckDuckGo, Startpage, Brave, Ecosia, SearXNG, Mojeek)
   social          Social category (Reddit, Twitter, Facebook)
   code            Code category (GitHub, Stack Overflow, DevDocs)
+  cpp             C++ category (Stack Overflow, C++ Reference, DevDocs C++)
+  html            HTML category (Stack Overflow, DevDocs HTML, MDN Web Docs)
+  css             CSS category (Stack Overflow, DevDocs CSS, MDN Web Docs)
+  javascript      JavaScript category (Stack Overflow, DevDocs JavaScript, MDN Web Docs)
   video           Video category (YouTube)
 
 Examples:
@@ -45,6 +49,10 @@ Examples:
   $0 ai-tools "machine learning"   # Search AI tools category
   $0 news "election results"       # Search news category
   $0 code "javascript function"    # Search code category
+  $0 cpp "std::string"             # Search C++ category
+  $0 html "div element"            # Search HTML category
+  $0 css "flexbox"                 # Search CSS category
+  $0 javascript "array methods"    # Search JavaScript category
   $0 video "tutorial"              # Search video category
   $0 all "black holes"             # Search all engines
   $0 "simple query"                # Search basic engines (Google, Bing, DuckDuckGo, Startpage, Perplexity)
@@ -110,6 +118,11 @@ declare -A engine_urls=(
     ["kimi"]="https://www.kimi.com/"
     ["openrouter"]="https://openrouter.ai/chat"
     ["venice"]="https://venice.ai/chat"
+    ["devdocs-cpp"]="https://devdocs.io/cpp/#q="
+    ["devdocs-html"]="https://devdocs.io/html/#q="
+    ["devdocs-css"]="https://devdocs.io/css/#q="
+    ["devdocs-javascript"]="https://devdocs.io/javascript/#q="
+    ["mdn"]="https://developer.mozilla.org/en-US/search?q="
 )
 
 # Define category mappings
@@ -124,6 +137,10 @@ declare -A categories=(
     ["code"]="github stackoverflow devdocs"
     ["video"]="youtube"
     ["ai-tools"]="deepseek usersearch qwen z lmarena huggingface phind kimi openrouter venice"
+    ["cpp"]="stackoverflow devdocs-cpp"
+    ["html"]="stackoverflow devdocs-html mdn"
+    ["css"]="stackoverflow devdocs-css mdn"
+    ["javascript"]="stackoverflow devdocs-javascript mdn"
 )
 
 # Define shortcut mappings
@@ -171,6 +188,10 @@ declare -A shortcuts=(
     ["code"]="code"
     ["video"]="video"
     ["ai-tools"]="ai-tools"
+    ["cpp"]="cpp"
+    ["html"]="html"
+    ["css"]="css"
+    ["javascript"]="javascript"
 )
 
 # Function to check if searXNG is running
