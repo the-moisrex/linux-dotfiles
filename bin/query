@@ -98,8 +98,28 @@ declare -A shortcuts=(
     ["all"]="all"
 )
 
+# Function to check if searXNG is running
+is_searxng_running() {
+    if command -v curl >/dev/null 2>&1; then
+        # Check if searXNG is running on localhost:8080
+        curl -s --max-time 1 http://localhost:8080/ >/dev/null 2>&1
+        return $?
+    elif command -v wget >/dev/null 2>&1; then
+        # Alternative check using wget
+        wget --timeout=1 -q --spider http://localhost:8080/ 2>/dev/null
+        return $?
+    else
+        # If no tool available, assume searXNG is not running
+        return 1
+    fi
+}
+
 # Default engines (used when no specific engines are requested)
-default_engines=("google" "bing" "duckduckgo" "startpage" "swisscows" "mojeek" "searxng")
+default_engines=("google" "bing" "duckduckgo" "startpage" "swisscows" "mojeek")
+# Add searXNG to default engines only if it's running
+if is_searxng_running; then
+    default_engines+=("searxng")
+fi
 
 # URL-encode function using python3 for better encoding
 encode_query() {
