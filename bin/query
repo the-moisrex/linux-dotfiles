@@ -28,19 +28,24 @@ Engine Shortcuts:
 
 Categories:
   ai              AI category (Perplexity, ChatGPT)
-  news            News category (Google, Bing, Yahoo, Yandex)
+  ai-tools        AI tools category (DeepSeek, UserSearch, Qwen, Z.ai, LMArena, Hugging Face, Phind, Kimi, OpenRouter, Venice)
+  news            News category (Google, Bing, Yahoo, Yandex, Al Jazeera, RT, Khabarfoori, Sputnik, CNN, Fox News, Google News, Bing News)
   tech            Tech category (Google, TechCrunch, Ars Technica)
   hacker-news, hn Hacker News category (Hacker News, Reddit, TechCrunch, Ars Technica)
   academic        Academic category (Google Scholar, WolframAlpha)
   privacy         Privacy category (DuckDuckGo, Startpage, Brave, Ecosia, SearXNG, Mojeek)
   social          Social category (Reddit, Twitter, Facebook)
-  code            Code category (GitHub, Stack Overflow)
+  code            Code category (GitHub, Stack Overflow, DevDocs)
+  video           Video category (YouTube)
 
 Examples:
   $0 g "quantum physics"           # Search only Google
   $0 g per "machine learning"      # Search Google and Perplexity
   $0 ai "machine learning"         # Search AI category (Perplexity and ChatGPT)
+  $0 ai-tools "machine learning"   # Search AI tools category
   $0 news "election results"       # Search news category
+  $0 code "javascript function"    # Search code category
+  $0 video "tutorial"              # Search video category
   $0 all "black holes"             # Search all engines
   $0 "simple query"                # Search basic engines (Google, Bing, DuckDuckGo, Startpage, Perplexity)
 EOF
@@ -85,18 +90,40 @@ declare -A engine_urls=(
     ["facebook"]="https://www.facebook.com/search/top/?q="
     ["github"]="https://github.com/search?q="
     ["stackoverflow"]="https://stackoverflow.com/search?q="
+    ["aljazeera"]="https://www.aljazeera.com/search/"
+    ["rt"]="https://www.rt.com/search?q="
+    ["khabarfoori"]="https://www.khabarfoori.com/fa/newsstudios/archive/?query="
+    ["sputnik"]="https://sputnikglobe.com/search/?query="
+    ["cnn"]="https://edition.cnn.com/search?q="
+    ["foxnews"]="https://www.foxnews.com/search-results/search#q="
+    ["google-news"]="https://news.google.com/search?hl=en-US&gl=US&q="
+    ["bing-news"]="https://www.bing.com/news/search?q="
+    ["devdocs"]="https://devdocs.io/#q="
+    ["youtube"]="https://www.youtube.com/results?search_query="
+    ["deepseek"]="https://chat.deepseek.com/"
+    ["usersearch"]="https://usersearch.ai/"
+    ["qwen"]="https://chat.qwen.ai/"
+    ["z"]="https://chat.z.ai/"
+    ["lmarena"]="https://lmarena.ai/"
+    ["huggingface"]="https://huggingface.co/spaces"
+    ["phind"]="https://www.phind.com/"
+    ["kimi"]="https://www.kimi.com/"
+    ["openrouter"]="https://openrouter.ai/chat"
+    ["venice"]="https://venice.ai/chat"
 )
 
 # Define category mappings
 declare -A categories=(
     ["ai"]="perplexity chatgpt"
-    ["news"]="google bing yahoo yandex"
+    ["news"]="google bing yahoo yandex aljazeera rt khabarfoori sputnik cnn foxnews google-news bing-news"
     ["tech"]="google techcrunch arstechnica"
     ["hacker-news"]="hackernews reddit techcrunch arstechnica"
     ["academic"]="google scholar wolframalpha"
     ["privacy"]="duckduckgo startpage brave ecosia searxng mojeek"
     ["social"]="reddit twitter facebook"
-    ["code"]="github stackoverflow"
+    ["code"]="github stackoverflow devdocs"
+    ["video"]="youtube"
+    ["ai-tools"]="deepseek usersearch qwen z lmarena huggingface phind kimi openrouter venice"
 )
 
 # Define shortcut mappings
@@ -142,6 +169,8 @@ declare -A shortcuts=(
     ["privacy"]="privacy"
     ["social"]="social"
     ["code"]="code"
+    ["video"]="video"
+    ["ai-tools"]="ai-tools"
 )
 
 # Function to check if searXNG is running
