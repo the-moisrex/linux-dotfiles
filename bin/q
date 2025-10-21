@@ -3,11 +3,25 @@
 # Get the directory where this script is located
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Check for --no-new-window option (and its aliases) to NOT open in new window
+if [[ "$1" = "--no-new-window" ]] || [[ "$1" = "--nonewwindow" ]] || [[ "$1" = "-N" ]] || [[ "$1" = "-nonew" ]] || [[ "$1" = "-nonewwindow" ]]; then
+    no_new_window_option="$1"
+    shift
+else
+    no_new_window_option=""
+fi
+
 # Run query with all arguments and pipe to openin only if query succeeds
 if output=$("$DIR/query" "$@" 2>&1); then
     # Only pipe to openin if output contains URLs (not help text)
     if echo "$output" | grep -q "http"; then
-        echo "$output" | "$DIR/openin"
+        if [ -z "$no_new_window_option" ]; then
+            # Open in new window by default (when no --no-new-window option is provided)
+            echo "$output" | "$DIR/openin" "--new-window"
+        else
+            # Don't open in new window when --no-new-window option is provided
+            echo "$output" | "$DIR/openin"
+        fi
     else
         # If output doesn't contain URLs, just display it (likely help text)
         echo "$output"
