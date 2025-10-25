@@ -1,5 +1,5 @@
 all:
-	g++ -g3 -std=c++23 main.cpp
+	g++ -g3 -std=c++26 main.cpp
 
 clang:
-	clang++ -g3 -std=c++20 main.cpp
+	clang++ -g3 -std=c++26 main.cpp
