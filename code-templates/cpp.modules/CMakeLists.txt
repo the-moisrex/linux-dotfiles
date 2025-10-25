@@ -11,7 +11,7 @@ set(LIB_NAME ${PROJECT_NAME}-lib)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Set the version of C++ for the project
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 26)
 
 # Create a library
 add_library(${LIB_NAME})
