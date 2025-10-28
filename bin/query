@@ -24,6 +24,7 @@ Engine Shortcuts:
   sw, swisscows   Swisscows
   m, mojeek       Mojeek
   sx, searxng     SearXNG
+  gr, grokipedia  Grokipedia
   all             All search engines
 
 Categories:
@@ -118,6 +119,7 @@ declare -A engine_urls=(
     ["kimi"]="https://www.kimi.com/"
     ["openrouter"]="https://openrouter.ai/chat"
     ["venice"]="https://venice.ai/chat"
+    ["grokipedia"]="https://grokipedia.com/search?q="
     ["devdocs-cpp"]="https://devdocs.io/cpp/#q="
     ["devdocs-html"]="https://devdocs.io/html/#q="
     ["devdocs-css"]="https://devdocs.io/css/#q="
@@ -192,6 +194,8 @@ declare -A shortcuts=(
     ["html"]="html"
     ["css"]="css"
     ["javascript"]="javascript"
+    ["gr"]="grokipedia"
+    ["grokipedia"]="grokipedia"
 )
 
 # Function to check if searXNG is running
