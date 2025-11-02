@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""
+Python replacement for `llvm.run` using LLVM plugin subprocess with:
+- .clang/.clangd flags support
+- Header TU handling
+"""
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+import tempfile
+import shlex
+
+# ----------------------------
+# Read valid clang flags from .clang/.clangd
+# ----------------------------
+def read_clang_flags(verbose=False):
+    git_root = Path(".").resolve()
+    while not (git_root / ".git").exists() and git_root.parent != git_root:
+        git_root = git_root.parent
+    flags = []
+
+    for file_name in [".clang", ".clangd"]:
+        path = git_root / file_name
+        if path.exists():
+            if verbose:
+                print(f"[verbose] Reading clang flags from {path}")
+            try:
+                text = path.read_text()
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    # Split by spaces
+                    for token in shlex.split(line):
+                        # Split comma-separated flags
+                        subtokens = [t.strip() for t in token.split(",") if t.strip()]
+                        for sub in subtokens:
+                            # Keep only valid clang CLI flags
+                            if sub.startswith("-") and not sub.startswith("--header-insertion") and not sub.startswith("--limit"):
+                                flags.append(sub)
+            except Exception as e:
+                if verbose:
+                    print(f"[verbose] Failed reading {path}: {e}")
+    return flags
+
+# ----------------------------
+# Find files using git grep
+# ----------------------------
+def git_grep_files(plugin_arg, verbose=False):
+    cmd = ["git", "grep", "-l", plugin_arg, "--", "*.cpp", "*.cxx", "*.ixx", "*.cc", "*.h", "*.hpp"]
+    if verbose:
+        print(f"[verbose] Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    files = result.stdout.strip().splitlines()
+    if verbose:
+        print(f"[verbose] Found files: {files}")
+    return files
+
+# ----------------------------
+# Build the LLVM plugin shared library if it doesn't exist
+# ----------------------------
+def build_llvm_plugin(plugin_name, verbose=False):
+    # The script is in bin directory, so llvm directory should be at ../llvm
+    script_dir = Path(__file__).resolve().parent
+    llvm_dir = script_dir.parent / "llvm"
+    
+    if not llvm_dir.exists():
+        raise FileNotFoundError(f"LLVM directory not found at {llvm_dir}")
+    
+    # The plugin name must match the name registered in the source file
+    # Look for source files that might contain the plugin implementation
+    source_file = None
+    source_files = []
+    
+    for ext in ["*.cpp", "*.cxx", "*.cc"]:
+        for file_path in llvm_dir.glob(ext):
+            if file_path.is_file():
+                source_files.append(file_path)
+    
+    if not source_files:
+        raise FileNotFoundError(f"No source files found in llvm directory")
+    
+    # Look through source files to find one that registers the plugin name
+    for file_path in source_files:
+        try:
+            content = file_path.read_text()
+            # Look for the plugin registration line in the source code
+            if f'X("{plugin_name}",' in content or f'X( "{plugin_name}" ,' in content or \
+               f'X( "{plugin_name}",' in content or f'X("{plugin_name}" ,' in content:
+                source_file = file_path
+                break
+        except:
+            continue  # Skip files that can't be read
+    
+    # If we didn't find a source file that registers this plugin, check if this is a known plugin
+    # by checking against the available source files and their content
+    if not source_file:
+        # If the plugin name matches a file name, use that file
+        for file_path in source_files:
+            if file_path.stem == plugin_name:
+                source_file = file_path
+                break
+        
+        # If still not found, we can try to be more lenient and look for common patterns
+        if not source_file:
+            # Check if print-symbols.cpp contains the print-class plugin registration
+            for file_path in source_files:
+                try:
+                    content = file_path.read_text()
+                    if 'print-class' in content and ('X(' in content and ')' in content):
+                        # If this file contains print-class plugin, use it for print-class
+                        if plugin_name == 'print-class':
+                            source_file = file_path
+                            break
+                except:
+                    continue
+    
+    if not source_file:
+        raise FileNotFoundError(f"Plugin '{plugin_name}' not found in any source file in llvm directory. Available source files: {[f.name for f in source_files]}")
+    
+    lib_name = f"lib{plugin_name}.so"
+    lib_path = llvm_dir / lib_name
+    
+    if not lib_path.exists():
+        if verbose:
+            print(f"[verbose] Building {lib_name} from {source_file}")
+        build_cmd = ["clang++", "-std=c++26", "-shared", "-lclang-cpp", str(source_file), "-o", str(lib_path)]
+        result = subprocess.run(build_cmd, cwd=llvm_dir, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to build plugin: {result.stderr}")
+    
+    return lib_path
+
+# ----------------------------
+# Process files using LLVM plugin
+# ----------------------------
+def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=False):
+    try:
+        # Build the plugin if needed
+        lib_path = build_llvm_plugin(plugin_name, verbose=verbose)
+    except Exception as e:
+        print(f"Error: Could not build plugin '{plugin_name}': {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Check that the plugin file actually exists and is accessible
+    if not lib_path.exists():
+        print(f"Error: Plugin library {lib_path} was not created successfully", file=sys.stderr)
+        sys.exit(1)
+    
+    # The script is in bin directory, so llvm directory should be at ../llvm
+    script_dir = Path(__file__).resolve().parent
+    llvm_dir = script_dir.parent / "llvm"
+    
+    if not llvm_dir.exists():
+        raise FileNotFoundError(f"LLVM directory not found at {llvm_dir}")
+    
+    # Process header files with temporary TUs
+    processed_files = []
+    temp_files = []
+    
+    for file in files:
+        path = Path(file)
+        if not path.exists() and not (llvm_dir / path).exists():
+            if verbose:
+                print(f"[verbose] Skipping non-existent file: {file}")
+            continue
+
+        # Handle headers with temporary TU
+        if path.suffix in ['.h', '.hpp', '.hh', '.hxx', '.ixx']:
+            tu_file = tempfile.NamedTemporaryFile(suffix=".cpp", delete=False)
+            # Use absolute path if the header is in the llvm directory, otherwise relative
+            header_path = llvm_dir / path if (llvm_dir / path).exists() else path
+            tu_file.write(f'#include "{header_path}"\n'.encode())
+            tu_file.close()
+            processed_files.append(Path(tu_file.name))
+            temp_files.append(Path(tu_file.name))
+            if verbose:
+                print(f"[verbose] Created temporary TU: {tu_file.name}")
+        else:
+            # Check if file exists relative to current directory or in llvm directory
+            if path.exists():
+                processed_files.append(path)
+            elif (llvm_dir / path).exists():
+                processed_files.append(llvm_dir / path)
+            else:
+                processed_files.append(path)  # Let it fail if it doesn't exist
+
+    # clang command with LLVM plugin
+    lib_name = f"lib{plugin_name}.so"
+    cmd = ["clang", "-cc1", "-load", f"./{lib_name}", "-plugin", plugin_name]
+    
+    # Add all plugin arguments directly
+    for arg in plugin_args:
+        if '=' in arg:
+            # Split plugin arg like "class=Test" into "-plugin-arg-pluginname" and "class=Test"
+            cmd.extend([f"-plugin-arg-{plugin_name}", arg])
+        else:
+            cmd.extend([f"-plugin-arg-{plugin_name}", arg])
+
+    # Add all processed files to the command
+    for file_path in processed_files:
+        cmd.append(str(file_path))
+        
+    cmd.extend(extra_flags)
+
+    if verbose:
+        print(f"[verbose] Running: {' '.join(cmd)}")
+
+    try:
+        result = subprocess.run(cmd, cwd=llvm_dir, capture_output=True, text=True)
+        if result.stdout.strip():
+            print(result.stdout)
+        if result.stderr.strip() and result.returncode != 0:
+            if verbose:
+                print(f"[verbose] stderr: {result.stderr}")
+            else:
+                print(result.stderr, file=sys.stderr)
+    except Exception as e:
+        if verbose:
+            print(f"[verbose] Error running clang plugin: {e}")
+        sys.exit(1)
+
+    # Clean up temporary TU files
+    for temp_file in temp_files:
+        temp_file.unlink()
+
+# ----------------------------
+# CLI
+# ----------------------------
+def main():
+    parser = argparse.ArgumentParser(description="Extract content using LLVM plugin")
+    parser.add_argument("plugin_name", help="LLVM plugin name to run")
+    parser.add_argument("plugin_args", nargs="*", help="Arguments to pass to the plugin (e.g., class=Test, or --files file1.cpp file2.cpp)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    args = parser.parse_args()
+
+    # Separate plugin args from files
+    plugin_args = []
+    files = []
+    
+    i = 0
+    while i < len(args.plugin_args):
+        arg = args.plugin_args[i]
+        if arg == "--files" or arg == "--file":
+            # Next arguments until the next flag are files
+            i += 1
+            while i < len(args.plugin_args) and not args.plugin_args[i].startswith("--"):
+                files.append(args.plugin_args[i])
+                i += 1
+            continue
+        else:
+            plugin_args.append(arg)
+            i += 1
+    
+    # If no files specified, try to find files using git grep with the plugin args
+    if not files:
+        # Use the first plugin arg as search term if available
+        search_term = plugin_args[0].split('=')[-1] if plugin_args and '=' in plugin_args[0] else "test"
+        files = git_grep_files(search_term, verbose=args.verbose)
+        if not files:
+            if args.verbose:
+                print(f"[verbose] No files found containing '{search_term}', using all C++ files")
+            # Fallback to using all C++ files in the llvm directory
+            llvm_dir = Path(__file__).resolve().parent.parent / "llvm"
+            for ext in ["*.cpp", "*.cxx", "*.cc", "*.c", "*.h", "*.hpp", "*.hh", "*.hxx"]:
+                for file_path in llvm_dir.glob(ext):
+                    if file_path.is_file():
+                        files.append(str(file_path.name))
+
+    extra_flags = read_clang_flags(verbose=args.verbose)
+    extract_with_plugin(args.plugin_name, plugin_args, files, extra_flags, verbose=args.verbose)
+
+if __name__ == "__main__":
+    main()
