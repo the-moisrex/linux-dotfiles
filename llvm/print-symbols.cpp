@@ -33,7 +33,7 @@ public:
 
     if (matches.empty()) {
       CI.getDiagnostics().Report(DiagnosticsEngine::Warning)
-          << "print-class plugin: no class named '" << TargetName
+          << "print-symbols plugin: no class named '" << TargetName
           << "' found in TU";
       return;
     }
@@ -114,8 +114,8 @@ public:
 
     if (ClassName.empty()) {
       CI.getDiagnostics().Report(DiagnosticsEngine::Warning)
-          << "print-class plugin: no class name provided; use "
-             "-plugin-arg-print-class=class=Foo";
+          << "print-symbols plugin: no class name provided; use "
+             "-plugin-arg-print-symbols=class=Foo";
       return false; // fail parsing
     }
     return true;
@@ -138,13 +138,13 @@ static FrontendPluginRegistry::Add<PrintClassAction>
 /*
 2) Run the plugin with clang's -cc1 interface. Example:
 
-   clang -cc1 -load ./libprint-class-plugin.so -plugin print-class \
-         -plugin-arg-print-class -class=Foo test.cpp
+   clang -cc1 -load ./libprint-symbols-plugin.so -plugin print-symbols \
+         -plugin-arg-print-symbols -class=Foo test.cpp
 
    Alternative argument styles that some clang builds accept:
 
-   clang -cc1 -load ./libprint-class-plugin.so -plugin print-class \
-         -plugin-arg-print-class class=Foo test.cpp
+   clang -cc1 -load ./libprint-symbols-plugin.so -plugin print-symbols \
+         -plugin-arg-print-symbols class=Foo test.cpp
 
 Notes:
  - Use `clang -cc1` because the plugin interface is part of clang's frontend
