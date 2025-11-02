@@ -56,4 +56,10 @@ complete -c telegram.links -f -l list-ids -d "List the stored Telegram IDs"
 # Completion for main arguments (Telegram IDs/URLs) - No condition for now, applies always when no option is given.
 complete -c telegram.links -f -a "(telegram.links --list-ids)" -d "Telegram Channel ID"
 
+# prompt
+complete -c prompt -s h -l help -d "Show help message"
+complete -c prompt -xa "list" -d "List available prompts"
+# Complete prompt names from the prompt list command
+complete -c prompt -xa '(prompt list 2>/dev/null)' -d "Prompt name"
+
 
