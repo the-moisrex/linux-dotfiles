@@ -51,7 +51,7 @@ def read_clang_flags(verbose=False):
 # Find files using git grep
 # ----------------------------
 def git_grep_files(function_name, verbose=False):
-    cmd = ["git", "grep", "-l", function_name, "--", "*.cpp", "*.cxx", "*.cc", "*.h", "*.hpp"]
+    cmd = ["git", "grep", "-l", function_name, "--", "*.cpp", "*.cxx", "*.ixx", "*.cc", "*.h", "*.hpp"]
     if verbose:
         print(f"[verbose] Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -71,7 +71,7 @@ def extract_file(function_name, file, include_dirs, extra_flags, verbose=False):
         return ""
 
     # Handle headers with temporary TU
-    if path.suffix in ['.h', '.hpp', '.hh', '.hxx']:
+    if path.suffix in ['.h', '.hpp', '.hh', '.hxx', '.ixx']:
         tu_file = tempfile.NamedTemporaryFile(suffix=".cpp", delete=False)
         tu_file.write(f'#include "{path}"\n'.encode())
         tu_file.close()
@@ -92,7 +92,7 @@ def extract_file(function_name, file, include_dirs, extra_flags, verbose=False):
         "-fno-caret-diagnostics",
         "-fno-delayed-template-parsing",
         str(target_file),
-        "-std=c++23"
+        "-std=c++26"
     ] + extra_flags
 
     for d in include_dirs:
