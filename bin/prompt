@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+#
+# Write a bash script that manages prompts for us.
+#
+# - Add --help
+# - $XDG_CONFIG_DIRS/prompts is where we can find prompt files + an special place "../prompts" which is relative to the source file itself.
+# - name of the script is `prompt`.
+# - Prompt files are bash scripts or txt or markdown files.
+# - Usage: `cat file.cpp | prompt cpp-debug`  would invoke `cpp-debug.sh` or `cpp-debug.txt`  or `cpp-debug.md` or `cpp-debug` file and append that file.cpp to it.
+# - For bash scripts, the script itself does the appending, the prompt script has to only pass the pipe (essentially calling `cat file.cpp | cpp-debug.sh`). but for markdown or txt files, we can just append it.
+# - The bash prompt files may not be executable, so don't run them manually, run them with bash.
+# - The bash prompt files would also take the arguments that are passed to `prompt` script itself as well (excluding the ones that are for the prompt script itself)
+# - Add a `prompt list` that lists all available prompts (only print the names and nothing else)
+# - If stdin is not given, just call the bash prompt file; this is because some bash prompt files may ask users some questions themselves or based on the directory that we're in, add additional context.
+# - Don't print anything other than errors yourself.
+# - Add this prompt a comment to the top of the script.
+#
+# (The above is intentionally included verbatim as a comment at the top of this script.)
+#
+
+set -euo pipefail
+
+# -- Configuration / defaults
+XDG_CONFIG_DIRS="${XDG_CONFIG_DIRS:-/etc/xdg}"
+PROMPT_SUBDIR="prompts"
+# search order for extensions
+EXT_ORDER=(.sh .txt .md "")
+
+# helper: get script directory
+_script_dir() {
+  # works even if symlinked only roughly; use BASH_SOURCE for bash
+  local src="${BASH_SOURCE[0]:-$0}"
+  printf "%s" "$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+}
+
+SCRIPT_DIR="$(_script_dir)"
+SPECIAL_PROMPTS_DIR="$(cd "${SCRIPT_DIR}/../prompts" 2>/dev/null && pwd || true)"
+
+# Split XDG_CONFIG_DIRS into array
+IFS=':' read -r -a XDG_DIRS_ARRAY <<< "$XDG_CONFIG_DIRS"
+
+# Collect search paths (preserve order: XDG_CONFIG_DIRS then special)
+_search_paths() {
+  local p
+  for p in "${XDG_DIRS_ARRAY[@]}"; do
+    # only add if it exists or not? keep even if absent (we'll check when using)
+    printf "%s\n" "${p%/}/${PROMPT_SUBDIR}"
+  done
+  # include SPECIAL_PROMPTS_DIR if set
+  if [[ -n "$SPECIAL_PROMPTS_DIR" ]]; then
+    printf "%s\n" "$SPECIAL_PROMPTS_DIR"
+  fi
+}
+
+# Find prompt file by name. Prints full path to stdout and returns 0 if found, non-zero otherwise.
+_find_prompt_file() {
+  local name="$1"
+  local dir ext candidate
+  while IFS= read -r dir; do
+    [[ -z "$dir" ]] && continue
+    for ext in "${EXT_ORDER[@]}"; do
+      candidate="$dir/$name$ext"
+      if [[ -f "$candidate" ]]; then
+        printf "%s" "$candidate"
+        return 0
+      fi
+    done
+  done < <(_search_paths)
+  return 1
+}
+
+# Determine file type by extension
+_file_type() {
+  local file="$1"
+  case "$file" in
+    *.sh) printf "bash";;
+    *.txt) printf "text";;
+    *.md) printf "md";;
+    *) printf "text";; # treat unknown/no-ext as text by default (but could be executable bash - user wanted no ext fallback)
+  esac
+}
+
+# List available prompt *names* (no extensions), unique, one per line
+cmd_list() {
+  local dir ext base name
+  declare -A seen
+  # search through paths and files
+  while IFS= read -r dir; do
+    [[ -d "$dir" ]] || continue
+    # consider files with these extensions and also files without an extension
+    while IFS= read -r file; do
+      # skip if not regular file
+      [[ -f "$file" ]] || continue
+      base="$(basename "$file")"
+      # strip known extensions
+      name="$base"
+      for ext in .sh .txt .md; do
+        name="${name%$ext}"
+      done
+      # if it still ends with a dot (rare), clean
+      name="${name%.}"
+      if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
+        seen[$name]=1
+      fi
+    done < <(find "$dir" -maxdepth 1 -type f -print 2>/dev/null)
+  done < <(_search_paths)
+  # print order: sort by name to be deterministic
+  printf "%s\n" "${!seen[@]}" | sort
+}
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  prompt --help
+  prompt list
+  prompt <name> [-- arg1 arg2 ...]    # or prompt <name> arg1 arg2 ...
+Examples:
+  cat file.cpp | prompt cpp-debug
+  prompt cpp-debug --flag value
+Notes:
+  - Searches $XDG_CONFIG_DIRS/prompts and ../prompts (relative to this script) for prompt files.
+  - Recognized extensions (in search order): .sh .txt .md then no extension.
+  - For .sh prompts, the script will be executed with bash and receive STDIN and any additional arguments.
+  - For .txt/.md (or no-ext treated as text) prompts the file contents are printed, then STDIN is appended (if any).
+  - 'prompt list' prints available prompt names (one per line).
+USAGE
+}
+
+# Parse basic options. We don't have many flags; accept --help.
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ "${1:-}" == "list" ]]; then
+  # produce only names, nothing else
+  cmd_list
+  exit 0
+fi
+
+# If no args -> show usage (but user didn't request we print anything but errors; usage here is explicit)
+if [[ $# -lt 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+PROMPT_NAME="$1"
+shift || true
+
+# Allow the user to pass `--` to indicate remaining args are for prompt; already handled with shift
+# $@ are the args forwarded to the prompt script (if any)
+
+# Find the prompt file
+PROMPT_FILE=""
+if ! PROMPT_FILE="$(_find_prompt_file "$PROMPT_NAME")"; then
+  # not found: print error
+  printf "prompt: prompt '%s' not found\n" "$PROMPT_NAME" >&2
+  exit 3
+fi
+
+TYPE="$(_file_type "$PROMPT_FILE")"
+
+# detect whether stdin has data (not a terminal)
+# We'll check if stdin is a tty. If it's not a tty then there's piped data.
+if [ -t 0 ]; then
+  STDIN_PIPED=false
+else
+  STDIN_PIPED=true
+fi
+
+# Behavior:
+# - For bash prompts (.sh): run via `bash "$PROMPT_FILE"` with forwarded args; if STDIN_PIPED then pipe in (stdin already forwarded), else run interactive (i.e., no stdin).
+# - For non-bash (txt/md/noext): output contents of prompt file, and if STDIN_PIPED append stdin to stdout. If no stdin, just output the file contents.
+# Important: do not print anything else to stdout. Errors should go to stderr.
+
+if [[ "$TYPE" == "bash" ]]; then
+  # Always run with bash (script may not be executable)
+  # Forward arguments ($@) to the prompt file.
+  # If stdin is piped, it will already be connected; just exec bash so stdin is preserved.
+  exec bash "$PROMPT_FILE" "$@"
+else
+  # text or md
+  # Print the prompt file contents
+  # We must not output anything else.
+  cat -- "$PROMPT_FILE"
+  # If there's piped stdin, append it
+  if $STDIN_PIPED; then
+    cat -  # read from stdin and append to stdout
+  fi
+  exit 0
+fi
