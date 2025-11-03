@@ -7,46 +7,23 @@ Python replacement for `llvm.run` using LLVM plugin subprocess with:
 
 import argparse
 import subprocess
+from pathlib import Path
+import shlex
 import sys
 
 # Global array of essential clang flags to use by default
 ESSENTIAL_CLANG_FLAGS = [
-    "-triple", "x86_64-pc-linux-gnu",
-    "-disable-free", 
-    "-clear-ast-before-backend", 
-    "-disable-llvm-verifier", 
-    "-discard-value-names", 
-    "-main-file-name", "null", 
-    "-mrelocation-model", "pic", 
-    "-pic-level", "2", 
-    "-pic-is-pie", 
-    "-mframe-pointer=all", 
-    "-fmath-errno", 
-    "-ffp-contract=on", 
-    "-fno-rounding-math", 
-    "-mconstructor-aliases", 
-    # "-funwind-tables=2",  # Commented out to reduce warnings
-    "-target-cpu", "x86-64", 
-    "-tune-cpu", "generic", 
-    "-debugger-tuning=gdb", 
-    "-fdeprecated-macro", 
-    "-ferror-limit", "19", 
-    "-stack-protector", "2", 
-    "-fgnuc-version=4.2.1",  # Commented out as it may cause issues
-    "-fskip-odr-check-in-gmf", 
-    "-fcxx-exceptions", 
-    "-fexceptions", 
-    "-faddrsig",
-    # "-D__GCC_HAVE_DWARF2_CFI_ASM=1",  # Commented out for cleaner compilation
-    # Specific warning suppression flags
+    # Warning suppression flags
     "-Wno-assume",  # For the assumption warning in webpp
     "-Wno-character-conversion",  # For the character conversion warning
     "-Wno-ignored-attributes",  # To suppress ignored attribute warnings
-    "-Wno-deprecated-declarations"  # To suppress deprecated declarations warnings
+    "-Wno-deprecated-declarations",  # To suppress deprecated declarations warnings
+    "-Wno-invalid-source-encoding",  # Suppress invalid source encoding warnings
+    "-Wno-undefined-internal",  # Suppress undefined internal warnings
+    "-Wno-gnu-anonymous-struct",  # Suppress gnu anonymous struct warnings
+    "-Wno-nested-anon-types",  # Suppress nested anonymous types warnings
+    "-w"  # Suppress all warnings to reduce output noise
 ]
-from pathlib import Path
-import tempfile
-import shlex
 
 # Global list of flags to exclude from clang compilation
 EXCLUDE_FLAGS = [
@@ -57,16 +34,46 @@ EXCLUDE_FLAGS = [
     "-Wall",
     "-Wextra",
     "-Wpedantic",
-    "-Wno-unused-variable",
-    "-Wno-infinite-recursion",
     "-Werror=implicit-function-declaration",
     "-Wshadow",
-    "-Wno-shadow-field-in-constructor-modified",
-    "-Wno-shadow-ivar",
     "-Wuninitialized",
     "-Wunused-label",
-    "-Wunused-lambda-capture"
+    "-Wunused-lambda-capture",
 ]
+
+
+def get_clang_cc1_args():
+    # Run the clang++ command and capture stderr (that's where -### output goes)
+    result = subprocess.run(
+        ["clang++", "-###", "-E", "-x", "c++", "-std=c++26", "/dev/null", "-o", "/dev/null"],
+        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        text=True,
+    )
+
+    for line in result.stderr.splitlines():
+        if '"-cc1"' in line:
+            # Remove the leading and trailing quotes, split respecting quotes
+            tokens = shlex.split(line)
+            # Drop the first token (the clang executable)
+            tokens = tokens[1:]
+            # Remove the "-o" and the following "/dev/null" argument
+            cleaned_tokens = []
+            i = 0
+            while i < len(tokens):
+                if tokens[i] == "-o" and i + 1 < len(tokens) and tokens[i + 1] == "/dev/null":
+                    # Skip both "-o" and "/dev/null"
+                    i += 2
+                elif tokens[i] == "/dev/null":
+                    # Skip just "/dev/null" if it wasn't part of "-o /dev/null" (shouldn't happen but for safety)
+                    i += 1
+                else:
+                    cleaned_tokens.append(tokens[i])
+                    i += 1
+            return cleaned_tokens
+
+    raise RuntimeError("No -cc1 invocation found in clang output.")
+
 
 # ----------------------------
 # Read valid clang flags from .clang/.clangd
@@ -353,8 +360,28 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
     # Use the absolute path to the library relative to the working directory
     lib_path_relative = llvm_dir / lib_name
     
-    # Get default essential flags from our global array
+    # Get default essential flags from our global array and append dynamic clang flags
     std_flags = ESSENTIAL_CLANG_FLAGS.copy()
+    
+    # Get dynamic flags from get_clang_cc1_args
+    clang_cc1_args = []
+    try:
+        clang_cc1_args = get_clang_cc1_args()
+    except Exception as e:
+        if verbose:
+            print(f"[verbose] Could not get clang cc1 args: {e}, using only essential flags")
+        # If we can't get the dynamic flags, continue with just the essential flags
+    
+    # Remove any flags that might conflict with essential flags
+    # Specifically look for -std flags in clang_cc1_args to avoid duplication
+    filtered_clang_cc1_args = []
+    for flag in clang_cc1_args:
+        # Skip -std flags from clang_cc1_args since they will be in extra_flags if needed
+        if flag.startswith('-std'):
+            continue
+        filtered_clang_cc1_args.append(flag)
+    
+    std_flags.extend(filtered_clang_cc1_args)
     
     # Add the debug compilation directory based on the working directory
     working_dir = str(Path.cwd())
@@ -422,6 +449,7 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
     # Placing these early to ensure language settings like -std=c++23 are applied before file processing
     unique_extra_flags = []
     seen_flags = set()
+    seen_std_flags = False  # Track if we've already seen a -std flag to avoid duplicates
     i = 0
     while i < len(extra_flags):
         flag = extra_flags[i]
@@ -429,6 +457,23 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
             # This is a flag that takes an argument, so combine with next value
             if i + 1 < len(extra_flags):
                 combined_flag = f"{flag} {extra_flags[i+1]}"
+                
+                # Special handling for -std flags to avoid duplicates
+                if flag == '-std':
+                    if seen_std_flags:
+                        # Skip this -std flag since we've already seen one
+                        i += 2
+                        continue
+                    else:
+                        seen_std_flags = True
+                elif flag.startswith('-std='):
+                    if seen_std_flags:
+                        # Skip this -std flag since we've already seen one
+                        i += 2
+                        continue
+                    else:
+                        seen_std_flags = True
+                        
                 if combined_flag not in seen_flags:
                     unique_extra_flags.extend([flag, extra_flags[i+1]])
                     seen_flags.add(combined_flag)
@@ -440,6 +485,16 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
                 i += 1
         elif flag.startswith(('-std=', '-I', '-isystem', '-include', '-D', '-L', '-l')):
             # This is a flag=value format (like -std=c++23, -I./, etc.)
+            
+            # Special handling for -std= flags to avoid duplicates
+            if flag.startswith('-std='):
+                if seen_std_flags:
+                    # Skip this -std flag since we've already seen one
+                    i += 1
+                    continue
+                else:
+                    seen_std_flags = True
+            
             if flag not in seen_flags:
                 unique_extra_flags.append(flag)
                 seen_flags.add(flag)
