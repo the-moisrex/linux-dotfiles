@@ -32,9 +32,9 @@ public:
     }
 
     if (matches.empty()) {
-      CI.getDiagnostics().Report(DiagnosticsEngine::Warning)
-          << "print-symbols plugin: no class named '" << TargetName
-          << "' found in TU";
+      CI.getDiagnostics().Report(DiagnosticsEngine::Warning);
+      //   << "print-symbols plugin: no class named '" + TargetName +
+      //          "' found in TU";
       return;
     }
 

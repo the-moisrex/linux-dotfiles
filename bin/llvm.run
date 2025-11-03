@@ -8,9 +8,65 @@ Python replacement for `llvm.run` using LLVM plugin subprocess with:
 import argparse
 import subprocess
 import sys
+
+# Global array of essential clang flags to use by default
+ESSENTIAL_CLANG_FLAGS = [
+    "-triple", "x86_64-pc-linux-gnu",
+    "-disable-free", 
+    "-clear-ast-before-backend", 
+    "-disable-llvm-verifier", 
+    "-discard-value-names", 
+    "-main-file-name", "null", 
+    "-mrelocation-model", "pic", 
+    "-pic-level", "2", 
+    "-pic-is-pie", 
+    "-mframe-pointer=all", 
+    "-fmath-errno", 
+    "-ffp-contract=on", 
+    "-fno-rounding-math", 
+    "-mconstructor-aliases", 
+    # "-funwind-tables=2",  # Commented out to reduce warnings
+    "-target-cpu", "x86-64", 
+    "-tune-cpu", "generic", 
+    "-debugger-tuning=gdb", 
+    "-fdeprecated-macro", 
+    "-ferror-limit", "19", 
+    "-stack-protector", "2", 
+    "-fgnuc-version=4.2.1",  # Commented out as it may cause issues
+    "-fskip-odr-check-in-gmf", 
+    "-fcxx-exceptions", 
+    "-fexceptions", 
+    "-faddrsig",
+    # "-D__GCC_HAVE_DWARF2_CFI_ASM=1",  # Commented out for cleaner compilation
+    # Specific warning suppression flags
+    "-Wno-assume",  # For the assumption warning in webpp
+    "-Wno-character-conversion",  # For the character conversion warning
+    "-Wno-ignored-attributes",  # To suppress ignored attribute warnings
+    "-Wno-deprecated-declarations"  # To suppress deprecated declarations warnings
+]
 from pathlib import Path
 import tempfile
 import shlex
+
+# Global list of flags to exclude from clang compilation
+EXCLUDE_FLAGS = [
+    "--header-insertion=",  # Note: including the equals sign to match full flag patterns like --header-insertion=never
+    "--limit-references",
+    "--limit-results",
+    "-W",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Wno-unused-variable",
+    "-Wno-infinite-recursion",
+    "-Werror=implicit-function-declaration",
+    "-Wshadow",
+    "-Wno-shadow-field-in-constructor-modified",
+    "-Wno-shadow-ivar",
+    "-Wuninitialized",
+    "-Wunused-label",
+    "-Wunused-lambda-capture"
+]
 
 # ----------------------------
 # Read valid clang flags from .clang/.clangd
@@ -44,7 +100,22 @@ def read_clang_flags(verbose=False):
                             for flag_item in flag_items:
                                 flag_item = flag_item.strip()
                                 if flag_item.startswith('-'):
-                                    flags.append(flag_item)
+                                    # Skip flags that should be excluded
+                                    should_exclude = False
+                                    for exclude_flag in EXCLUDE_FLAGS:
+                                        if exclude_flag.endswith('='):
+                                            # For flags with an equals sign, check if the flag starts with the base part
+                                            base_flag = exclude_flag.rstrip('=')
+                                            if flag_item.startswith(base_flag + '=') or flag_item == base_flag:
+                                                should_exclude = True
+                                                break
+                                        else:
+                                            # For flags without equals, use startswith
+                                            if flag_item.startswith(exclude_flag):
+                                                should_exclude = True
+                                                break
+                                    if not should_exclude:
+                                        flags.append(flag_item)
                         elif line.strip().startswith("CompilationDatabase:"):
                             # Get compilation database path
                             comp_db_path = line.split(":", 1)[1].strip()
@@ -62,8 +133,21 @@ def read_clang_flags(verbose=False):
                             # Split comma-separated flags
                             subtokens = [t.strip() for t in token.split(",") if t.strip()]
                             for sub in subtokens:
-                                # Keep only valid clang CLI flags
-                                if sub.startswith("-") and not sub.startswith("--header-insertion") and not sub.startswith("--limit"):
+                                # Skip flags that should be excluded
+                                should_exclude = False
+                                for exclude_flag in EXCLUDE_FLAGS:
+                                    if exclude_flag.endswith('='):
+                                        # For flags with an equals sign, check if the flag starts with the base part
+                                        base_flag = exclude_flag.rstrip('=')
+                                        if sub.startswith(base_flag + '=') or sub == base_flag:
+                                            should_exclude = True
+                                            break
+                                    else:
+                                        # For flags without equals, use startswith
+                                        if sub.startswith(exclude_flag):
+                                            should_exclude = True
+                                            break
+                                if not should_exclude:
                                     flags.append(sub)
             except Exception as e:
                 if verbose:
@@ -246,9 +330,7 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
     if not llvm_dir.exists():
         raise FileNotFoundError(f"LLVM directory not found at {llvm_dir}")
     
-    # Process header files with temporary TUs
     processed_files = []
-    temp_files = []
     
     for file in files:
         path = Path(file)
@@ -264,26 +346,115 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
             # If it doesn't exist in either location, we'll still add it and let clang handle the error
             abs_file_path = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
         
-        # Handle headers with temporary TU
-        if path.suffix in ['.h', '.hpp', '.hh', '.hxx', '.ixx']:
-            tu_file = tempfile.NamedTemporaryFile(suffix=".cpp", delete=False)
-            # Use absolute path for the header inclusion
-            tu_file.write(f'#include "{abs_file_path}"\n'.encode())
-            tu_file.close()
-            processed_files.append(Path(tu_file.name))
-            temp_files.append(Path(tu_file.name))
-            if verbose:
-                print(f"[verbose] Created temporary TU: {tu_file.name}")
-        else:
-            processed_files.append(abs_file_path)
+        processed_files.append(abs_file_path)
 
     # clang command with LLVM plugin
     lib_name = f"lib{plugin_name}.so"
     # Use the absolute path to the library relative to the working directory
     lib_path_relative = llvm_dir / lib_name
     
-    cmd = ["clang", "-cc1", "-load", f"./{lib_name}", "-plugin", plugin_name]
+    # Get default essential flags from our global array
+    std_flags = ESSENTIAL_CLANG_FLAGS.copy()
     
+    # Add the debug compilation directory based on the working directory
+    working_dir = str(Path.cwd())
+    std_flags.extend([
+        "-fdebug-compilation-dir", working_dir
+    ])
+    
+    # Add resource directory (can be detected or default)
+    import subprocess as sp
+    try:
+        # Try to get resource directory from clang
+        result = sp.run(["clang", "-print-resource-dir"], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            resource_dir = result.stdout.strip()
+            if resource_dir:
+                # Replace the resource-dir in std_flags if we found one
+                if "-resource-dir" in std_flags:
+                    idx = std_flags.index("-resource-dir")
+                    if idx + 1 < len(std_flags):
+                        std_flags[idx + 1] = resource_dir
+                else:
+                    std_flags.extend(["-resource-dir", resource_dir])
+        else:
+            # If we can't get the resource dir, just keep the default one
+            pass
+    except:
+        # If all methods fail, use the default resource-dir from ESSENTIAL_CLANG_FLAGS
+        pass
+    
+    # Add system include paths (get them from clang -v if possible)
+    include_flags = []
+    try:
+        result = sp.run(["clang++", "-v", "-E", "-x", "c++", "/dev/null", "-o", "/dev/null"], 
+                       capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            lines = result.stderr.split('\n')
+            in_includes = False
+            for line in lines:
+                if "#include <...> search starts here:" in line:
+                    in_includes = True
+                    continue
+                elif "End of search list." in line:
+                    in_includes = False
+                    break
+                elif in_includes:
+                    path = line.strip()
+                    if path:
+                        include_flags.extend(["-internal-isystem", path])
+    except:
+        pass  # If this fails, include_flags remains empty
+    
+    std_flags.extend(include_flags)
+    
+    # Remove any potential duplicate -cc1 that might have been included from clang's output
+    # This could happen if -cc1 was in the extracted default flags
+    cleaned_std_flags = []
+    for flag in std_flags:
+        if flag != "-cc1":  # Remove any -cc1 that might have been captured
+            cleaned_std_flags.append(flag)
+    
+    cmd = ["clang", "-cc1"] + cleaned_std_flags
+    
+    # Add extra flags (from .clang/.clangd) but remove duplicates to prevent issues like "-std=c++23 -std=c++23" 
+    # Placing these early to ensure language settings like -std=c++23 are applied before file processing
+    unique_extra_flags = []
+    seen_flags = set()
+    i = 0
+    while i < len(extra_flags):
+        flag = extra_flags[i]
+        if flag in ['-std', '-I', '-isystem', '-include', '-D', '-L', '-l']:
+            # This is a flag that takes an argument, so combine with next value
+            if i + 1 < len(extra_flags):
+                combined_flag = f"{flag} {extra_flags[i+1]}"
+                if combined_flag not in seen_flags:
+                    unique_extra_flags.extend([flag, extra_flags[i+1]])
+                    seen_flags.add(combined_flag)
+                i += 2
+            else:
+                if flag not in seen_flags:
+                    unique_extra_flags.append(flag)
+                    seen_flags.add(flag)
+                i += 1
+        elif flag.startswith(('-std=', '-I', '-isystem', '-include', '-D', '-L', '-l')):
+            # This is a flag=value format (like -std=c++23, -I./, etc.)
+            if flag not in seen_flags:
+                unique_extra_flags.append(flag)
+                seen_flags.add(flag)
+        else:
+            # Regular flag
+            if flag not in seen_flags:
+                unique_extra_flags.append(flag)
+                seen_flags.add(flag)
+        i += 1
+    
+    cmd.extend(unique_extra_flags)
+    
+    # Add plugin loading and plugin arguments
+    cmd.extend(["-load", f"./{lib_name}", "-plugin", plugin_name])
+
     # Add all plugin arguments directly
     for arg in plugin_args:
         if '=' in arg:
@@ -302,8 +473,6 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
             # If the file is not relative to llvm_dir, use it as is
             cmd.append(str(file_path))
 
-    cmd.extend(extra_flags)
-
     if verbose:
         print(f"[verbose] Running: {' '.join(cmd)}")
 
@@ -321,9 +490,7 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
             print(f"[verbose] Error running clang plugin: {e}")
         sys.exit(1)
 
-    # Clean up temporary TU files
-    for temp_file in temp_files:
-        temp_file.unlink()
+    # Process complete - no temporary files to clean up
 
 # ----------------------------
 # CLI
