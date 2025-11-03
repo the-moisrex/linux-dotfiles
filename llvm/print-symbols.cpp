@@ -19,16 +19,21 @@ public:
       : CI(CI), TargetName(SymbolName.str()) {}
 
   void HandleTranslationUnit(ASTContext &Ctx) override {
+    PrintingPolicy Policy(Ctx.getLangOpts());
+    Policy.TerseOutput = false;
+    raw_ostream &out = outs();
+
     struct Visitor : public RecursiveASTVisitor<Visitor> {
       std::string Target;
       PrintingPolicy Policy;
       raw_ostream &out;
       ASTContext &Ctx;
       SmallVector<NamedDecl *, 4> matches;
+      raw_ostream &sout;
 
       Visitor(ASTContext &ctx, raw_ostream &o, const std::string &target,
               const PrintingPolicy &policy)
-          : Ctx(ctx), out(o), Target(target), Policy(policy) {}
+          : Ctx(ctx), out(o), Target(target), Policy(policy), sout{outs()} {}
 
       bool VisitNamedDecl(NamedDecl *ND) {
         if (ND->getNameAsString() == Target) {
@@ -37,11 +42,6 @@ public:
         return true;
       }
     };
-
-    PrintingPolicy Policy(Ctx.getLangOpts());
-    Policy.TerseOutput = false;
-
-    raw_ostream &out = outs();
 
     Visitor visitor(Ctx, out, TargetName, Policy);
     visitor.TraverseTranslationUnitDecl(Ctx.getTranslationUnitDecl());

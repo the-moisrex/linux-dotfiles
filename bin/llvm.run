@@ -14,15 +14,15 @@ import sys
 # Global array of essential clang flags to use by default
 ESSENTIAL_CLANG_FLAGS = [
     # Warning suppression flags
-    "-Wno-assume",  # For the assumption warning in webpp
-    "-Wno-character-conversion",  # For the character conversion warning
-    "-Wno-ignored-attributes",  # To suppress ignored attribute warnings
-    "-Wno-deprecated-declarations",  # To suppress deprecated declarations warnings
-    "-Wno-invalid-source-encoding",  # Suppress invalid source encoding warnings
-    "-Wno-undefined-internal",  # Suppress undefined internal warnings
-    "-Wno-gnu-anonymous-struct",  # Suppress gnu anonymous struct warnings
-    "-Wno-nested-anon-types",  # Suppress nested anonymous types warnings
-    "-w"  # Suppress all warnings to reduce output noise
+    # "-Wno-assume",  # For the assumption warning in webpp
+    # "-Wno-character-conversion",  # For the character conversion warning
+    # "-Wno-ignored-attributes",  # To suppress ignored attribute warnings
+    # "-Wno-deprecated-declarations",  # To suppress deprecated declarations warnings
+    # "-Wno-invalid-source-encoding",  # Suppress invalid source encoding warnings
+    # "-Wno-undefined-internal",  # Suppress undefined internal warnings
+    # "-Wno-gnu-anonymous-struct",  # Suppress gnu anonymous struct warnings
+    # "-Wno-nested-anon-types",  # Suppress nested anonymous types warnings
+    "-w",  # Suppress all warnings to reduce output noise
 ]
 
 # Global list of flags to exclude from clang compilation
