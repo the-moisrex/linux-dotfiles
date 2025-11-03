@@ -41,47 +41,17 @@ EXCLUDE_FLAGS = [
     "-Wunused-lambda-capture",
 ]
 
-
-def get_clang_cc1_args():
-    # Run the clang++ command and capture stderr (that's where -### output goes)
-    result = subprocess.run(
-        ["clang++", "-###", "-E", "-x", "c++", "-std=c++26", "/dev/null", "-o", "/dev/null"],
-        stderr=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        text=True,
-    )
-
-    for line in result.stderr.splitlines():
-        if '"-cc1"' in line:
-            # Remove the leading and trailing quotes, split respecting quotes
-            tokens = shlex.split(line)
-            # Drop the first token (the clang executable)
-            tokens = tokens[1:]
-            # Remove the "-o" and the following "/dev/null" argument
-            cleaned_tokens = []
-            i = 0
-            while i < len(tokens):
-                if tokens[i] == "-o" and i + 1 < len(tokens) and tokens[i + 1] == "/dev/null":
-                    # Skip both "-o" and "/dev/null"
-                    i += 2
-                elif tokens[i] == "/dev/null":
-                    # Skip just "/dev/null" if it wasn't part of "-o /dev/null" (shouldn't happen but for safety)
-                    i += 1
-                else:
-                    cleaned_tokens.append(tokens[i])
-                    i += 1
-            return cleaned_tokens
-
-    raise RuntimeError("No -cc1 invocation found in clang output.")
+def get_git_root():
+    current = Path(".").resolve()
+    while not (current / ".git").exists() and current.parent != current:
+        current = current.parent
+    return current
 
 
 # ----------------------------
 # Read valid clang flags from .clang/.clangd
 # ----------------------------
-def read_clang_flags(verbose=False):
-    git_root = Path(".").resolve()
-    while not (git_root / ".git").exists() and git_root.parent != git_root:
-        git_root = git_root.parent
+def read_clang_flags(git_root, verbose=False):
     flags = []
 
     for file_name in [".clang", ".clangd"]:
@@ -185,47 +155,20 @@ def build_llvm_plugin(plugin_name, verbose=False):
     if not llvm_dir.exists():
         raise FileNotFoundError(f"LLVM directory not found at {llvm_dir}")
     
-    # Look for source files that might contain the plugin implementation
-    source_files = []
-    
-    for ext in ["*.cpp", "*.cxx", "*.cc"]:
-        for file_path in llvm_dir.glob(ext):
-            if file_path.is_file():
-                source_files.append(file_path)
-    
-    if not source_files:
-        raise FileNotFoundError(f"No source files found in llvm directory")
-    
     # Look through source files to find one that registers the plugin name
-    source_file = None
-    for file_path in source_files:
-        try:
-            content = file_path.read_text()
-            # Look for the plugin registration line in the source code
-            if f'X("{plugin_name}",' in content or f'X( "{plugin_name}" ,' in content or \
-               f'X( "{plugin_name}",' in content or f'X("{plugin_name}" ,' in content:
-                source_file = file_path
-                break
-        except:
-            continue  # Skip files that can't be read
+    source_file = llvm_dir / (plugin_name + ".cpp")
+    if not source_file.exists():
+        # Look for source files that might contain the plugin implementation
+        source_files = []
+        
+        for ext in ["*.cpp", "*.cxx", "*.cc"]:
+            for file_path in llvm_dir.glob(ext):
+                if file_path.is_file():
+                    source_files.append(file_path)
+        
+        if not source_files:
+            raise FileNotFoundError(f"No source files found in llvm directory")
     
-    # If we didn't find a source file with exact registered name, look for plugin classes that might match
-    if not source_file:
-        for file_path in source_files:
-            try:
-                content = file_path.read_text()
-                # Check for common plugin class patterns that might indicate the plugin supports this name
-                if plugin_name in content:
-                    # Look for class names that might be related to the plugin name
-                    # For example, if plugin_name is "print-class", look for "PrintClassAction" class
-                    plugin_class_name = ''.join(word.capitalize() for word in plugin_name.replace('-', '_').split('_')) + "Action"
-                    if plugin_class_name in content:
-                        source_file = file_path
-                        break
-            except:
-                continue  # Skip files that can't be read
-    
-    if not source_file:
         raise FileNotFoundError(f"Plugin '{plugin_name}' not found in any source file in llvm directory. Available source files: {[f.name for f in source_files]}")
     
     lib_name = f"lib{plugin_name}.so"
@@ -234,9 +177,6 @@ def build_llvm_plugin(plugin_name, verbose=False):
     if not lib_path.exists():
         if verbose:
             print(f"[verbose] Building {lib_name} from {source_file}")
-        # Build with proper include flags
-        import subprocess as sp
-        
         # Try to find clang installation location and get proper include paths
         try:
             # Find clang++ and use it to get system include paths
@@ -317,7 +257,7 @@ def build_llvm_plugin(plugin_name, verbose=False):
 # ----------------------------
 # Process files using LLVM plugin
 # ----------------------------
-def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=False):
+def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, git_root, verbose=False):
     try:
         # Build the plugin if needed
         lib_path = build_llvm_plugin(plugin_name, verbose=verbose)
@@ -349,6 +289,9 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
         # Then check if it exists relative to the llvm directory
         elif (llvm_dir / path).exists():
             abs_file_path = (llvm_dir / path).resolve()
+        # Then check if it exists relative to git root
+        elif (git_root / path).exists():
+            abs_file_path = (git_root / path).resolve()
         else:
             # If it doesn't exist in either location, we'll still add it and let clang handle the error
             abs_file_path = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
@@ -357,93 +300,9 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
 
     # clang command with LLVM plugin
     lib_name = f"lib{plugin_name}.so"
-    # Use the absolute path to the library relative to the working directory
-    lib_path_relative = llvm_dir / lib_name
     
-    # Get default essential flags from our global array and append dynamic clang flags
+    # Essential flags
     std_flags = ESSENTIAL_CLANG_FLAGS.copy()
-    
-    # Get dynamic flags from get_clang_cc1_args
-    clang_cc1_args = []
-    try:
-        clang_cc1_args = get_clang_cc1_args()
-    except Exception as e:
-        if verbose:
-            print(f"[verbose] Could not get clang cc1 args: {e}, using only essential flags")
-        # If we can't get the dynamic flags, continue with just the essential flags
-    
-    # Remove any flags that might conflict with essential flags
-    # Specifically look for -std flags in clang_cc1_args to avoid duplication
-    filtered_clang_cc1_args = []
-    for flag in clang_cc1_args:
-        # Skip -std flags from clang_cc1_args since they will be in extra_flags if needed
-        if flag.startswith('-std'):
-            continue
-        filtered_clang_cc1_args.append(flag)
-    
-    std_flags.extend(filtered_clang_cc1_args)
-    
-    # Add the debug compilation directory based on the working directory
-    working_dir = str(Path.cwd())
-    std_flags.extend([
-        "-fdebug-compilation-dir", working_dir
-    ])
-    
-    # Add resource directory (can be detected or default)
-    import subprocess as sp
-    try:
-        # Try to get resource directory from clang
-        result = sp.run(["clang", "-print-resource-dir"], capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            resource_dir = result.stdout.strip()
-            if resource_dir:
-                # Replace the resource-dir in std_flags if we found one
-                if "-resource-dir" in std_flags:
-                    idx = std_flags.index("-resource-dir")
-                    if idx + 1 < len(std_flags):
-                        std_flags[idx + 1] = resource_dir
-                else:
-                    std_flags.extend(["-resource-dir", resource_dir])
-        else:
-            # If we can't get the resource dir, just keep the default one
-            pass
-    except:
-        # If all methods fail, use the default resource-dir from ESSENTIAL_CLANG_FLAGS
-        pass
-    
-    # Add system include paths (get them from clang -v if possible)
-    include_flags = []
-    try:
-        result = sp.run(["clang++", "-v", "-E", "-x", "c++", "/dev/null", "-o", "/dev/null"], 
-                       capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            lines = result.stderr.split('\n')
-            in_includes = False
-            for line in lines:
-                if "#include <...> search starts here:" in line:
-                    in_includes = True
-                    continue
-                elif "End of search list." in line:
-                    in_includes = False
-                    break
-                elif in_includes:
-                    path = line.strip()
-                    if path:
-                        include_flags.extend(["-internal-isystem", path])
-    except:
-        pass  # If this fails, include_flags remains empty
-    
-    std_flags.extend(include_flags)
-    
-    # Remove any potential duplicate -cc1 that might have been included from clang's output
-    # This could happen if -cc1 was in the extracted default flags
-    cleaned_std_flags = []
-    for flag in std_flags:
-        if flag != "-cc1":  # Remove any -cc1 that might have been captured
-            cleaned_std_flags.append(flag)
-    
-    cmd = ["clang", "-cc1"] + cleaned_std_flags
     
     # Add extra flags (from .clang/.clangd) but remove duplicates to prevent issues like "-std=c++23 -std=c++23" 
     # Placing these early to ensure language settings like -std=c++23 are applied before file processing
@@ -505,34 +364,33 @@ def extract_with_plugin(plugin_name, plugin_args, files, extra_flags, verbose=Fa
                 seen_flags.add(flag)
         i += 1
     
-    cmd.extend(unique_extra_flags)
+    cmd = ["clang++", "-fsyntax-only", "-x", "c++"] + std_flags + unique_extra_flags
     
-    # Add plugin loading and plugin arguments
-    cmd.extend(["-load", f"./{lib_name}", "-plugin", plugin_name])
+    # Add plugin loading and plugin arguments via -Xclang
+    plugin_load = ["-Xclang", "-load", "-Xclang", str(lib_path)]
+    plugin_load.extend(["-Xclang", "-add-plugin", "-Xclang", plugin_name])
 
     # Add all plugin arguments directly
     for arg in plugin_args:
-        if '=' in arg:
-            # Split plugin arg like "class=Test" into "-plugin-arg-pluginname" and "class=Test"
-            cmd.extend([f"-plugin-arg-{plugin_name}", arg])
-        else:
-            cmd.extend([f"-plugin-arg-{plugin_name}", arg])
+        plugin_load.extend(["-Xclang", f"-plugin-arg-{plugin_name}", "-Xclang", arg])
+
+    cmd.extend(plugin_load)
 
     # Add all processed files to the command
     for file_path in processed_files:
-        # Convert to relative path from the llvm directory for clang
+        # Convert to relative path from the git_root for clang
         try:
-            relative_path = file_path.relative_to(llvm_dir)
+            relative_path = file_path.relative_to(git_root)
             cmd.append(str(relative_path))
         except ValueError:
-            # If the file is not relative to llvm_dir, use it as is
+            # If the file is not relative to git_root, use it as is
             cmd.append(str(file_path))
 
     if verbose:
         print(f"[verbose] Running: {' '.join(cmd)}")
 
     try:
-        result = subprocess.run(cmd, cwd=llvm_dir, capture_output=True, text=True)
+        result = subprocess.run(cmd, cwd=git_root, capture_output=True, text=True)
         if result.stdout.strip():
             print(result.stdout)
         if result.stderr.strip() and result.returncode != 0:
@@ -558,6 +416,8 @@ def main():
     parser.add_argument("--grep", help="Grep pattern to use for finding files")
     parser.add_argument("--files", nargs="*", help="Files to process (for compatibility)")
     args = parser.parse_args()
+
+    git_root = get_git_root()
 
     # Separate plugin args from files
     plugin_args = []
@@ -598,7 +458,7 @@ def main():
                 for ext in ["*.cpp", "*.cxx", "*.cc", "*.c", "*.h", "*.hpp", "*.hh", "*.hxx"]:
                     for file_path in llvm_dir.glob(ext):
                         if file_path.is_file():
-                            files.append(str(file_path.name))
+                            files.append(str(file_path))
         else:
             # If no search term and no files specified, use all C++ files in the llvm directory
             if args.verbose:
@@ -607,10 +467,10 @@ def main():
             for ext in ["*.cpp", "*.cxx", "*.cc", "*.c", "*.h", "*.hpp", "*.hh", "*.hxx"]:
                 for file_path in llvm_dir.glob(ext):
                     if file_path.is_file():
-                        files.append(str(file_path.name))
+                        files.append(str(file_path))
 
-    extra_flags = read_clang_flags(verbose=args.verbose)
-    extract_with_plugin(args.plugin_name, plugin_args, files, extra_flags, verbose=args.verbose)
+    extra_flags = read_clang_flags(git_root, verbose=args.verbose)
+    extract_with_plugin(args.plugin_name, plugin_args, files, extra_flags, git_root, verbose=args.verbose)
 
 if __name__ == "__main__":
     main()
