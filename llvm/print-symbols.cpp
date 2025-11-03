@@ -1,7 +1,7 @@
-
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/PrettyPrinter.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
@@ -13,80 +13,63 @@ using namespace llvm;
 
 namespace {
 
-class PrintClassConsumer : public ASTConsumer {
+class PrintSymbolConsumer : public ASTConsumer {
 public:
-  PrintClassConsumer(CompilerInstance &CI, StringRef ClassName)
-      : CI(CI), TargetName(ClassName.str()) {}
+  PrintSymbolConsumer(CompilerInstance &CI, StringRef SymbolName)
+      : CI(CI), TargetName(SymbolName.str()) {}
 
   void HandleTranslationUnit(ASTContext &Ctx) override {
-    TranslationUnitDecl *TU = Ctx.getTranslationUnitDecl();
+    struct Visitor : public RecursiveASTVisitor<Visitor> {
+      std::string Target;
+      PrintingPolicy Policy;
+      raw_ostream &out;
+      ASTContext &Ctx;
+      SmallVector<NamedDecl *, 4> matches;
 
-    // Find the CXXRecordDecl(s) with the requested name.
-    SmallVector<CXXRecordDecl *, 4> matches;
-    for (auto *D : TU->decls()) {
-      if (auto *C = dyn_cast<CXXRecordDecl>(D)) {
-        if (C->getName() == TargetName) {
-          matches.push_back(C);
+      Visitor(ASTContext &ctx, raw_ostream &o, const std::string &target,
+              const PrintingPolicy &policy)
+          : Ctx(ctx), out(o), Target(target), Policy(policy) {}
+
+      bool VisitNamedDecl(NamedDecl *ND) {
+        if (ND->getNameAsString() == Target) {
+          matches.push_back(ND);
         }
+        return true;
       }
-    }
+    };
 
-    if (matches.empty()) {
-      CI.getDiagnostics().Report(DiagnosticsEngine::Warning);
-      //   << "print-symbols plugin: no class named '" + TargetName +
-      //          "' found in TU";
-      return;
-    }
-
-    // Prepare printing policy from the compiler's LangOptions.
     PrintingPolicy Policy(Ctx.getLangOpts());
     Policy.TerseOutput = false;
 
     raw_ostream &out = outs();
 
-    for (auto *C : matches) {
-      // Print the class declaration (this prints the declaration text
-      // as it would appear in source for that declaration node).
-      C->print(out, Policy);
+    Visitor visitor(Ctx, out, TargetName, Policy);
+    visitor.TraverseTranslationUnitDecl(Ctx.getTranslationUnitDecl());
+
+    if (visitor.matches.empty()) {
+      DiagnosticsEngine &Diags = CI.getDiagnostics();
+      unsigned DiagID = Diags.getCustomDiagID(
+          DiagnosticsEngine::Warning,
+          "print-symbols plugin: no symbol named '%0' found in TU");
+      Diags.Report(DiagID) << TargetName;
+      return;
+    }
+
+    for (auto *ND : visitor.matches) {
+      ND->print(out, Policy);
       out << "\n";
 
-      // Now find any method definitions that belong to this class but
-      // are *out-of-line* (i.e. defined outside the class body). We
-      // iterate the translation unit to find
-      // FunctionDecl/CXXMethodDecls that have this class as their
-      // parent and are definitions.
-
-      for (auto *D : TU->decls()) {
-        if (auto *FD = dyn_cast<FunctionDecl>(D)) {
-          // We want CXXMethodDecl specifically and a definition.
-          if (auto *MD = dyn_cast<CXXMethodDecl>(FD)) {
-            if (MD->getParent() == C && MD->isThisDeclarationADefinition()) {
-              // If the declaration is actually inside the
-              // class body (i.e. the "in-class" definition),
-              // the MethodDecl *is* located nested inside the
-              // CXXRecordDecl and will typically not appear
-              // separately as a top-level TU decl; but many
-              // out-of-line definitions *are* top-level
-              // FunctionDecls in the TU, so this catches
-              // those.
-
-              // Avoid printing the same method twice: skip if
-              // this method is already defined inline inside
-              // the class (isOutOfLine returns true for
-              // out-of-line definitions).
-              if (!MD->isOutOfLine())
-                continue;
-
-              // Print the full function definition using the
-              // printing policy.
-              MD->print(out, Policy);
-              out << "\n";
-            }
+      if (auto *CRD = dyn_cast<CXXRecordDecl>(ND)) {
+        for (auto *MD : CRD->methods()) {
+          if (MD->isThisDeclarationADefinition() && MD->isOutOfLine()) {
+            MD->print(out, Policy);
+            out << "\n";
           }
         }
+        out << "// ---- end of class " << TargetName << " ----\n\n";
+      } else {
+        out << "// ---- end of symbol " << TargetName << " ----\n\n";
       }
-
-      out << "// ---- end of class " << TargetName << " ----\n\n";
     }
   }
 
@@ -95,42 +78,44 @@ private:
   std::string TargetName;
 };
 
-class PrintClassAction : public PluginASTAction {
+class PrintSymbolAction : public PluginASTAction {
 public:
   std::unique_ptr<ASTConsumer>
   CreateASTConsumer(CompilerInstance &CI, StringRef /*InFile*/) override {
-    return std::make_unique<PrintClassConsumer>(CI, ClassName);
+    return std::make_unique<PrintSymbolConsumer>(CI, SymbolName);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
                  const std::vector<std::string> &args) override {
     for (auto &arg : args) {
-      // Accept either "class=Foo" or just "Foo" for convenience.
-      if (arg.starts_with("class="))
-        ClassName = arg.substr(strlen("class="));
+      // Accept either "symbol=Foo" or just "Foo" for convenience.
+      if (arg.starts_with("symbol="))
+        SymbolName = arg.substr(strlen("symbol="));
       else
-        ClassName = arg;
+        SymbolName = arg;
     }
 
-    if (ClassName.empty()) {
-      CI.getDiagnostics().Report(DiagnosticsEngine::Warning)
-          << "print-symbols plugin: no class name provided; use "
-             "-plugin-arg-print-symbols=class=Foo";
+    if (SymbolName.empty()) {
+      DiagnosticsEngine &Diags = CI.getDiagnostics();
+      unsigned DiagID = Diags.getCustomDiagID(
+          DiagnosticsEngine::Warning,
+          "print-symbols plugin: no symbol name provided; use "
+          "-plugin-arg-print-symbols symbol=Foo");
+      Diags.Report(DiagID);
       return false; // fail parsing
     }
     return true;
   }
 
-  bool HandleTopLevelDecl(DeclGroupRef DG) { return true; }
-
 private:
-  std::string ClassName;
+  std::string SymbolName;
 };
 
 } // namespace
 
-static FrontendPluginRegistry::Add<PrintClassAction>
-    X("print-symbols", "print a class and its out-of-line method definitions");
+static FrontendPluginRegistry::Add<PrintSymbolAction> X(
+    "print-symbols",
+    "print a symbol and if class/struct, its member function implementations");
 
 // -----------------------------
 // Build & run (short guide)
@@ -139,12 +124,12 @@ static FrontendPluginRegistry::Add<PrintClassAction>
 2) Run the plugin with clang's -cc1 interface. Example:
 
    clang -cc1 -load ./libprint-symbols-plugin.so -plugin print-symbols \
-         -plugin-arg-print-symbols -class=Foo test.cpp
+         -plugin-arg-print-symbols symbol=Foo test.cpp
 
    Alternative argument styles that some clang builds accept:
 
    clang -cc1 -load ./libprint-symbols-plugin.so -plugin print-symbols \
-         -plugin-arg-print-symbols class=Foo test.cpp
+         -plugin-arg-print-symbols symbol=Foo test.cpp
 
 Notes:
  - Use `clang -cc1` because the plugin interface is part of clang's frontend
