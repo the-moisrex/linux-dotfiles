@@ -2,6 +2,11 @@
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
+print_prompt() {
+  echo "Turn this into an markdown article and remove the ads, repetition, meaningless stuff: "
+  echo
+}
+
 transform_url() {
   local url="$1"
   # Capture stdout for processing while letting stderr flow to stderr by using the command directly
@@ -27,8 +32,7 @@ process_stdin() {
     local result
     if result=$(transform_url "$trimmed"); then
       # Only print header and result if the command succeeds
-      echo "Turn this into an article and remove the ads, repetition, meaningless stuff: "
-      echo
+      print_prompt
       printf '%s' "$result"
     else
       # If command fails, transform_url already printed errors to stderr
@@ -37,8 +41,7 @@ process_stdin() {
     fi
   else
     # Not a URL: print original stdin exactly with header
-    echo "Turn this into an article and remove the ads, repetition, meaningless stuff: "
-    echo
+    print_prompt
     printf '%s' "$input"
   fi
 }
