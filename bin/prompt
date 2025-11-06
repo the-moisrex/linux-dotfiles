@@ -168,24 +168,83 @@ else
   STDIN_PIPED=true
 fi
 
-# Behavior:
-# - For bash prompts (.sh): run via `bash "$PROMPT_FILE"` with forwarded args; if STDIN_PIPED then pipe in (stdin already forwarded), else run interactive (i.e., no stdin).
-# - For non-bash (txt/md/noext): output contents of prompt file, and if STDIN_PIPED append stdin to stdout. If no stdin, just output the file contents.
-# Important: do not print anything else to stdout. Errors should go to stderr.
-
-if [[ "$TYPE" == "bash" ]]; then
-  # Always run with bash (script may not be executable)
-  # Forward arguments ($@) to the prompt file.
-  # If stdin is piped, it will already be connected; just exec bash so stdin is preserved.
-  exec bash "$PROMPT_FILE" "$@"
+# Check if output is going to a terminal (stdout)
+if [ -t 1 ]; then
+  STDOUT_TO_TERMINAL=true
 else
-  # text or md
-  # Print the prompt file contents
-  # We must not output anything else.
-  cat -- "$PROMPT_FILE"
-  # If there's piped stdin, append it
-  if $STDIN_PIPED; then
-    cat -  # read from stdin and append to stdout
+  STDOUT_TO_TERMINAL=false
+fi
+
+# Function to copy output to clipboard and send notification
+copy_output_to_clipboard() {
+  local output="$1"
+  printf "%s" "$output"
+  printf "%s" "$output" | "$SCRIPT_DIR/c.c"
+  # Notification when output goes to terminal and not piped
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send "Prompt completed" "Output copied to clipboard" 2>/dev/null || true
+  elif command -v zenity >/dev/null 2>&1; then
+    zenity --notification --text="Prompt completed: Output copied to clipboard" 2>/dev/null || true
   fi
-  exit 0
+}
+
+# Function to handle output based on whether it goes to terminal or is piped
+handle_output() {
+  local output="$1"
+  if $STDOUT_TO_TERMINAL; then
+    copy_output_to_clipboard "$output"
+  else
+    printf "%s" "$output"
+  fi
+}
+
+# Function to handle text prompts when stdin is provided
+handle_text_with_stdin() {
+  if $STDOUT_TO_TERMINAL; then
+    # Capture full output when going to terminal
+    OUTPUT=$(cat -- "$PROMPT_FILE"; if $STDIN_PIPED; then cat -; fi)
+    copy_output_to_clipboard "$OUTPUT"
+  else
+    # Direct output without capturing for clipboard
+    cat -- "$PROMPT_FILE"
+    if $STDIN_PIPED; then
+      cat -  # read from stdin and append to stdout
+    fi
+  fi
+}
+
+# If no stdin is provided, get clipboard content via c.p
+if ! $STDIN_PIPED; then
+  if [[ "$TYPE" == "bash" ]]; then
+    # For bash prompts, pipe clipboard content to the script and handle output
+    if $STDOUT_TO_TERMINAL; then
+      # Capture output when stdout goes to terminal
+      OUTPUT=$(exec "$SCRIPT_DIR/c.p" | bash "$PROMPT_FILE" "$@")
+      copy_output_to_clipboard "$OUTPUT"
+    else
+      # Just pipe clipboard content to the script
+      exec "$SCRIPT_DIR/c.p" | exec bash "$PROMPT_FILE" "$@"
+    fi
+  else
+    # For text prompts, output the file content first, then append clipboard content
+    OUTPUT=$(cat -- "$PROMPT_FILE"; "$SCRIPT_DIR/c.p")
+    handle_output "$OUTPUT"
+  fi
+else
+  # Original behavior when stdin is provided
+  if [[ "$TYPE" == "bash" ]]; then
+    # Always run with bash (script may not be executable)
+    # Forward arguments ($@) to the prompt file.
+    if $STDOUT_TO_TERMINAL; then
+      # Capture output when stdout goes to terminal
+      OUTPUT=$(bash "$PROMPT_FILE" "$@")
+      copy_output_to_clipboard "$OUTPUT"
+    else
+      # If stdout is piped, just execute normally
+      exec bash "$PROMPT_FILE" "$@"
+    fi
+  else
+    # text or md - handle text prompts with possible stdin
+    handle_text_with_stdin
+  fi
 fi

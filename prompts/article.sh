@@ -2,7 +2,6 @@
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
-# Example transformer (replace with your implementation)
 transform_url() {
   local url="$1"
   # Capture stdout for processing while letting stderr flow to stderr by using the command directly
