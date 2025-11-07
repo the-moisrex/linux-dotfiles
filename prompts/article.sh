@@ -36,8 +36,9 @@ process_stdin() {
   local trimmed
   trimmed="$(printf '%s' "$input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
-  # URL regex: accept http(s)://... with at least one host char
-  if printf '%s' "$trimmed" | grep -Eq '^https?://[^[:space:]]+$'; then
+  # URL regex: check if trimmed content is a single-line URL
+  # First check that there are no newlines in trimmed content, then check URL format
+  if [[ "$trimmed" != *$'\n'* ]] && printf '%s' "$trimmed" | grep -Eq '^https?://[^[:space:]]+$'; then
     # It's a URL: call transformer and print its output only if successful
     local result
     if result="$(transform_url "$trimmed")"; then
@@ -45,8 +46,9 @@ process_stdin() {
       print_prompt
       printf '%s' "$result"
     else
-      # transform_url failed and should have written errors to stderr
-      exit 1
+      # transform_url failed, treat as regular input instead of exiting
+      print_prompt
+      printf '%s' "$input"
     fi
   else
     # Not a URL: print original stdin exactly with header
