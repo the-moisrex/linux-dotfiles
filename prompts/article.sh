@@ -1,4 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -o nounset
+# don't enable -e globally because we use explicit if/else checks;
+# keep pipefail local where needed (we also set it inside transform_url)
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
@@ -9,12 +12,19 @@ print_prompt() {
 
 transform_url() {
   local url="$1"
-  # Capture stdout for processing while letting stderr flow to stderr by using the command directly
-  # without capturing stderr in the substitution
-  printf '%s' "$(
-    set -o pipefail
-    "$curdir/yt.links" "$url" | xargs "$curdir/subtitle" | "$curdir/srt2text"
-  )"
+
+  # make sure any failure in the pipeline is visible
+  set -o pipefail
+
+  # run pipeline inside a command substitution but check its exit status
+  local out
+  if ! out="$("$curdir/yt.links" "$url" | xargs "$curdir/subtitle" | "$curdir/srt2text")"; then
+    # pipeline failed — propagate failure and don't print anything to stdout
+    return 1
+  fi
+
+  # success: print captured output
+  printf '%s' "$out"
 }
 
 process_stdin() {
@@ -30,13 +40,12 @@ process_stdin() {
   if printf '%s' "$trimmed" | grep -Eq '^https?://[^[:space:]]+$'; then
     # It's a URL: call transformer and print its output only if successful
     local result
-    if result=$(transform_url "$trimmed"); then
+    if result="$(transform_url "$trimmed")"; then
       # Only print header and result if the command succeeds
       print_prompt
       printf '%s' "$result"
     else
-      # If command fails, transform_url already printed errors to stderr
-      # Don't print anything to stdout, just exit with failure code
+      # transform_url failed and should have written errors to stderr
       exit 1
     fi
   else
@@ -47,3 +56,4 @@ process_stdin() {
 }
 
 process_stdin
+
