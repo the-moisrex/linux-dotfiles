@@ -5,7 +5,7 @@
 # Finds the root directory of the current git repository
 # Returns the path as a string, or null if not in a git repo or error occurs
 def calc_git_root [] {
-    mut current_path = Path.pwd()
+    mut current_path = $env.PWD
     loop {
         let git_dir = ($current_path | path join ".git")
         if (($git_dir | path type) == "dir") {
@@ -21,15 +21,19 @@ def calc_git_root [] {
     }
 }
 
+# Backup original cd command to avoid recursion
+alias cd-builtin = cd
+
 # --- Navigation ---
 
 # Change directory relative to the git root
-def cdi [path_in_repo?: string = ""] {
+def --env cdi [path_in_repo?: string = ""] {
     let root = calc_git_root
     match ($root) {
         _ => {
             let target_path = ([$root $path_in_repo] | path join)
-            cd $target_path
+            cd-builtin $target_path
+            ls
         }
         $none => {
             error make { msg: "Not inside a git repository." }
@@ -45,9 +49,19 @@ def proj [path_in_proj?: string = ""] {
         return
     }
     let target_path = ([$env.projects_root $path_in_proj] | path join)
-    cd $target_path
+    cd-builtin $target_path
 }
 alias cdproj = proj
+
+# Custom navigation functions
+def --env cd [path?: string = ""] {
+    cd-builtin $path
+    ls
+}
+def --env .. [] { cd-builtin .. }
+def --env ... [] { cd-builtin ../.. }
+def --env .... [] { cd-builtin ../../.. }
+def --env ..... [] { cd-builtin ../../../.. }
 
 
 # --- Utilities ---
@@ -73,9 +87,11 @@ alias tg.link = telegram.links
 # Note: Nushell aliases don't directly expand other aliases in their definition in the same way
 #       as Fish/Bash sometimes do. We parse the base command string here.
 #       Alternatively, define a helper function `def run-ls [...] { $ls_command ...$rest }`
-alias ll = ls -al
-alias la = ls -a
-alias l = ls
+alias ll = ^ls -alFh
+alias la = ^ls -a
+alias l = ^ls -F
+alias lh = ^ls -lh
+alias lsdir = ^ls -ld */
 alias dir = dir --color=auto   # Assumes 'dir' is GNU dir
 alias vdir = vdir --color=auto # Assumes 'vdir' is GNU vdir
 
@@ -103,8 +119,8 @@ alias killfirefox = pkill -9 firefox
 alias killslack = pkill -9 slack
 
 # --- Case Aliases ---
-alias CD = cd
-alias Cd = cd
+alias CD = cd-builtin
+alias Cd = cd-builtin
 
 # --- Proxy Command Wrappers ---
 # These use 'env' to set environment variables for just the wrapped command
@@ -164,6 +180,13 @@ alias cb.hist = clipboard.history
 # --- Misc Aliases ---
 alias ping = ping -DO
 alias please = sudo
+def paux [search_term?: string] {
+    if ($search_term | is-not-empty) {
+        ^ps aux | ^grep $search_term
+    } else {
+        ^ps aux
+    }
+}
 alias tog = sig toggle # Assumes 'sig' command exists
 
 # --- Aliases for commands typically needing sudo ---
