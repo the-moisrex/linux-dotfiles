@@ -379,6 +379,11 @@ declare -A YT_LANG_MAP=(
     ["zu"]="zu"
 )
 
+# -------------------------------
+# Browsers to try with --cookies-from-browser if yt-dlp fails normally
+# -------------------------------
+BROWSERS_TO_TRY=("firefox" "vivaldi")
+
 
 
 # -------------------------------
@@ -426,6 +431,25 @@ get_lang_aliases() {
 # Convert language code for yt-dlp
 to_yt_lang() {
     echo "${YT_LANG_MAP[$1]:-$1}"
+}
+
+# Execute yt-dlp with given options and handle output
+execute_yt_dlp() {
+    local opts=("$@")
+    
+    if [[ $VERBOSE -eq 0 ]]; then
+        if yt-dlp "${opts[@]}" >/dev/null 2>&1; then
+            return 0
+        else
+            return 1
+        fi
+    else
+        if yt-dlp "${opts[@]}"; then
+            return 0
+        else
+            return 1
+        fi
+    fi
 }
 
 # Extract YouTube video ID from URL
@@ -530,51 +554,57 @@ get_subs_from_url() {
     local opts=(--skip-download --sub-lang "$yt_lang-orig,$yt_lang" --write-auto-sub --convert-subs "$FORMAT" --sub-format "$FORMAT")
     opts+=(-o "$tmpdir/subtitles.%(ext)s" "$url")
     
-    if [[ $VERBOSE -eq 0 ]]; then
-        # Download to temporary directory with yt-dlp
-        if yt-dlp "${opts[@]}" >/dev/null 2>&1; then
-            # yt-dlp succeeded, continue with the existing logic
-            # Find the downloaded subtitle file
-            local subfile=$(find "$tmpdir" -name "*.${FORMAT}" | head -n1)
-            
-            if [[ -f "$subfile" ]]; then
-                if [[ "$OUTPUT" == "-" ]]; then
-                    # Output to stdout
-                    cat "$subfile"
-                else
-                    # Move to final destination
-                    mv "$subfile" "$OUTPUT"
-                    log "Subtitles saved to: $OUTPUT"
-                fi
-                rm -rf "$tmpdir"
-                return 0
+    # Download to temporary directory with yt-dlp
+    if execute_yt_dlp "${opts[@]}"; then
+        # yt-dlp succeeded, continue with the existing logic
+        # Find the downloaded subtitle file
+        local subfile=$(find "$tmpdir" -name "*.${FORMAT}" | head -n1)
+        
+        if [[ -f "$subfile" ]]; then
+            if [[ "$OUTPUT" == "-" ]]; then
+                # Output to stdout
+                cat "$subfile"
+            else
+                # Move to final destination
+                mv "$subfile" "$OUTPUT"
+                log "Subtitles saved to: $OUTPUT"
             fi
-        fi
-    else
-        # Download to temporary directory with yt-dlp
-        if yt-dlp "${opts[@]}"; then
-            # yt-dlp succeeded, continue with the existing logic
-            # Find the downloaded subtitle file
-            local subfile=$(find "$tmpdir" -name "*.${FORMAT}" | head -n1)
-            
-            if [[ -f "$subfile" ]]; then
-                if [[ "$OUTPUT" == "-" ]]; then
-                    # Output to stdout
-                    cat "$subfile"
-                else
-                    # Move to final destination
-                    mv "$subfile" "$OUTPUT"
-                    log "Subtitles saved to: $OUTPUT"
-                fi
-                rm -rf "$tmpdir"
-                return 0
-            fi
+            rm -rf "$tmpdir"
+            return 0
         fi
     fi
     
-    log "yt-dlp failed, trying youtube_transcript_api as fallback..."
+    log "yt-dlp failed, trying with --cookies-from-browser option..."
     
-    # yt-dlp failed, try youtube_transcript_api as fallback
+    # If initial yt-dlp command failed, try with --cookies-from-browser for each browser
+    local browser
+    for browser in "${BROWSERS_TO_TRY[@]}"; do
+        log "Trying yt-dlp with --cookies-from-browser=$browser"
+        
+        local cookie_opts=("${opts[@]}" --cookies-from-browser "$browser")
+        
+        if execute_yt_dlp "${cookie_opts[@]}"; then
+            # yt-dlp with cookies succeeded
+            local subfile=$(find "$tmpdir" -name "*.${FORMAT}" | head -n1)
+            
+            if [[ -f "$subfile" ]]; then
+                if [[ "$OUTPUT" == "-" ]]; then
+                    # Output to stdout
+                    cat "$subfile"
+                else
+                    # Move to final destination
+                    mv "$subfile" "$OUTPUT"
+                    log "Subtitles saved to: $OUTPUT"
+                fi
+                rm -rf "$tmpdir"
+                return 0
+            fi
+        fi
+    done
+    
+    log "yt-dlp with --cookies-from-browser failed, trying youtube_transcript_api as fallback..."
+    
+    # All yt-dlp attempts failed, try youtube_transcript_api as fallback
     if command -v youtube_transcript_api >/dev/null 2>&1; then
         log "youtube_transcript_api is available, using it as fallback"
         
