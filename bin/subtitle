@@ -428,6 +428,23 @@ to_yt_lang() {
     echo "${YT_LANG_MAP[$1]:-$1}"
 }
 
+# Extract YouTube video ID from URL
+get_youtube_id() {
+    local url="$1"
+    # Various YouTube URL patterns
+    if [[ "$url" =~ ^https?://[^/]*youtube\.com/watch\?v=([a-zA-Z0-9_-]{11}) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$url" =~ ^https?://youtu\.be/([a-zA-Z0-9_-]{11}) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$url" =~ ^https?://[^/]*youtube\.com/embed/([a-zA-Z0-9_-]{11}) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$url" =~ ^https?://[^/]*youtube\.com/v/([a-zA-Z0-9_-]{11}) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        return 1
+    fi
+}
+
 # -------------------------------
 # Argument parsing
 # -------------------------------
@@ -501,58 +518,126 @@ extract_embedded_subs() {
 }
 
 # -------------------------------
-# Get subtitles from online URL
+# Get subtitles from online URL with youtube_transcript_api fallback
 # -------------------------------
 get_subs_from_url() {
     local url="$1"
     log "Downloading subtitles from URL: $url"
     
+    # First, try yt-dlp
     local tmpdir=$(mktemp -d)
     local yt_lang=$(to_yt_lang "$LANG")
     local opts=(--skip-download --sub-lang "$yt_lang-orig,$yt_lang" --write-auto-sub --convert-subs "$FORMAT" --sub-format "$FORMAT")
     opts+=(-o "$tmpdir/subtitles.%(ext)s" "$url")
     
-    # echo "${opts[@]}";
-    
-    
     if [[ $VERBOSE -eq 0 ]]; then
-        # Download to temporary directory
-        if ! yt-dlp "${opts[@]}" >/dev/null 2>&1; then
-            log "Failed to download subtitles from URL: $url"
-            rm -rf "$tmpdir"
-            return 1
+        # Download to temporary directory with yt-dlp
+        if yt-dlp "${opts[@]}" >/dev/null 2>&1; then
+            # yt-dlp succeeded, continue with the existing logic
+            # Find the downloaded subtitle file
+            local subfile=$(find "$tmpdir" -name "*.${FORMAT}" | head -n1)
+            
+            if [[ -f "$subfile" ]]; then
+                if [[ "$OUTPUT" == "-" ]]; then
+                    # Output to stdout
+                    cat "$subfile"
+                else
+                    # Move to final destination
+                    mv "$subfile" "$OUTPUT"
+                    log "Subtitles saved to: $OUTPUT"
+                fi
+                rm -rf "$tmpdir"
+                return 0
+            fi
         fi
     else
-        # Download to temporary directory
-        if ! yt-dlp "${opts[@]}"; then
-            log "Failed to download subtitles from URL: $url"
-            rm -rf "$tmpdir"
-            return 1
+        # Download to temporary directory with yt-dlp
+        if yt-dlp "${opts[@]}"; then
+            # yt-dlp succeeded, continue with the existing logic
+            # Find the downloaded subtitle file
+            local subfile=$(find "$tmpdir" -name "*.${FORMAT}" | head -n1)
+            
+            if [[ -f "$subfile" ]]; then
+                if [[ "$OUTPUT" == "-" ]]; then
+                    # Output to stdout
+                    cat "$subfile"
+                else
+                    # Move to final destination
+                    mv "$subfile" "$OUTPUT"
+                    log "Subtitles saved to: $OUTPUT"
+                fi
+                rm -rf "$tmpdir"
+                return 0
+            fi
         fi
     fi
     
+    log "yt-dlp failed, trying youtube_transcript_api as fallback..."
     
-    # Find the downloaded subtitle file
-    local subfile=$(find "$tmpdir" -name "*.${FORMAT}" | head -n1)
-    
-    if [[ -f "$subfile" ]]; then
-        if [[ "$OUTPUT" == "-" ]]; then
-            # Output to stdout
-            cat "$subfile"
+    # yt-dlp failed, try youtube_transcript_api as fallback
+    if command -v youtube_transcript_api >/dev/null 2>&1; then
+        log "youtube_transcript_api is available, using it as fallback"
+        
+        # Extract video ID from URL
+        local video_id
+        video_id=$(get_youtube_id "$url")
+        if [[ -z "$video_id" ]]; then
+            log "Could not extract YouTube video ID from URL: $url"
+            rm -rf "$tmpdir"
+            return 1
+        fi
+        
+        # Format mapping for youtube_transcript_api
+        local yt_api_format="$FORMAT"
+        case "$FORMAT" in
+            "srt") yt_api_format="srt" ;;
+            "vtt"|"webvtt") yt_api_format="webvtt" ;;
+            "txt") yt_api_format="text" ;;
+            "json") yt_api_format="json" ;;
+            "pretty") yt_api_format="pretty" ;;
+            *) yt_api_format="srt" ;;  # default to srt
+        esac
+        
+        # Try to get subtitles using youtube_transcript_api CLI
+        # Map our language code to standard 2-letter code for youtube_transcript_api
+        local api_lang="$yt_lang"
+        case "$yt_lang" in
+            "ger") api_lang="de" ;;
+            "fra") api_lang="fr" ;;
+            "spa") api_lang="es" ;;
+            "eng") api_lang="en" ;;
+            "zh-Hans") api_lang="zh-CN" ;;
+            "zh-Hant") api_lang="zh-TW" ;;
+            "fas") api_lang="fa" ;;
+        esac
+        
+        # Try with the CLI and capture output and exit code
+        local api_output
+        api_output=$(youtube_transcript_api --languages "$api_lang" --format "$yt_api_format" "$video_id" 2>&1)
+        local api_exit_code=$?
+        
+        # The CLI sometimes returns 0 exit code even when it fails, so we need to check the output
+        if [[ $api_exit_code -eq 0 && -n "$api_output" && ! "$api_output" =~ "Could not retrieve a transcript" && ! "$api_output" =~ "This is most likely caused by:" ]]; then
+            # Success (no error message in output)
+            echo "$api_output"
+            rm -rf "$tmpdir"
+            return 0
         else
-            # Move to final destination
-            mv "$subfile" "$OUTPUT"
-            log "Subtitles saved to: $OUTPUT"
+            # Failure: either non-zero exit code or error message in output
+            log "youtube_transcript_api CLI failed for video: $video_id"
+            if [[ -n "$api_output" ]]; then
+                echo "$api_output" >&2  # Output error to stderr
+            fi
+            rm -rf "$tmpdir"
+            return 1
         fi
     else
-        log "No subtitles found for language: $yt_lang"
+        log "youtube_transcript_api is not installed. Install it with: pip install youtube-transcript-api"
+        echo "Error: Neither yt-dlp nor youtube_transcript_api could extract subtitles." >&2
+        echo "Error: youtube_transcript_api is not installed. Install it with: pip install youtube-transcript-api" >&2
         rm -rf "$tmpdir"
         return 1
     fi
-    
-    # Clean up
-    rm -rf "$tmpdir"
-    return 0
 }
 
 # -------------------------------
@@ -563,7 +648,7 @@ for item in "${ARGS[@]}"; do
         # URL case
         [[ "$SOURCE" == "embedded" ]] && { log "Skipping URL $item because source=embedded"; continue; }
         if ! get_subs_from_url "$item"; then
-            echo "Error: Failed to extract subtitles from URL: $item" >&2
+            # Error message is already handled within get_subs_from_url
             exit 1
         fi
         elif [[ -f "$item" ]]; then
@@ -581,7 +666,7 @@ for item in "${ARGS[@]}"; do
                 url=$("$curdir/yt.links" "$item" || true)
                 if [[ -n "$url" ]]; then
                     if ! get_subs_from_url "$url"; then
-                        echo "Error: Failed to extract subtitles from URL: $url" >&2
+                        # Error message is already handled within get_subs_from_url
                         exit 1
                     fi
                 else
