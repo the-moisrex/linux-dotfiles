@@ -54,8 +54,12 @@ def proj [path_in_proj?: string = ""] {
 alias cdproj = proj
 
 # Custom navigation functions
-def --env cd [path?: string = ""] {
-    cd-builtin $path
+def --env cd [path?: string] {
+    if ($path | is-empty) {
+        cd-builtin
+    } else {
+        cd-builtin $path
+    }
     ls
 }
 def --env .. [] { cd-builtin .. }
