@@ -35,14 +35,47 @@ show_help() {
     echo "  --help       Display this help message"
     echo "  --verbose    Enable verbose output"
     echo
+    echo "Commands:"
+    echo "  list         List all supported news agencies"
+    echo
     echo "Examples:"
     echo "  $0 rt.com       # Fetch news URLs from rt.com"
     echo "  $0 --verbose rt  # Fetch news URLs from rt.com with verbose output"
+    echo "  $0 list         # List all supported news agencies"
+}
+
+# Function to list supported news agencies
+list_agencies() {
+    echo "Supported news agencies:"
+    echo "  rt.com (Russia Today)"
+    echo "  sputnik, sputnikglobe.com (Sputnik News)"
+    echo "  spnfa, spnfa.ir (Sputnik Farsi)"
+    echo "  iranintl, iranintl.com (Iran International)"
+    echo "  bbc-farsi, bbcfarsi, bbcpersian (BBC Persian)"
+    echo "  msnbc, msnbc.com (MSNBC)"
+    echo "  cnn, cnn.com (CNN)"
+    echo "  cna.asia, channelnewsasia.com (Channel NewsAsia)"
+    echo "  reuters, reuters.com (Reuters)"
+    echo "  ap, apnews.com (Associated Press)"
+    echo "  dw, dw.com (Deutsche Welle)"
+    echo "  bbc, bbc.com (BBC News)"
+    echo "  france24, france24.com (France 24)"
+    echo "  abc, abc.com (ABC News)"
+    echo "  nhk, nhk.or.jp (NHK World)"
+    echo "  sky, sky.com (Sky News)"
+    echo "  theguardian, theguardian.com (The Guardian)"
+    echo "  afp, afp.com (Agence France-Presse)"
+    echo "  trt, trtworld.com (TRT World)"
+    echo "  cgtn, cgtn.com (CGTN)"
+    echo "  aa, aa.com.tr (Anadolu Agency)"
+    echo "  aljazeera, aljazeera.com (Al Jazeera)"
 }
 
 # Parse command-line arguments
 VERBOSE=false
 WEBSITE=""
+COMMAND=""
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help)
@@ -52,6 +85,10 @@ while [[ $# -gt 0 ]]; do
         --verbose)
             VERBOSE=true
             shift
+            ;;
+        list)
+            list_agencies
+            exit 0
             ;;
         *)
             if [ -z "$WEBSITE" ]; then
@@ -66,7 +103,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if a website was provided
+# Check if a website was provided (unless command was 'list')
 if [ -z "$WEBSITE" ]; then
     echo "Error: No website specified."
     show_help
