@@ -153,7 +153,10 @@ check_video_exists() {
 process_file() {
     local input="$1"
     local url=""
-    
+
+    # Trim leading and trailing spaces from input
+    input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
     # Check if input is a URL (starts with http)
     if [[ "$input" =~ ^https?:// ]]; then
         # Input is a URL - try to extract YouTube ID and clean it
@@ -172,26 +175,26 @@ process_file() {
             [[ "$VERBOSE" == true ]] && echo "Skipping non-file: $input" >&2
             return 0
         fi
-        
+
         case "$METHOD" in
             file)       url=$(extract_from_filename "$input") || return 1 ;;
             meta)       url=$(extract_from_ffprobe "$input") ;;
             both)       url=$(extract_from_filename "$input") || url=$(extract_from_ffprobe "$input") ;;
             meta-first) url=$(extract_from_ffprobe "$input") || url=$(extract_from_filename "$input") ;;
         esac
-        
+
         if [[ -z "$url" ]]; then
             [[ "$VERBOSE" == true ]] && echo "No URL found for: $input" >&2
             return 1
         fi
     fi
-    
+
     # If we have a URL to work with
     if [[ -n "$url" ]]; then
         # Clean the URL by removing extra parameters (like list, index, etc.)
         local clean_url
         clean_url=$(clean_youtube_url "$url")
-        
+
         if [[ "$CHECK" == true ]]; then
             check_video_exists "$clean_url"
             case $? in
