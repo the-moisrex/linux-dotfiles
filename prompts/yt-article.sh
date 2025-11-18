@@ -7,9 +7,9 @@ curdir="$(realpath "$(dirname "$0")/../bin")"
 
 print_prompt() {
     if [[ -z "$1" ]]; then
-        echo "Turn this into an markdown article and remove the ads, repetition, meaningless stuff: "
+        echo "Turn this into an article and remove the ads, repetition, meaningless stuff and add key takeaways and summary notes at the end as well: "
     else
-        echo "Turn this [youtube video]($1) into an markdown article and remove the ads, repetition, meaningless stuff: "
+        echo "Turn this [youtube video]($1) into an article and remove the ads, repetition, meaningless stuff and add key takeaways and summary notes at the end as well: "
     fi
     echo
     echo

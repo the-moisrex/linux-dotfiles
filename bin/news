@@ -76,7 +76,7 @@ fi
 BASE_URL="https://$WEBSITE"
 # Configure website-specific settings
 case $WEBSITE in
-    rt.com|rt)
+    rt.com|rt|russia-today|rtoday|russiatoday)
         WEBSITE="rt.com"
         BASE_URL="https://rt.com"
         CURL_COMMANDS=(
@@ -87,7 +87,7 @@ case $WEBSITE in
             "grep -E \"/news/[[:digit:]]+\""
         )
         ;;
-    sputnik|sputnikglobe.com|sput|sputnic)
+    sputnik|sputnikglobe.com|sput|sputnic|sputinik|sputnik-news|sputniknews|spoutnik)
         WEBSITE="sputnikglobe.com"
         BASE_URL="https://${WEBSITE}"
         CURL_COMMANDS=(
@@ -100,7 +100,7 @@ case $WEBSITE in
             'grep -vE "yandex.ru"'
         )
         ;;
-    spnfa|spnfa.ir|sput-fa|sputnic-fa|sputnik-fa|sputnikfa|spntfa|spfa|spnt-fa)
+    spnfa|spnfa.ir|sput-fa|sputnic-fa|sputnik-fa|sputnikfa|spntfa|spfa|spnt-fa|sputnik-farsi|sputnikfa.ir|sputnik-persian)
         WEBSITE="spnfa.ir"
         BASE_URL="https://${WEBSITE}"
         CURL_COMMANDS=(
@@ -118,7 +118,7 @@ case $WEBSITE in
             'grep -vE "yandex.ru"'
         )
         ;;
-    iranintl|intl|iranintl.com)
+    iranintl|intl|iranintl.com|iran-intl|iraninternational|iranintl-news)
         WEBSITE="iranintl.com"
         BASE_URL="https://${WEBSITE}"
         CURL_COMMANDS=(
@@ -128,7 +128,7 @@ case $WEBSITE in
             "grep -E \"/[[:digit:]]+\""
         )
         ;;
-    bbc-farsi|bbcfarsi|bbcpersian|bbc-persian)
+    bbc-farsi|bbcfarsi|bbcpersian|bbc-persian|bbcpersian.com|bbc-fa|bbcpersiannews|bbcpersian-news|bbc-farsi-news)
         WEBSITE="bbc.com"
         BASE_URL="https://${WEBSITE}"
         CURL_COMMANDS=(
@@ -138,7 +138,7 @@ case $WEBSITE in
             'grep "articles"'
         )
         ;;
-    msnbc|msnbc.com)
+    msnbc|msnbc.com|msnbc-news|msnbcnews|msnbc-tv|msnbc-america)
         WEBSITE="msnbc.com"
         BASE_URL="https://${WEBSITE}"
         CURL_COMMANDS=(
@@ -150,7 +150,7 @@ case $WEBSITE in
             "grep -vE 'https?://www\.msnbc\.com/[^/]+(/[^/]+)?$'"
         )
         ;;
-    cnn|cnn.com)
+    cnn|cnn.com|cnn-news|cnnnews|cnn-international|cnni|cnn-intl)
         WEBSITE="cnn.com"
         BASE_URL="https://${WEBSITE}"
         CURL_COMMANDS=(
@@ -161,7 +161,7 @@ case $WEBSITE in
             "grep -E 'cnn\\.com/[[:digit:]]{4}/[[:digit:]]{2}/[[:digit:]]{2}'"
         )
         ;;
-    cna.asia|cna|cna.com|channelnewsasia.com|channelnewsasia|channelnews)
+    cna.asia|cna|cna.com|channelnewsasia.com|channelnewsasia|channelnews|cna-news|channelnews-asia|cna-asia|channelnewsasia-news)
         WEBSITE="www.channelnewsasia.com"
         BASE_URL="https://${WEBSITE}"
         CURL_COMMANDS=(
@@ -171,6 +171,19 @@ case $WEBSITE in
             # "grep -E 'channelnewsasia\.com/(asia|cna-insider|commentary|east-asia|entertainment|singapore|sustainability|today|world)/'"
             "grep -E 'https?://(www\.)?channelnewsasia\.com/(asia|cna-insider|commentary|east-asia|entertainment|singapore|sustainability|world|big-read|up-close|voices)/[^/]+-[0-9]+'"
             "grep -v '/adulting'"
+        )
+        ;;
+    aljazeera|aljazeera.com|aj|aljazeera-eng|aljazera|ajazeera|aljezera|aljazeerae|aljazer|aljazira|ajazera|aljazeeraeng)
+        WEBSITE="aljazeera.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/news"
+            "curl $CURL_OPTIONS $BASE_URL/news/latest"
+        )
+        FILTERS=(
+            "grep -E '/(news|features|opinions|investigations|economy|middle-east|europe|asia-pacific|asia|latin-america|us-canada|africa)/[0-9]{4}/[0-9]{2}/[0-9]{2}/'"
+            'grep -vE "liveblog|videos|gallery|podcasts|schedule|newsletters|sitemap|about-us|contact|careers|privacy|terms|code-of-ethics|user-accounts-help|stay-connected|travel|climate-crisis|learning|training|forum|doc|balkans|ajplus|aljazeera\.net|liberties|studies|hotels|commercial|cdn|static|google-analytics|chartbeat|ajiunit|mubasher|interactives"'
         )
         ;;
     *)
