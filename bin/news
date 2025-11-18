@@ -173,6 +173,176 @@ case $WEBSITE in
             "grep -v '/adulting'"
         )
         ;;
+    reuters|reuters.com|reuters-news|reutersnews|reuter)
+        WEBSITE="www.reuters.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/world/"
+            "curl $CURL_OPTIONS $BASE_URL/business/"
+            "curl $CURL_OPTIONS $BASE_URL/politics/"
+        )
+        FILTERS=(
+            'grep -E "reuters\.com"'
+            'grep -vE "video|videohub|lifestyle|authors|fund|sustainability|reutersone|dossier|article|section|topic|tag|topic|search|archive"'
+        )
+        ;;
+    ap|apnews.com|ap-news|associated-press|ap-newscom|associatedpress)
+        WEBSITE="apnews.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/hub/world-news"
+            "curl $CURL_OPTIONS $BASE_URL/hub/politics"
+            "curl $CURL_OPTIONS $BASE_URL/hub/business"
+        )
+        FILTERS=(
+            'grep -E "/[0-9]{4}/[0-9]{2}/[0-9]{2}/"'
+            'grep -vE "hub|tag|video|gallery|interactive|apnews-in|about|terms|privacy"'
+        )
+        ;;
+    dw|dw.com|dw-world|dw-world.com|deutsche-welle)
+        WEBSITE="www.dw.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL/en/"
+            "curl $CURL_OPTIONS $BASE_URL/en/top-stories/"
+            "curl $CURL_OPTIONS $BASE_URL/en/news"
+        )
+        FILTERS=(
+            'grep -E "/en/(top-stories|africa|asia|europe|latin-america|middle-east|north-america|germany|climate|health|human-rights|migration|technology|business|science|culture|news)/s-[0-9]+"'
+            'grep -vE "video|audio|gallery|search|sitemap|subscribe|about|topic|category|academy|corporate|service|imprint|legal|privacy"'
+        )
+        ;;
+    bbc|bbc.com|bbc-news|bbcnews|bbcworld|bbc-world)
+        WEBSITE="www.bbc.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL/news"
+            "curl $CURL_OPTIONS $BASE_URL/news/world"
+            "curl $CURL_OPTIONS $BASE_URL/news/politics"
+            "curl $CURL_OPTIONS $BASE_URL/news/business"
+            "curl $CURL_OPTIONS $BASE_URL/news/technology"
+        )
+        FILTERS=(
+            'grep -E "/news/[^/]+/"'
+            'grep -vE "live|video|audio|gallery|in-pictures|topics|sport|weather|account|preferences|contact|about"'
+            'grep -vE "/news$|/news/[^/]*$|/news/uk$|/news/world$|/news/politics$|/news/business$|/news/technology$"'
+        )
+        ;;
+    france24|france24.com|france-24|france-24-com|fr)
+        WEBSITE="www.france24.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL/en/"
+            "curl $CURL_OPTIONS $BASE_URL/en/rss"
+        )
+        FILTERS=(
+            'grep -E "/[0-9]{4}/[0-9]{2}/[0-9]{2}/|[0-9]{8}-"'
+            'grep -vE "video|tag|author|sitemap|privacy|terms|newsletter|podcast"'
+        )
+        ;;
+    abc|abc.com|abc-news|abcnews|abc-news-com)
+        WEBSITE="abcnews.go.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/us"
+            "curl $CURL_OPTIONS $BASE_URL/international"
+            "curl $CURL_OPTIONS $BASE_URL/politics"
+        )
+        FILTERS=(
+            'grep -E "/(story|article)/"'
+            'grep -E "id="'
+            'grep -vE "video|photo|gallery|tag|category|author|sitemap|privacy|terms|newsletter"'
+        )
+        ;;
+    nhk|nhk.or.jp|nhk-world|nhkworld)
+        WEBSITE="www3.nhk.or.jp"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL/news/"
+        )
+        FILTERS=(
+            'grep -E "nhk\.or\.jp/news/[en0-9]+\.html"'
+            'grep -vE "index|archive|sitemap|about|contact"'
+        )
+        ;;
+    sky|sky.com|sky-news|skynews|sky-com)
+        WEBSITE="news.sky.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/news/world"
+            "curl $CURL_OPTIONS $BASE_URL/news/politics"
+        )
+        FILTERS=(
+            'grep -E "/story/"'
+            'grep -E "[0-9]{7,}"'
+            'grep -vE "video|live|watch|tv|radio|podcast|archive|sitemap|privacy|terms"'
+        )
+        ;;
+    theguardian|theguardian.com|guardian|guardian-news|guardian-com)
+        WEBSITE="www.theguardian.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/world"
+            "curl $CURL_OPTIONS $BASE_URL/politics"
+            "curl $CURL_OPTIONS $BASE_URL/business"
+        )
+        FILTERS=(
+            'grep -E "/[0-9]{4}/[0-9]{2}/[0-9]{2}/"'
+            'grep -vE "video|audio|gallery|info|about|help|preferences|email"'
+        )
+        ;;
+    afp|afp.com|afpnews|afp-news|agence-france-presse)
+        WEBSITE="www.afp.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL/en"
+        )
+        FILTERS=(
+            'grep -E "/[0-9]{4}/[0-9]{2}/[0-9]{2}/"'
+            'grep -vE "page|category|author|search|sitemap|privacy|terms|newsletter"'
+        )
+        ;;
+    trt|trtworld.com|trt-world|trt-world-com)
+        WEBSITE="www.trtworld.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/news"
+        )
+        FILTERS=(
+            'grep -E "/[0-9]{4}/[0-9]{2}/[0-9]{2}/"'
+            'grep -vE "video|audio|gallery|author|category|tag|sitemap|privacy|terms"'
+        )
+        ;;
+    cgtn|cgtn.com|cgtn-news|china-global-television-network)
+        WEBSITE="www.cgtn.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "/news/[0-9]{4}-[0-9]{2}-[0-9]{2}/"'
+            'grep -vE "video|audio|gallery|section|author|tag|sitemap|privacy|terms|about"'
+            'grep -vE "\.(jpg|jpeg|png|gif|svg|webp|bmp|ico)$"'
+            'grep -vE "img/|\.jpeg|\.png|\.jpg"'
+        )
+        ;;
+    aa|aa.com.tr|anadolu|anadolu-agency|anadoluagency)
+        WEBSITE="www.aa.com.tr"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL/en"
+        )
+        FILTERS=(
+            'grep -E "/[a-zA-Z]+/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]+.html"'
+            'grep -vE "video|photo|sitemap|privacy|terms|about|contact|category"'
+        )
+        ;;
     aljazeera|aljazeera.com|aj|aljazeera-eng|aljazera|ajazeera|aljezera|aljazeerae|aljazer|aljazira|ajazera|aljazeeraeng)
         WEBSITE="aljazeera.com"
         BASE_URL="https://${WEBSITE}"
@@ -197,10 +367,15 @@ esac
 
 # Build the pipeline
 PIPELINE="( "
-for cmd in "${CURL_COMMANDS[@]}"; do
-    PIPELINE+="$cmd; "
+for i in "${!CURL_COMMANDS[@]}"; do
+    PIPELINE+="${CURL_COMMANDS[$i]}"
+    if [ $i -lt $((${#CURL_COMMANDS[@]} - 1)) ]; then
+        PIPELINE+="; "
+    else
+        PIPELINE+=" "
+    fi
 done
-PIPELINE+=" ) | $URLS_CMD $BASE_URL | sort -u"
+PIPELINE+=") | $URLS_CMD $BASE_URL | sort -u"
 for filter in "${FILTERS[@]}"; do
     PIPELINE+=" | $filter"
 done
