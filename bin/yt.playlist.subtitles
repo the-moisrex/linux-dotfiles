@@ -31,6 +31,7 @@ curdir=$(realpath "$(dirname "$0")")
 # Default values
 VERBOSE=0
 HELP=0
+PARALLEL=1
 PLAYLIST_URL=""
 LANG="eng"
 BROWSER=""
@@ -52,6 +53,7 @@ Options:
   -h, --help            Show this help message and exit
   -l, --lang LANG       Language code for subtitles (default: eng)
   -v, --verbose         Enable verbose output
+  -j, --parallel NUM    Number of concurrent subtitle downloads (default: 1)
   --browser BROWSER     Specify browser for yt.playlist
   --cookies FILE        Path to cookies file for yt.playlist
   --profile NAME        Profile name for yt.playlist
@@ -110,6 +112,14 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
+        -j|--parallel)
+            PARALLEL="$2"
+            shift 2
+            ;;
+        --parallel=*)
+            PARALLEL="${1#*=}"
+            shift
+            ;;
         --browser)
             BROWSER="$2"
             shift 2
@@ -144,6 +154,12 @@ if [[ $HELP -eq 1 ]]; then
     exit 0
 fi
 
+# Validate PARALLEL parameter
+if ! [[ "$PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
+    print_error "Parallel value must be a positive integer"
+    exit 1
+fi
+
 # Use default playlist URL if none provided
 if [[ -z "$PLAYLIST_URL" ]]; then
     PLAYLIST_URL="$DEFAULT_PLAYLIST_URL"
@@ -176,7 +192,16 @@ fi
 print_verbose "Extracting videos from playlist: $PLAYLIST_URL"
 print_verbose "yt.playlist arguments: ${yt_playlist_args[*]}"
 
-video_links=$("$curdir/yt.playlist" "${yt_playlist_args[@]}" 2>/dev/null)
+# Use a safer approach to avoid xargs issues with quotes in titles
+if [[ -n "$COOKIES" ]]; then
+    video_links=$(yt-dlp --quiet --no-warnings --flat-playlist --cookies "$COOKIES" --print "%(webpage_url)s  |  %(title)s" "$PLAYLIST_URL" 2>/dev/null)
+elif [[ -n "$BROWSER" ]] && [[ -n "$PROFILE" ]]; then
+    video_links=$(yt-dlp --quiet --no-warnings --flat-playlist --cookies-from-browser "$BROWSER:$PROFILE" --print "%(webpage_url)s  |  %(title)s" "$PLAYLIST_URL" 2>/dev/null)
+elif [[ -n "$BROWSER" ]]; then
+    video_links=$(yt-dlp --quiet --no-warnings --flat-playlist --cookies-from-browser "$BROWSER" --print "%(webpage_url)s  |  %(title)s" "$PLAYLIST_URL" 2>/dev/null)
+else
+    video_links=$("$curdir/yt.playlist" "${yt_playlist_args[@]}" 2>/dev/null)
+fi
 
 if [[ -z "$video_links" ]]; then
     print_error "No videos found in playlist"
@@ -191,39 +216,106 @@ failure_count=0
 
 print_status "$BLUE" "$PLAYLIST" "Processing $total_videos videos from playlist..."
 
-# Process each video link
+# Process video links with parallelism
+processed_count=0
+success_count=0
+failure_count=0
+video_data_file=$(mktemp)
+result_file=$(mktemp)
+# Create a lock directory for job counting
+lock_dir=$(mktemp -d)
+trap "rm -rf '$video_data_file' '$result_file' '$lock_dir'" EXIT
+
+# Store video data in file for parallel processing
 while IFS= read -r line; do
     # Skip empty lines
     [[ -z "$line" ]] && continue
 
     # Extract the URL from the line (format: "URL  |  title")
-    video_url=$(echo "$line" | cut -d'|' -f1 | xargs)  # xargs trims whitespace
-    video_title=$(echo "$line" | cut -d'|' -f2- | xargs)  # Extract title (everything after first |)
+    # Use parameter expansion to trim leading/trailing whitespace instead of xargs
+    raw_url=$(echo "$line" | cut -d'|' -f1)
+    raw_title=$(echo "$line" | cut -d'|' -f2-)
+
+    # Trim leading and trailing whitespace without using xargs
+    video_url="${raw_url#"${raw_url%%[![:space:]]*}"}"   # Remove leading whitespace
+    video_url="${video_url%"${video_url##*[![:space:]]}"}"  # Remove trailing whitespace
+    video_title="${raw_title#"${raw_title%%[![:space:]]*}"}"   # Remove leading whitespace
+    video_title="${video_title%"${video_title##*[![:space:]]}"}"  # Remove trailing whitespace
 
     processed_count=$((processed_count + 1))
-    print_verbose "Processing ($processed_count/$total_videos): $video_url"
+    echo "$video_url|$video_title|$processed_count" >> "$video_data_file"
 
+    print_verbose "Queued ($processed_count/$total_videos): $video_url"
     if [[ -n "$video_title" ]]; then
         print_verbose "Title: $video_title"
     fi
+done <<< "$video_links"
+
+# Process videos in parallel with job control
+total_to_process=$processed_count
+
+# Function to process a single video
+process_video() {
+    local video_url="$1"
+    local video_title="$2"
+    local processed_num="$3"
+    local total_count="$4"
 
     # Download subtitle for this video using --cache option
     if output=$("$curdir/subtitle" --cache -l "$LANG" -f srt "$video_url" 2>&1); then
-        success_count=$((success_count + 1))
-        print_status "$GREEN" "$CHECKMARK" "($processed_count/$total_videos) Successfully downloaded subtitle for: $video_title"
+        echo "SUCCESS|$processed_num|$video_title" >> "$result_file"
+        # Print success message immediately with direct color codes since running in subshell
+        echo -e "\033[0;32m✅\033[0m ($processed_num/$total_count) Successfully downloaded subtitle for: $video_title"
         if [[ $VERBOSE -eq 1 ]]; then
-            echo "$output"
+            echo "OUTPUT|$output" >> "$result_file"
         fi
     else
-        failure_count=$((failure_count + 1))
-        print_status "$RED" "$CROSS" "($processed_count/$total_videos) Failed to download subtitle for: $video_title"
+        echo "FAILURE|$processed_num|$video_title|$(echo "$output" | head -n 1)" >> "$result_file"
+        # Print failure message immediately with direct color codes since running in subshell
+        echo -e "\033[0;31m❌\033[0m ($processed_num/$total_count) Failed to download subtitle for: $video_title" >&2
         if [[ $VERBOSE -eq 1 ]]; then
             echo "$output" >&2
         else
-            # Show summary of error in non-verbose mode
-            echo -e "${RED}$output${NC}" >&2
+            echo -e "\033[0;31m$(echo "$output" | head -n 1)\033[0m" >&2
         fi
     fi
-done <<< "$video_links"
+}
+
+# Process each video, controlling parallelism
+while IFS='|' read -r video_url video_title processed_num; do
+    # Process subtitle download in background - pass all needed variables
+    process_video "$video_url" "$video_title" "$processed_num" "$total_to_process" &
+
+    # Wait when we have too many background jobs running
+    while (( $(jobs -r | wc -l) >= PARALLEL )); do
+        wait -n  # Wait for any one job to finish
+    done
+done < "$video_data_file"
+
+# Wait for all remaining jobs to complete
+wait
+
+# Process results and count successes/failures
+while IFS='|' read -r status num title extra; do
+    case "$status" in
+        "SUCCESS")
+            ((success_count++))
+            print_status "$GREEN" "$CHECKMARK" "($num/$total_to_process) Successfully downloaded subtitle for: $title"
+            ;;
+        "FAILURE")
+            ((failure_count++))
+            print_status "$RED" "$CROSS" "($num/$total_to_process) Failed to download subtitle for: $title"
+            if [[ $VERBOSE -eq 1 ]]; then
+                echo "$extra" >&2
+            else
+                # Show summary of error in non-verbose mode
+                echo -e "${RED}$extra${NC}" >&2
+            fi
+            ;;
+        "OUTPUT")
+            echo "$extra"
+            ;;
+    esac
+done < "$result_file"
 
 print_status "$PURPLE" "$SUCCESS" "Finished processing playlist: $success_count successful, $failure_count failed"
