@@ -23,6 +23,16 @@ SOURCE="auto"  # embedded, online, auto
 USE_CACHE=true
 CACHE_DISABLED=false
 
+# Check if FORMAT includes .gz compression (e.g., "srt.gz")
+COMPRESSION_ENABLED=false
+if [[ "$FORMAT" == *.gz ]]; then
+    ORIGINAL_FORMAT="${FORMAT%.gz}"
+    COMPRESSION_ENABLED=true
+    FORMAT="$ORIGINAL_FORMAT"
+else
+    ORIGINAL_FORMAT="$FORMAT"
+fi
+
 # Language mappings
 # -------------------------------
 # Language mappings (user input → canonical code)
@@ -397,7 +407,7 @@ Usage: $curfile [options] <file_or_url>...
 
 Options:
   -l, --lang <code>       Subtitle language (default: en, e.g., en, eng, English)
-  -f, --format <fmt>      Subtitle format (default: srt)
+  -f, --format <fmt>      Subtitle format (default: srt, supports compressed formats like srt.gz)
   -o, --output <file>     Output file (default: stdout)
   -v, --verbose           Enable verbose output
   -s, --source <src>      Subtitle source: embedded, online, auto (default: auto)
@@ -408,6 +418,7 @@ Options:
 Examples:
   $curfile video.mp4
   $curfile -l es -f vtt -o subs.vtt https://youtube.com/watch?v=xyz
+  $curfile -l en -f srt.gz -o subs.srt.gz https://youtube.com/watch?v=xyz  # Compressed output
   $curfile myfile.mp4 -s auto
   $curfile --cache https://youtube.com/watch?v=xyz    # Caches to default directory
   $curfile --no-cache https://youtube.com/watch?v=xyz # Disables caching
@@ -454,17 +465,38 @@ cache_exists() {
     # Set up the output directory
     local subtitles_dir="${XDG_CONFIG_HOME:-$HOME/.config}/youtube-subtitles"
 
-    # Create the cached filename
-    local cached_file="$subtitles_dir/$video_id.$LANG.$FORMAT"
+    # Create the cached filename (with compression extension if enabled)
+    local cached_file="$subtitles_dir/$video_id.$LANG.$ORIGINAL_FORMAT"
 
-    # Check if the cached file exists
-    if [[ -f "$cached_file" ]]; then
-        log "Cached subtitle found: $cached_file"
-        echo "$cached_file"
-        return 0
+    # Check priority depends on COMPRESSION_ENABLED setting:
+    # If compression is enabled, check for .gz file first, then uncompressed
+    # If compression is disabled, check for uncompressed file first, then .gz
+    if [[ "$COMPRESSION_ENABLED" == "true" ]]; then
+        if [[ -f "${cached_file}.gz" ]]; then
+            log "Cached compressed subtitle found: ${cached_file}.gz"
+            echo "${cached_file}.gz"
+            return 0
+        elif [[ -f "$cached_file" ]]; then
+            log "Cached subtitle found: $cached_file"
+            echo "$cached_file"
+            return 0
+        else
+            log "No cached subtitle found for: $video_id"
+            return 1
+        fi
     else
-        log "No cached subtitle found for: $video_id"
-        return 1
+        if [[ -f "$cached_file" ]]; then
+            log "Cached subtitle found: $cached_file"
+            echo "$cached_file"
+            return 0
+        elif [[ -f "${cached_file}.gz" ]]; then
+            log "Cached compressed subtitle found: ${cached_file}.gz"
+            echo "${cached_file}.gz"
+            return 0
+        else
+            log "No cached subtitle found for: $video_id"
+            return 1
+        fi
     fi
 }
 
@@ -485,12 +517,22 @@ save_to_default_dir() {
     local subtitles_dir="${XDG_CONFIG_HOME:-$HOME/.config}/youtube-subtitles"
     mkdir -p "$subtitles_dir"
 
-    # Create the output filename
-    local output_file="$subtitles_dir/$video_id.$LANG.$FORMAT"
+    # Create the output filename (with compression extension if enabled)
+    local output_file="$subtitles_dir/$video_id.$LANG.$ORIGINAL_FORMAT"
 
-    # Write the subtitle content to the file
-    echo "$subs_content" > "$output_file"
-    log "Subtitles saved to: $output_file"
+    # Write the subtitle content to the file (compress if needed)
+    if [[ "$COMPRESSION_ENABLED" == "true" ]]; then
+        # Write to temporary file first, then compress
+        local temp_file=$(mktemp)
+        echo "$subs_content" > "$temp_file"
+        compress_file "$temp_file" "${output_file}.gz"
+        rm -f "$temp_file"
+        log "Compressed subtitles saved to: ${output_file}.gz"
+    else
+        # Write uncompressed
+        echo "$subs_content" > "$output_file"
+        log "Subtitles saved to: $output_file"
+    fi
 
     return 0
 }
@@ -538,7 +580,19 @@ ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -l|--lang) LANG=$(normalize_lang "$2"); shift 2 ;;
-        -f|--format) FORMAT="$2"; shift 2 ;;
+        -f|--format)
+            FORMAT="$2"
+            # Check if FORMAT includes .gz compression (e.g., "srt.gz")
+            if [[ "$FORMAT" == *.gz ]]; then
+                ORIGINAL_FORMAT="${FORMAT%.gz}"
+                COMPRESSION_ENABLED=true
+                FORMAT="$ORIGINAL_FORMAT"
+            else
+                ORIGINAL_FORMAT="$FORMAT"
+                COMPRESSION_ENABLED=false
+            fi
+            shift 2
+            ;;
         -o|--output) OUTPUT="$2"; shift 2 ;;
         -v|--verbose) VERBOSE=1; shift ;;
         -s|--source) SOURCE="$2"; shift 2 ;;
@@ -556,6 +610,31 @@ done
 [[ ${#ARGS[@]} -eq 0 ]] && { echo "Error: no input files or URLs specified" >&2; usage; }
 
 # -------------------------------
+# Compression/Decompression functions
+# -------------------------------
+compress_file() {
+    local input_file="$1"
+    local output_file="$2"
+    if command -v gzip >/dev/null 2>&1; then
+        gzip -c "$input_file" > "$output_file"
+    else
+        echo "Error: gzip command not found" >&2
+        return 1
+    fi
+}
+
+decompress_file() {
+    local input_file="$1"
+    local output_file="$2"
+    if command -v gunzip >/dev/null 2>&1; then
+        gunzip -c "$input_file" > "$output_file"
+    else
+        echo "Error: gunzip command not found" >&2
+        return 1
+    fi
+}
+
+# -------------------------------
 # Extract embedded subtitles
 # -------------------------------
 extract_embedded_subs() {
@@ -569,16 +648,36 @@ extract_embedded_subs() {
         cached_file=$(cache_exists "$url")
         if [[ -n "$cached_file" && -f "$cached_file" ]]; then
             # Cache exists, use it
-            local cached_content=$(cat "$cached_file")
+            local cached_content
+            if [[ "$cached_file" == *.gz ]]; then
+                # Decompress the cached file if it has .gz extension
+                local temp_decompressed=$(mktemp)
+                decompress_file "$cached_file" "$temp_decompressed"
+                cached_content=$(cat "$temp_decompressed")
+                rm -f "$temp_decompressed"
+            else
+                # Read uncompressed file
+                cached_content=$(cat "$cached_file")
+            fi
 
             # Handle output
             if [[ "$OUTPUT" == "-" ]]; then
                 # Output to stdout
                 echo "$cached_content"
             else
-                # Save to specified file
-                echo "$cached_content" > "$OUTPUT"
-                log "Subtitles saved to: $OUTPUT"
+                # Save to specified file (with compression if needed)
+                if [[ "$COMPRESSION_ENABLED" == "true" && "$ORIGINAL_FORMAT" != "gz" ]]; then
+                    # Compress the output file
+                    local temp_file=$(mktemp)
+                    echo "$cached_content" > "$temp_file"
+                    compress_file "$temp_file" "$OUTPUT"
+                    rm -f "$temp_file"
+                    log "Compressed subtitles saved to: $OUTPUT"
+                else
+                    # Save uncompressed
+                    echo "$cached_content" > "$OUTPUT"
+                    log "Subtitles saved to: $OUTPUT"
+                fi
             fi
             return 0
         fi
@@ -602,7 +701,7 @@ extract_embedded_subs() {
 
         log "Using subtitle stream index: $subtitle_index (absolute index: $index)"
 
-        # Always use a temporary file with proper extension
+        # Use a temporary file with proper extension
         local tmpfile=$(mktemp --suffix=".$FORMAT")
 
         # Extract to temporary file
@@ -621,9 +720,19 @@ extract_embedded_subs() {
             # Output to stdout
             echo "$sub_content"
         else
-            # Move to final destination
-            echo "$sub_content" > "$OUTPUT"
-            log "Subtitles saved to: $OUTPUT"
+            # Save to specified file (with compression if needed)
+            if [[ "$COMPRESSION_ENABLED" == "true" ]]; then
+                # Compress the output file
+                local temp_file=$(mktemp)
+                echo "$sub_content" > "$temp_file"
+                compress_file "$temp_file" "$OUTPUT"
+                rm -f "$temp_file"
+                log "Compressed subtitles saved to: $OUTPUT"
+            else
+                # Save uncompressed
+                echo "$sub_content" > "$OUTPUT"
+                log "Subtitles saved to: $OUTPUT"
+            fi
         fi
 
         # Clean up
@@ -648,16 +757,36 @@ get_subs_from_url() {
         cached_file=$(cache_exists "$url")
         if [[ -n "$cached_file" && -f "$cached_file" ]]; then
             # Cache exists, use it
-            local cached_content=$(cat "$cached_file")
+            local cached_content
+            if [[ "$cached_file" == *.gz ]]; then
+                # Decompress the cached file if it has .gz extension
+                local temp_decompressed=$(mktemp)
+                decompress_file "$cached_file" "$temp_decompressed"
+                cached_content=$(cat "$temp_decompressed")
+                rm -f "$temp_decompressed"
+            else
+                # Read uncompressed file
+                cached_content=$(cat "$cached_file")
+            fi
 
             # Handle output
             if [[ "$OUTPUT" == "-" ]]; then
                 # Output to stdout
                 echo "$cached_content"
             else
-                # Save to specified file
-                echo "$cached_content" > "$OUTPUT"
-                log "Subtitles saved to: $OUTPUT"
+                # Save to specified file (with compression if needed)
+                if [[ "$COMPRESSION_ENABLED" == "true" && "$ORIGINAL_FORMAT" != "gz" ]]; then
+                    # Compress the output file
+                    local temp_file=$(mktemp)
+                    echo "$cached_content" > "$temp_file"
+                    compress_file "$temp_file" "$OUTPUT"
+                    rm -f "$temp_file"
+                    log "Compressed subtitles saved to: $OUTPUT"
+                else
+                    # Save uncompressed
+                    echo "$cached_content" > "$OUTPUT"
+                    log "Subtitles saved to: $OUTPUT"
+                fi
             fi
             return 0
         fi
@@ -691,9 +820,19 @@ get_subs_from_url() {
                 # Output to stdout
                 echo "$sub_content"
             else
-                # Save to specified file
-                echo "$sub_content" > "$OUTPUT"
-                log "Subtitles saved to: $OUTPUT"
+                # Save to specified file (with compression if needed)
+                if [[ "$COMPRESSION_ENABLED" == "true" ]]; then
+                    # Compress the output file
+                    local temp_file=$(mktemp)
+                    echo "$sub_content" > "$temp_file"
+                    compress_file "$temp_file" "$OUTPUT"
+                    rm -f "$temp_file"
+                    log "Compressed subtitles saved to: $OUTPUT"
+                else
+                    # Save uncompressed
+                    echo "$sub_content" > "$OUTPUT"
+                    log "Subtitles saved to: $OUTPUT"
+                fi
             fi
             rm -rf "$tmpdir"
             return 0
@@ -727,9 +866,19 @@ get_subs_from_url() {
                     # Output to stdout
                     echo "$sub_content"
                 else
-                    # Save to specified file
-                    echo "$sub_content" > "$OUTPUT"
-                    log "Subtitles saved to: $OUTPUT"
+                    # Save to specified file (with compression if needed)
+                    if [[ "$COMPRESSION_ENABLED" == "true" ]]; then
+                        # Compress the output file
+                        local temp_file=$(mktemp)
+                        echo "$sub_content" > "$temp_file"
+                        compress_file "$temp_file" "$OUTPUT"
+                        rm -f "$temp_file"
+                        log "Compressed subtitles saved to: $OUTPUT"
+                    else
+                        # Save uncompressed
+                        echo "$sub_content" > "$OUTPUT"
+                        log "Subtitles saved to: $OUTPUT"
+                    fi
                 fi
                 rm -rf "$tmpdir"
                 return 0
@@ -791,8 +940,25 @@ get_subs_from_url() {
                 save_to_default_dir "$url" "$sub_content"
             fi
 
-            # Output to stdout (as requested)
-            echo "$sub_content"
+            # Handle output (print to stdout or save to specified file)
+            if [[ "$OUTPUT" == "-" ]]; then
+                # Output to stdout
+                echo "$sub_content"
+            else
+                # Save to specified file (with compression if needed)
+                if [[ "$COMPRESSION_ENABLED" == "true" ]]; then
+                    # Compress the output file
+                    local temp_file=$(mktemp)
+                    echo "$sub_content" > "$temp_file"
+                    compress_file "$temp_file" "$OUTPUT"
+                    rm -f "$temp_file"
+                    log "Compressed subtitles saved to: $OUTPUT"
+                else
+                    # Save uncompressed
+                    echo "$sub_content" > "$OUTPUT"
+                    log "Subtitles saved to: $OUTPUT"
+                fi
+            fi
             rm -rf "$tmpdir"
             return 0
         else
