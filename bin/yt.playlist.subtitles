@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Download subtitles from a YouTube playlist
+# Uses yt.playlist to get links and subtitle --save to download and save subtitles
+
+set -euo pipefail
+
+# Script path info
+curfile=$(basename "$0")
+curdir=$(realpath "$(dirname "$0")")
+
+# Default values
+VERBOSE=0
+HELP=0
+PLAYLIST_URL=""
+LANG="eng"
+BROWSER=""
+COOKIES=""
+PROFILE=""
+DEFAULT_PLAYLIST_URL="https://www.youtube.com/playlist?list=WL"
+
+# Function to display help message
+show_help() {
+    cat << 'EOF'
+Usage: yt.playlist.subtitles [OPTIONS] [PLAYLIST_URL]
+
+Download subtitles from all videos in a YouTube playlist.
+Subtitles are saved to $XDG_CONFIG_HOME/youtube-subtitles/VIDEOID.LANG.srt
+
+If no PLAYLIST_URL is provided, defaults to Watch Later playlist (WL).
+
+Options:
+  -h, --help            Show this help message and exit
+  -l, --lang LANG       Language code for subtitles (default: eng)
+  -v, --verbose         Enable verbose output
+  --browser BROWSER     Specify browser for yt.playlist
+  --cookies FILE        Path to cookies file for yt.playlist
+  --profile NAME        Profile name for yt.playlist
+
+Examples:
+  yt.playlist.subtitles                        # Downloads from Watch Later playlist
+  yt.playlist.subtitles --browser firefox      # Downloads from Watch Later using Firefox
+  yt.playlist.subtitles https://www.youtube.com/playlist?list=PLat4GgaVK09caz8Q_9mElDVS-4nbRZtKU
+  yt.playlist.subtitles -l es https://www.youtube.com/playlist?list=PLat4GgaVK09caz8Q_9mElDVS-4nbRZtKU
+
+Requirements:
+  - yt.playlist (for extracting playlist video links)
+  - subtitle with --save option (for downloading and saving subtitles)
+  - yt-dlp (for downloading subtitles)
+EOF
+}
+
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            HELP=1
+            shift
+            ;;
+        -l|--lang)
+            LANG="$2"
+            shift 2
+            ;;
+        --lang=*)
+            LANG="${1#*=}"
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        --browser)
+            BROWSER="$2"
+            shift 2
+            ;;
+        --cookies)
+            COOKIES="$2"
+            shift 2
+            ;;
+        --profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        http*)
+            PLAYLIST_URL="$1"
+            shift
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            show_help
+            exit 1
+            ;;
+        *)
+            PLAYLIST_URL="$1"
+            shift
+            ;;
+    esac
+done
+
+# Show help if requested
+if [[ $HELP -eq 1 ]]; then
+    show_help
+    exit 0
+fi
+
+# Use default playlist URL if none provided
+if [[ -z "$PLAYLIST_URL" ]]; then
+    PLAYLIST_URL="$DEFAULT_PLAYLIST_URL"
+fi
+
+# Check dependencies
+if [[ ! -x "$curdir/yt.playlist" ]]; then
+    echo "Error: yt.playlist script not found in $curdir" >&2
+    exit 1
+fi
+
+if [[ ! -x "$curdir/subtitle" ]]; then
+    echo "Error: subtitle script not found in $curdir" >&2
+    exit 1
+fi
+
+# Prepare arguments for yt.playlist
+yt_playlist_args=("$PLAYLIST_URL")
+if [[ -n "$BROWSER" ]]; then
+    yt_playlist_args+=(--browser "$BROWSER")
+fi
+if [[ -n "$COOKIES" ]]; then
+    yt_playlist_args+=(--cookies "$COOKIES")
+fi
+if [[ -n "$PROFILE" ]]; then
+    yt_playlist_args+=(--profile "$PROFILE")
+fi
+
+# Extract video links from the playlist
+if [[ $VERBOSE -eq 1 ]]; then
+    echo "Extracting videos from playlist: $PLAYLIST_URL"
+    echo "yt.playlist arguments: ${yt_playlist_args[*]}"
+fi
+
+video_links=$("$curdir/yt.playlist" "${yt_playlist_args[@]}" 2>/dev/null)
+
+if [[ -z "$video_links" ]]; then
+    echo "Error: No videos found in playlist" >&2
+    exit 1
+fi
+
+# Process each video link
+while IFS= read -r line; do
+    # Skip empty lines
+    [[ -z "$line" ]] && continue
+
+    # Extract the URL from the line (format: "URL  |  title")
+    video_url=$(echo "$line" | cut -d'|' -f1 | xargs)  # xargs trims whitespace
+
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "Processing: $video_url"
+    fi
+
+    # Download subtitle for this video using --save option
+    if "$curdir/subtitle" --save -l "$LANG" -f srt "$video_url"; then
+        if [[ $VERBOSE -eq 1 ]]; then
+            echo "Successfully downloaded subtitle for: $video_url"
+        fi
+    else
+        if [[ $VERBOSE -eq 1 ]]; then
+            echo "Failed to download subtitle for: $video_url"
+        fi
+    fi
+done <<< "$video_links"
+
+if [[ $VERBOSE -eq 1 ]]; then
+    echo "Finished processing playlist"
+fi
