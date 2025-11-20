@@ -20,7 +20,8 @@ FORMAT="srt"
 OUTPUT="-"
 VERBOSE=0
 SOURCE="auto"  # embedded, online, auto
-SAVE_TO_DIR=false
+USE_CACHE=true
+CACHE_DISABLED=false
 
 # Language mappings
 # -------------------------------
@@ -400,14 +401,16 @@ Options:
   -o, --output <file>     Output file (default: stdout)
   -v, --verbose           Enable verbose output
   -s, --source <src>      Subtitle source: embedded, online, auto (default: auto)
-  --save                  Save to default directory (\${XDG_CONFIG_HOME:-\$HOME/.config}/youtube-subtitles/VIDEOID.LANG.FORMAT)
+  --cache                 Enable caching to default directory (\${XDG_CONFIG_HOME:-\$HOME/.config}/youtube-subtitles/VIDEOID.LANG.FORMAT)
+  --no-cache              Disable caching (overrides --cache)
   -h, --help              Show this help message
 
 Examples:
   $curfile video.mp4
   $curfile -l es -f vtt -o subs.vtt https://youtube.com/watch?v=xyz
   $curfile myfile.mp4 -s auto
-  $curfile --save https://youtube.com/watch?v=xyz    # Saves to default directory
+  $curfile --cache https://youtube.com/watch?v=xyz    # Caches to default directory
+  $curfile --no-cache https://youtube.com/watch?v=xyz # Disables caching
 EOF
     exit 0
 }
@@ -434,6 +437,35 @@ get_lang_aliases() {
 # Convert language code for yt-dlp
 to_yt_lang() {
     echo "${YT_LANG_MAP[$1]:-$1}"
+}
+
+# Check if cached subtitle exists
+cache_exists() {
+    local url="$1"
+
+    # Extract video ID
+    local video_id
+    video_id=$(get_youtube_id "$url")
+    if [[ -z "$video_id" ]]; then
+        log "Could not extract YouTube video ID from URL: $url"
+        return 1
+    fi
+
+    # Set up the output directory
+    local subtitles_dir="${XDG_CONFIG_HOME:-$HOME/.config}/youtube-subtitles"
+
+    # Create the cached filename
+    local cached_file="$subtitles_dir/$video_id.$LANG.$FORMAT"
+
+    # Check if the cached file exists
+    if [[ -f "$cached_file" ]]; then
+        log "Cached subtitle found: $cached_file"
+        echo "$cached_file"
+        return 0
+    else
+        log "No cached subtitle found for: $video_id"
+        return 1
+    fi
 }
 
 # Extract YouTube video ID from URL and save to default directory
@@ -510,7 +542,8 @@ while [[ $# -gt 0 ]]; do
         -o|--output) OUTPUT="$2"; shift 2 ;;
         -v|--verbose) VERBOSE=1; shift ;;
         -s|--source) SOURCE="$2"; shift 2 ;;
-        --save) SAVE_TO_DIR=true; shift ;;
+        --cache) USE_CACHE=true; CACHE_DISABLED=false; shift ;;
+        --no-cache) CACHE_DISABLED=true; USE_CACHE=false; shift ;;
         -h|--help) usage ;;
         -*)
             echo "Unknown option: $1" >&2
@@ -529,6 +562,27 @@ extract_embedded_subs() {
     local file="$1"
     local url="${2:-}"  # Optional URL parameter to support saving to default directory
     log "Checking embedded subtitles for $file (lang=$LANG)..."
+
+    # Check cache first if caching is enabled and we have a URL
+    if [[ -n "$url" && "$USE_CACHE" == "true" && "$CACHE_DISABLED" == "false" ]]; then
+        local cached_file
+        cached_file=$(cache_exists "$url")
+        if [[ -n "$cached_file" && -f "$cached_file" ]]; then
+            # Cache exists, use it
+            local cached_content=$(cat "$cached_file")
+
+            # Handle output
+            if [[ "$OUTPUT" == "-" ]]; then
+                # Output to stdout
+                echo "$cached_content"
+            else
+                # Save to specified file
+                echo "$cached_content" > "$OUTPUT"
+                log "Subtitles saved to: $OUTPUT"
+            fi
+            return 0
+        fi
+    fi
 
     # Get subtitle stream indices matching language aliases
     local aliases=($(get_lang_aliases "$LANG"))
@@ -557,8 +611,8 @@ extract_embedded_subs() {
         # Read the subtitle content
         local sub_content=$(cat "$tmpfile")
 
-        # If SAVE_TO_DIR is true and we have a URL, save to default directory
-        if [[ "$SAVE_TO_DIR" == "true" && -n "$url" ]]; then
+        # If cache is enabled and we have a URL, save to default directory
+        if [[ -n "$url" && "$USE_CACHE" == "true" && "$CACHE_DISABLED" == "false" ]]; then
             save_to_default_dir "$url" "$sub_content"
         fi
 
@@ -588,6 +642,27 @@ get_subs_from_url() {
     local url="$1"
     log "Downloading subtitles from URL: $url"
 
+    # Check cache first if caching is enabled
+    if [[ "$USE_CACHE" == "true" && "$CACHE_DISABLED" == "false" ]]; then
+        local cached_file
+        cached_file=$(cache_exists "$url")
+        if [[ -n "$cached_file" && -f "$cached_file" ]]; then
+            # Cache exists, use it
+            local cached_content=$(cat "$cached_file")
+
+            # Handle output
+            if [[ "$OUTPUT" == "-" ]]; then
+                # Output to stdout
+                echo "$cached_content"
+            else
+                # Save to specified file
+                echo "$cached_content" > "$OUTPUT"
+                log "Subtitles saved to: $OUTPUT"
+            fi
+            return 0
+        fi
+    fi
+
     # First, try yt-dlp
     local tmpdir=$(mktemp -d)
     local yt_lang=$(to_yt_lang "$LANG")
@@ -606,8 +681,8 @@ get_subs_from_url() {
             # Read the subtitle content
             sub_content=$(cat "$subfile")
 
-            # If SAVE_TO_DIR is true, save to default directory
-            if [[ "$SAVE_TO_DIR" == "true" ]]; then
+            # If cache is enabled, save to default directory
+            if [[ "$USE_CACHE" == "true" && "$CACHE_DISABLED" == "false" ]]; then
                 save_to_default_dir "$url" "$sub_content"
             fi
 
@@ -642,8 +717,8 @@ get_subs_from_url() {
                 # Read the subtitle content
                 sub_content=$(cat "$subfile")
 
-                # If SAVE_TO_DIR is true, save to default directory
-                if [[ "$SAVE_TO_DIR" == "true" ]]; then
+                # If cache is enabled, save to default directory
+                if [[ "$USE_CACHE" == "true" && "$CACHE_DISABLED" == "false" ]]; then
                     save_to_default_dir "$url" "$sub_content"
                 fi
 
@@ -711,8 +786,8 @@ get_subs_from_url() {
             # Success (no error message in output)
             sub_content="$api_output"
 
-            # If SAVE_TO_DIR is true, save to default directory
-            if [[ "$SAVE_TO_DIR" == "true" ]]; then
+            # If cache is enabled, save to default directory
+            if [[ "$USE_CACHE" == "true" && "$CACHE_DISABLED" == "false" ]]; then
                 save_to_default_dir "$url" "$sub_content"
             fi
 
@@ -754,11 +829,9 @@ for item in "${ARGS[@]}"; do
         if [[ "$SOURCE" == "embedded" || "$SOURCE" == "auto" ]]; then
             # Try to get URL for video file to use for saving with video ID
             url=""
-            if [[ "$SAVE_TO_DIR" == "true" ]]; then
-                # Check if we can get a URL for the video file to extract video ID
-                if [[ -x "$curdir/yt.links" ]]; then
-                    url=$("$curdir/yt.links" "$item" || true)
-                fi
+            # Check if we can get a URL for the video file to extract video ID
+            if [[ -x "$curdir/yt.links" ]]; then
+                url=$("$curdir/yt.links" "$item" || true)
             fi
 
             if extract_embedded_subs "$item" "$url"; then
@@ -782,10 +855,10 @@ for item in "${ARGS[@]}"; do
             else
                 log "yt.links not found or not executable in $curdir."
             fi
-        elif [[ "$found_embedded" -eq 1 && "$SAVE_TO_DIR" == "true" && -z "$url" ]]; then
-            # If we found embedded subtitles and --save was specified, but no URL is available
+        elif [[ "$found_embedded" -eq 1 && "$USE_CACHE" == "true" && "$CACHE_DISABLED" == "false" && -z "$url" ]]; then
+            # If we found embedded subtitles and caching is enabled, but no URL is available
             # we can't save to the default directory since we don't have a video ID
-            log "Embedded subtitles found but no URL available for --save functionality (video ID required for filename)"
+            log "Embedded subtitles found but no URL available for caching functionality (video ID required for filename)"
         fi
     else
         log "Skipping invalid input: $item"
