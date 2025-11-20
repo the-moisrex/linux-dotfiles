@@ -24,7 +24,7 @@ show_help() {
 Usage: yt.playlist.subtitles [OPTIONS] [PLAYLIST_URL]
 
 Download subtitles from all videos in a YouTube playlist.
-Subtitles are saved to $XDG_CONFIG_HOME/youtube-subtitles/VIDEOID.LANG.srt
+Subtitles are cached to $XDG_CONFIG_HOME/youtube-subtitles/VIDEOID.LANG.srt
 
 If no PLAYLIST_URL is provided, defaults to Watch Later playlist (WL).
 
@@ -44,7 +44,7 @@ Examples:
 
 Requirements:
   - yt.playlist (for extracting playlist video links)
-  - subtitle with --save option (for downloading and saving subtitles)
+  - subtitle with --cache option (for downloading and caching subtitles)
   - yt-dlp (for downloading subtitles)
 EOF
 }
@@ -155,8 +155,8 @@ while IFS= read -r line; do
         echo "Processing: $video_url"
     fi
 
-    # Download subtitle for this video using --save option
-    if "$curdir/subtitle" --save -l "$LANG" -f srt "$video_url"; then
+    # Download subtitle for this video using --cache option
+    if "$curdir/subtitle" --cache -l "$LANG" -f srt "$video_url"; then
         if [[ $VERBOSE -eq 1 ]]; then
             echo "Successfully downloaded subtitle for: $video_url"
         fi
