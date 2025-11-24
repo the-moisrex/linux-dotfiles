@@ -43,13 +43,14 @@ def --env cdi [path_in_repo?: string = ""] {
 
 
 # Change directory relative to the projects root
-def proj [path_in_proj?: string = ""] {
+def --env proj [path_in_proj?: string = ""] {
     if ($env.projects_root? | is-empty) {
         error make { msg: "$env.projects_root is not set."}
         return
     }
     let target_path = ([$env.projects_root $path_in_proj] | path join)
     cd-builtin $target_path
+    ls
 }
 alias cdproj = proj
 
