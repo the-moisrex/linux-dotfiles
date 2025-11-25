@@ -31,7 +31,15 @@ def --env cdi [path_in_repo?: string = ""] {
     let root = calc_git_root
     match ($root) {
         _ => {
-            let target_path = ([$root $path_in_repo] | path join)
+            # Extract just the relative path if a full path is provided
+            let rel_path = if ($path_in_repo | is-not-empty) and (($path_in_repo | str starts-with "/") or ($path_in_repo | str contains "/")) {
+                # If it's a path, extract just the base name or make it relative to git root
+                $path_in_repo | path basename
+            } else {
+                # If it's just a name, use it as is
+                $path_in_repo
+            }
+            let target_path = ([$root $rel_path] | path join)
             cd-builtin $target_path
             ls
         }
@@ -48,7 +56,15 @@ def --env proj [path_in_proj?: string = ""] {
         error make { msg: "$env.projects_root is not set."}
         return
     }
-    let target_path = ([$env.projects_root $path_in_proj] | path join)
+    # Extract just the project name if a full path is provided
+    let project_name = if ($path_in_proj | is-not-empty) and (($path_in_proj | str starts-with "/") or ($path_in_proj | str contains "/")) {
+        # If it's a path, extract just the base name
+        $path_in_proj | path basename
+    } else {
+        # If it's just a name, use it as is
+        $path_in_proj
+    }
+    let target_path = ([$env.projects_root $project_name] | path join)
     cd-builtin $target_path
     ls
 }
@@ -104,7 +120,7 @@ alias vdir = vdir --color=auto # Assumes 'vdir' is GNU vdir
 # --- yt-dlp Aliases ---
 alias dl = download
 
-let yt_base_opts = "--restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs en*,es,fa,-live_chat"
+const yt_base_opts = "--restrict-filenames --continue --embed-thumbnail --write-auto-sub --embed-subs --embed-metadata --embed-chapters --sub-langs en*,es,fa,-live_chat"
 alias yt = yt-dlp $yt_base_opts
 alias yt-list = yt --output '%(playlist_index)s - %(title)s [%(id)s].%(ext)s'
 alias yt-audio = yt -x

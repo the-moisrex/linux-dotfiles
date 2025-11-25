@@ -73,7 +73,7 @@ def complete_cdi [spans: list<string>] {
 def complete_cdproj [spans: list<string>] {
     let word = ($spans | last | default "")
     let dirs = if 'projects_root' in $env {
-        try { ls $"($env.projects_root)" | where type == dir | get name | each {|n| {value: $n, description: "Project directory"}} } catch { [] }
+        try { ls $"($env.projects_root)" | where type == dir | get name | path basename | each {|n| {value: $n, description: "Project directory"}} } catch { [] }
     } else { [] }
     filter_completions $word $dirs
 }
@@ -81,9 +81,11 @@ def complete_cdproj [spans: list<string>] {
 # === proj completion ===
 def complete_proj [spans: list<string>] {
     let word = ($spans | last | default "")
-    let dirs = if 'projects_root' in $env {
-        try { ls $"($env.projects_root)" | where type == dir | get name | each {|n| {value: $n, description: "Project"}} } catch { [] }
-    } else { [] }
+    # Use the same logic as in aliases.nu to determine projects_root
+    let projects_root = if $env.projects_root? != null { $env.projects_root } else { [$nu.home-path "Projects"] | path join }
+    let dirs = try {
+        ls $"($projects_root)" | where type == dir | get name | path basename | each {|n| {value: $n, description: "Project directory"}}
+    } catch { [] }
     filter_completions $word $dirs
 }
 
