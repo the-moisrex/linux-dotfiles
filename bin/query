@@ -201,15 +201,12 @@ declare -A shortcuts=(
 # Function to check if searXNG is running
 is_searxng_running() {
     if command -v curl >/dev/null 2>&1; then
-        # Check if searXNG is running on localhost:8080
         curl -s --max-time 1 http://localhost:8080/ >/dev/null 2>&1
         return $?
     elif command -v wget >/dev/null 2>&1; then
-        # Alternative check using wget
         wget --timeout=1 -q --spider http://localhost:8080/ 2>/dev/null
         return $?
     else
-        # If no tool available, assume searXNG is not running
         return 1
     fi
 }
@@ -226,15 +223,25 @@ encode_query() {
     python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "$1"
 }
 
+# Helper: case-insensitive contains check
+contains_ci() {
+    local hay="$1"
+    local needle="$2"
+    # returns 0 if found
+    echo "$hay" | tr '[:upper:]' '[:lower:]' | grep -F -i -q "$(echo "$needle" | tr '[:upper:]' '[:lower:]')"
+}
+
 # Parse arguments to extract engines and query
 engines=()
 query_parts=()
 all_engines=false
 processing_engines=true
+user_specified_engines=false
 
 for arg in "$@"; do
     if [ "$processing_engines" = true ]; then
         if [ -n "${shortcuts[$arg]}" ]; then
+            user_specified_engines=true
             shortcut_target="${shortcuts[$arg]}"
             if [ "$shortcut_target" = "all" ]; then
                 all_engines=true
@@ -242,7 +249,7 @@ for arg in "$@"; do
                 # Expand category to its constituent engines
                 category_engines=(${categories[$shortcut_target]})
                 for cat_engine in "${category_engines[@]}"; do
-                    if [[ ! " ${engines[@]} " =~ " ${cat_engine} " ]]; then  # Avoid duplicates
+                    if [[ ! " ${engines[@]} " =~ " ${cat_engine} " ]]; then
                         engines+=("$cat_engine")
                     fi
                 done
@@ -282,23 +289,67 @@ if [ -z "$query" ]; then
     exit 1
 fi
 
-# Set engines based on input
+# --- Auto-selection heuristics (only apply when user DID NOT specify engines) ---
+if [ "$user_specified_engines" = false ]; then
+    # 1) DuckDuckGo bang if query starts with '!'
+    if [[ "${query:0:1}" == "!" ]]; then
+        engines=("duckduckgo")
+    else
+        # lowercase copy for simpler checks
+        lc_query=$(echo "$query" | tr '[:upper:]' '[:lower:]')
+
+        # 2) C++ specific detection
+        if echo "$query" | grep -q "std::" || echo "$lc_query" | grep -q -E '\bc\+\+\b' || echo "$lc_query" | grep -q -E '\bcpp\b'; then
+            engines=("devdocs-cpp" "stackoverflow" "google")
+        # 3) News-related detection (keywords)
+        elif echo "$lc_query" | grep -q -E 'news|breaking|election|president|prime minister|attack|war|crisis|earthquake|hurricane|flood|tornado|result(s)?|markets?|stock(s)?|economy|finance'; then
+            # expand the news category
+            engines=(${categories["news"]})
+        # 4) Code/How-to/problem detection
+        elif echo "$lc_query" | grep -q -E 'how to|how do i|tutorial|example|error|exception|segfault|compile|build|function|class|snippet|stack overflow|stacktrace|stack trace'; then
+            engines=(${categories["code"]})
+        # 5) Video related
+        elif echo "$lc_query" | grep -q -E 'video|youtube|tutorial|walkthrough'; then
+            engines=("youtube" "google")
+        else
+            # No heuristics matched: use default engines
+            engines=("${default_engines[@]}")
+        fi
+    fi
+fi
+
+# If user explicitly asked for 'all'
 if [ "$all_engines" = true ]; then
     engines=("${!engine_urls[@]}")
-    elif [ ${#engines[@]} -eq 0 ]; then
+fi
+
+# Ensure we have at least one engine
+if [ ${#engines[@]} -eq 0 ]; then
     engines=("${default_engines[@]}")
 fi
 
 # URL-encode the query
-encoded_query=$(encode_query "$query")
+# Special handling for DuckDuckGo bangs: keep leading '!' unencoded
+if [[ "${query:0:1}" == "!" ]]; then
+    bang_prefix="!"
+    rest="${query:1}"
+    encoded_rest=$(encode_query "$rest")
+    ddg_query="${bang_prefix}${encoded_rest}"
+    # Use duckduckgo only (the engines array should already be duckduckgo)
+    encoded_query="$ddg_query"
+else
+    encoded_query=$(encode_query "$query")
+fi
 
 # Generate and print URLs
-# echo "Search URLs for: \"$query\""
-# echo "=========================================="
-
 for engine in "${engines[@]}"; do
     if [ -n "${engine_urls[$engine]}" ]; then
-        # echo "[$engine] ${engine_urls[$engine]}$encoded_query"
-        echo "${engine_urls[$engine]}$encoded_query"
+        # If duckduckgo + bang scenario, the encoded_query already includes the '!' prefix
+        if [ "$engine" = "duckduckgo" ] && [[ "${query:0:1}" == "!" ]]; then
+            echo "${engine_urls[$engine]}$encoded_query"
+        else
+            echo "${engine_urls[$engine]}$encoded_query"
+        fi
     fi
 done
+
