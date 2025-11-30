@@ -1,4 +1,5 @@
 #!/bin/bash
+curdir="$(realpath "$(dirname "$0")")"
 set -euo pipefail
 
 # Function to display help
@@ -13,11 +14,7 @@ EOF
 }
 
 # Basic checks
-if [ $# -eq 0 ]; then
-    show_help
-    exit 1
-fi
-if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     show_help
     exit 0
 fi
@@ -110,6 +107,7 @@ declare -A categories=(
     ["css"]="stackoverflow devdocs-css mdn"
     ["javascript"]="stackoverflow devdocs-javascript mdn"
     ["recipes"]="allrecipes foodnetwork youtube"
+    ["def"]="google bing duckduckgo startpage swisscows mojeek"
 )
 
 declare -A shortcuts=(
@@ -138,6 +136,8 @@ declare -A shortcuts=(
     ["css"]="css"
     ["javascript"]="javascript"
     ["recipe"]="recipes"
+    ["aj"]="aljazeera" ["aljazeera"]="aljazeera" ["aljazeerah"]="aljazeera"
+    ["def"]="def"
     ["all"]="all"
 )
 
@@ -155,7 +155,7 @@ is_searxng_running() {
 }
 
 # default engines
-default_engines=("google" "bing" "duckduckgo" "startpage" "swisscows" "mojeek")
+default_engines=("google" "duckduckgo")
 if is_searxng_running; then
     default_engines+=("searxng")
 fi
@@ -202,10 +202,25 @@ if [ -z "$query" ]; then
     fi
 fi
 
+# After all input methods, if still no query, try clipboard
 if [ -z "$query" ]; then
-    echo "Error: No search query provided" >&2
-    show_help
-    exit 1
+    # Try to get clipboard content
+    query=$("$curdir/c.p" 2>/dev/null) || query=""
+
+    # If we still have no query
+    if [ -z "$query" ]; then
+        if [ $# -eq 0 ]; then
+            # No arguments at all, show help
+            echo "Error: No search query provided" >&2
+            show_help
+            exit 1
+        else
+            # Engines were specified but no query and no clipboard content
+            echo "Error: No search query provided" >&2
+            show_help
+            exit 1
+        fi
+    fi
 fi
 
 # If user explicitly asked for all engines
