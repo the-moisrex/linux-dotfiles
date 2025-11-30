@@ -50,4 +50,5 @@
     "containers.containerClient": "com.microsoft.visualstudio.containers.podman",
     "containers.orchestratorClient": "com.microsoft.visualstudio.orchestrators.podmancompose",
     "C_Cpp.intelliSenseEngine": "disabled",
+    "workbench.startupEditor": "none",
 }
