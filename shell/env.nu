@@ -109,21 +109,21 @@ $env.projects_root = $"($env.HOME)/Projects"
 # --- LS_COLORS ---
 # Set LS_COLORS based on dircolors (equivalent to eval (dircolors ...))
 # Run dircolors and capture its output to set the environment variable
-try {
-    let dircolors_path = "~/.dircolors"
-    let ls_colors_output = if (($dircolors_path | path type) == file) {
-        dircolors -c $dircolors_path
-    } else {
-        dircolors -c
-    }
-    # The output of dircolors is the command to set LS_COLORS, parse it
-    # Example output: LS_COLORS='...'; export LS_COLORS
-    # We just need the value inside the quotes
-    let ls_colors_value = ($ls_colors_output | parse "LS_COLORS='{value}'; export LS_COLORS" | get value | first)
-    $env.LS_COLORS = $ls_colors_value
-} catch {
-    # Ignore if dircolors command fails or parsing fails
-}
+# try {
+#     let dircolors_path = "~/.dircolors"
+#     let ls_colors_output = if (($dircolors_path | path type) == file) {
+#         dircolors -c $dircolors_path
+#     } else {
+#         dircolors -c
+#     }
+#     # The output of dircolors is the command to set LS_COLORS, parse it
+#     # Example output: LS_COLORS='...'; export LS_COLORS
+#     # We just need the value inside the quotes
+#     let ls_colors_value = ($ls_colors_output | parse "LS_COLORS='{value}'; export LS_COLORS" | get value | first)
+#     $env.LS_COLORS = $ls_colors_value
+# } catch {
+#     # Ignore if dircolors command fails or parsing fails
+# }
 
 
 # --- Proxy Settings ---
