@@ -54,6 +54,7 @@ list_agencies() {
     echo "  bbc-farsi, bbcfarsi, bbcpersian (BBC Persian)"
     echo "  msnbc, msnbc.com (MSNBC)"
     echo "  cnn, cnn.com (CNN)"
+    echo "  cnbc, cnbc.com (CNBC)"
     echo "  cna.asia, channelnewsasia.com (Channel NewsAsia)"
     echo "  reuters, reuters.com (Reuters)"
     echo "  ap, apnews.com (Associated Press)"
@@ -391,6 +392,21 @@ case $WEBSITE in
         FILTERS=(
             "grep -E '/(news|features|opinions|investigations|economy|middle-east|europe|asia-pacific|asia|latin-america|us-canada|africa)/[0-9]{4}/[0-9]{2}/[0-9]{2}/'"
             'grep -vE "liveblog|videos|gallery|podcasts|schedule|newsletters|sitemap|about-us|contact|careers|privacy|terms|code-of-ethics|user-accounts-help|stay-connected|travel|climate-crisis|learning|training|forum|doc|balkans|ajplus|aljazeera\.net|liberties|studies|hotels|commercial|cdn|static|google-analytics|chartbeat|ajiunit|mubasher|interactives"'
+        )
+        ;;
+    cnbc|cnbc.com|cnbc-news|cnbcnews)
+        WEBSITE="cnbc.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+            "curl $CURL_OPTIONS $BASE_URL/news"
+            "curl $CURL_OPTIONS $BASE_URL/world"
+            "curl $CURL_OPTIONS $BASE_URL/business"
+            "curl $CURL_OPTIONS $BASE_URL/politics"
+        )
+        FILTERS=(
+            'grep -E "cnbc\.com/[0-9]{4}/[0-9]{2}/[0-9]{2}/"'
+            'grep -vE "video|video-play|gallery|photos|tag|tags|author|search|sitemap|privacy|terms|newsletter|rss|quotes|symbols|quotes\.html"'
         )
         ;;
     *)
