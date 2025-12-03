@@ -390,8 +390,9 @@ case $WEBSITE in
             "curl $CURL_OPTIONS $BASE_URL/news/latest"
         )
         FILTERS=(
-            "grep -E '/(news|features|opinions|investigations|economy|middle-east|europe|asia-pacific|asia|latin-america|us-canada|africa)/[0-9]{4}/[0-9]{2}/[0-9]{2}/'"
-            'grep -vE "liveblog|videos|gallery|podcasts|schedule|newsletters|sitemap|about-us|contact|careers|privacy|terms|code-of-ethics|user-accounts-help|stay-connected|travel|climate-crisis|learning|training|forum|doc|balkans|ajplus|aljazeera\.net|liberties|studies|hotels|commercial|cdn|static|google-analytics|chartbeat|ajiunit|mubasher|interactives"'
+            "grep -E '/(news|features|opinions|investigations|economy|middle-east|europe|asia-pacific|asia|latin-america|us-canada|africa)/|/[0-9]{4}/[0-9]{2}/[0-9]{2}/'"
+            'grep -vE "liveblog|videos|gallery|podcasts|schedule|newsletters|sitemap|about-us|contact|careers|privacy|terms|code-of-ethics|user-accounts-help|stay-connected|travel|climate-crisis|learning|training|forum|doc|balkans|ajplus|aljazeera\.net|liberties|studies|hotels|commercial|cdn|static|google-analytics|chartbeat|ajiunit|mubasher|interactives|\.mp4|\.webm"'
+            'grep -vE "/$"'
         )
         ;;
     cnbc|cnbc.com|cnbc-news|cnbcnews)
