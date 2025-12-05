@@ -44,7 +44,7 @@
         },
         "OfferToSaveLogins": false,
         "PasswordManagerEnabled": false,
-        "SkipTermsOfUse": true,
+        "SkipTermsOfUse": true
     },
     "NetworkPrediction": true,
     "SearchBar": "unified"
