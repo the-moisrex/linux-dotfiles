@@ -2,6 +2,7 @@
     "policies": {
         "DisableTelemetry": true,
         "AppAutoUpdate": false,
+        "DisableAppUpdate": true,
         "BackgroundAppUpdate": false,
         "CaptivePortal": false,
         "Containers": {
@@ -37,7 +38,13 @@
             "SponsoredPocket": false,
             "Snippets": false,
             "Locked": false
-        }
+        },
+        "FirefoxSuggest": {
+            "SponsoredSuggestions": false
+        },
+        "OfferToSaveLogins": false,
+        "PasswordManagerEnabled": false,
+        "SkipTermsOfUse": true,
     },
     "NetworkPrediction": true,
     "SearchBar": "unified"
