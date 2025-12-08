@@ -1,0 +1,246 @@
+#!/bin/bash
+
+# wg21 - A bash script to interact with wg21.link for C++ standards papers and related resources.
+# Does not open links; outputs URLs or information to stdout.
+# Assumes standard bash and curl are available.
+# Papers are filtered to match PXXXXRX format.
+
+set -euo pipefail
+
+BASE_URL="https://wg21.link"
+INDEX_URL="${BASE_URL}/index.txt"
+
+# Detect date command: use gdate on Darwin if available
+if [[ "$(uname)" == "Darwin" ]]; then
+    if command -v gdate >/dev/null 2>&1; then
+        DATE_CMD="gdate"
+    else
+        echo "Warning: On macOS, please install GNU coreutils (brew install coreutils) for gdate." >&2
+        DATE_CMD="date"
+    fi
+else
+    DATE_CMD="date"
+fi
+
+# Function to display help
+usage() {
+    echo "Usage: wg21 <command> [arguments]"
+    echo ""
+    echo "Commands:"
+    echo "  last <N> [--no-titles] Output the last N papers with titles (or URLs if --no-titles, default N=20)"
+    echo "  range <start> <end> [--no-titles] Output papers between start and end dates with titles (or URLs if --no-titles)"
+    echo "                             <start> and <end> are date expressions supported by 'date -d', e.g., '2023-01-01', '1 month ago', 'yesterday'"
+    echo "                             Example for this month: wg21 range \"\$($DATE_CMD +%Y-%m-01)\" \"today\""
+    echo "                             Example for last month: wg21 range \"\$($DATE_CMD -d '1 month ago' +%Y-%m-01)\" \"\$($DATE_CMD -d '\$($DATE_CMD -d '1 month ago' +%Y-%m-01) +1 month -1 day' +%Y-%m-%d)\""
+    echo "  search <query> [--no-titles]  Search titles for query words (OR logic), output ID: highlighted_title and URL (or URLs if --no-titles)"
+    echo "  paper <PXXXX> [rX]     Output URL for a specific paper (add revision if needed)"
+    echo "  issue <*wgXXX>         Output URL for an issue (e.g., cwg123, ewg456)"
+    echo "  std [11|14|17|20|23]   Output URL for the working draft (default latest if no year)"
+    echo "  <id> github            Output GitHub tracking issue URL for paper/issue"
+    echo "  <id> status            Output status URL for paper/issue"
+    echo "  <id> yaml              Output YAML URL for pandoc-citeproc"
+    echo "  <id> issue             Output issue URL for paper"
+    echo "  <id> paper             Output paper URL for issue"
+    echo "  index <format>         Output URL for index in format (json, ndjson, txt, html, yaml, bib)"
+    echo "  --help                 Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  wg21 last 10 --no-titles"
+    echo "  wg21 range '1 year ago' 'today'"
+    echo "  wg21 search 'constexpr template' --no-titles"
+    echo "  wg21 paper p1234 r5"
+    echo "  wg21 issue cwg1"
+    echo "  wg21 std 23"
+    echo "  wg21 p1234 github"
+    echo "  wg21 cwg1 status"
+    echo "  wg21 p1234 yaml"
+    echo "  wg21 p1234 issue"
+    echo "  wg21 cwg1 paper"
+    echo "  wg21 index json"
+    exit 0
+}
+
+# Function to parse a line from index.txt
+# Expected format: PXXXXRX: [Group] Title (by Authors) (YYYY-MM-DD) [optional (Related: URL)]
+parse_line() {
+    local line="$1"
+    if [[ "$line" =~ ^(P[0-9]{4}R[0-9]+):\ \[(.*)\]\ (.*)\ \(by\ (.*)\)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)(\ \(Related:\ (.*)\))? ]]; then
+        ID="${BASH_REMATCH[1]}"
+        GROUP="${BASH_REMATCH[2]}"
+        TITLE="${BASH_REMATCH[3]}"
+        AUTHORS="${BASH_REMATCH[4]}"
+        DATE="${BASH_REMATCH[5]}"
+        RELATED="${BASH_REMATCH[7]:-}"  # Optional
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to fetch and cache index.txt (fetched fresh each time for simplicity)
+fetch_index() {
+    curl -L -s --fail "$INDEX_URL"
+}
+
+# Function to output based on titles flag
+output_paper() {
+    local titles="$1"
+    local highlighted_title="${2:-$TITLE}"
+    local url="${BASE_URL}/${ID}"
+    if [[ "$titles" -eq 1 ]]; then
+        echo -e "${ID}: ${highlighted_title}"
+        # echo "$url"
+        # echo ""
+    else
+        echo "$url"
+    fi
+}
+
+# Main logic
+if [[ $# -eq 0 || "$1" == "--help" ]]; then
+    usage
+fi
+
+command="$1"
+shift
+
+case "$command" in
+    last)
+        N="${1:-20}"
+        TITLES=1
+        if [[ "${2:-}" == "--no-titles" ]]; then
+            TITLES=0
+            shift || true
+        fi
+        shift || true
+        fetch_index | head -n "$N" | while IFS= read -r line; do
+            if parse_line "$line"; then
+                output_paper "$TITLES"
+            fi
+        done
+        ;;
+
+    search)
+        query=()
+        TITLES=1
+        while [[ $# -gt 0 ]]; do
+            if [[ "$1" == "--no-titles" ]]; then
+                TITLES=0
+            else
+                query+=("$1")
+            fi
+            shift
+        done
+        if [[ ${#query[@]} -eq 0 ]]; then
+            echo "Error: Search requires a query." >&2
+            exit 1
+        fi
+        fetch_index | while IFS= read -r line; do
+            if parse_line "$line"; then
+                match=0
+                for word in "${query[@]}"; do
+                    if echo "$TITLE" | grep -iq "$word"; then
+                        match=1
+                        break
+                    fi
+                done
+                if [[ "$match" -eq 1 ]]; then
+                    if [[ "$TITLES" -eq 1 ]]; then
+                        highlighted="$TITLE"
+                        for word in "${query[@]}"; do
+                            highlighted=$(echo -e "$highlighted" | sed -E "s/($word)/\\\\033[1;31m\1\\\\033[0m/gI")
+                        done
+                        output_paper 1 "$highlighted"
+                    else
+                        output_paper 0
+                    fi
+                fi
+            fi
+        done
+        ;;
+
+    range)
+        if [[ $# -lt 2 ]]; then
+            echo "Error: range requires <start> <end>" >&2
+            exit 1
+        fi
+        START_EXPR="$1"
+        END_EXPR="$2"
+        shift 2
+        TITLES=1
+        if [[ "${1:-}" == "--no-titles" ]]; then
+            TITLES=0
+            shift || true
+        fi
+        START_DATE=$("$DATE_CMD" -d "$START_EXPR" +%Y-%m-%d)
+        END_DATE=$("$DATE_CMD" -d "$END_EXPR" +%Y-%m-%d)
+        fetch_index | while IFS= read -r line; do
+            if parse_line "$line"; then
+                # Use string comparisons (<, >) inside [[ ... ]] which are the correct string operators.
+                # We skip any DATE that is strictly less than START_DATE or strictly greater than END_DATE.
+                # That makes the range inclusive of both START_DATE and END_DATE.
+                if [[ "$DATE" < "$START_DATE" || "$DATE" > "$END_DATE" ]]; then
+                    continue
+                fi
+                output_paper "$TITLES"
+            fi
+        done
+        ;;
+
+    paper)
+        ID="$1"
+        if [[ -n "${2:-}" && "$2" =~ ^r[0-9]+$ ]]; then
+            ID="${ID}${2}"
+        fi
+        echo "${BASE_URL}/${ID}"
+        ;;
+
+    issue)
+        echo "${BASE_URL}/${1}"
+        ;;
+
+    std)
+        VER="${1:-}"
+        if [[ -z "$VER" ]]; then
+            VER="std"
+        else
+            VER="std${VER}"
+        fi
+        echo "${BASE_URL}/${VER}"
+        ;;
+
+    index)
+        FORMAT="${1:-txt}"
+        case "$FORMAT" in
+            json|ndjson|txt|html|yaml|bib)
+                echo "${BASE_URL}/index.${FORMAT}"
+                ;;
+            *)
+                echo "Error: Invalid index format. Supported: json, ndjson, txt, html, yaml, bib" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    *)
+        # Handle general <id> <suffix> like p1234 github
+        ID="$command"
+        SUFFIX="${1:-}"
+        if [[ -z "$SUFFIX" ]]; then
+            # If no suffix, assume it's a direct id like p1234 or cwg1
+            echo "${BASE_URL}/${ID}"
+        else
+            # Normalize suffix (remove leading / if present)
+            SUFFIX="${SUFFIX#/}"
+            case "$SUFFIX" in
+                github|status|yaml|issue|paper)
+                    echo "${BASE_URL}/${ID}/${SUFFIX}"
+                    ;;
+                *)
+                    echo "Error: Invalid suffix. Supported: github, status, yaml, issue, paper" >&2
+                    exit 1
+                    ;;
+            esac
+        fi
+        ;;
+esac
