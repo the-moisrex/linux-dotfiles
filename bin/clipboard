@@ -5,12 +5,47 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to detect desktop environment
+detect_desktop_environment() {
+    if [[ -n "$KDE_SESSION_VERSION" ]]; then
+        echo "kde"
+    elif [[ -n "$GNOME_DESKTOP_SESSION_ID" ]] || [[ "$XDG_CURRENT_DESKTOP" == *"GNOME"* ]] || [[ "$XDG_SESSION_DESKTOP" == *"gnome"* ]]; then
+        echo "gnome"
+    elif [[ "$XDG_CURRENT_DESKTOP" == *"SWAY"* ]] || [[ "$XDG_SESSION_DESKTOP" == *"sway"* ]]; then
+        echo "wayland"
+    else
+        # Check if running on Wayland by default
+        if [[ -n "$WAYLAND_DISPLAY" ]]; then
+            echo "wayland"
+        else
+            echo "x11"
+        fi
+    fi
+}
+
+desktop_env=$(detect_desktop_environment)
+
 # Main script logic
 case "$1" in
     paste|--paste|p|pst|-p|--p)
+        # Try Wayland clipboard utilities first (works for GNOME on Wayland)
+        if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
+            if command_exists wl-paste; then
+                wl-paste
+                exit 0
+            fi
+        fi
+
+        # Try KDE klipper
         if command_exists qdbus; then
-            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents
-        elif command_exists xclip; then
+            if qdbus org.kde.klipper >/dev/null 2>&1; then
+                qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents
+                exit 0
+            fi
+        fi
+
+        # Fallback to X11 clipboard utilities
+        if command_exists xclip; then
             xclip -selection clipboard -o
         elif command_exists xsel; then
             xsel --clipboard --output
@@ -20,12 +55,25 @@ case "$1" in
         fi
         ;;
     copy|--copy|cp|c|--c|--cp|-cp)
+        # Try Wayland clipboard utilities first (works for GNOME on Wayland)
+        if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
+            if command_exists wl-copy; then
+                wl-copy
+                exit 0
+            fi
+        fi
+
+        # Try X11 clipboard utilities
         if command_exists xclip; then
             xclip -selection clipboard -i
         elif command_exists xsel; then
             xsel --clipboard --input
+        # Fallback to KDE klipper for copy (with workaround)
         elif command_exists qdbus; then
-            xargs -0 qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}
+            if qdbus org.kde.klipper >/dev/null 2>&1; then
+                xargs -0 qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}
+                exit 0
+            fi
         else
             echo "No supported clipboard utility found for copying."
             exit 1
@@ -33,11 +81,13 @@ case "$1" in
         ;;
     history|--history)
         if command_exists qdbus; then
-            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardHistoryMenu
-        else
-            echo "Clipboard history is only supported with klipper."
-            exit 1
+            if qdbus org.kde.klipper >/dev/null 2>&1; then
+                qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardHistoryMenu
+                exit 0
+            fi
         fi
+        echo "Clipboard history is only supported with klipper."
+        exit 1
         ;;
     *)
         echo "Usage: $0 {paste|--paste|copy|--copy|history|--history}"
