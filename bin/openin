@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of known browsers in priority order (command names)
-browsers=(vivaldi vivaldi-stable brave firefox firefox-developer-edition google-chrome chromium brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp firefox.tmp)
+browsers=(vivaldi vivaldi-stable brave firefox-developer-edition firefox google-chrome chromium brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp firefox.tmp)
 
 # List of browsers that should always open URLs one by one
 one_by_one_browsers=(xdg-open)
@@ -157,12 +157,25 @@ if [ $# -ge 1 ]; then
         exit 1
     fi
 else
-    for browser in "${browsers[@]}"; do
-        if pgrep -f "$browser" > /dev/null; then
-            selected_browser="$browser"
-            break
-        fi
-    done
+    # Check for running browsers, but prioritize firefox-developer-edition over firefox
+    # We want to detect firefox-developer-edition even if regular firefox is also running
+    selected_browser=""
+
+    # First, check specifically for firefox-developer-edition processes
+    # The process name might be different from the command name, so check multiple patterns
+    if (pgrep -f "firefox-developer-edition\|firefox.*dev\|firefox.*developer" > /dev/null) && command -v firefox-developer-edition > /dev/null; then
+        selected_browser="firefox-developer-edition"
+    # If firefox-developer-edition is not running, check for other browsers in priority order
+    else
+        for browser in "${browsers[@]}"; do
+            if pgrep -f "$browser" > /dev/null; then
+                selected_browser="$browser"
+                break
+            fi
+        done
+    fi
+
+    # If still no browser found, fall back to xdg-open
     if [ -z "$selected_browser" ]; then
         selected_browser="xdg-open"
     fi
