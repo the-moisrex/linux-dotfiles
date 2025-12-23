@@ -3,6 +3,13 @@
 # Get the directory where this script is located
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Check for --post option to convert GET to POST request
+POST_OPTION=0
+if [[ "$1" = "--post" ]]; then
+    POST_OPTION=1
+    shift
+fi
+
 # Check for --no-new-window option (and its aliases) to NOT open in new window
 if [[ "$1" = "--no-new-window" ]] || [[ "$1" = "--nonewwindow" ]] || [[ "$1" = "-N" ]] || [[ "$1" = "-nonew" ]] || [[ "$1" = "-nonewwindow" ]]; then
     no_new_window_option="$1"
@@ -15,6 +22,18 @@ fi
 if output=$("$DIR/query" "$@" 2>&1); then
     # Only pipe to openin if output contains URLs (not help text)
     if echo "$output" | grep -q "http"; then
+        # If --post option was given, convert the URL using form.post script
+        if [ $POST_OPTION -eq 1 ]; then
+            # Get the URL from query output
+            url=$(echo "$output" | grep -o "http[^[:space:]]*" | head -n 1)
+            if [ -n "$url" ]; then
+                # Use form.post script with --from-query option to convert GET to POST
+                post_url=$("$DIR/form.post" --from-query "$url")
+                # Replace the original URL with the POST URL in the output
+                output=$(echo "$output" | sed "s|$url|$post_url|g")
+            fi
+        fi
+
         if [ -z "$no_new_window_option" ]; then
             # Open in new window by default (when no --no-new-window option is provided)
             echo "$output" | "$DIR/openin" "--new-window"

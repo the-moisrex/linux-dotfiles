@@ -1,0 +1,160 @@
+#!/bin/bash
+
+show_help() {
+    cat <<EOF
+Usage: $0 [OPTIONS] <url> [name=value ...]
+
+Generates an HTML page with a form that automatically submits a POST request
+to the given URL, containing the provided form fields.
+
+Positional arguments:
+  <url>                 The target URL for the POST request (query part is ignored
+                        if --from-query is used).
+  name=value            Zero or more additional key-value pairs to send as form fields.
+
+Options:
+  --data-uri            Output a single data:text/html URI instead of a file:// URL.
+  --from-query          Extract key-value pairs from the query string of <url>
+                        and include them in the POST body. The resulting URL in the
+                        form will have the query string removed.
+  --help                Show this help message and exit.
+
+Behavior:
+  - By default: creates a temporary file and outputs file://URL (or data URI
+    if --data-uri is given).
+  - Fields come from explicit name=value arguments and, if --from-query is
+    used, from the query parameters in <url>.
+
+This effectively allows converting a GET request (with query parameters) into
+an equivalent POST request.
+
+Examples:
+  $0 https://httpbin.org/post foo=bar
+  $0 --data-uri https://example.com/search query=hello page=2
+  $0 --from-query "https://httpbin.org/post?a=1&b=2+3&c=" extra=field
+  $0 --from-query --data-uri https://example.com/login?user=alice&pass=secret
+EOF
+    exit 0
+}
+
+# Parse options
+DATA_URI=0
+FROM_QUERY=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            show_help
+            ;;
+        --data-uri)
+            DATA_URI=1
+            shift
+            ;;
+        --from-query)
+            FROM_QUERY=1
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [ $# -lt 1 ]; then
+    echo "Error: missing target URL" >&2
+    echo "Use $0 --help for usage information." >&2
+    exit 1
+fi
+
+FULL_URL="$1"
+shift
+
+# Separate base URL and query string
+if [[ "$FULL_URL" =~ ^([^?]+)\??(.*)$ ]]; then
+    TARGET_URL="${BASH_REMATCH[1]}"
+    QUERY_STRING="${BASH_REMATCH[2]}"
+else
+    TARGET_URL="$FULL_URL"
+    QUERY_STRING=""
+fi
+
+# If --from-query, parse query string into name=value pairs
+EXTRA_PAIRS=()
+if [ $FROM_QUERY -eq 1 ] && [ -n "$QUERY_STRING" ]; then
+    # Split on & (and handle empty values correctly)
+    IFS='&' read -ra PARAMS <<< "$QUERY_STRING"
+    for param in "${PARAMS[@]}"; do
+        # Unescape %XX and + manually is complex; use Python for proper parsing
+        EXTRA_PAIRS+=("$param")
+    done
+fi
+
+# Combine query-derived pairs with explicit ones
+ALL_PAIRS=("${EXTRA_PAIRS[@]}" "$@")
+
+if [ ${#ALL_PAIRS[@]} -eq 0 ] && [ $FROM_QUERY -eq 0 ]; then
+    echo "Warning: no form fields provided (no query string and no name=value args)" >&2
+    exit 1;
+fi
+
+# Helper: URL-encode a string (used only for data URI attribute values)
+urlencode() {
+    python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$1"
+}
+
+# Helper: properly parse a single query parameter into name and value
+# Handles %XX decoding and + → space
+parse_query_param() {
+    python3 -c "import urllib.parse, sys; print(urllib.parse.unquote_plus(sys.argv[1]))" "$1"
+}
+
+# Build hidden inputs
+INPUTS=""
+for raw_pair in "${ALL_PAIRS[@]}"; do
+    if [[ "$raw_pair" != *"="* ]]; then
+        echo "Error: invalid name=value pair: $raw_pair" >&2
+        exit 1
+    fi
+
+    # Properly decode the raw "name=value" from query string
+    decoded=$(parse_query_param "$raw_pair")
+    name="${decoded%%=*}"
+    value="${decoded#*=}"
+
+    if [ $DATA_URI -eq 1 ]; then
+        enc_name=$(urlencode "$name")
+        enc_value=$(urlencode "$value")
+        INPUTS="$INPUTS        <input type=\"hidden\" name=\"$enc_name\" value=\"$enc_value\">\n"
+    else
+        # For file:// we can use the raw (decoded) values – browsers will encode on submit
+        INPUTS="$INPUTS        <input type=\"hidden\" name=\"$name\" value=\"$value\">\n"
+    fi
+done
+
+# Common HTML template
+HTML=$(cat <<EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Auto POST</title>
+</head>
+<body>
+    <form id="autoform" action="$TARGET_URL" method="POST">
+$INPUTS    </form>
+    <script type="text/javascript">
+        document.getElementById("autoform").submit();
+    </script>
+</body>
+</html>
+EOF
+)
+
+if [ $DATA_URI -eq 1 ]; then
+    encoded_html=$(printf "%s" "$HTML" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
+    echo "data:text/html,$encoded_html"
+else
+    TMPFILE=$(mktemp --suffix=.html) || exit 1
+    printf "%s\n" "$HTML" > "$TMPFILE"
+    echo "file://$TMPFILE"
+fi
