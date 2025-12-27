@@ -17,7 +17,7 @@ trash "$HOME/.npm"
 trash "$HOME/.conan2"
 trash "$HOME/.parallel"
 trash "$HOME/.icons"
-trash "$HOME/.var"
+# trash "$HOME/.var"  # flatpak?
 trash "$HOME/.fontconfig"
 trash "$HOME/.java" # contains font configs, I think
 trash "$HOME/.swt" # extracted native libraries (.so files) which are essentially a cache
