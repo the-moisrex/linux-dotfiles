@@ -78,6 +78,23 @@ if status is-interactive
     # <<< conda initialize <<<
 
     source $HOME/.config/fish/cmd_timer.fish
+
+    function _open_pdf
+        echo "evince $argv"  # or your PDF viewer
+    end
+    function _open_editor
+        echo "$EDITOR $argv"  # open Markdown in VS Code
+    end
+    function _open_editor
+        echo "jless $argv"  # open Markdown in VS Code
+    end
+    abbr --add 'pdf' --regex '.*\.pdf$' --function _open_pdf
+    abbr --add 'nvim-text-files' --regex '.*\.(md|cpp|hpp|cxx|ixx|h|sh)$' --function _open_editor
+    abbr --add 'json' --regex '.*\.(json|yml|yaml)$' --function _open_editor
+
+    abbr -a "c." --position anywhere --set-cursor "c.p | % | c.c" # Paste, Modify, Copy
+    abbr -a "issue" --set-cursor "gh issue view --comments % | clean.privacy | c.c"
+    abbr for-dirs --set-cursor=! "$(string join \n -- 'for dir in */' 'cd $dir' '!' 'cd ..' 'end')"
 end
 
 # function try -d "try a command until it works."
