@@ -61,6 +61,7 @@ ripgrep-all
 fd           # find . -name '*foo*'
 jq           # JSON processor
 glow         # Markdown prettifier
+jless        # View JSON/Yaml
 
 # Shells
 kitty
