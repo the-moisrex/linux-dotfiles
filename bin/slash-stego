@@ -1,0 +1,114 @@
+#!/bin/bash
+
+# hidden_url.sh - Encode/decode hidden binary messages in URLs
+# /  = binary 1
+# \  = binary 0  (appears as \\ in the string)
+
+set -euo pipefail
+
+DEFAULT_DOMAIN="example.com"
+
+usage() {
+    cat << EOF
+Usage:
+  $(basename "$0") "message" [domain]          # Encode message
+  $(basename "$0") "https:/\\\\..."            # Decode URL
+
+Examples:
+  $(basename "$0") "Hello World"
+  $(basename "$0") "Hello World" mysite.com
+  $(basename "$0") "https:/\\//\\////\\\\//\\/...\//example.com"
+EOF
+    exit 1
+}
+
+(( $# < 1 || $# > 2 )) && usage
+
+input="$1"
+domain="${2:-$DEFAULT_DOMAIN}"
+
+# ====================== ENCODE ======================
+encode() {
+    local msg="$1"
+    local dom="${2:-example.com}"
+
+    # Convert to binary
+    local binary=""
+    binary=$(echo -n "$msg" | perl -ne 'printf "%08b", ord for split //')
+
+    local path=""
+    local i
+    for ((i=0; i<${#binary}; i++)); do
+        if [[ "${binary:i:1}" == "1" ]]; then
+            path+="/"
+        else
+            path+="\\\\"   # Critical: four backslashes in code → one literal \ in string
+        fi
+    done
+
+    echo "https:${path}//$dom"
+}
+
+# ====================== DECODE ======================
+decode() {
+    local url="$1"
+
+    # Remove "https:" prefix
+    [[ $url =~ ^https:(.*)$ ]] || { echo "Error: URL must start with https:" >&2; return 1; }
+    local rest="${BASH_REMATCH[1]}"
+
+    # Extract path: everything before the last "//domain"
+    if [[ $rest =~ ^(.*)//([a-zA-Z0-9.-]+)$ ]]; then
+        local encoded_path="${BASH_REMATCH[1]}"
+    else
+        echo "Error: Could not find //domain at the end" >&2
+        return 1
+    fi
+
+    # Now decode the path: / → 1, \\ → 0
+    local binary=""
+    local i=0
+    local len=${#encoded_path}
+
+    while (( i < len )); do
+        if (( i + 1 < len )) && [[ "${encoded_path:i:2}" == "\\\\" ]]; then
+            binary+="0"
+            (( i += 2 ))
+        elif [[ "${encoded_path:i:1}" == "/" ]]; then
+            binary+="1"
+            (( i += 1 ))
+        else
+            echo "Warning: Skipping unexpected character at position $i: '${encoded_path:i:1}'" >&2
+            (( i += 1 ))
+        fi
+    done
+
+    # Validate binary length
+    if (( ${#binary} % 8 != 0 )); then
+        echo "Error: Binary length (${#binary}) is not a multiple of 8 — incomplete or corrupted message" >&2
+        return 1
+    fi
+
+    if [[ -z $binary ]]; then
+        echo "(empty message)"
+        return 0
+    fi
+
+    # Convert binary to text
+    local message=""
+    for (( i = 0; i < ${#binary}; i += 8 )); do
+        local byte="${binary:i:8}"
+        local decimal=$((2#$byte))               # binary to decimal
+        local octal=$(printf "%o" "$decimal")    # decimal to octal for printf
+        message+=$(printf "\\$octal")
+    done
+
+    printf "%s" "$message"
+}
+
+# ==================== MAIN LOGIC ====================
+if [[ $input == https:* ]] && [[ $input == *//* ]]; then
+    decode "$input"
+else
+    encode "$input" "$domain"
+fi
