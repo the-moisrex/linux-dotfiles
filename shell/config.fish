@@ -97,8 +97,8 @@ if status is-interactive
     abbr for-dirs --set-cursor=! "$(string join \n -- 'for dir in */' 'cd $dir' '!' 'cd ..' 'end')"
     abbr -a pro prompt
 
-    abbr -a "yt.save" "c.p | yt.links >> ~/Youtube/tmp/links.txt"
-    abbr -a "yt.dl" "c.p | yt.links | xargs download --cookies-from-browser firefox 1440p"
+    abbr -a "yt.save" "c.p | yt.links >> ~/Youtube/tmp/links.txt; exit"
+    abbr -a "yt.dl" "c.p | yt.links | xargs download --cookies-from-browser firefox 1440p; exit"
     abbr -a hx helix
 end
 
