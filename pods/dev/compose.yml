@@ -1,0 +1,89 @@
+version: "3.9"
+
+services:
+  it-tools:
+    image: corentinth/it-tools
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ittools.entrypoints=web"
+      - >
+        traefik.http.routers.ittools.rule=
+        Host(`tools.localhost`)
+        || Host(`it.localhost`)
+        || Host(`it-tools.localhost`)
+      - "traefik.http.services.ittools.loadbalancer.server.port=80"
+    restart: unless-stopped
+
+  hoppscotch:
+    image: hoppscotch/hoppscotch
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hoppscotch.entrypoints=web"
+      - >
+        traefik.http.routers.hoppscotch.rule=
+        Host(`api.localhost`)
+        || Host(`hoppscotch.localhost`)
+        || Host(`postman.localhost`)
+      - "traefik.http.services.hoppscotch.loadbalancer.server.port=3000"
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    volumes:
+      - minio-data:/data
+    labels:
+      - "traefik.enable=true"
+
+      # S3 API
+      - "traefik.http.routers.minio.entrypoints=web"
+      - "traefik.http.routers.minio.rule=Host(`s3.localhost`)"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+
+      # MinIO Console
+      - "traefik.http.routers.minio-console.entrypoints=web"
+      - "traefik.http.routers.minio-console.rule=Host(`minio.localhost`)"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+    restart: unless-stopped
+
+  code-server:
+    image: codercom/code-server
+    environment:
+      PASSWORD: dev
+    volumes:
+      - code-data:/home/coder
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.code.entrypoints=web"
+      - >
+        traefik.http.routers.code.rule=
+        Host(`code.localhost`)
+        || Host(`vscode.localhost`)
+      - "traefik.http.services.code.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+  gitea:
+    image: gitea/gitea
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+    volumes:
+      - gitea-data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gitea.entrypoints=web"
+      - >
+        traefik.http.routers.gitea.rule=
+        Host(`git.localhost`)
+        || Host(`gitea.localhost`)
+      - "traefik.http.services.gitea.loadbalancer.server.port=3000"
+    restart: unless-stopped
+
+volumes:
+  minio-data:
+  code-data:
+  gitea-data:
+
