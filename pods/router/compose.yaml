@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:latest
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--api.insecure=false"
+      - "--api.dashboard=true"
+      - "--log.level=INFO"
+      # - "--entrypoints.websecure.address=:443"
+      # - "--certificatesresolvers.selfsigned.acme.tlschallenge=true"
+      # - "--certificatesresolvers.selfsigned.acme.email=dev@localhost"
+      # - "--certificatesresolvers.selfsigned.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "8080:8080"
+      # - "443:443"
+    volumes:
+      - /run/user/1000/podman/podman.sock:/var/run/docker.sock
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik.entrypoints=web"
+      - "traefik.http.routers.traefik.service=api@internal"
+
+  # Middleware for redirecting HTTP -> HTTPS
+  # traefik-middlewares:
+  #   image: traefik/whoami # Dummy container just for labels
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+
+
+# volumes:
+#  pgdata:
+#  letsencrypt:
+
