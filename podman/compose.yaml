@@ -1,0 +1,158 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:latest
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - # "--entrypoints.websecure.address=:443"
+      - # "--certificatesresolvers.selfsigned.acme.tlschallenge=true"
+      - # "--certificatesresolvers.selfsigned.acme.email=dev@localhost"
+      - # "--certificatesresolvers.selfsigned.acme.storage=/letsencrypt/acme.json"
+      - "--api.insecure=false"
+      - "--api.dashboard=true"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      # - "443:443"
+      - "8080:8080"
+    volumes:
+      - /run/user/1000/podman/podman.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  # Middleware for redirecting HTTP -> HTTPS
+  # traefik-middlewares:
+  #   image: traefik/whoami # Dummy container just for labels
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+
+  compiler-explorer:
+    image: madduci/docker-compiler-explorer
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.compiler.entrypoints=web"
+      - "traefik.http.routers.compiler.rule=Host(`compiler.localhost`) || Host(`compiler`) || Host(`compiler.local`)"
+      # - "traefik.http.routers.compiler.tls.certresolver=selfsigned"
+      # - "traefik.http.routers.compiler.middlewares=redirect-to-https"
+      - "traefik.http.services.compiler.loadbalancer.server.port=10240"
+    restart: unless-stopped
+
+  excalidraw:
+    image: excalidraw/excalidraw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.excalidraw.entrypoints=web"
+      - "traefik.http.routers.excalidraw.rule=Host(`draw.localhost`) || Host(`draw.local`) || Host(`draw`)"
+      # - "traefik.http.routers.excalidraw.tls.certresolver=selfsigned"
+      # - "traefik.http.routers.excalidraw.middlewares=redirect-to-https"
+      - "traefik.http.services.excalidraw.loadbalancer.server.port=80"
+    restart: unless-stopped
+
+  devdocs:
+    image: freecodecamp/devdocs
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.devdocs.entrypoints=web"
+      - "traefik.http.routers.devdocs.rule=Host(`docs.localhost`) || Host(`docs.local`) || Host(`docs`)"
+      # - "traefik.http.routers.devdocs.tls.certresolver=selfsigned"
+      # - "traefik.http.routers.devdocs.middlewares=redirect-to-https"
+      - "traefik.http.services.devdocs.loadbalancer.server.port=9292"
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng
+    environment:
+      - BASE_URL=http://search.localhost
+      - INSTANCE_NAME=SearXNG
+    labels:
+      - "traefik.enable=true"
+      - >
+        traefik.http.routers.searxng.rule=
+        Host(`search.localhost`)
+        || Host(`search.local`)
+        || Host(`search`)
+        || Host(`searx.local`)
+        || Host(`searx`)
+        || Host(`searx.localhost`)
+        || Host(`searxng.localhost`)
+        || Host(`searxng.local`)
+        || Host(`searxng`)
+      - "traefik.http.routers.searxng.entrypoints=web"
+      # - "traefik.http.routers.searxng.tls.certresolver=selfsigned"
+      # - "traefik.http.routers.searxng.middlewares=redirect-to-https"
+      - "traefik.http.services.searxng.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+  kasm-ubuntu:
+    image: kasmweb/ubuntu-noble-desktop:1.18.0-rolling-weekly
+    environment:
+      - VNC_PW=password
+      - KASM_REQUIRE_SSL=true
+    shm_size: "1gb"
+    labels:
+      - "traefik.enable=true"
+      - >
+        traefik.http.routers.kasm.rule=
+        Host(`kasm.localhost`)
+        || Host(`kasm.local`)
+        || Host(`kasm`)
+        || Host(`desktop.localhost`)
+        || Host(`desktop.local`)
+        || Host(`desktop`)
+        || Host(`ubuntu.localhost`)
+        || Host(`ubuntu.local`)
+        || Host(`ubuntu`)
+      - "traefik.http.routers.kasm.entrypoints=web"
+      # - "traefik.http.routers.kasm.tls.certresolver=selfsigned"
+      # - "traefik.http.routers.kasm.middlewares=redirect-to-https"
+      - "traefik.http.routers.kasm.tls=false"
+      - "traefik.http.services.kasm.loadbalancer.server.port=6901"
+    restart: unless-stopped
+    ports:
+      # - "6901:6901"
+      - "5901:5901"
+
+  jupyter:
+    image: jupyter/datascience-notebook
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=dev
+      - JUPYTER_PASSWORD=dev
+    labels:
+      - "traefik.enable=true"
+      - >
+        traefik.http.routers.jupyter.rule=
+        Host(`jupyter.localhost`)
+        || Host(`jupyter.local`)
+        || Host(`jupyter`)
+        || Host(`notebook.localhost`)
+        || Host(`notebook.local`)
+        || Host(`notebook`)
+        || Host(`lab.localhost`)
+        || Host(`lab.local`)
+        || Host(`lab`)
+      - "traefik.http.routers.jupyter.entrypoints=web"
+      # - "traefik.http.routers.jupyter.tls.certresolver=selfsigned"
+      # - "traefik.http.routers.jupyter.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.jupyter-headers.headers.customrequestheaders.X-Forwarded-Proto=http"
+      - "traefik.http.routers.jupyter.middlewares=jupyter-headers"
+      - "traefik.http.services.jupyter.loadbalancer.server.port=8888"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: appdb
+    # volumes:
+    #  - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+# volumes:
+#  pgdata:
+#  letsencrypt:
+
