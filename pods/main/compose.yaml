@@ -114,6 +114,24 @@ services:
       - "traefik.http.services.jupyter.loadbalancer.server.port=8888"
     restart: unless-stopped
 
+  freshrss:
+    image: freshrss/freshrss
+    environment:
+      - CRON_MINUTES=5
+      - UID=1000
+      - GID=1000
+      - TZ=UTC
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.freshrss.entrypoints=web"
+      - "traefik.http.routers.freshrss.rule=Host(`freshrss.localhost`) || Host(`freshrss`) || Host(`freshrss.local`)"
+      # - "traefik.http.routers.freshrss.tls.certresolver=selfsigned"
+      # - "traefik.http.routers.freshrss.middlewares=redirect-to-https"
+      - "traefik.http.services.freshrss.loadbalancer.server.port=80"
+    restart: unless-stopped
+    # volumes:
+    #   - ./freshrss-data:/var/www/FreshRSS/data
+
   # postgres:
   #   image: postgres
   #   environment:
