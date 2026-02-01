@@ -1,138 +1,46 @@
-# Database Stack with Podman Compose
+# Database Configuration Setup
 
-This repository contains a comprehensive database stack deployed using Podman Compose. It includes multiple database technologies and their corresponding management interfaces, all configured with persistent storage and Traefik routing.
+This directory contains scripts and configurations for the database management tools in the pod.
 
-## Services Included
+## Setup Script
 
-### Relational Databases
-- **MariaDB** - MySQL-compatible database
-- **PostgreSQL** - Advanced open-source relational database
-- **Supabase** - Open-source Firebase alternative (PostgreSQL-based)
+The `setup_database_configs.sh` script creates all necessary directories and configuration files for the database management tools:
 
-### NoSQL Databases
-- **Neo4j** - Graph database
-- **MongoDB** - Document-oriented database
-- **Redis** - In-memory key-value store
+- Creates SQLite database files (main.db, test.db, development.db)
+- Sets up pgAdmin server configurations
+- Configures PHPMyAdmin with connections to all databases
+- Creates authentication files
 
-### Analytical Databases
-- **DuckDB** - Analytical database with Jupyter interface
+## Usage
 
-### File-based Databases
-- **SQLite** - Lightweight file-based database
-
-### Management Interfaces
-- **phpMyAdmin** - Web interface for MariaDB/MySQL
-- **pgAdmin** - Web interface for PostgreSQL
-- **Adminer** - Universal database management tool
-- **Supabase Studio** - Web interface for Supabase projects
-
-### Analytics & Visualization
-- **Apache Superset** - Data visualization and exploration platform
-
-## Prerequisites
-
-- Podman
-- Podman Compose plugin
-
-## Setup Instructions
-
-1. Clone this repository
-2. Ensure you have Podman and Podman Compose installed
-3. Run the following command to start all services:
+Run the setup script whenever you recreate the pod or delete the `$HOME/databases` directory:
 
 ```bash
-podman-compose up -d
+./setup_database_configs.sh
 ```
 
-## Storage Locations
-
-All databases store their data persistently in your home directory under the `databases` folder:
-
-- `$HOME/databases/neo4j/` - Neo4j data
-- `$HOME/databases/mariadb/` - MariaDB data
-- `$HOME/databases/postgres/` - PostgreSQL data
-- `$HOME/databases/sqlite/` - SQLite files
-- `$HOME/databases/duckdb/` - DuckDB files
-- `$HOME/databases/redis/` - Redis data
-- `$HOME/databases/mongodb/` - MongoDB data
-- `$HOME/databases/superset/` - Apache Superset data
-- `$HOME/databases/supabase/` - Supabase data
-- `$HOME/databases/pgadmin/` - pgAdmin data
-
-## Access Information
-
-All web interfaces are accessible via Traefik routing using `.localhost` domains:
-
-- **Neo4j Browser**: [http://neo4j.localhost](http://neo4j.localhost) (Username: `root`, Password: `toor`)
-- **MariaDB**: [http://mariadb.localhost](http://mariadb.localhost) (Direct connection)
-- **phpMyAdmin**: [http://phpmyadmin.localhost](http://phpmyadmin.localhost) (Username: `root`, Password: `toor`)
-- **PostgreSQL**: [http://postgres.localhost](http://postgres.localhost) (Direct connection)
-- **pgAdmin**: [http://pgadmin.localhost](http://pgadmin.localhost) (Email: `admin@localhost`, Password: `toor`)
-- **SQLite**: [http://sqlite.localhost](http://sqlite.localhost)
-- **DuckDB**: [http://duckdb.localhost](http://duckdb.localhost) (Jupyter Lab)
-- **Adminer**: [http://adminer.localhost](http://adminer.localhost) (Username: `root`, Password: `toor`)
-- **Redis**: [http://redis.localhost](http://redis.localhost) (Direct connection)
-- **MongoDB**: [http://mongodb.localhost](http://mongodb.localhost) (Direct connection)
-- **Apache Superset**: [http://superset.localhost](http://superset.localhost)
-- **Supabase DB**: [http://supabase-db.localhost](http://supabase-db.localhost) (Direct connection)
-- **Supabase Studio**: [http://supabase-studio.localhost](http://supabase-studio.localhost)
-
-## Default Credentials
-
-For all services that require authentication, the default credentials are:
-
-- **Username**: `root`
-- **Password**: `toor`
-
-## Ports Used
-
-- 7474: Neo4j HTTP
-- 7687: Neo4j Bolt
-- 3306: MariaDB
-- 5432: PostgreSQL
-- 8080: phpMyAdmin
-- 8081: SQLite Web Interface
-- 8082: pgAdmin
-- 8083: Adminer
-- 8888: DuckDB (Jupyter)
-- 6379: Redis
-- 27017: MongoDB
-- 8088: Apache Superset
-- 54322: Supabase Database
-- 54323: Supabase Studio
-
-## Stopping the Services
-
-To stop all services:
+After running the script, start your pod with:
 
 ```bash
-podman-compose down
+podman-compose -f podman-compose.yml up -d
 ```
 
-To stop and remove all containers, networks, and volumes:
+After the services are running, configure pgAdmin with preconfigured servers:
 
 ```bash
-podman-compose down -v
+./configure_pgadmin.sh
 ```
 
-## Customization
+The database management tools will have all preconfigured connections ready to use.
 
-You can customize the configuration by modifying the `podman-compose.yml` file according to your needs. Common customizations include:
+## Services
 
-- Changing default passwords
-- Modifying port mappings
-- Adjusting resource limits
-- Adding additional environment variables
+Once the pod is running, access the database management tools at:
 
-## Troubleshooting
-
-If you encounter issues:
-
-1. Check that Podman and Podman Compose are properly installed
-2. Verify that the required ports are not already in use
-3. Check the logs with `podman-compose logs [service-name]`
-4. Ensure you have sufficient disk space for the databases
-
-## License
-
-This configuration is provided as-is for educational and development purposes.
+- **pgAdmin**: http://pgadmin.localhost or http://localhost:8082
+- **PHPMyAdmin**: http://phpmyadmin.localhost or http://localhost:8084
+- **Adminer**: http://adminer.localhost or http://localhost:8083
+- **SQLite Admin**: http://sqlite.localhost or http://localhost:8081
+- **MongoDB Admin**: http://mongo.localhost or http://localhost:8086
+- **Redis Admin**: http://redis.localhost or http://localhost:8085
+- **Neo4j Browser**: http://neo4j.localhost or http://localhost:7474
