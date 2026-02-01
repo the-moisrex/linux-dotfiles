@@ -27,6 +27,18 @@ services:
       - "traefik.http.routers.traefik.entrypoints=web"
       - "traefik.http.routers.traefik.service=api@internal"
 
+  dashboard:
+    build: ../dashboard
+    container_name: dashboard
+    restart: unless-stopped
+    volumes:
+      - ../..:/app/data:ro  # Mount parent directory to scan for compose files
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`dashboard.localhost`)"
+      - "traefik.http.routers.dashboard.entrypoints=web"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=8000"
+
   # Middleware for redirecting HTTP -> HTTPS
   # traefik-middlewares:
   #   image: traefik/whoami # Dummy container just for labels

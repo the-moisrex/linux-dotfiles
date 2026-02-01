@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Podman Compose Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-primary: #f5f7fa;
+            --bg-secondary: white;
+            --text-primary: #333;
+            --text-secondary: #666;
+            --border-color: #ddd;
+            --header-bg: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            --card-bg: #f8f9fa;
+            --card-hover: #f1f3f5;
+            --link-bg: #3498db;
+            --link-hover: #2980b9;
+            --running-bg: #d4edda;
+            --running-border: #c3e6cb;
+            --running-text: #155724;
+            --stopped-bg: #f8d7da;
+            --stopped-border: #f5c6cb;
+            --stopped-text: #721c24;
+            --unknown-bg: #fff3cd;
+            --unknown-border: #ffeaa7;
+            --unknown-text: #856404;
+        }
+        .dark-mode {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2d2d2d;
+            --text-primary: #f0f0f0;
+            --text-secondary: #aaa;
+            --border-color: #444;
+            --card-bg: #3a3a3a;
+            --card-hover: #4a4a4a;
+            --link-bg: #4da6ff;
+            --link-hover: #1a3d6d;
+            --running-bg: #1d3c25;
+            --running-border: #2d5c3d;
+            --running-text: #a3d9b1;
+            --stopped-bg: #4d2629;
+            --stopped-border: #6d3c3f;
+            --stopped-text: #f1aeb5;
+            --unknown-bg: #4d4725;
+            --unknown-border: #6d633d;
+            --unknown-text: #ffeaa7;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--header-bg);
+            color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .header-content {
+            flex-grow: 1;
+            text-align: center;
+        }
+        h1 {
+            margin: 0;
+            font-size: 2.5em;
+        }
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+            margin-top: 10px;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            width: 100%;
+            max-width: 600px;
+        }
+        .search-box {
+            flex-grow: 1;
+            padding: 12px 15px;
+            border: 2px solid #ddd;
+            border-radius: 30px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        .search-box:focus {
+            border-color: var(--link-bg);
+        }
+        .theme-toggle {
+            background: none;
+            border: 1px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: white;
+        }
+        .compose-group {
+            background: var(--bg-secondary);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 25px;
+            overflow: hidden;
+        }
+        .compose-header {
+            background: #2c3e50;
+            color: white;
+            padding: 15px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .compose-header:hover {
+            background: #34495e;
+        }
+        .compose-title {
+            margin: 0;
+            font-size: 1.4em;
+        }
+        .expand-icon {
+            font-size: 1.2em;
+        }
+        .compose-body {
+            padding: 0;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .compose-body.expanded {
+            max-height: 1000px;
+            padding: 20px;
+        }
+        .service-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .service-card {
+            background: var(--card-bg);
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 20px;
+            position: relative;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border-left: 4px solid #3498db;
+        }
+        .service-card.running {
+            border-left-color: #28a745;
+        }
+        .service-card.stopped {
+            border-left-color: #dc3545;
+        }
+        .service-card.unknown {
+            border-left-color: #ffc107;
+        }
+        .service-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            background: var(--card-hover);
+        }
+        .service-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+        .status-running { background-color: #28a745; }
+        .status-stopped { background-color: #dc3545; }
+        .status-unknown { background-color: #ffc107; }
+        .logo-container {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #3498db, #7b68ee);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            color: white;
+            font-weight: bold;
+            font-size: 20px;
+        }
+        .service-name {
+            font-weight: bold;
+            color: var(--text-primary);
+            font-size: 1.2em;
+            flex-grow: 1;
+        }
+        .service-status {
+            margin-left: 10px;
+            font-size: 0.85em;
+            padding: 3px 8px;
+            border-radius: 12px;
+        }
+        .status-badge-running {
+            background-color: var(--running-bg);
+            color: var(--running-text);
+            border: 1px solid var(--running-border);
+        }
+        .status-badge-stopped {
+            background-color: var(--stopped-bg);
+            color: var(--stopped-text);
+            border: 1px solid var(--stopped-border);
+        }
+        .status-badge-unknown {
+            background-color: var(--unknown-bg);
+            color: var(--unknown-text);
+            border: 1px solid var(--unknown-border);
+        }
+        .service-links {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        .service-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 12px;
+            background: var(--link-bg);
+            color: white;
+            text-decoration: none;
+            border-radius: 20px;
+            font-size: 0.9em;
+            transition: background 0.2s;
+        }
+        .service-link:hover {
+            background: var(--link-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .service-details {
+            display: none;
+        }
+        .service-details.expanded {
+            display: block;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px dashed var(--border-color);
+        }
+        .detail-item {
+            margin-bottom: 8px;
+        }
+        .detail-label {
+            font-weight: bold;
+            color: var(--text-secondary);
+            display: inline-block;
+            width: 80px;
+        }
+        .detail-value {
+            color: var(--text-primary);
+        }
+        .toggle-details {
+            background: none;
+            border: none;
+            color: var(--link-bg);
+            cursor: pointer;
+            font-size: 0.9em;
+            text-decoration: underline;
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0;
+        }
+        .toggle-details:hover {
+            color: var(--link-hover);
+        }
+        .no-services {
+            color: #e74c3c;
+            font-style: italic;
+            padding: 10px;
+            text-align: center;
+        }
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+        .hidden {
+            display: none !important;
+        }
+        @media (max-width: 768px) {
+            .service-grid {
+                grid-template-columns: 1fr;
+            }
+            header {
+                padding: 15px;
+            }
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <h1><i class="fas fa-network-wired"></i> Podman Compose Dashboard</h1>
+                <div class="subtitle">Overview of all your compose files and services</div>
+            </div>
+            <div class="controls">
+                <input type="text" class="search-box" id="searchBox" placeholder="Search services...">
+                <button class="theme-toggle" id="themeToggle">
+                    <i class="fas fa-moon"></i>
+                </button>
+            </div>
+        </header>
+
+        <main>
+
+        <div class="compose-group" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+            <div class="compose-header">
+                <h3 class="compose-title"><i class="fas fa-file-code"></i> ../../home/moisrex/cmd/pods/databases/podman-compose.yml</h3>
+                <div class="expand-icon">−</div>
+            </div>
+            <div class="compose-body expanded">
+                <div class="service-grid">
+                    
+            <div class="service-card unknown" data-service-name="neo4j" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">N</div>
+                    <div class="service-name">neo4j
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">neo4j:latest</span></div>
+                <div class="service-links">
+                    <a href="http://neo4j.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> neo4j.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">7474:7474, 7687:7687</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">4 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">3 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="mariadb" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">M</div>
+                    <div class="service-name">mariadb
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">mariadb:latest</span></div>
+                <div class="service-links">
+                    <a href="http://mariadb.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> mariadb.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">3306:3306</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">2 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">4 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="phpmyadmin" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">P</div>
+                    <div class="service-name">phpmyadmin
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">phpmyadmin:latest</span></div>
+                <div class="service-links">
+                    <a href="http://phpmyadmin.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> phpmyadmin.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">8080:80</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">5 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="sqlite" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">S</div>
+                    <div class="service-name">sqlite
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">coleifer/sqlite-web:latest</span></div>
+                <div class="service-links">
+                    <a href="http://sqlite.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> sqlite.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">8081:8080</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">1 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="duckdb" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">D</div>
+                    <div class="service-name">duckdb
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">jupyter/scipy-notebook:latest</span></div>
+                <div class="service-links">
+                    <a href="http://duckdb.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> duckdb.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">8888:8888</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">1 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="postgres" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">P</div>
+                    <div class="service-name">postgres
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">postgres:latest</span></div>
+                <div class="service-links">
+                    <a href="http://postgres.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> postgres.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">5432:5432</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">3 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="pgadmin" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">P</div>
+                    <div class="service-name">pgadmin
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">dpage/pgadmin4:latest</span></div>
+                <div class="service-links">
+                    <a href="http://pgadmin.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> pgadmin.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">8082:80</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">3 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="adminer" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">A</div>
+                    <div class="service-name">adminer
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">adminer:latest</span></div>
+                <div class="service-links">
+                    <a href="http://adminer.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> adminer.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">8083:8080</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">2 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="redis" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">R</div>
+                    <div class="service-name">redis
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">redis:latest</span></div>
+                <div class="service-links">
+                    <a href="http://redis.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> redis.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">6379:6379</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">0 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="mongodb" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">M</div>
+                    <div class="service-name">mongodb
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">mongo:latest</span></div>
+                <div class="service-links">
+                    <a href="http://mongodb.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> mongodb.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">27017:27017</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">2 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="superset" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">S</div>
+                    <div class="service-name">superset
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">apache/superset:latest</span></div>
+                <div class="service-links">
+                    <a href="http://superset.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> superset.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">8088:8088</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">1 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="supabase-db" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">S</div>
+                    <div class="service-name">supabase-db
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">supabase/postgres:15</span></div>
+                <div class="service-links">
+                    <a href="http://supabase-db.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> supabase-db.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">54322:5432</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">5 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="supabase-studio" data-compose-path="../../home/moisrex/cmd/pods/databases/podman-compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">S</div>
+                    <div class="service-name">supabase-studio
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">supabase/studio:latest</span></div>
+                <div class="service-links">
+                    <a href="http://supabase-studio.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> supabase-studio.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">54323:3000</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">3 vars</span>
+                    </div>
+                </div>
+            </div>
+                </div>
+            </div>
+        </div>
+        <div class="compose-group" data-compose-path="../../home/moisrex/cmd/pods/router/compose.yaml">
+            <div class="compose-header">
+                <h3 class="compose-title"><i class="fas fa-file-code"></i> ../../home/moisrex/cmd/pods/router/compose.yaml</h3>
+                <div class="expand-icon">−</div>
+            </div>
+            <div class="compose-body expanded">
+                <div class="service-grid">
+                    
+            <div class="service-card unknown" data-service-name="traefik" data-compose-path="../../home/moisrex/cmd/pods/router/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">T</div>
+                    <div class="service-name">traefik
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">traefik:latest</span></div>
+                <div class="service-links">
+                    <a href="http://traefik.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> traefik.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">80:80, 8080:8080</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">0 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="dashboard" data-compose-path="../../home/moisrex/cmd/pods/router/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">D</div>
+                    <div class="service-name">dashboard
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">N/A</span></div>
+                <div class="service-links">
+                    <a href="http://dashboard.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> dashboard.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">0 vars</span>
+                    </div>
+                </div>
+            </div>
+                </div>
+            </div>
+        </div>
+        <div class="compose-group" data-compose-path="../../home/moisrex/cmd/pods/main/compose.yaml">
+            <div class="compose-header">
+                <h3 class="compose-title"><i class="fas fa-file-code"></i> ../../home/moisrex/cmd/pods/main/compose.yaml</h3>
+                <div class="expand-icon">−</div>
+            </div>
+            <div class="compose-body expanded">
+                <div class="service-grid">
+                    
+            <div class="service-card unknown" data-service-name="compiler-explorer" data-compose-path="../../home/moisrex/cmd/pods/main/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">C</div>
+                    <div class="service-name">compiler-explorer
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">madduci/docker-compiler-explorer</span></div>
+                <div class="service-links">
+                    <a href="http://compiler.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> compiler.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">0 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="excalidraw" data-compose-path="../../home/moisrex/cmd/pods/main/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">E</div>
+                    <div class="service-name">excalidraw
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">excalidraw/excalidraw</span></div>
+                <div class="service-links">
+                    <a href="http://draw.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> draw.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">0 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="devdocs" data-compose-path="../../home/moisrex/cmd/pods/main/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">D</div>
+                    <div class="service-name">devdocs
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">freecodecamp/devdocs</span></div>
+                <div class="service-links">
+                    <a href="http://docs.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> docs.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">0 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="searxng" data-compose-path="../../home/moisrex/cmd/pods/main/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">S</div>
+                    <div class="service-name">searxng
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">docker.io/searxng/searxng</span></div>
+                <div class="service-links">
+                    <a href="http://search.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> search.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">2 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="jupyter" data-compose-path="../../home/moisrex/cmd/pods/main/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">J</div>
+                    <div class="service-name">jupyter
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">jupyter/datascience-notebook</span></div>
+                <div class="service-links">
+                    <a href="http://jupyter.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> jupyter.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">6 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">3 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="freshrss" data-compose-path="../../home/moisrex/cmd/pods/main/compose.yaml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">F</div>
+                    <div class="service-name">freshrss
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">freshrss/freshrss</span></div>
+                <div class="service-links">
+                    <a href="http://freshrss.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> freshrss.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">4 vars</span>
+                    </div>
+                </div>
+            </div>
+                </div>
+            </div>
+        </div>
+        <div class="compose-group" data-compose-path="../../home/moisrex/cmd/pods/dev/compose.yml">
+            <div class="compose-header">
+                <h3 class="compose-title"><i class="fas fa-file-code"></i> ../../home/moisrex/cmd/pods/dev/compose.yml</h3>
+                <div class="expand-icon">−</div>
+            </div>
+            <div class="compose-body expanded">
+                <div class="service-grid">
+                    
+            <div class="service-card unknown" data-service-name="it-tools" data-compose-path="../../home/moisrex/cmd/pods/dev/compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">I</div>
+                    <div class="service-name">it-tools
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">corentinth/it-tools</span></div>
+                <div class="service-links">
+                    <a href="http://tools.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> tools.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">0 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">0 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="minio" data-compose-path="../../home/moisrex/cmd/pods/dev/compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">M</div>
+                    <div class="service-name">minio
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">minio/minio</span></div>
+                <div class="service-links">
+                    <a href="http://s3.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> s3.localhost</a><a href="http://minio.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> minio.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">9 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">4 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="code-server" data-compose-path="../../home/moisrex/cmd/pods/dev/compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">C</div>
+                    <div class="service-name">code-server
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">codercom/code-server</span></div>
+                <div class="service-links">
+                    <a href="http://code.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> code.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">1 vars</span>
+                    </div>
+                </div>
+            </div>
+            <div class="service-card unknown" data-service-name="gitea" data-compose-path="../../home/moisrex/cmd/pods/dev/compose.yml">
+                <div class="service-header">
+                    <div class="status-indicator status-unknown"></div>
+                    <div class="logo-container">G</div>
+                    <div class="service-name">gitea
+                        <span class="service-status status-badge-unknown">unknown</span>
+                    </div>
+                </div>
+                <div class="service-image">Image: <span class="detail-value">gitea/gitea</span></div>
+                <div class="service-links">
+                    <a href="http://git.localhost" target="_blank" class="service-link"><i class="fas fa-external-link-alt"></i> git.localhost</a>
+                </div>
+                <button class="toggle-details"><i class="fas fa-chevron-down"></i> Show More</button>
+                <div class="service-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Ports:</span>
+                        <span class="detail-value">None</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Labels:</span>
+                        <span class="detail-value">4 labels</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Volumes:</span>
+                        <span class="detail-value">1 volumes</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Env:</span>
+                        <span class="detail-value">2 vars</span>
+                    </div>
+                </div>
+            </div>
+                </div>
+            </div>
+        </div>
+        </main>
+
+        <footer>
+            Generated on 2026-01-31 13:49:01<div style="margin-top: 10px;">
+                <button id="refreshBtn" style="padding: 8px 16px; background: var(--link-bg); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    <i class="fas fa-sync-alt"></i> Refresh Status
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Theme toggle functionality
+        const themeToggle = document.getElementById("themeToggle");
+        const themeIcon = themeToggle.querySelector("i");
+
+        // Check for saved theme preference or respect OS setting
+        const savedTheme = localStorage.getItem("theme");
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+        if (savedTheme === "dark" || (!savedTheme && prefersDark)) {
+            document.body.classList.add("dark-mode");
+            themeIcon.classList.remove("fa-moon");
+            themeIcon.classList.add("fa-sun");
+        }
+
+        themeToggle.addEventListener("click", () => {
+            document.body.classList.toggle("dark-mode");
+
+            if (document.body.classList.contains("dark-mode")) {
+                localStorage.setItem("theme", "dark");
+                themeIcon.classList.remove("fa-moon");
+                themeIcon.classList.add("fa-sun");
+            } else {
+                localStorage.setItem("theme", "light");
+                themeIcon.classList.remove("fa-sun");
+                themeIcon.classList.add("fa-moon");
+            }
+        });
+
+        // Toggle expand/collapse for compose sections
+        document.querySelectorAll(".compose-header").forEach(header => {
+            header.addEventListener("click", () => {
+                const body = header.nextElementSibling;
+                body.classList.toggle("expanded");
+                const icon = header.querySelector(".expand-icon");
+                icon.textContent = body.classList.contains("expanded") ? "−" : "+";
+            });
+        });
+
+        // Expand all by default
+        document.querySelectorAll(".compose-body").forEach(body => {
+            body.classList.add("expanded");
+            const icon = body.previousElementSibling.querySelector(".expand-icon");
+            icon.textContent = "−";
+        });
+
+        // Toggle service details
+        document.querySelectorAll(".toggle-details").forEach(button => {
+            button.addEventListener("click", function() {
+                const details = this.parentNode.querySelector(".service-details");
+                details.classList.toggle("expanded");
+
+                const icon = this.querySelector("i");
+                if (details.classList.contains("expanded")) {
+                    this.innerHTML = "<i class=\"fas fa-chevron-up\"></i> Show Less";
+                } else {
+                    this.innerHTML = "<i class=\"fas fa-chevron-down\"></i> Show More";
+                }
+            });
+        });
+
+        // Search functionality
+        const searchBox = document.getElementById("searchBox");
+        searchBox.addEventListener("input", function() {
+            const searchTerm = this.value.toLowerCase();
+            
+            // Hide/show compose groups based on search term
+            document.querySelectorAll(".compose-group").forEach(group => {
+                const composePath = group.getAttribute("data-compose-path");
+                if (composePath.includes(searchTerm)) {
+                    group.classList.remove("hidden");
+                    return; // Don't hide this group
+                }
+                
+                // Check if any services in this group match the search
+                let hasMatchingService = false;
+                group.querySelectorAll(".service-card").forEach(service => {
+                    const serviceName = service.getAttribute("data-service-name");
+                    if (serviceName.includes(searchTerm)) {
+                        service.classList.remove("hidden");
+                        hasMatchingService = true;
+                    } else {
+                        service.classList.add("hidden");
+                    }
+                });
+                
+                // Show/hide the group based on whether it has matching services
+                if (hasMatchingService || searchTerm === "") {
+                    group.classList.remove("hidden");
+                } else {
+                    group.classList.add("hidden");
+                }
+            });
+        });
+
+        // Refresh status button
+        const refreshBtn = document.getElementById("refreshBtn");
+        refreshBtn.addEventListener("click", function() {
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+            refreshBtn.disabled = true;
+            
+            // Reload the page to refresh the dashboard
+            location.reload();
+        });
+    </script>
+</body>
+</html>
