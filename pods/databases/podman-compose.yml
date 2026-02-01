@@ -1,0 +1,268 @@
+version: '3.8'
+
+services:
+  # Neo4j graph database
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j-db
+    restart: unless-stopped
+    environment:
+      - NEO4J_AUTH=root/toor
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_auth__enabled=false
+    volumes:
+      - $HOME/databases/neo4j/data:/data
+      - $HOME/databases/neo4j/logs:/logs
+      - $HOME/databases/neo4j/import:/var/lib/neo4j/import
+      - $HOME/databases/neo4j/plugins:/plugins
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.neo4j.rule=Host(`neo4j.localhost`)"
+      - "traefik.http.routers.neo4j.entrypoints=web"
+      - "traefik.http.services.neo4j.loadbalancer.server.port=7474"
+
+  # MariaDB (compatible with MySQL)
+  mariadb:
+    image: mariadb:latest
+    container_name: mariadb-db
+    restart: unless-stopped
+    environment:
+      - MARIADB_ROOT_PASSWORD=toor
+      - MARIADB_DATABASE=myapp
+      - MARIADB_USER=root
+      - MARIADB_PASSWORD=toor
+    volumes:
+      - $HOME/databases/mariadb/data:/var/lib/mysql
+      - $HOME/databases/mariadb/config:/etc/mysql/conf.d
+    ports:
+      - "3306:3306"
+    command: [--default-authentication-plugin=mysql_native_password]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mariadb.rule=Host(`mariadb.localhost`)"
+      - "traefik.http.routers.mariadb.entrypoints=web"
+      - "traefik.http.services.mariadb.loadbalancer.server.port=3306"
+
+  # phpMyAdmin for MariaDB/MySQL management
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: phpmyadmin-web
+    restart: unless-stopped
+    environment:
+      - PMA_HOST=mariadb
+      - PMA_PORT=3306
+      - PMA_USER=root
+      - PMA_PASSWORD=toor
+      - MYSQL_ROOT_PASSWORD=toor
+    ports:
+      - "8080:80"
+    depends_on:
+      - mariadb
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`)"
+      - "traefik.http.routers.phpmyadmin.entrypoints=web"
+      - "traefik.http.services.phpmyadmin.loadbalancer.server.port=80"
+
+  # SQLite Admin interface
+  sqlite:
+    image: coleifer/sqlite-web:latest
+    container_name: sqlite-admin
+    restart: unless-stopped
+    volumes:
+      - $HOME/databases/sqlite:/dbs
+    ports:
+      - "8081:8080"
+    environment:
+      - SQLITE_DATABASE_PATHS=/dbs
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sqlite.rule=Host(`sqlite.localhost`)"
+      - "traefik.http.routers.sqlite.entrypoints=web"
+      - "traefik.http.services.sqlite.loadbalancer.server.port=8080"
+
+  # DuckDB - Using a Jupyter notebook container with DuckDB installed
+  duckdb:
+    image: jupyter/scipy-notebook:latest
+    container_name: duckdb-jupyter
+    restart: unless-stopped
+    volumes:
+      - $HOME/databases/duckdb:/home/jovyan/work
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+    command: >
+      bash -c "pip install --upgrade pip duckdb && start.sh jupyter lab
+      --NotebookApp.token=''
+      --NotebookApp.password=''
+      --NotebookApp.open_browser=False
+      --NotebookApp.allow_origin='*'
+      --NotebookApp.ip=0.0.0.0"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.duckdb.rule=Host(`duckdb.localhost`)"
+      - "traefik.http.routers.duckdb.entrypoints=web"
+      - "traefik.http.services.duckdb.loadbalancer.server.port=8888"
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:latest
+    container_name: postgres-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=myapp
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=toor
+    volumes:
+      - $HOME/databases/postgres/data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.postgres.rule=Host(`postgres.localhost`)"
+      - "traefik.http.routers.postgres.entrypoints=web"
+      - "traefik.http.services.postgres.loadbalancer.server.port=5432"
+
+  # pgAdmin for PostgreSQL management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin-web
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@localhost
+      - PGADMIN_DEFAULT_PASSWORD=toor
+      - PGADMIN_LISTEN_PORT=80
+    ports:
+      - "8082:80"
+    depends_on:
+      - postgres
+    volumes:
+      - $HOME/databases/pgadmin:/var/lib/pgadmin
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pgadmin.rule=Host(`pgadmin.localhost`)"
+      - "traefik.http.routers.pgadmin.entrypoints=web"
+      - "traefik.http.services.pgadmin.loadbalancer.server.port=80"
+
+  # Adminer - Universal database management tool
+  adminer:
+    image: adminer:latest
+    container_name: adminer-web
+    restart: unless-stopped
+    ports:
+      - "8083:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=mariadb
+      - ADMINER_DESIGN=pepa-linha-dark
+    depends_on:
+      - mariadb
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adminer.rule=Host(`adminer.localhost`)"
+      - "traefik.http.routers.adminer.entrypoints=web"
+      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
+
+  # Redis - In-memory data structure store
+  redis:
+    image: redis:latest
+    container_name: redis-db
+    restart: unless-stopped
+    volumes:
+      - $HOME/databases/redis/data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass toor --appendonly yes
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.redis.rule=Host(`redis.localhost`)"
+      - "traefik.http.routers.redis.entrypoints=web"
+      - "traefik.http.services.redis.loadbalancer.server.port=6379"
+
+  # MongoDB - NoSQL document database
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb-db
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=toor
+    volumes:
+      - $HOME/databases/mongodb/data:/data/db
+    ports:
+      - "27017:27017"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mongodb.rule=Host(`mongodb.localhost`)"
+      - "traefik.http.routers.mongodb.entrypoints=web"
+      - "traefik.http.services.mongodb.loadbalancer.server.port=27017"
+
+  # Apache Superset - Data visualization and exploration platform
+  superset:
+    image: apache/superset:latest
+    container_name: superset-web
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment:
+      - SUPERSET_SECRET_KEY=superset-secret-key-change-me
+    volumes:
+      - $HOME/databases/superset:/app/superset_home
+    depends_on:
+      - postgres
+      - mariadb
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.superset.rule=Host(`superset.localhost`)"
+      - "traefik.http.routers.superset.entrypoints=web"
+      - "traefik.http.services.superset.loadbalancer.server.port=8088"
+    entrypoint: ["/bin/sh", "-c"]
+    command: [
+      "pip install psycopg2-binary mysql-connector-python && superset db upgrade && superset init && gunicorn --bind 0.0.0.0:8088 --workers 1 --worker-class gthread --threads 20 --timeout 60 --max-requests 100 --max-requests-jitter 10 superset.app:create_app()"
+    ]
+
+  # Supabase - Open source Firebase alternative (PostgreSQL backend)
+  # Note: Full Supabase deployment requires additional services (auth, storage, etc.)
+  # This is a simplified version focusing on the database layer
+  supabase-db:
+    image: supabase/postgres:15
+    container_name: supabase-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=supabase_admin
+      - POSTGRES_PASSWORD=toor
+      - JWT_SECRET=super-secret-jwt-token-for-supabase
+      - AUTH_ENABLED=false
+    volumes:
+      - $HOME/databases/supabase/data:/var/lib/postgresql/data
+    ports:
+      - "54322:5432"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.supabase-db.rule=Host(`supabase-db.localhost`)"
+      - "traefik.http.routers.supabase-db.entrypoints=web"
+      - "traefik.http.services.supabase-db.loadbalancer.server.port=5432"
+
+  # Supabase Studio - Web-based interface for managing Supabase projects
+  supabase-studio:
+    image: supabase/studio:latest
+    container_name: supabase-studio
+    restart: unless-stopped
+    environment:
+      - STUDIO_PG_META_URL=http://supabase-db:5432
+      - DEFAULT_ORGANIZATION_NAME=Supabase
+      - DEFAULT_PROJECT_NAME=supabase_project
+    ports:
+      - "54323:3000"
+    depends_on:
+      - supabase-db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.supabase-studio.rule=Host(`supabase-studio.localhost`)"
+      - "traefik.http.routers.supabase-studio.entrypoints=web"
+      - "traefik.http.services.supabase-studio.loadbalancer.server.port=3000"
