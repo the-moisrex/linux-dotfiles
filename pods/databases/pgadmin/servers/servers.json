@@ -1,0 +1,24 @@
+{
+    "Servers": {
+        "1": {
+            "Name": "PostgreSQL Main",
+            "Group": "Servers",
+            "Host": "postgres",
+            "Port": 5432,
+            "MaintenanceDB": "postgres",
+            "Username": "root",
+            "PasswordExecType": "Script",
+            "PasswordExec": "cat /pgpassfile | grep postgres | awk '{print $4}'"
+        },
+        "2": {
+            "Name": "Supabase PostgreSQL",
+            "Group": "Servers",
+            "Host": "supabase-db",
+            "Port": 5432,
+            "MaintenanceDB": "postgres",
+            "Username": "supabase_admin",
+            "PasswordExecType": "Script",
+            "PasswordExec": "cat /pgpassfile_supabase | grep supabase-db | awk '{print $4}'"
+        }
+    }
+}

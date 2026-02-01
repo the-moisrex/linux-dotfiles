@@ -1,0 +1,24 @@
+{
+    "Servers": {
+        "1": {
+            "Name": "PostgreSQL Main",
+            "Group": "Servers",
+            "Host": "postgres",
+            "Port": 5432,
+            "MaintenanceDB": "postgres",
+            "Username": "root",
+            "PassFile": "/pgpassfile",
+            "SSLMode": "prefer"
+        },
+        "2": {
+            "Name": "Supabase PostgreSQL",
+            "Group": "Servers",
+            "Host": "supabase-db",
+            "Port": 5432,
+            "MaintenanceDB": "postgres",
+            "Username": "supabase_admin",
+            "PassFile": "/pgpassfile_supabase",
+            "SSLMode": "prefer"
+        }
+    }
+}

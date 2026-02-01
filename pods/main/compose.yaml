@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
 
   devdocs:
-    image: freecodecamp/devdocs
+    image: ghcr.io/freecodecamp/devdocs
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.devdocs.entrypoints=web"

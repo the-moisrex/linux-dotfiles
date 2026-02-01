@@ -7,7 +7,7 @@ services:
     container_name: neo4j-db
     restart: unless-stopped
     environment:
-      - NEO4J_AUTH=root/toor
+      - NEO4J_AUTH=neo4j/password123
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_auth__enabled=false
     volumes:
@@ -52,15 +52,19 @@ services:
     container_name: phpmyadmin-web
     restart: unless-stopped
     environment:
-      - PMA_HOST=mariadb
-      - PMA_PORT=3306
+      - PMA_HOSTS=mariadb,postgres,supabase-db
+      - PMA_PORTS=3306,5432,5432
       - PMA_USER=root
       - PMA_PASSWORD=toor
       - MYSQL_ROOT_PASSWORD=toor
     ports:
-      - "8080:80"
+      - "8084:80"
     depends_on:
       - mariadb
+      - postgres
+      - supabase-db
+    volumes:
+      - $HOME/databases/phpmyadmin_config.inc.php:/etc/phpmyadmin/config.user.inc.php:ro
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`)"
@@ -77,7 +81,8 @@ services:
     ports:
       - "8081:8080"
     environment:
-      - SQLITE_DATABASE_PATHS=/dbs
+      - SQLITE_DATABASE_PATHS=/dbs/main.db
+    command: sqlite_web --host 0.0.0.0 --port 8080 /dbs/main.db /dbs/test.db /dbs/development.db
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sqlite.rule=Host(`sqlite.localhost`)"
@@ -110,7 +115,7 @@ services:
 
   # PostgreSQL database
   postgres:
-    image: postgres:latest
+    image: postgres:15
     container_name: postgres-db
     restart: unless-stopped
     environment:
@@ -121,6 +126,7 @@ services:
       - $HOME/databases/postgres/data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    command: postgres
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.postgres.rule=Host(`postgres.localhost`)"
@@ -133,20 +139,27 @@ services:
     container_name: pgadmin-web
     restart: unless-stopped
     environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@localhost
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
       - PGADMIN_DEFAULT_PASSWORD=toor
-      - PGADMIN_LISTEN_PORT=80
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+      - PGADMIN_CONFIG_SET_SERVERS_IN_SSL_CONTROLLED_PATH=False
     ports:
       - "8082:80"
     depends_on:
       - postgres
     volumes:
-      - $HOME/databases/pgadmin:/var/lib/pgadmin
+      - $HOME/databases/pgadmin:/var/lib/pgadmin:Z
+      - $HOME/databases/pgadmin_config.py:/pgadmin4/config_local.py:ro
+      - $HOME/databases/pgpassfile:/pgpassfile:ro
+      - $HOME/databases/pgpassfile:/pgpassfile_supabase:ro
+    user: "0"  # Run as root to avoid permission issues, then drop privileges
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.pgadmin.rule=Host(`pgadmin.localhost`)"
       - "traefik.http.routers.pgadmin.entrypoints=web"
       - "traefik.http.services.pgadmin.loadbalancer.server.port=80"
+      - "traefik.http.services.pgadmin.loadbalancer.server.scheme=http"
 
   # Adminer - Universal database management tool
   adminer:
@@ -158,9 +171,13 @@ services:
     environment:
       - ADMINER_DEFAULT_SERVER=mariadb
       - ADMINER_DESIGN=pepa-linha-dark
+      - ADMINER_PLUGINS=tables-filter tinymce
     depends_on:
       - mariadb
       - postgres
+      - supabase-db
+      - mongodb
+      - redis
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.adminer.rule=Host(`adminer.localhost`)"
@@ -201,35 +218,11 @@ services:
       - "traefik.http.routers.mongodb.entrypoints=web"
       - "traefik.http.services.mongodb.loadbalancer.server.port=27017"
 
-  # Apache Superset - Data visualization and exploration platform
-  superset:
-    image: apache/superset:latest
-    container_name: superset-web
-    restart: unless-stopped
-    ports:
-      - "8088:8088"
-    environment:
-      - SUPERSET_SECRET_KEY=superset-secret-key-change-me
-    volumes:
-      - $HOME/databases/superset:/app/superset_home
-    depends_on:
-      - postgres
-      - mariadb
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.superset.rule=Host(`superset.localhost`)"
-      - "traefik.http.routers.superset.entrypoints=web"
-      - "traefik.http.services.superset.loadbalancer.server.port=8088"
-    entrypoint: ["/bin/sh", "-c"]
-    command: [
-      "pip install psycopg2-binary mysql-connector-python && superset db upgrade && superset init && gunicorn --bind 0.0.0.0:8088 --workers 1 --worker-class gthread --threads 20 --timeout 60 --max-requests 100 --max-requests-jitter 10 superset.app:create_app()"
-    ]
-
   # Supabase - Open source Firebase alternative (PostgreSQL backend)
   # Note: Full Supabase deployment requires additional services (auth, storage, etc.)
   # This is a simplified version focusing on the database layer
   supabase-db:
-    image: supabase/postgres:15
+    image: postgres:15
     container_name: supabase-postgres
     restart: unless-stopped
     environment:
@@ -242,6 +235,7 @@ services:
       - $HOME/databases/supabase/data:/var/lib/postgresql/data
     ports:
       - "54322:5432"
+    command: postgres
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.supabase-db.rule=Host(`supabase-db.localhost`)"
@@ -257,6 +251,9 @@ services:
       - STUDIO_PG_META_URL=http://supabase-db:5432
       - DEFAULT_ORGANIZATION_NAME=Supabase
       - DEFAULT_PROJECT_NAME=supabase_project
+      - STUDIO_SUPABASE_URL=http://supabase-db:5432
+      - STUDIO_SUPABASE_ANON_KEY=anon_key
+      - STUDIO_SUPABASE_SERVICE_KEY=service_role_key
     ports:
       - "54323:3000"
     depends_on:
