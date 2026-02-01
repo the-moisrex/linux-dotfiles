@@ -1,0 +1,2 @@
+postgres:5432:*:root:toor
+supabase-db:5432:*:supabase_admin:toor
