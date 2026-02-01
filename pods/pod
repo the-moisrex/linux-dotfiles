@@ -1,0 +1,363 @@
+#!/bin/bash
+
+# Pod management script for multiple services
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PODS_ROOT="$SCRIPT_DIR"
+DATABASE_DIR="$HOME/databases"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Print colored output
+print_status() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_header() {
+    echo -e "${BLUE}$1${NC}"
+}
+
+# Find all pod directories with compose files
+find_pod_dirs() {
+    local pods=()
+    for dir in "$PODS_ROOT"/*/; do
+        if [[ -d "$dir" ]]; then
+            local dirname=$(basename "$dir")
+            # Look for common compose file names
+            if [[ -f "$dir/podman-compose.yml" ]] || [[ -f "$dir/docker-compose.yml" ]] || [[ -f "$dir/compose.yml" ]] || [[ -f "$dir/compose.yaml" ]]; then
+                pods+=("$dirname")
+            fi
+        fi
+    done
+    echo "${pods[@]}"
+}
+
+# Get compose file for a pod
+get_compose_file() {
+    local pod_name="$1"
+    local pod_dir="$PODS_ROOT/$pod_name"
+
+    if [[ -f "$pod_dir/podman-compose.yml" ]]; then
+        echo "$pod_dir/podman-compose.yml"
+    elif [[ -f "$pod_dir/docker-compose.yml" ]]; then
+        echo "$pod_dir/docker-compose.yml"
+    elif [[ -f "$pod_dir/compose.yml" ]]; then
+        echo "$pod_dir/compose.yml"
+    elif [[ -f "$pod_dir/compose.yaml" ]]; then
+        echo "$pod_dir/compose.yaml"
+    else
+        return 1
+    fi
+}
+
+# Show help message
+show_help() {
+    local available_pods=($(find_pod_dirs))
+    local pods_list=$(IFS=', '; echo "${available_pods[*]}")
+    
+    cat << EOF
+Multi-Pod Management Script
+
+USAGE:
+    $0 [COMMAND] [POD_NAMES...] [OPTIONS]
+
+COMMANDS:
+    start       Start specified pods (or all if none specified)
+    stop        Stop specified pods (or all if none specified)
+    restart     Restart specified pods (or all if none specified)
+    clean       Remove $DATABASE_DIR directory (requires confirmation)
+    status      Show status of all pods
+    list        List all available pods
+    --help      Show this help message
+
+POD NAMES:
+    Specify one or more pod names to operate on. Use 'all' to operate on all pods.
+    Available pods: ${pods_list:-None found}
+
+EXAMPLES:
+    $0 start all                    # Start all pods
+    $0 start database               # Start only the database pod
+    $0 start database dev           # Start database and dev pods
+    $0 stop                         # Stop all pods
+    $0 restart dev main             # Restart dev and main pods
+    $0 clean                        # Remove database directory with confirmation
+    $0 clean --force                # Remove database directory without confirmation
+    $0 status                       # Show status of all services
+    $0 list                         # List all available pods
+EOF
+}
+
+# Validate pod names
+validate_pods() {
+    local requested_pods=("$@")
+    local available_pods=($(find_pod_dirs))
+    local invalid_pods=()
+    
+    for pod in "${requested_pods[@]}"; do
+        if [[ "$pod" != "all" ]] && [[ ! " ${available_pods[*]} " =~ " $pod " ]]; then
+            invalid_pods+=("$pod")
+        fi
+    done
+    
+    if [[ ${#invalid_pods[@]} -gt 0 ]]; then
+        print_error "Invalid pod names: ${invalid_pods[*]}"
+        print_status "Available pods: ${available_pods[*]}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Get pods to operate on
+get_target_pods() {
+    local args=("$@")
+    local target_pods=()
+    
+    if [[ ${#args[@]} -eq 0 ]]; then
+        # No arguments specified, operate on all pods
+        target_pods=($(find_pod_dirs))
+    elif [[ " ${args[*]} " =~ " all " ]]; then
+        # 'all' specified, operate on all pods
+        target_pods=($(find_pod_dirs))
+    else
+        # Specific pods specified
+        target_pods=("${args[@]}")
+    fi
+    
+    # Remove 'all' from the list if it was included with other pods
+    local filtered_pods=()
+    for pod in "${target_pods[@]}"; do
+        if [[ "$pod" != "all" ]]; then
+            filtered_pods+=("$pod")
+        fi
+    done
+    
+    echo "${filtered_pods[@]}"
+}
+
+# Start specified pods
+start_pods() {
+    local pods_to_start=("$@")
+    
+    if [[ ${#pods_to_start[@]} -eq 0 ]]; then
+        print_warning "No pods found to start."
+        return 0
+    fi
+    
+    for pod in "${pods_to_start[@]}"; do
+        local compose_file=$(get_compose_file "$pod")
+        if [[ $? -ne 0 ]]; then
+            print_error "Compose file not found for pod: $pod"
+            continue
+        fi
+        
+        print_status "Starting pod: $pod"
+        if podman-compose -f "$compose_file" up -d; then
+            print_status "Pod $pod started successfully."
+            
+            # Special handling for database pod to configure pgAdmin
+            if [[ "$pod" == "databases" ]]; then
+                # Wait for pgAdmin to initialize
+                if podman ps | grep -q pgadmin-web; then
+                    print_status "Configuring pgAdmin with preconfigured servers..."
+                    
+                    # Run the pgAdmin configuration inside the container
+                    podman exec pgadmin-web sh -c "
+                    if ! command -v sqlite3 &> /dev/null; then
+                        apk add --no-cache sqlite
+                    fi
+
+                    # Wait for the database file to be accessible
+                    sleep 10
+
+                    # Add the preconfigured servers to the database
+                    sqlite3 /var/lib/pgadmin/pgadmin4.db \"INSERT OR IGNORE INTO server (user_id, servergroup_id, name, host, port, username, maintenance_db, comment) VALUES (1, 1, 'PostgreSQL Main', 'postgres', 5432, 'root', 'postgres', 'Main PostgreSQL database');\"
+                    sqlite3 /var/lib/pgadmin/pgadmin4.db \"INSERT OR IGNORE INTO server (user_id, servergroup_id, name, host, port, username, maintenance_db, comment) VALUES (1, 1, 'Supabase PostgreSQL', 'supabase-db', 5432, 'supabase_admin', 'postgres', 'Supabase PostgreSQL database');\"
+                    
+                    echo 'Server configurations added to pgAdmin database.'
+                    " 2>/dev/null || print_error "Failed to configure pgAdmin"
+                    
+                    print_status "pgAdmin configured with preconfigured servers."
+                fi
+            fi
+        else
+            print_error "Failed to start pod: $pod"
+        fi
+    done
+}
+
+# Stop specified pods
+stop_pods() {
+    local pods_to_stop=("$@")
+    
+    if [[ ${#pods_to_stop[@]} -eq 0 ]]; then
+        print_warning "No pods found to stop."
+        return 0
+    fi
+    
+    for pod in "${pods_to_stop[@]}"; do
+        local compose_file=$(get_compose_file "$pod")
+        if [[ $? -ne 0 ]]; then
+            print_error "Compose file not found for pod: $pod"
+            continue
+        fi
+        
+        print_status "Stopping pod: $pod"
+        if podman-compose -f "$compose_file" down; then
+            print_status "Pod $pod stopped successfully."
+        else
+            print_error "Failed to stop pod: $pod"
+        fi
+    done
+}
+
+# Restart specified pods
+restart_pods() {
+    local pods_to_restart=("$@")
+    
+    stop_pods "${pods_to_restart[@]}"
+    sleep 2
+    start_pods "${pods_to_restart[@]}"
+}
+
+# Clean database directory
+clean_database_dir() {
+    local force=false
+    
+    # Check if --force flag is provided
+    if [[ "$2" == "--force" ]]; then
+        force=true
+    fi
+    
+    if [[ "$force" == false ]]; then
+        print_warning "This will remove the entire $DATABASE_DIR directory and all data."
+        read -p "Are you sure you want to continue? (yes/no): " -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+            print_status "Operation cancelled."
+            exit 0
+        fi
+    fi
+    
+    print_status "Removing $DATABASE_DIR directory..."
+    
+    # Try to stop the databases pod if it's running
+    local compose_file=$(get_compose_file "databases")
+    if [[ -n "$compose_file" ]]; then
+        podman-compose -f "$compose_file" down 2>/dev/null || true
+    fi
+    
+    # Remove the database directory
+    if sudo rm -rf "$DATABASE_DIR"; then
+        print_status "Database directory removed successfully."
+    else
+        print_error "Failed to remove database directory. You may need to run with elevated privileges."
+        exit 1
+    fi
+}
+
+# Show status of all services
+show_status() {
+    local all_pods=($(find_pod_dirs))
+    
+    if [[ ${#all_pods[@]} -eq 0 ]]; then
+        print_warning "No pods found."
+        return 0
+    fi
+    
+    for pod in "${all_pods[@]}"; do
+        print_header "Pod: $pod"
+        local compose_file=$(get_compose_file "$pod")
+        if [[ -n "$compose_file" ]]; then
+            # Get the project name from the compose file directory
+            local project_name=$(basename "$(dirname "$compose_file")")
+            if command -v podman &> /dev/null; then
+                # Show containers for this pod
+                podman ps --filter "label=io.podman.compose.project=$project_name" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
+                podman ps --filter "name=${project_name}_" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
+                echo "No running containers found for pod: $pod"
+            else
+                print_error "Podman is not installed or not in PATH."
+            fi
+        else
+            print_error "Compose file not found for pod: $pod"
+        fi
+        echo
+    done
+}
+
+# List all available pods
+list_pods() {
+    local available_pods=($(find_pod_dirs))
+    
+    if [[ ${#available_pods[@]} -eq 0 ]]; then
+        print_warning "No pods found."
+        return 0
+    fi
+    
+    print_status "Available pods:"
+    for pod in "${available_pods[@]}"; do
+        echo "  - $pod"
+    done
+}
+
+# Main script logic
+command="${1:-}"
+shift
+
+case "$command" in
+    start)
+        if ! validate_pods "$@"; then
+            exit 1
+        fi
+        target_pods=($(get_target_pods "$@"))
+        start_pods "${target_pods[@]}"
+        ;;
+    stop)
+        if ! validate_pods "$@"; then
+            exit 1
+        fi
+        target_pods=($(get_target_pods "$@"))
+        stop_pods "${target_pods[@]}"
+        ;;
+    restart)
+        if ! validate_pods "$@"; then
+            exit 1
+        fi
+        target_pods=($(get_target_pods "$@"))
+        restart_pods "${target_pods[@]}"
+        ;;
+    clean)
+        clean_database_dir "$@"
+        ;;
+    status)
+        show_status
+        ;;
+    list)
+        list_pods
+        ;;
+    --help|help|-h)
+        show_help
+        ;;
+    "")
+        show_help
+        ;;
+    *)
+        print_error "Unknown command: $command"
+        echo
+        show_help
+        exit 1
+        ;;
+esac
