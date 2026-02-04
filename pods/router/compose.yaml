@@ -39,7 +39,7 @@ services:
       - "traefik.http.routers.dashboard.entrypoints=web"
       - "traefik.http.services.dashboard.loadbalancer.server.port=8000"
 
-  # Middleware for redirecting HTTP -> HTTPS
+# Middleware for redirecting HTTP -> HTTPS
   # traefik-middlewares:
   #   image: traefik/whoami # Dummy container just for labels
   #   labels:
@@ -48,6 +48,6 @@ services:
 
 
 # volumes:
-#  pgdata:
-#  letsencrypt:
+#  prometheus_data:
+#  grafana_data:
 
