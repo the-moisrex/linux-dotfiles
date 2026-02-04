@@ -263,3 +263,34 @@ services:
       - "traefik.http.routers.supabase-studio.rule=Host(`supabase-studio.localhost`)"
       - "traefik.http.routers.supabase-studio.entrypoints=web"
       - "traefik.http.services.supabase-studio.loadbalancer.server.port=3000"
+
+  # MinIO - Object storage compatible with Amazon S3
+  minio:
+    image: minio/minio
+    container_name: minio-s3
+    command: server /data --console-address ":9001" --address ":9000"
+    environment:
+      - MINIO_ROOT_USER=root
+      - MINIO_ROOT_PASSWORD=minio123
+      - MINIO_SERVER_URL=http://s3.localhost  # Helps with redirects and domain validation
+      - MINIO_BROWSER_REDIRECT_URL=http://minio.localhost # Redirect browser to the console URL
+    volumes:
+      - $HOME/databases/minio/data:/data
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Console
+    labels:
+      - "traefik.enable=true"
+
+      # S3 API
+      - "traefik.http.routers.minio-api.entrypoints=web"
+      - "traefik.http.routers.minio-api.rule=Host(`s3.localhost`)"
+      - "traefik.http.routers.minio-api.service=minio-api"
+      - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
+
+      # MinIO Console
+      - "traefik.http.routers.minio-console.entrypoints=web"
+      - "traefik.http.routers.minio-console.rule=Host(`minio.localhost`)"
+      - "traefik.http.routers.minio-console.service=minio-console"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+    restart: unless-stopped

@@ -15,37 +15,6 @@ services:
     restart: unless-stopped
 
 
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001" --address ":9000"
-    environment:
-      MINIO_ROOT_USER: root
-      MINIO_ROOT_PASSWORD: minio123
-      MINIO_SERVER_URL: http://s3.localhost  # Helps with redirects and domain validation
-      MINIO_BROWSER_REDIRECT_URL: http://minio.localhost # Redirect browser to the console URL
-    volumes:
-      - minio-data:/data
-    labels:
-      - "traefik.enable=true"
-
-      # S3 API
-      - "traefik.http.routers.minio-api.entrypoints=web"
-      - "traefik.http.routers.minio-api.rule=Host(`s3.localhost`)"
-      - "traefik.http.routers.minio-api.service=minio-api"
-      - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
-    
-      # MinIO Console
-      - "traefik.http.routers.minio-console.entrypoints=web"
-      - "traefik.http.routers.minio-console.rule=Host(`minio.localhost`)"
-      - "traefik.http.routers.minio-console.service=minio-console"
-      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
-      # - "traefik.http.middlewares.minio-console-headers.headers.customrequestheaders.Host=minio.localhost"
-      # - "traefik.http.routers.minio-console.middlewares=minio-console-headers"
-      # - "traefik.http.middlewares.minio-console-headers.headers.stsseconds=31536000"
-      # - "traefik.http.middlewares.minio-console-headers.headers.browserxssfilter=true"
-      # - "traefik.http.middlewares.minio-console-headers.headers.contenttypenosniff=true"
-      # - "traefik.http.routers.minio-console.middlewares=minio-console-headers"
-    restart: unless-stopped
 
   code-server:
     image: codercom/code-server
@@ -81,7 +50,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  minio-data:
   code-data:
   gitea-data:
 
