@@ -14,8 +14,6 @@ services:
       - "traefik.http.services.ittools.loadbalancer.server.port=80"
     restart: unless-stopped
 
-
-
   code-server:
     image: codercom/code-server
     environment:
@@ -49,7 +47,50 @@ services:
       - "traefik.http.services.gitea.loadbalancer.server.port=3000"
     restart: unless-stopped
 
+  # Minimal Sentry services
+  sentry-postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: sentry
+      POSTGRES_PASSWORD: sentry
+      POSTGRES_DB: sentry
+    volumes:
+      - sentry-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  sentry-redis:
+    image: redis:alpine
+    restart: unless-stopped
+
+  sentry-web:
+    image: sentry:latest
+    depends_on:
+      - sentry-postgres
+      - sentry-redis
+    environment:
+      SENTRY_POSTGRES_HOST: sentry-postgres
+      SENTRY_POSTGRES_PORT: 5432
+      SENTRY_DB_USER: sentry
+      SENTRY_DB_PASSWORD: sentry
+      SENTRY_REDIS_HOST: sentry-redis
+      SENTRY_REDIS_PORT: 6379
+      SENTRY_SECRET_KEY: changeme
+      SENTRY_FILESTORE_DIR: /var/lib/sentry/files
+    volumes:
+      - sentry-data:/var/lib/sentry
+    ports:
+      - "9000:9000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sentry.entrypoints=web"
+      - "traefik.http.routers.sentry.rule=Host(`sentry.localhost`)"
+      - "traefik.http.services.sentry.loadbalancer.server.port=9000"
+    command: sh -c "sentry upgrade --noinput && sentry createuser --email admin@example.com --password toor --superuser --no-password || true && sentry run web"
+    restart: unless-stopped
+
 volumes:
   code-data:
   gitea-data:
+  sentry-data:
+  sentry-postgres-data:
 
