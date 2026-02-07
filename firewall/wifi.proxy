@@ -4,9 +4,10 @@ set -euo pipefail
 PROXY_USER="proxyuser"
 LOCAL_PORT="1089"
 TABLE_ID="200"
-FW_MARK="0x1"
-NFT_TABLE="ip wifi_proxy"
+# FW_MARK="0x1"
+# NFT_TABLE="ip wifi_proxy"
 SSHD_PORT="62020"
+PROXY_UID=0
 
 usage() {
   echo "Usage: $0 --enable | --disable | --status | --help"
@@ -41,20 +42,24 @@ create_user() {
     run useradd --system --no-create-home --shell /usr/sbin/nologin "$PROXY_USER"
     run passwd -d "$PROXY_USER"
   fi
+  PROXY_UID=$(id -u "$PROXY_USER")
 }
 
 setup_routing() {
+  # run ip route replace "$WIFI_NET" dev "$WIFI_IF" src "$WIFI_IP" table "$TABLE_ID"
+  # run ip route replace default via "$WIFI_GW" dev "$WIFI_IF" table "$TABLE_ID"
   run ip route add "$WIFI_NET" dev "$WIFI_IF" src "$WIFI_IP" table "$TABLE_ID" 2>/dev/null || true
   run ip route add default via "$WIFI_GW" dev "$WIFI_IF" table "$TABLE_ID" 2>/dev/null || true
-  run ip rule add fwmark "$FW_MARK" lookup "$TABLE_ID" 2>/dev/null || true
+  # run ip rule add fwmark "$FW_MARK" lookup "$TABLE_ID" 2>/dev/null || true
+  run ip rule add uidrange "$PROXY_UID"-"$PROXY_UID" lookup "$TABLE_ID"
 }
 
-setup_nft() {
-  run nft list table "$NFT_TABLE" &>/dev/null || nft add table "$NFT_TABLE"
-  run nft add counter "$NFT_TABLE" wifiproxy
-  run nft 'add chain ip wifi_proxy output { type route hook output priority -300; policy accept; }' 2>/dev/null || true
-  run nft add rule ip wifi_proxy output meta skuid "$PROXY_USER" counter name wifiproxy meta mark set "$FW_MARK" 2>/dev/null || true
-}
+# setup_nft() {
+#   run nft list table "$NFT_TABLE" &>/dev/null || nft add table "$NFT_TABLE"
+#   run nft add counter "$NFT_TABLE" wifiproxy
+#   run nft 'add chain ip wifi_proxy output { type route hook output priority -350; policy accept; }' 2>/dev/null || true
+#   run nft add rule ip wifi_proxy output meta skuid "$PROXY_USER" counter name wifiproxy meta mark set "$FW_MARK" 2>/dev/null || true
+# }
 
 start_ssh() {
   CONFIG_DIR=$(sudo -u "$PROXY_USER" mktemp -d /tmp/sshd_temp.XXXXXX)
@@ -96,7 +101,6 @@ Match User $PROXY_USER
     AllowUsers $PROXY_USER
     X11Forwarding no
     AllowAgentForwarding no
-    ForceCommand echo 'This account is for SOCKS proxy only'
 EOF
 
   # Start sshd
@@ -121,9 +125,10 @@ cleanup_all() {
   echo "------------------------------------------------------"
   run pkill -u "$PROXY_USER" ssh 2>/dev/null || true
   run pkill -u "$PROXY_USER" sshd 2>/dev/null || true
-  run ip rule del fwmark "$FW_MARK" lookup "$TABLE_ID" 2>/dev/null || true
+  # run ip rule del fwmark "$FW_MARK" lookup "$TABLE_ID" 2>/dev/null || true
+  run ip rule del uidrange "${PROXY_UID}-${PROXY_UID}" lookup "$TABLE_ID" 2>/dev/null || true
   run ip route flush table "$TABLE_ID" 2>/dev/null || true
-  run nft delete table "$NFT_TABLE" 2>/dev/null || true
+  # run nft delete table "$NFT_TABLE" 2>/dev/null || true
   run userdel "$PROXY_USER" 2>/dev/null || true
   echo
   echo "----- Cleanup Completed -----------------------------"
@@ -135,14 +140,14 @@ status() {
   echo "Proxy user: $(id "$PROXY_USER" &>/dev/null && echo exists || echo absent)"
   echo "SSH SOCKS: $(pgrep -u "$PROXY_USER" ssh &>/dev/null && echo running || echo stopped)"
   echo "Policy rule: $(ip rule | grep "$TABLE_ID" || echo none)"
-  echo "NFT table: $(nft list table ip wifi_proxy &>/dev/null && echo present || echo absent)"
+  # echo "NFT table: $(nft list table ip wifi_proxy &>/dev/null && echo present || echo absent)"
 }
 
 enable() {
   detect_wifi
   create_user
   setup_routing
-  setup_nft
+  # setup_nft
 
   echo "------------------------------------------------------"
   echo "Starting SOCKS proxy on 127.0.0.1:$LOCAL_PORT via WiFi ($WIFI_IF)"
