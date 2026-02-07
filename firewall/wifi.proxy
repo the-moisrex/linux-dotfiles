@@ -49,7 +49,7 @@ setup_routing() {
   # run ip route replace "$WIFI_NET" dev "$WIFI_IF" src "$WIFI_IP" table "$TABLE_ID"
   # run ip route replace default via "$WIFI_GW" dev "$WIFI_IF" table "$TABLE_ID"
   run ip route add "$WIFI_NET" dev "$WIFI_IF" src "$WIFI_IP" table "$TABLE_ID" 2>/dev/null || true
-  run ip route add default via "$WIFI_GW" dev "$WIFI_IF" table "$TABLE_ID" 2>/dev/null || true
+  run ip route add default via "$WIFI_GW" dev "$WIFI_IF" src "$WIFI_IP" table "$TABLE_ID" metric 50 2>/dev/null || true
   # run ip rule add fwmark "$FW_MARK" lookup "$TABLE_ID" 2>/dev/null || true
   run ip rule add uidrange "$PROXY_UID"-"$PROXY_UID" lookup "$TABLE_ID"
 }
