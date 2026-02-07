@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROXY_USER="proxyuser"
+LOCAL_PORT="1089"
+TABLE_ID="200"
+FW_MARK="0x1"
+NFT_TABLE="ip wifi_proxy"
+SSHD_PORT="62020"
+
+usage() {
+  echo "Usage: $0 --enable | --disable | --status | --help"
+}
+
+run() {
+  echo "#" "$@";
+  "$@";
+}
+
+require_root() {
+  [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
+}
+
+detect_wifi() {
+  WIFI_IF=$(ip -o link show up | awk -F': ' '/(wlp|wifi)/{print $2}' | head -n 1)
+
+  [[ -n "${WIFI_IF:-}" ]] || { echo "No WiFi interface found"; exit 1; }
+
+  WIFI_IP=$(ip -4 addr show dev "$WIFI_IF" scope global | awk '/inet /{print $2}' | head -1 | cut -d/ -f1)
+  WIFI_NET=$(ip -4 addr show dev "$WIFI_IF" scope global | awk '/inet /{print $2}' | head -1)
+  WIFI_GW=$(ip route show dev "$WIFI_IF" default | awk '{print $3}' | head -1)
+
+  [[ -n "$WIFI_IP" && -n "$WIFI_NET" && -n "$WIFI_GW" ]] || {
+    echo "Failed to detect WiFi network info"
+    exit 1
+  }
+}
+
+create_user() {
+  if ! id "$PROXY_USER" &>/dev/null; then
+    run useradd --system --no-create-home --shell /usr/sbin/nologin "$PROXY_USER"
+    run passwd -d "$PROXY_USER"
+  fi
+}
+
+setup_routing() {
+  run ip route add "$WIFI_NET" dev "$WIFI_IF" src "$WIFI_IP" table "$TABLE_ID" 2>/dev/null || true
+  run ip route add default via "$WIFI_GW" dev "$WIFI_IF" table "$TABLE_ID" 2>/dev/null || true
+  run ip rule add fwmark "$FW_MARK" lookup "$TABLE_ID" 2>/dev/null || true
+}
+
+setup_nft() {
+  run nft list table "$NFT_TABLE" &>/dev/null || nft add table "$NFT_TABLE"
+  run nft add counter "$NFT_TABLE" wifiproxy
+  run nft 'add chain ip wifi_proxy output { type route hook output priority -300; policy accept; }' 2>/dev/null || true
+  run nft add rule ip wifi_proxy output meta skuid "$PROXY_USER" counter name wifiproxy meta mark set "$FW_MARK" 2>/dev/null || true
+}
+
+start_ssh() {
+  CONFIG_DIR=$(sudo -u "$PROXY_USER" mktemp -d /tmp/sshd_temp.XXXXXX)
+  CONFIG_FILE="$CONFIG_DIR/sshd_config"
+
+  # Generate host keys
+  run sudo -u "$PROXY_USER" ssh-keygen -t rsa -f "$CONFIG_DIR/ssh_host_rsa_key" -N "" -q
+  run sudo -u "$PROXY_USER" ssh-keygen -t ecdsa -f "$CONFIG_DIR/ssh_host_ecdsa_key" -N "" -q
+  run sudo -u "$PROXY_USER" ssh-keygen -t ed25519 -f "$CONFIG_DIR/ssh_host_ed25519_key" -N "" -q
+
+  # Generate temporary client key pair (no passphrase)
+  run sudo -u "$PROXY_USER" ssh-keygen -t ed25519 -f "$CONFIG_DIR/proxy_key" -N "" -q
+
+  # Create authorized_keys with the public key
+  run sudo -u "$PROXY_USER" mkdir -p "$CONFIG_DIR/.ssh"
+  run sudo -u "$PROXY_USER" cp "$CONFIG_DIR/proxy_key.pub" "$CONFIG_DIR/.ssh/authorized_keys"
+  run sudo -u "$PROXY_USER" chmod 700 "$CONFIG_DIR/.ssh"
+  run sudo -u "$PROXY_USER" chmod 600 "$CONFIG_DIR/.ssh/authorized_keys"
+
+  # Write sshd config
+  sudo -u "$PROXY_USER" tee "$CONFIG_FILE" << EOF > /dev/null
+Port $SSHD_PORT
+HostKey $CONFIG_DIR/ssh_host_rsa_key
+HostKey $CONFIG_DIR/ssh_host_ecdsa_key
+HostKey $CONFIG_DIR/ssh_host_ed25519_key
+
+# Critical fix: disable strict modes and force absolute path to avoid OpenSSH rejecting the authorized_keys due to /tmp ancestry
+StrictModes no
+AuthorizedKeysFile $CONFIG_DIR/.ssh/authorized_keys
+
+PubkeyAuthentication yes
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+
+Match User $PROXY_USER
+    AllowTcpForwarding yes
+    PermitTunnel no
+    AllowUsers $PROXY_USER
+    X11Forwarding no
+    AllowAgentForwarding no
+    ForceCommand echo 'This account is for SOCKS proxy only'
+EOF
+
+  # Start sshd
+  run sudo -u "$PROXY_USER" /usr/sbin/sshd -f "$CONFIG_FILE" -D &
+  run sleep 2s
+
+  # Connect with the private key
+  run sudo -u "$PROXY_USER" ssh -N -D "$LOCAL_PORT" \
+    -i "$CONFIG_DIR/proxy_key" \
+    -o ExitOnForwardFailure=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o PubkeyAuthentication=yes \
+    -o PasswordAuthentication=no \
+    -o KbdInteractiveAuthentication=no \
+    -o IdentitiesOnly=yes \
+    "$PROXY_USER"@127.0.0.1 -p $SSHD_PORT &
+  SSH_PID=$!
+}
+
+cleanup_all() {
+  echo "------------------------------------------------------"
+  run pkill -u "$PROXY_USER" ssh 2>/dev/null || true
+  run pkill -u "$PROXY_USER" sshd 2>/dev/null || true
+  run ip rule del fwmark "$FW_MARK" lookup "$TABLE_ID" 2>/dev/null || true
+  run ip route flush table "$TABLE_ID" 2>/dev/null || true
+  run nft delete table "$NFT_TABLE" 2>/dev/null || true
+  run userdel "$PROXY_USER" 2>/dev/null || true
+  echo
+  echo "----- Cleanup Completed -----------------------------"
+  echo
+}
+
+status() {
+  echo "WiFi IF: ${WIFI_IF:-unknown}"
+  echo "Proxy user: $(id "$PROXY_USER" &>/dev/null && echo exists || echo absent)"
+  echo "SSH SOCKS: $(pgrep -u "$PROXY_USER" ssh &>/dev/null && echo running || echo stopped)"
+  echo "Policy rule: $(ip rule | grep "$TABLE_ID" || echo none)"
+  echo "NFT table: $(nft list table ip wifi_proxy &>/dev/null && echo present || echo absent)"
+}
+
+enable() {
+  detect_wifi
+  create_user
+  setup_routing
+  setup_nft
+
+  echo "------------------------------------------------------"
+  echo "Starting SOCKS proxy on 127.0.0.1:$LOCAL_PORT via WiFi ($WIFI_IF)"
+  start_ssh
+  echo
+  echo ">> 127.0.0.1:$LOCAL_PORT via WiFi ($WIFI_IF)"
+
+  trap cleanup_all EXIT INT TERM
+  wait "$SSH_PID"
+}
+
+require_root
+
+case "${1:-}" in
+  --enable) enable ;;
+  --disable) cleanup_all ;;
+  --status) detect_wifi || true; status ;;
+  --help) usage ;;
+  "") 
+      cleanup_all;
+      enable;
+      ;;
+  *) usage; exit 1 ;;
+esac
+
