@@ -1,0 +1,357 @@
+#!/bin/bash
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+
+# A list of pastel/acceptable colors to randomly choose from.
+# COLORS=(
+#     "#ffd1dc" # Pastel Pink
+#     "#b0e0e6" # Powder Blue
+#     "#e6e6fa" # Lavender
+#     "#f0e68c" # Khaki
+#     "#98fb98" # Pale Green
+#     "#ffdead" # Navajo White
+#     "#d8bfd8" # Thistle
+#     "#add8e6" # Light Blue
+#     "#ffe4e1" # Misty Rose
+# )
+COLORS=(
+    "#e6a8b7" # Darker Pastel Pink
+    "#8ec9d6" # Darker Powder Blue
+    "#c7c7e8" # Darker Lavender
+    "#d4c45a" # Darker Khaki
+    "#6fdc6f" # Darker Pale Green
+    "#e6c28f" # Darker Navajo White
+    "#c6a6c6" # Darker Thistle
+    "#86c3da" # Darker Light Blue
+    "#e6bcbc" # Darker Misty Rose
+)
+
+
+# ==========================================
+# SETUP & CHECKS
+# ==========================================
+
+firefox_exe="firefox"
+if command -v firefox-developer-edition >/dev/null; then
+    if ! command -v firefox >/dev/null; then
+        firefox_exe="firefox-developer-edition"
+    fi
+elif ! command -v firefox >/dev/null; then
+    echo "Firefox is not installed or it's not in the PATH"
+    exit 1
+fi
+
+if ! command -v rsync >/dev/null; then
+    echo "rsync is required but was not found in PATH"
+    exit 1
+fi
+
+profiles_ini="$HOME/.mozilla/firefox/profiles.ini"
+if [[ ! -f "$profiles_ini" ]]; then
+    echo "Firefox profiles.ini not found at $profiles_ini"
+    exit 1
+fi
+
+# ==========================================
+# HELP & ARGUMENTS
+# ==========================================
+
+usage() {
+    echo "Usage: $0 [options] [--] [url...]"
+    echo ""
+    echo "Options:"
+    echo "  -p, --profile <name>    Specify profile name or path to copy."
+    echo "  --cookies               Include cookies in the copy (default: excluded)."
+    echo "  --help                  Show this help message."
+    echo ""
+    echo "If no profile is specified, the default profile is used."
+    echo "If no URLs are provided, opens 'about:blank'."
+}
+
+profile_name=""
+copy_cookies=0
+args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -p|--profile)
+            profile_name="$2"
+            shift 2
+            ;;
+        --cookies)
+            copy_cookies=1
+            shift
+            ;;
+        --)
+            shift
+            args+=("$@")
+            break
+            ;;
+        *)
+            args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ ${#args[@]} -eq 0 ]]; then
+    args=("about:blank")
+fi
+
+# ==========================================
+# FUNCTIONS
+# ==========================================
+
+get_profile_info_by_name() {
+    local name="$1"
+    awk -F= -v name="$name" '
+        /^\[Profile/ {
+            if (in_profile && pname == name) { print path "|" isrel; exit }
+            in_profile=1; pname=""; path=""; isrel=""; next
+        }
+        /^\[/ {
+            if (in_profile && pname == name) { print path "|" isrel; exit }
+            in_profile=0; next
+        }
+        in_profile && $1=="Name" { pname=$2 }
+        in_profile && $1=="Path" { path=$2 }
+        in_profile && $1=="IsRelative" { isrel=$2 }
+        END { if (in_profile && pname == name) print path "|" isrel }
+    ' "$profiles_ini"
+}
+
+get_default_profile_info() {
+    # 1. Try modern Firefox default (stored in [Install*] sections)
+    local default_path
+    default_path=$(awk -F= '
+        /^\[Install/ { in_install=1; next }
+        /^\[/ { in_install=0 }
+        in_install && $1=="Default" && $2 != "" { print $2; exit }
+    ' "$profiles_ini")
+
+    if [[ -n "$default_path" ]]; then
+        awk -F= -v target="$default_path" '
+            /^\[Profile/ {
+                if (in_profile && path == target) { print path "|" isrel; exit }
+                in_profile=1; path=""; isrel=""; next
+            }
+            /^\[/ {
+                if (in_profile && path == target) { print path "|" isrel; exit }
+                in_profile=0; next
+            }
+            in_profile && $1=="Path" { path=$2 }
+            in_profile && $1=="IsRelative" { isrel=$2 }
+            END { if (in_profile && path == target) print path "|" isrel }
+        ' "$profiles_ini"
+        return
+    fi
+
+    # 2. Fallback to legacy Default=1 in [Profile*] sections
+    awk -F= '
+        /^\[Profile/ {
+            if (in_profile && isdefault == 1) { print path "|" isrel; exit }
+            in_profile=1; path=""; isrel=""; isdefault=0; next
+        }
+        /^\[/ {
+            if (in_profile && isdefault == 1) { print path "|" isrel; exit }
+            in_profile=0; next
+        }
+        in_profile && $1=="Path" { path=$2 }
+        in_profile && $1=="IsRelative" { isrel=$2 }
+        in_profile && $1=="Default" { isdefault=$2 }
+        END { if (in_profile && isdefault == 1) print path "|" isrel }
+    ' "$profiles_ini"
+}
+
+resolve_profile_path() {
+    local path="$1"
+    local isrel="$2"
+    if [[ "$isrel" == "1" || -z "$isrel" ]]; then
+        echo "$HOME/.mozilla/firefox/$path"
+    else
+        echo "$path"
+    fi
+}
+
+# ==========================================
+# LOGIC
+# ==========================================
+
+profile_path=""
+profile_label=""
+if [[ -n "$profile_name" ]]; then
+    if [[ -d "$profile_name" ]]; then
+        profile_path="$profile_name"
+        profile_label=$(basename "$profile_name")
+    else
+        profile_info=$(get_profile_info_by_name "$profile_name")
+        if [[ -n "$profile_info" ]]; then
+            profile_path=$(resolve_profile_path "${profile_info%%|*}" "${profile_info##*|}")
+            profile_label="$profile_name"
+        fi
+    fi
+else
+    profile_info=$(get_default_profile_info)
+    if [[ -n "$profile_info" ]]; then
+        profile_path=$(resolve_profile_path "${profile_info%%|*}" "${profile_info##*|}")
+        profile_label=$(basename "$profile_path")
+    fi
+fi
+
+if [[ -z "$profile_path" || ! -d "$profile_path" ]]; then
+    echo "Unable to locate Firefox profile."
+    echo "Available profiles:"
+    awk -F= '
+        /^\[Profile/ { in_profile=1; next }
+        /^\[/ { in_profile=0 }
+        in_profile && $1=="Name" { print "  " $2 }
+    ' "$profiles_ini"
+    exit 1
+fi
+
+copy_root=$(mktemp -d)
+copy_profile_dir="$copy_root/copy-$profile_label"
+mkdir -p "$copy_profile_dir"
+
+cleanup() {
+    rm -rf "$copy_root"
+    echo "Firefox Config Directory $copy_root Deleted."
+}
+trap cleanup EXIT
+
+echo "Firefox Source Profile: $profile_path"
+echo "Firefox Copy Profile: $copy_profile_dir"
+
+# Select a random color for the UI distinction
+random_color=${COLORS[$RANDOM % ${#COLORS[@]}]}
+echo "Applying Distinction Color: $random_color"
+
+exclude_args=(
+    "--exclude=signedInUser.json"
+    "--exclude=signedInUser.json.backup"
+    "--exclude=signedInUser.json.corrupt"
+    "--exclude=logins.json"
+    "--exclude=key4.db"
+    # Exclude session data to ensure tabs are not copied/restored
+    "--exclude=sessionstore.jsonlz4"
+    "--exclude=sessionstore-backups/"
+)
+
+if [[ $copy_cookies -eq 0 ]]; then
+    exclude_args+=(
+        "--exclude=cookies.sqlite"
+        "--exclude=cookies.sqlite-shm"
+        "--exclude=cookies.sqlite-wal"
+        # Exclude account sync data
+        "--exclude=storage-sync.sqlite"
+        "--exclude=storage-sync.sqlite-shm"
+        "--exclude=storage-sync.sqlite-wal"
+    )
+fi
+
+# --copy-links: Dereference symlinks. This converts symlinks to regular files,
+# ensuring nothing in the copy points back to the original profile.
+rsync -a --copy-links "${exclude_args[@]}" "$profile_path/" "$copy_profile_dir/"
+
+# Explicitly remove sensitive files
+rm -f \
+    "$copy_profile_dir/signedInUser.json" \
+    "$copy_profile_dir/signedInUser.json.backup" \
+    "$copy_profile_dir/signedInUser.json.corrupt" \
+    "$copy_profile_dir/logins.json" \
+    "$copy_profile_dir/key4.db"
+
+# Remove Account Data and Sync Keys
+rm -rf "$copy_profile_dir/services/sync"
+
+# Fix: Remove any account username references
+sed -i '/services.sync.username/d' "$copy_profile_dir/prefs.js"
+
+# ==========================================
+# CSS / VISUAL DISTINCTION SETUP
+# ==========================================
+
+# Create chrome directory if it doesn't exist
+mkdir -p "$copy_profile_dir/chrome"
+
+# Ensure userChrome.css exists so we can append to it
+touch "$copy_profile_dir/chrome/userChrome.css"
+
+# Append CSS to set variables and styles
+cat <<CSS >> "$copy_profile_dir/chrome/userChrome.css"
+/* Appended by firefox.copy to visually distinguish the temporary profile */
+
+/* 1. Define your main color variable here */
+:root {
+    /* Change #ff0055 to whatever hex color you desire */
+    --strip-base-color: $random_color; 
+}
+
+/* 2. Apply the styling to the Navigation Bar */
+#nav-bar {
+    /* Use linear-gradient to create the 3 strips with 45deg slope */
+    /* The logic is: [Transparent] -> [Strip 1] -> [Strip 2] -> [Strip 3] -> [Transparent] */
+    background-image: linear-gradient(
+        -45deg, 
+        transparent 20%,
+        
+        /* Shade 1: The Base Color */
+        var(--strip-base-color) 20%, 
+        var(--strip-base-color) 32%,
+        transparent 32%,
+        
+        /* Shade 2: Base color mixed with 20% black (darker) */
+        transparent 34%,
+        color-mix(in srgb, var(--strip-base-color), black 20%) 34%, 
+        color-mix(in srgb, var(--strip-base-color), black 20%) 44%,
+        transparent 44%,
+        
+        /* Shade 3: Base color mixed with 40% black (darkest) */
+        transparent 46%,
+        color-mix(in srgb, var(--strip-base-color), black 40%) 46%, 
+        color-mix(in srgb, var(--strip-base-color), black 40%) 56%,
+        
+        /* Remaining background transparent */
+        transparent 56%
+    ) !important;
+
+    /* Ensure the background doesn't repeat weirdly */
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    
+    /* Ensure the default toolbar background is cleared so the gradient shows */
+    background-color: transparent !important;
+    
+    /* Reset the border to look cleaner (optional) */
+    border-bottom: 1px solid rgba(0,0,0,0.1) !important;
+    box-shadow: none !important;
+}
+
+/* 3. Ensure the URL bar and Search bar backgrounds remain readable 
+   By giving them a solid white/light background so they pop against the strips */
+#urlbar-background, #searchbar {
+    background-color: #ffffff !important;
+    border: 1px solid rgba(0,0,0,0.2) !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1) !important;
+}
+
+/* Optional: Adjust text color of toolbar buttons if the strips are dark */
+#nav-bar .toolbarbutton-icon {
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
+}
+
+CSS
+
+# Ensure userChrome.css is enabled
+cat <<PREFS >> "$copy_profile_dir/user.js"
+// Added by firefox.copy
+user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+user_pref("browser.tabs.drawInTitlebar", true);
+PREFS
+
+"$firefox_exe" --no-remote --new-instance --profile "$copy_profile_dir" "${args[@]}"
