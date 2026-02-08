@@ -32,7 +32,9 @@ table inet socks {
         
         # filter out what you want to go through the transparent proxy here
         # socket transparent 0 return; # accept only those with "socket transparent 1"
+        #$ if id proxyuser &>/dev/null; then
         meta skuid proxyuser return;
+        #$ fi
         meta mark $accepted_fwmark return;
         meta mark $skip_vpn_mark return; # marked to be skiped already
         meta mark $outbound_socks_fwmark return; # socks itself generated this packet
@@ -54,7 +56,9 @@ table inet socks {
 
         # filter out what you want to go through the transparent proxy here
         # socket transparent 0 return; # accept only those with "socket transparent 1"
+        #$ if id proxyuser &>/dev/null; then
         meta skuid proxyuser return;
+        #$ fi
         meta mark $accepted_fwmark return;
         meta mark $skip_vpn_mark return; # marked to be skiped already
         meta mark $outbound_socks_fwmark return; # socks itself generated this packet
