@@ -21,7 +21,7 @@ function create_bash {
         sed -re '/#\$/! s/"/\\"/g' |                    # replace " with \"
         sed -re '/#\$/! s/\$(\w)/\\$\1/g' |             # replace $variables with \$vaiables
         sed -re '/#\$/! s/^[^\n]*$/echo "&";/' |        # wrap simple lines with 'echo "..."'
-        sed -re 's/(^(.*?))#\$([^\n]*)/echo "\1"\n\3/'; # handle '$#' lines
+        sed -re 's/([ \t]*?)#\$([^\n]*)/echo "\1"\n\2/'; # handle '$#' lines
 }
 
 function print_help {
