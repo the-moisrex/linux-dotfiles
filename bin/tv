@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+URL="https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8"
+CACHE_DIR="${HOME}/.cache/tv"
+CACHE="${CACHE_DIR}/playlist.m3u8"
+
+mkdir -p "$CACHE_DIR"
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [options] [search_term]
+
+Options:
+  --background      Run mpv in background (detached)
+  --search-index    Print only the 0-based index of first match
+  --list            List top matching channels + indices (do not play)
+  --help, -h        This help
+
+Default (no term): "CNN International", falls back to "CNN" if not found.
+EOF
+  exit 0
+}
+
+# Help check first
+[[ " $* " =~ " --help " || " $* " =~ " -h " ]] && show_help
+
+# Cache: refresh if >24h old or missing
+if [[ ! -f "$CACHE" || $(find "$CACHE" -mmin +1440 -print) ]]; then
+  echo "Refreshing playlist cache..." >&2
+  curl -fsSLo "$CACHE" "$URL" || {
+    [[ -f "$CACHE" ]] && echo "Using old cache (download failed)." >&2 || {
+      echo "No cache & download failed." >&2; exit 1
+    }
+  }
+fi
+
+SEARCH_TERM=""
+BACKGROUND=0
+SEARCH_ONLY=0
+LIST_MODE=0
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --background)   BACKGROUND=1; shift ;;
+    --search-index) SEARCH_ONLY=1; shift ;;
+    --list)         LIST_MODE=1; shift ;;
+    *) 
+      [[ -z $SEARCH_TERM ]] && SEARCH_TERM="$1" || { echo "Only one term allowed."; exit 1; }
+      shift ;;
+  esac
+done
+
+[[ -z $SEARCH_TERM ]] && SEARCH_TERM="CNN International"
+
+LOWER_TERM="${SEARCH_TERM,,}"
+
+# Find first match + extract title & index
+read -r INDEX TITLE < <(awk -v term="$LOWER_TERM" '
+  BEGIN { entry=0 }
+  /^#EXTINF:/ {
+    line = $0
+    if (index(tolower(line), term)) {
+      sub(/^#EXTINF:[^,]+,/, "", line)
+      gsub(/"/, "", line)
+      print entry " " line
+      exit 0
+    }
+    entry++
+  }
+' "$CACHE")
+
+if [[ -z $INDEX ]]; then
+  # Fallback to plain "cnn"
+  read -r INDEX TITLE < <(awk -v term="cnn" '
+    BEGIN { entry=0 }
+    /^#EXTINF:/ {
+      line = $0
+      if (index(tolower(line), term) && !index(tolower(line), "albania") && !index(tolower(line), "prima")) {
+        sub(/^#EXTINF:[^,]+,/, "", line)
+        gsub(/"/, "", line)
+        print entry " " line
+        exit 0
+      }
+      entry++
+    }
+  ' "$CACHE")
+fi
+
+if [[ -z $INDEX ]]; then
+  echo "No matching channel found for '$SEARCH_TERM' (or fallback 'CNN')." >&2
+  exit 1
+fi
+
+echo "Found: \"$TITLE\" at index $INDEX" >&2
+
+if [[ $LIST_MODE -eq 1 ]]; then
+  echo "Top matches:"
+  awk -v term="$LOWER_TERM" '
+    BEGIN { entry=0; count=0 }
+    /^#EXTINF:/ {
+      if (index(tolower($0), term) && count < 5) {
+        sub(/^#EXTINF:[^,]+,/, "", $0)
+        gsub(/"/, "", $0)
+        print "  " entry ": " $0
+        count++
+      }
+      entry++
+    }
+  ' "$CACHE"
+  exit 0
+fi
+
+if [[ $SEARCH_ONLY -eq 1 ]]; then
+  echo "$INDEX"
+  exit 0
+fi
+
+MPV=(mpv "$CACHE" --playlist-start="$INDEX")
+
+if [[ $BACKGROUND -eq 1 ]]; then
+  "${MPV[@]}" &>/dev/null &
+  disown
+  echo "Started in background." >&2
+else
+  "${MPV[@]}"
+fi
+
