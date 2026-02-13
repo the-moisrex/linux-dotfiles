@@ -47,7 +47,7 @@ table inet socks {
         # QUIC protocol; we t-proxy UDP here because we don't want to change the packet
         # udp dport { 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
         # udp dport { 80, 443 } counter name socks tproxy to :$tproxy_port mark set $lo_socks_fwmark accept;
-        udp dport { 80, 443, 53 } counter name socks tproxy to :$tproxy_port;
+        udp dport { 80, 443 } counter name socks tproxy to :$tproxy_port;
     }
 
     chain output {
@@ -69,7 +69,7 @@ table inet socks {
         
         # QUIC Protocol; no t-proxying here; because our source address is already local
         # udp dport { 80, 443 } counter name socks mark set $lo_socks_fwmark accept;
-        udp dport { 80, 443, 53 } counter name socks redirect to :$tproxy_port;
+        udp dport { 80, 443 } counter name socks redirect to :$tproxy_port;
         # udp dport { 443 } counter name socks mark set $lo_socks_fwmark redirect to :$tproxy_port;
     }
 }

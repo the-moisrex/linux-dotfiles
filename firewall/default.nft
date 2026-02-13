@@ -332,8 +332,11 @@ table inet nat {
         type nat hook prerouting priority dstnat
         policy accept
 
+        ip protocol { udp, tcp } th dport 53 skuid dnsmasq accept;
+        ip protocol { udp, tcp } th dport 53 skuid dnscrypt-proxy accept;
         # Hijack the DNS Queries
-        ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to meta iifname map {$devices_ips_map} comment "Hijack DNS"
+        # ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to meta iifname map {$devices_ips_map} comment "Hijack DNS"
+        ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to 127.0.0.1:53 comment "Hijack DNS"
     }
 
     chain input {
@@ -350,6 +353,7 @@ table inet nat {
         meta pkttype broadcast accept;
         meta pkttype multicast accept;
         meta mark $lo_v2ray_fwmark accept;
+        # ip saddr == $local_network ip daddr == 127.0.0.1 counter name nat.masquerade masquerade comment "nat anything comming from local network (DNS)"
         ip daddr != $local_network meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
         ip daddr != $local_network counter name nat.masquerade masquerade comment "nat everything"
     }
