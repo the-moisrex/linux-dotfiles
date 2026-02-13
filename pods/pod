@@ -62,11 +62,73 @@ get_compose_file() {
     fi
 }
 
+# Pull latest images for specified pods
+pull_latest_images() {
+    local pods_to_update=("$@")
+
+    if [[ ${#pods_to_update[@]} -eq 0 ]]; then
+        print_warning "No pods found to update."
+        return 0
+    fi
+
+    for pod in "${pods_to_update[@]}"; do
+        local compose_file=$(get_compose_file "$pod")
+        if [[ $? -ne 0 ]]; then
+            print_error "Compose file not found for pod: $pod"
+            continue
+        fi
+
+        print_status "Checking for 'latest' tagged images in pod: $pod"
+        
+        # Extract image names from the compose file that use 'latest' tag
+        local latest_images=()
+        if command -v yq &> /dev/null; then
+            # Using yq to parse YAML properly
+            latest_images=($(yq '.services[] | select(.image) | .image' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true))
+        else
+            # Fallback to grep if yq is not available
+            latest_images=($(grep -oE '[^[:space:]]*:[^[:space:]]*' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true))
+        fi
+        
+        if [[ ${#latest_images[@]} -gt 0 ]]; then
+            print_status "Found ${#latest_images[@]} 'latest' tagged images in pod $pod. Pulling updates..."
+            
+            for image in "${latest_images[@]}"; do
+                print_status "Pulling latest image: $image"
+                if podman pull "$image"; then
+                    print_status "Successfully pulled $image"
+                else
+                    print_error "Failed to pull $image"
+                fi
+            done
+        else
+            print_status "No 'latest' tagged images found in pod: $pod"
+        fi
+    done
+}
+
+# Update specified pods (pull latest images and restart)
+update_pods() {
+    local pods_to_update=("$@")
+    
+    if [[ ${#pods_to_update[@]} -eq 0 ]]; then
+        print_warning "No pods found to update."
+        return 0
+    fi
+    
+    # First pull the latest images
+    pull_latest_images "${pods_to_update[@]}"
+    
+    # Then restart the pods to use the updated images
+    print_status "Restarting pods to use updated images..."
+    restart_pods "${pods_to_update[@]}"
+}
+
 # Show help message
 show_help() {
     local available_pods=($(find_pod_dirs))
     local pods_list=$(IFS=', '; echo "${available_pods[*]}")
-    
+
     cat << EOF
 Multi-Pod Management Script
 
@@ -77,6 +139,7 @@ COMMANDS:
     start       Start specified pods (or all if none specified)
     stop        Stop specified pods (or all if none specified)
     restart     Restart specified pods (or all if none specified)
+    update      Update specified pods (pull latest images and restart)
     clean       Remove $DATABASE_DIR directory (requires confirmation)
     status      Show status of all pods
     list        List all available pods
@@ -92,6 +155,9 @@ EXAMPLES:
     $0 start database dev           # Start database and dev pods
     $0 stop                         # Stop all pods
     $0 restart dev main             # Restart dev and main pods
+    $0 update all                   # Update all pods (pull latest images and restart)
+    $0 update database              # Update only the database pod
+    $0 update database dev          # Update database and dev pods
     $0 clean                        # Remove database directory with confirmation
     $0 clean --force                # Remove database directory without confirmation
     $0 status                       # Show status of all services
@@ -338,6 +404,13 @@ case "$command" in
         fi
         target_pods=($(get_target_pods "$@"))
         restart_pods "${target_pods[@]}"
+        ;;
+    update)
+        if ! validate_pods "$@"; then
+            exit 1
+        fi
+        target_pods=($(get_target_pods "$@"))
+        update_pods "${target_pods[@]}"
         ;;
     clean)
         clean_database_dir "$@"
