@@ -19,10 +19,10 @@ trash "$HOME/.parallel"
 trash "$HOME/.icons"
 # trash "$HOME/.var"  # flatpak?
 trash "$HOME/.fontconfig"
-trash "$HOME/.java" # contains font configs, I think
+# trash "$HOME/.java" # contains font configs, I think
 trash "$HOME/.swt" # extracted native libraries (.so files) which are essentially a cache
 trash "$HOME/.ipython"
-trash "$HOME/.skiko" # cache for unpacked native libraries for Jetbrains
+# trash "$HOME/.skiko" # cache for unpacked native libraries for Jetbrains
 trash "$HOME/.shutter"
 trash "$HOME/.fltk"
 trash "$HOME/.designer"
