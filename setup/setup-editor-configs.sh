@@ -16,7 +16,7 @@ USAGE
   exit 0
 fi
 
-log "Managing editor/terminal configs"
+log "Managing editor configs"
 
 log_step "Neovim"
 link_path "$ROOT_DIR/configs/nvim" "$HOME/.config/nvim"
@@ -27,20 +27,5 @@ if [[ -d "$HOME/.SpaceVim.d" || "$UNINSTALL" == "true" ]]; then
 else
   log_verbose "Skipping SpaceVim: ~/.SpaceVim.d not found"
 fi
-
-log_step "Alacritty"
-if [[ -x "$ROOT_DIR/configs/alacritty/update-themes.sh" && "$UNINSTALL" == "false" ]]; then
-  run_cmd "$ROOT_DIR/configs/alacritty/update-themes.sh"
-fi
-link_path "$ROOT_DIR/configs/alacritty" "$HOME/.config/alacritty"
-
-log_step "VS Code"
-link_path "$ROOT_DIR/configs/vscode/settings.json" "$HOME/.config/Code/User/settings.json"
-
-log_step "Chromium flags"
-link_path "$ROOT_DIR/configs/chromium-flags.conf" "$HOME/.config/chromium-flags.conf"
-
-log_step "GDB"
-link_path "$ROOT_DIR/configs/gdb/.gdbinit" "$HOME/.gdbinit"
 
 log "Done"

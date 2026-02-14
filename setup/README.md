@@ -9,7 +9,12 @@ Modular scripts for configuring this Linux dotfiles repository.
 - `disable-screen-lock.sh`: Disable/restore lock and display sleep settings.
 - `disable-auto-updates.sh`: Disable/re-enable automatic update mechanisms.
 - `setup-shell-configs.sh`: Install/remove Fish and Nushell configs.
-- `setup-editor-configs.sh`: Install/remove editor and terminal configs.
+- `setup-editor-configs.sh`: Install/remove editor configs (Neovim and SpaceVim).
+- `setup-alacritty-config.sh`: Install/remove Alacritty config.
+- `setup-vscode-config.sh`: Install/remove VS Code settings.
+- `setup-chromium-config.sh`: Install/remove Chromium flags config.
+- `setup-gdb-config.sh`: Install/remove GDB config.
+- `setup-firefox-userchrome.sh`: Install/remove Firefox `userChrome.css` in a profile.
 - `setup-desktop-configs.sh`: Install/remove desktop integration configs.
 
 ## Common flags

@@ -15,6 +15,11 @@ Components:
   auto-updates       setup/disable-auto-updates.sh
   shells             setup/setup-shell-configs.sh
   editors            setup/setup-editor-configs.sh
+  alacritty          setup/setup-alacritty-config.sh
+  vscode             setup/setup-vscode-config.sh
+  chromium           setup/setup-chromium-config.sh
+  gdb                setup/setup-gdb-config.sh
+  firefox-userchrome setup/setup-firefox-userchrome.sh
   desktop            setup/setup-desktop-configs.sh
 USAGE
 }
@@ -35,7 +40,7 @@ for arg in "$@"; do
 done
 
 if [[ "$ALL" == "true" || ${#COMPONENTS[@]} -eq 0 ]]; then
-  COMPONENTS=(packages sudo screen-lock auto-updates shells editors desktop)
+  COMPONENTS=(packages sudo screen-lock auto-updates shells editors alacritty vscode chromium gdb firefox-userchrome desktop)
 fi
 
 EXTRA_ARGS=()
@@ -50,6 +55,11 @@ for component in "${COMPONENTS[@]}"; do
     auto-updates) script="setup/disable-auto-updates.sh" ;;
     shells) script="setup/setup-shell-configs.sh" ;;
     editors) script="setup/setup-editor-configs.sh" ;;
+    alacritty) script="setup/setup-alacritty-config.sh" ;;
+    vscode) script="setup/setup-vscode-config.sh" ;;
+    chromium) script="setup/setup-chromium-config.sh" ;;
+    gdb) script="setup/setup-gdb-config.sh" ;;
+    firefox-userchrome) script="setup/setup-firefox-userchrome.sh" ;;
     desktop) script="setup/setup-desktop-configs.sh" ;;
     *)
       echo "Unknown component: $component" >&2
