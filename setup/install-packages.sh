@@ -1,90 +1,80 @@
-#!/bin/bash
-# Script to detect distribution and install packages from appropriate file
+#!/usr/bin/env bash
 
-echo "Detecting distribution and installing packages..."
+set -euo pipefail
 
-log () {
-    echo "  $@"
-}
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+# shellcheck source=setup/lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+SHOW_HELP=false
+parse_common_flags "$@"
 
-# Detect the Linux distribution
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    DISTRO=$NAME
-    DISTRO_ID=$ID
-elif type lsb_release >/dev/null 2>&1; then
-    DISTRO=$(lsb_release -si)
-    DISTRO_ID=$(echo $DISTRO | tr '[:upper:]' '[:lower:]')
-elif [ -f /etc/debian_version ]; then
-    DISTRO="Debian"
-    DISTRO_ID="debian"
-elif [ -f /etc/redhat-release ]; then
-    DISTRO="Red Hat"
-    DISTRO_ID="redhat"
-else
-    DISTRO="Unknown"
-    DISTRO_ID="unknown"
+if [[ "$SHOW_HELP" == "true" ]]; then
+  cat <<'USAGE'
+Usage: ./setup/install-packages.sh [--uninstall] [--verbose]
+  --uninstall  Remove listed packages instead of installing them
+USAGE
+  exit 0
 fi
 
-log "Detected distribution: $DISTRO ($DISTRO_ID)"
+log "Managing package installation"
 
-# Determine the package manager and package file to use
-case $DISTRO_ID in
-    ubuntu|debian|mint|pop)
-        PACKAGE_MANAGER="apt"
-        PKG_FILE="../../pkgs/ubuntu.txt"
-        UPDATE_CMD="sudo apt update"
-        INSTALL_CMD="sudo apt install -y"
-        ;;
-    fedora|rhel|centos|rocky|almalinux)
-        PACKAGE_MANAGER="dnf"
-        PKG_FILE="../../pkgs/fedora.txt"
-        UPDATE_CMD="sudo dnf check-update || true"
-        INSTALL_CMD="sudo dnf install -y"
-        ;;
-    opensuse*|suse)
-        PACKAGE_MANAGER="zypper"
-        PKG_FILE="../../pkgs/opensuse.txt"
-        UPDATE_CMD="sudo zypper refresh"
-        INSTALL_CMD="sudo zypper install -y"
-        ;;
-    arch|manjaro)
-        PACKAGE_MANAGER="pacman"
-        PKG_FILE="../../pkgs/arch.txt"
-        UPDATE_CMD="sudo pacman -Sy"
-        INSTALL_CMD="sudo pacman -S --noconfirm"
-        ;;
-    *)
-        log "Unsupported distribution: $DISTRO_ID"
-        exit 1
-        ;;
+if [[ -f /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  DISTRO_ID=${ID}
+else
+  DISTRO_ID="unknown"
+fi
+log_step "Detected distribution: $DISTRO_ID"
+
+PACKAGE_FILE=""
+UPDATE_CMD=()
+ACTION_CMD=()
+
+case "$DISTRO_ID" in
+  arch|manjaro)
+    PACKAGE_FILE="$ROOT_DIR/pkgs/pacman-core.txt"
+    UPDATE_CMD=(sudo pacman -Sy)
+    if [[ "$UNINSTALL" == "true" ]]; then
+      ACTION_CMD=(sudo pacman -Rns --noconfirm)
+    else
+      ACTION_CMD=(sudo pacman -S --noconfirm --needed)
+    fi
+    ;;
+  fedora|rhel|centos|rocky|almalinux)
+    PACKAGE_FILE="$ROOT_DIR/pkgs/dnf-core.txt"
+    UPDATE_CMD=(sudo dnf makecache)
+    if [[ "$UNINSTALL" == "true" ]]; then
+      ACTION_CMD=(sudo dnf remove -y)
+    else
+      ACTION_CMD=(sudo dnf install -y)
+    fi
+    ;;
+  *)
+    warn "No supported package list for distribution: $DISTRO_ID"
+    exit 0
+    ;;
 esac
 
-log "Using package manager: $PACKAGE_MANAGER"
-
-# Check if the package file exists for this distribution
-if [ ! -f "$PKG_FILE" ]; then
-    log "$PKG_FILE not found, skipping package installation for $DISTRO_ID."
-    exit 0
+if [[ ! -f "$PACKAGE_FILE" ]]; then
+  warn "Package file does not exist: $PACKAGE_FILE"
+  exit 0
 fi
 
-# Update package list
-log "Updating package list..."
-eval "$UPDATE_CMD"
+log_step "Using package list: $PACKAGE_FILE"
+run_cmd "${UPDATE_CMD[@]}"
 
-# Read packages from file and install them
-log "Reading packages from $PKG_FILE..."
-while IFS= read -r package || [ -n "$package" ]; do
-    # Skip empty lines and comments
-    if [[ -z "$package" || "$package" =~ ^[[:space:]]*# ]]; then
-        continue
-    fi
-    
-    # Remove leading/trailing whitespace
-    package=$(echo "$package" | xargs)
-    
-    log "Installing package: $package"
-    eval "$INSTALL_CMD $package"
-done < "$PKG_FILE"
+while IFS= read -r package || [[ -n "$package" ]]; do
+  [[ -z "$package" || "$package" =~ ^[[:space:]]*# ]] && continue
+  package=$(echo "$package" | xargs)
+  [[ -z "$package" ]] && continue
+  if [[ "$UNINSTALL" == "true" ]]; then
+    log_step "Removing package: $package"
+  else
+    log_step "Installing package: $package"
+  fi
+  run_cmd_may_fail "${ACTION_CMD[@]}" "$package"
+done < "$PACKAGE_FILE"
 
-log "Package installation for $DISTRO_ID completed!"
+log "Done"

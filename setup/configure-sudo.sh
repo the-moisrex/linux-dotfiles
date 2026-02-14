@@ -1,34 +1,53 @@
-#!/bin/bash
-# Script to configure sudo without requiring a password for the current user
+#!/usr/bin/env bash
 
-echo "Configuring sudo without password..."
+set -euo pipefail
 
-# Check if running as root
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=setup/lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+SHOW_HELP=false
+parse_common_flags "$@"
+
+if [[ "$SHOW_HELP" == "true" ]]; then
+  cat <<'USAGE'
+Usage: ./setup/configure-sudo.sh [--uninstall] [--verbose]
+USAGE
+  exit 0
+fi
+
+log "Configuring passwordless sudo"
+
 if [[ $EUID -eq 0 ]]; then
-   echo "  This script should not be run as root" 
-   exit 1
+  die "This script should not be run as root"
 fi
 
 USER_NAME=$(whoami)
 SUDO_FILE="/etc/sudoers.d/${USER_NAME}-nopasswd"
 
-# Create a temporary file with the sudoers entry
-TEMP_FILE=$(mktemp)
-echo "${USER_NAME} ALL=(ALL) NOPASSWD: ALL" > "$TEMP_FILE"
-
-# Validate the sudoers file syntax
-if visudo -c -f "$TEMP_FILE" > /dev/null 2>&1; then
-    # Copy the validated file to the sudoers directory
-    sudo cp "$TEMP_FILE" "$SUDO_FILE"
-    sudo chmod 440 "$SUDO_FILE"
-    echo "  Successfully configured sudo without password for user: $USER_NAME"
-else
-    echo "  Error: Invalid sudoers file syntax"
-    rm "$TEMP_FILE"
-    exit 1
+if [[ "$UNINSTALL" == "true" ]]; then
+  log_step "Removing sudoers override: $SUDO_FILE"
+  if [[ -f "$SUDO_FILE" ]]; then
+    run_cmd sudo rm -f "$SUDO_FILE"
+    log_step "Removed"
+  else
+    log_step "Nothing to remove"
+  fi
+  log "Done"
+  exit 0
 fi
 
-# Clean up
-rm "$TEMP_FILE"
+TEMP_FILE=$(mktemp)
+trap 'rm -f "$TEMP_FILE"' EXIT
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$USER_NAME" > "$TEMP_FILE"
 
-echo "  Sudo configuration completed!"
+log_step "Validating generated sudoers file"
+if visudo -c -f "$TEMP_FILE" >/dev/null 2>&1; then
+  log_step "Installing $SUDO_FILE"
+  run_cmd sudo cp "$TEMP_FILE" "$SUDO_FILE"
+  run_cmd sudo chmod 440 "$SUDO_FILE"
+  log_step "Configured for user: $USER_NAME"
+else
+  die "Generated sudoers entry is invalid"
+fi
+
+log "Done"
