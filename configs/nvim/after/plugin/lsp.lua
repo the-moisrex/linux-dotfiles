@@ -28,18 +28,14 @@ lsp_zero.extend_lspconfig({
 -- These are just examples. Replace them with the language
 -- servers you have installed in your system
 -- https://github.com/neovim/nvim-lspconfig/blob/master/doc/server_configurations.md
-local lspconfig = require('lspconfig')
-lspconfig.clangd.setup({})
-lspconfig.bashls.setup({})
-lspconfig.pylsp.setup({})
-lspconfig.rust_analyzer.setup({})
-
--- tsserver is deprecated, use ts_ls
--- lspconfig.tsserver.setup({})
-lspconfig.ts_ls.setup({})
+vim.lsp.enable('clangd')
+vim.lsp.enable('bashls')
+vim.lsp.enable('ts_ls')
+vim.lsp.enable('pylsp')
+-- vim.lsp.rust_analyzer.setup({})
 
 -- fixme: ccls has problems on webpp
--- lspconfig.ccls.setup({
+-- vim.lsp.ccls.setup({
 --   init_options = {
 --     compilationDatabaseDirectory = "build";
 --     index = {
