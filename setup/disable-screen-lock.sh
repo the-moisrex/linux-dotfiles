@@ -40,7 +40,7 @@ if [[ "$UNINSTALL" == "true" ]]; then
   if [[ -f /etc/systemd/logind.conf ]]; then
     replace_or_append_kv /etc/systemd/logind.conf HandleLidSwitch '=suspend'
     replace_or_append_kv /etc/systemd/logind.conf HandleLidSwitchDocked '=ignore'
-    run_cmd_may_fail sudo systemctl restart systemd-logind
+    log_step "Updated /etc/systemd/logind.conf (restart/relogin required to apply lid switch changes)"
   fi
 else
   log_step "Disabling lock and display sleep"
@@ -56,7 +56,7 @@ else
   if [[ -f /etc/systemd/logind.conf ]]; then
     replace_or_append_kv /etc/systemd/logind.conf HandleLidSwitch '=ignore'
     replace_or_append_kv /etc/systemd/logind.conf HandleLidSwitchDocked '=ignore'
-    run_cmd_may_fail sudo systemctl restart systemd-logind
+    log_step "Updated /etc/systemd/logind.conf (restart/relogin required to apply lid switch changes)"
   fi
 fi
 
