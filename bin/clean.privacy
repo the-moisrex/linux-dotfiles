@@ -49,6 +49,9 @@ replace_system_info() {
     
     # Replace full hostname
     text=$(echo "$text" | sed "s|$hostname_full|FULL_HOSTNAME|g")
+
+    # Replace Jetbrains details
+    text=$(echo "$text" | sed "s|/home/USER/.local/share/JetBrains/Toolbox/apps/clion-2/bin/cmake/linux/x64||g")
     
     echo "$text"
 }
