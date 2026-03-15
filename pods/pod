@@ -221,6 +221,8 @@ start_pods() {
         print_warning "No pods found to start."
         return 0
     fi
+
+    sudo sysctl net.ipv4.ip_unprivileged_port_start=80
     
     for pod in "${pods_to_start[@]}"; do
         local compose_file=$(get_compose_file "$pod")
