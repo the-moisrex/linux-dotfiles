@@ -1,0 +1,6 @@
+ms-vscode.cpptools
+ms-vscode.cpptools-extension-pack
+llvm-vs-code-extensions.vscode-clangd
+vadimcn.vscode-lldb
+twxs.cmake
+ms-vscode.cmake-tools
