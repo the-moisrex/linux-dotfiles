@@ -2,6 +2,14 @@
     // Disabling Telemetry:
     "telemetry.feedback.enabled": false,
     "telemetry.telemetryLevel": "off",
+    "python.analysis.enablePerfTelemetry": false,
+    "telemetry.editStats.details.enabled": false,
+    "telemetry.editStats.showDecorations": false,
+    "telemetry.editStats.enabled": false,
+    "editor.experimental.treeSitterTelemetry": false,
+    "python.analysis.reportExtraTelemetry": false,
+    "python.analysis.enableSnippetExtraTelemetry": false,
+    "telemetry.editStats.showStatusBar": false,
     "gitlens.telemetry.enabled": false,
     "rest-client.enableTelemetry": false,
     "code-runner.enableAppInsights": false,
@@ -14,47 +22,62 @@
         "<C-b>": false,
         "<C-k>": false,
     },
-    "editor.fontSize": 12,
-    "editor.fontFamily": "JetBrains Mono",
-    "editor.fontLigatures": true,
     "editor.formatOnSave": true,
-    "editor.defaultFormatter": "ms-vscode.cpptools-extension-pack",
     "editor.mouseWheelZoom": true,
     "editor.lineNumbers": "relative",
+    "editor.minimap.enabled": false,
+    "editor.smoothScrolling": true,
+    "editor.aiStats.enabled": false,
+    // font:
+    "editor.fontFamily": "JetBrains Mono",
+    "editor.fontSize": 14,
+    "terminal.integrated.fontSize": 14,
+    "notebook.output.fontSize": 12,
+    "chat.editor.fontSize": 12,
+    "debug.console.fontSize": 12,
+    "editor.fontLigatures": true,
+    "terminal.integrated.fontLigatures.enabled": true,
+    "terminal.integrated.hideOnStartup": "always",
+    "terminal.integrated.allowMnemonics": true,
+    "terminal.integrated.detectLocale": "on",
     // git:
     "git.confirmSync": false,
     "git.enableSmartCommit": true,
-    // language specific settings:
-    "[jsonc]": {
-        "editor.defaultFormatter": "vscode.json-language-features"
-    },
-    "[cpp]": {
-        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
-    },
-    "workbench.sideBar.location": "right",
-    "editor.minimap.enabled": false,
-    "editor.smoothScrolling": true,
-    "workbench.settings.editor": "json",
+    // window:
     "window.menuBarVisibility": "compact",
     "window.closeWhenEmpty": true,
     "window.confirmBeforeClose": "never",
     "window.autoDetectColorScheme": false,
     "window.commandCenter": false,
+    "zenMode.showTabs": "none",
+    "zenMode.centerLayout": true,
+    "debug.confirmOnExit": "never",
+    "debug.console.closeOnEnd": true,
+    "debug.showVariableTypes": true,
+    "containers.containerClient": "com.microsoft.visualstudio.containers.podman",
+    "containers.orchestratorClient": "com.microsoft.visualstudio.orchestrators.podmancompose",
+    // workbench:
     "workbench.layoutControl.enabled": false,
     "workbench.statusBar.visible": false,
-    "zenMode.showTabs": "none",
-    "terminal.integrated.tabs.enabled": false,
-    "terminal.integrated.fontFamily": "JetBrains Mono",
-    "terminal.integrated.fontSize": 12,
-    "debug.console.fontFamily": "JetBrains Mono",
-    "debug.console.fontSize": 12,
+    "workbench.sideBar.location": "right",
+    "workbench.settings.editor": "json",
+    "workbench.startupEditor": "none",
+    "workbench.colorTheme": "Ayu Dark",
+    "explorer.confirmDelete": false,
+    // language specific settings:
+    "C_Cpp.intelliSenseEngine": "disabled", // conflict with clangd
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+        "editor.formatOnPaste": true,
+    },
     "[json]": {
         "editor.defaultFormatter": "vscode.json-language-features"
     },
-    "containers.containerClient": "com.microsoft.visualstudio.containers.podman",
-    "containers.orchestratorClient": "com.microsoft.visualstudio.orchestrators.podmancompose",
-    "C_Cpp.intelliSenseEngine": "disabled",
-    "workbench.startupEditor": "none",
-    "workbench.colorTheme": "Ayu Dark",
-    "explorer.confirmDelete": false
+    "[javascript]": {
+        "editor.maxTokenizationLineLength": 2500,
+        "editor.defaultFormatter": "vscode.typescript-language-features"
+    }
 }
