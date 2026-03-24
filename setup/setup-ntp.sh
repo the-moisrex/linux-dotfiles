@@ -48,7 +48,7 @@ else
 fi
 
 # Configure chrony (Ubunut/Fedora/RHEL/CentOS)
-if [ -f /etc/chrony.conf ]; then
+if [ -f /etc/chrony.conf ] || [ -f /etc/chrony/chrony.conf ]; then
     log_step "Configure chrony (Ubuntu/Fedora/RHEL/CentOS)"
     run_cmd sudo sed -i '/^server /d' /etc/chrony.conf
     if [ -f /etc/chrony/sources.d/ ]; then
@@ -62,7 +62,13 @@ if [ -f /etc/chrony.conf ]; then
             fi
         done
     else
-        chrony_config="/etc/chrony.conf"
+        if [ -f /etc/chrony/chrony.conf ]; then
+            chrony_config="/etc/chrony/chrony.conf"
+            elif  [-f /etc/chrony.conf ]; then
+            chrony_config="/etc/chrony.conf"
+        else
+            die "Could not find chrony config file"
+        fi
         for server in $NTP_SERVERS; do
             if grep -q "$server" "$chrony_config"; then
                 log_step "skipped $server, it's already in the $chrony_config"
