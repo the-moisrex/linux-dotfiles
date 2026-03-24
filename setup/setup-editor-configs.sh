@@ -13,7 +13,7 @@ if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
 Usage: ./setup/setup-editor-configs.sh [--uninstall] [--verbose]
 USAGE
-  exit 0
+    exit 0
 fi
 
 log "Managing editor configs"
@@ -23,9 +23,9 @@ link_path "$ROOT_DIR/configs/nvim" "$HOME/.config/nvim"
 
 log_step "SpaceVim"
 if [[ -d "$HOME/.SpaceVim.d" || "$UNINSTALL" == "true" ]]; then
-  link_path "$ROOT_DIR/configs/SpaceVim.d/init.toml" "$HOME/.SpaceVim.d/init.toml"
+    link_path "$ROOT_DIR/configs/SpaceVim.d/init.toml" "$HOME/.SpaceVim.d/init.toml"
 else
-  log_verbose "Skipping SpaceVim: ~/.SpaceVim.d not found"
+    log_verbose "Skipping SpaceVim: ~/.SpaceVim.d not found"
 fi
 
 log "Done"
