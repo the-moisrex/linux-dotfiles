@@ -78,7 +78,11 @@ if [ -f /etc/chrony.conf ] || [ -f /etc/chrony/chrony.conf ]; then
             fi
         done
     fi
-    run_cmd sudo systemctl restart chronyd
+    log_step "Let's reload chrony's sources"
+    if ! run_cmd_may_fail sudo chronyc reload sources; then
+        log_step "chrony reload failed, let's restart the chronyd."
+        run_cmd sudo systemctl restart chronyd
+    fi
     log_step "✓ chrony updated"
 else
     log_step "chrony is not installed."
