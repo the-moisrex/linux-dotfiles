@@ -50,7 +50,7 @@ fi
 # Configure chrony (Ubunut/Fedora/RHEL/CentOS)
 if [ -f /etc/chrony.conf ] || [ -f /etc/chrony/chrony.conf ]; then
     log_step "Configure chrony (Ubuntu/Fedora/RHEL/CentOS)"
-    if [ -f /etc/chrony/sources.d/ ]; then
+    if [ -d /etc/chrony/sources.d/ ]; then
         chrony_config="/etc/chrony/sources.d/users-ntp-servers.conf"
         for server in $NTP_SERVERS; do
             if grep -q "$server" "$chrony_config"; then
