@@ -50,7 +50,6 @@ fi
 # Configure chrony (Ubunut/Fedora/RHEL/CentOS)
 if [ -f /etc/chrony.conf ] || [ -f /etc/chrony/chrony.conf ]; then
     log_step "Configure chrony (Ubuntu/Fedora/RHEL/CentOS)"
-    run_cmd sudo sed -i '/^server /d' /etc/chrony.conf
     if [ -f /etc/chrony/sources.d/ ]; then
         chrony_config="/etc/chrony/sources.d/users-ntp-servers.conf"
         for server in $NTP_SERVERS; do
@@ -69,6 +68,7 @@ if [ -f /etc/chrony.conf ] || [ -f /etc/chrony/chrony.conf ]; then
         else
             die "Could not find chrony config file"
         fi
+        # run_cmd sudo sed -i '/^server /d' /etc/chrony.conf
         for server in $NTP_SERVERS; do
             if grep -q "$server" "$chrony_config"; then
                 log_step "skipped $server, it's already in the $chrony_config"
