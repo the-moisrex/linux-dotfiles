@@ -38,6 +38,10 @@ warn() {
     echo "${C_WARN}WARNING:${C_RESET} $*" >&2
 }
 
+warn_step() {
+    echo "${C_WARN}  WARNING:${C_RESET} $*" >&2
+}
+
 die() {
     echo "${C_ERROR}ERROR:${C_RESET} $*" >&2
     exit 1
@@ -67,7 +71,7 @@ run_cmd_may_fail() {
     local output
     output=$("$@" 2>&1) || {
         [[ -n "$output" ]] && warn "$output"
-        warn "Command failed (ignored): $*"
+        warn_step "Command failed (ignored): $*"
         return 0
     }
 }
@@ -86,7 +90,7 @@ replace_or_append_kv() {
     else
         log_verbose "Appending ${key} ${value} to $file"
         if ! printf '%s %s\n' "$key" "$value" | sudo tee -a "$file" >/dev/null 2>&1; then
-            warn "Failed to append ${key} to $file"
+            warn_step "Failed to append ${key} to $file"
         fi
     fi
 }
@@ -122,7 +126,7 @@ link_path() {
     local dest="$2"
     
     if [[ ! -e "$src" ]]; then
-        warn "Source does not exist: $src"
+        warn_step "Source does not exist: $src"
         return 1
     fi
     
@@ -145,9 +149,9 @@ link_path() {
     if ln -s "$src" "$dest" 2>/dev/null; then
         log_step "Linked: $src -> $dest"
         elif cp -r "$src" "$dest"; then
-        warn "Symlink failed; copied instead: $src -> $dest"
+        warn_step "Symlink failed; copied instead: $src -> $dest"
     else
-        warn "Failed to install: $src -> $dest"
+        warn_step "Failed to install: $src -> $dest"
         return 1
     fi
 }

@@ -11,15 +11,19 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-alacritty-config.sh [--uninstall] [--verbose]
+Usage: ./setup/setup-alacritty-config.sh [--offline] [--uninstall] [--verbose]
 USAGE
-  exit 0
+    exit 0
 fi
 
 log "Managing Alacritty config"
 
 if [[ -x "$ROOT_DIR/configs/alacritty/update-themes.sh" && "$UNINSTALL" == "false" ]]; then
-  run_cmd "$ROOT_DIR/configs/alacritty/update-themes.sh"
+    if $OFFLINE; then
+        warn_step "Updating Alacrity Themes Ignored."
+    else
+        run_cmd "$ROOT_DIR/configs/alacritty/update-themes.sh"
+    fi
 fi
 
 link_path "$ROOT_DIR/configs/alacritty" "$HOME/.config/alacritty"
