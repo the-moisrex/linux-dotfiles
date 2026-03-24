@@ -63,6 +63,7 @@ for component in "${COMPONENTS[@]}"; do
         vscode) script="setup/setup-vscode-config.sh" ;;
         chromium) script="setup/setup-chromium-config.sh" ;;
         gdb) script="setup/setup-gdb-config.sh" ;;
+        ntp) script="setup/setup-ntp.sh" ;;
         firefox-userchrome) script="setup/setup-firefox-userchrome.sh" ;;
         desktop) script="setup/setup-desktop-configs.sh" ;;
         *)
