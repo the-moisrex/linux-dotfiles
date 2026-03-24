@@ -12,7 +12,7 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-gdb-config.sh [--verbose]
+Usage: ./setup/setup-ntp.sh [--verbose]
 USAGE
     exit 0
 fi
@@ -22,8 +22,6 @@ fi
 NTP_SERVERS="ntp.day.ir ntp.meetbsd.ir 0.arch.pool.ntp.org 1.arch.pool.ntp.org 2.arch.pool.ntp.org 3.arch.pool.ntp.org"
 
 log "Managing NTP Protocol (for time and date)"
-link_path "$ROOT_DIR/configs/gdb/.gdbinit" "$HOME/.gdbinit"
-
 
 # Configure systemd timesyncd (modern systems)
 if [ -f /etc/systemd/timesyncd.conf ]; then
@@ -32,6 +30,8 @@ if [ -f /etc/systemd/timesyncd.conf ]; then
     run_cmd sudo timedatectl set-ntp 0
     run_cmd sudo timedatectl set-ntp 1
     log_step "✓ systemd timesyncd updated"
+else
+    log_step "timesyncd is not installed."
 fi
 
 # Configure ntpd (older Debian/Ubuntu/RHEL)
@@ -43,6 +43,8 @@ if [ -f /etc/ntp.conf ]; then
     done
     run_cmd sudo systemctl restart ntpd
     log_step "✓ ntpd updated"
+else
+    log_step "ntpd is not installed."
 fi
 
 # Configure chrony (Ubunut/Fedora/RHEL/CentOS)
@@ -72,6 +74,8 @@ if [ -f /etc/chrony.conf ]; then
     fi
     run_cmd sudo systemctl restart chronyd
     log_step "✓ chrony updated"
+else
+    log_step "chrony is not installed."
 fi
 
 # Final check
