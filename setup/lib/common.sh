@@ -70,7 +70,7 @@ run_cmd_may_fail() {
     
     local output
     output=$("$@" 2>&1) || {
-        [[ -n "$output" ]] && warn "$output"
+        [[ -n "$output" ]] && warn_step "$output"
         warn_step "Command failed (ignored): $*"
         return 0
     }

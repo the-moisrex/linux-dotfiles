@@ -51,6 +51,6 @@ link_path "$ROOT_DIR/configs/vscode/keybindings.json" "$HOME/.local/share/code-s
 if ! $OFFLINE; then
     install_extensions
 else
-    log_step "Installing Extensions are ignored."
+    warn_step "Installing Extensions are ignored."
 fi
 log "Done"
