@@ -51,9 +51,11 @@
     "window.commandCenter": false,
     "zenMode.showTabs": "none",
     "zenMode.centerLayout": true,
+    // debug:
     "debug.confirmOnExit": "never",
     "debug.console.closeOnEnd": true,
-    "debug.showVariableTypes": true,
+    "debug.showVariableTypes": false,
+    // container:
     "containers.containerClient": "com.microsoft.visualstudio.containers.podman",
     "containers.orchestratorClient": "com.microsoft.visualstudio.orchestrators.podmancompose",
     // workbench:
@@ -62,7 +64,7 @@
     "workbench.sideBar.location": "right",
     "workbench.settings.editor": "json",
     "workbench.startupEditor": "none",
-    "workbench.colorTheme": "Ayu Dark",
+    "workbench.colorTheme": "Experimental Dark",
     "explorer.confirmDelete": false,
     // language specific settings:
     "C_Cpp.intelliSenseEngine": "disabled", // conflict with clangd
@@ -79,5 +81,14 @@
     "[javascript]": {
         "editor.maxTokenizationLineLength": 2500,
         "editor.defaultFormatter": "vscode.typescript-language-features"
-    }
+    },
+    "cmake.showNotAllDocumentsSavedQuestion": false,
+    "extensions.autoUpdate": false,
+    "roo-cline.debug": false,
+    "roo-cline.allowedCommands": [
+        "git log",
+        "git diff",
+        "git show"
+    ],
+    "roo-cline.deniedCommands": []
 }
