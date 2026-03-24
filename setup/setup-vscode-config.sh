@@ -11,34 +11,34 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-vscode-config.sh [--uninstall] [--verbose]
+Usage: ./setup/setup-vscode-config.sh [--offline] [--uninstall] [--verbose]
 USAGE
-  exit 0
+    exit 0
 fi
 
 install_extensions() {
-  local extension_file="$ROOT_DIR/configs/vscode/extensions.txt"
-  [[ -f "$extension_file" ]] || return 0
-
-  if [[ "$UNINSTALL" == "true" ]]; then
-    return 0
-  fi
-
-  local code_cli=""
-  if command -v code >/dev/null 2>&1; then
-    code_cli="code"
-  elif command -v code-server >/dev/null 2>&1; then
-    code_cli="code-server"
-  else
-    warn "Neither code nor code-server CLI found; skipping extension install"
-    return 0
-  fi
-
-  log "Installing VS Code extensions from $extension_file"
-  while IFS= read -r ext; do
-    [[ -z "$ext" || "$ext" =~ ^# ]] && continue
-    run_cmd_may_fail "$code_cli" --install-extension "$ext" --force
-  done < "$extension_file"
+    local extension_file="$ROOT_DIR/configs/vscode/extensions.txt"
+    [[ -f "$extension_file" ]] || return 0
+    
+    if [[ "$UNINSTALL" == "true" ]]; then
+        return 0
+    fi
+    
+    local code_cli=""
+    if command -v code >/dev/null 2>&1; then
+        code_cli="code"
+        elif command -v code-server >/dev/null 2>&1; then
+        code_cli="code-server"
+    else
+        warn "Neither code nor code-server CLI found; skipping extension install"
+        return 0
+    fi
+    
+    log "Installing VS Code extensions from $extension_file"
+    while IFS= read -r ext; do
+        [[ -z "$ext" || "$ext" =~ ^# ]] && continue
+        run_cmd_may_fail "$code_cli" --install-extension "$ext" --force
+    done < "$extension_file"
 }
 
 log "Managing VS Code config"
@@ -48,5 +48,9 @@ link_path "$ROOT_DIR/configs/vscode/keybindings.json" "$HOME/.config/Code/User/k
 link_path "$ROOT_DIR/configs/vscode/settings.json" "$HOME/.local/share/code-server/User/settings.json"
 #link_path "$ROOT_DIR/configs/vscode/projects.json" "$HOME/.local/share/code-server/User/projects.json"
 link_path "$ROOT_DIR/configs/vscode/keybindings.json" "$HOME/.local/share/code-server/User/keybindings.json"
-install_extensions
+if ! $OFFLINE; then
+    install_extensions
+else
+    log "Installing Extensions are ignored."
+fi
 log "Done"

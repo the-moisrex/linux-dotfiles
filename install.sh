@@ -6,7 +6,9 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 print_help() {
   cat <<'USAGE'
-Usage: ./install.sh [--all] [component ...] [--uninstall] [--verbose]
+Usage: ./install.sh [--offline] [--all] [component ...] [--uninstall] [--verbose]
+
+  --offline          Don't do anything online
 
 Components:
   packages           setup/install-packages.sh
@@ -27,20 +29,22 @@ USAGE
 ALL=false
 UNINSTALL=false
 VERBOSE=false
+OFFLINE=false
 COMPONENTS=()
 
 for arg in "$@"; do
-  case "$arg" in
-    --all) ALL=true ;;
-    --uninstall) UNINSTALL=true ;;
-    --verbose) VERBOSE=true ;;
-    -h|--help|help) print_help; exit 0 ;;
-    *) COMPONENTS+=("$arg") ;;
-  esac
+    case "$arg" in
+        --all) ALL=true ;;
+        --uninstall) UNINSTALL=true ;;
+        --verbose) VERBOSE=true ;;
+        --offline|offline|-offline) OFFLINE=true ;;
+        -h|--help|help) print_help; exit 0 ;;
+        *) COMPONENTS+=("$arg") ;;
+    esac
 done
 
 if [[ "$ALL" == "true" || ${#COMPONENTS[@]} -eq 0 ]]; then
-  COMPONENTS=(packages sudo screen-lock auto-updates shells editors alacritty vscode chromium gdb firefox-userchrome desktop)
+    COMPONENTS=(packages sudo screen-lock auto-updates shells editors alacritty vscode chromium gdb firefox-userchrome desktop)
 fi
 
 EXTRA_ARGS=()
@@ -48,28 +52,32 @@ EXTRA_ARGS=()
 [[ "$VERBOSE" == "true" ]] && EXTRA_ARGS+=(--verbose)
 
 for component in "${COMPONENTS[@]}"; do
-  case "$component" in
-    packages) script="setup/install-packages.sh" ;;
-    sudo) script="setup/configure-sudo.sh" ;;
-    screen-lock) script="setup/disable-screen-lock.sh" ;;
-    auto-updates) script="setup/disable-auto-updates.sh" ;;
-    shells) script="setup/setup-shell-configs.sh" ;;
-    editors) script="setup/setup-editor-configs.sh" ;;
-    alacritty) script="setup/setup-alacritty-config.sh" ;;
-    vscode) script="setup/setup-vscode-config.sh" ;;
-    chromium) script="setup/setup-chromium-config.sh" ;;
-    gdb) script="setup/setup-gdb-config.sh" ;;
-    firefox-userchrome) script="setup/setup-firefox-userchrome.sh" ;;
-    desktop) script="setup/setup-desktop-configs.sh" ;;
-    *)
-      echo "Unknown component: $component" >&2
-      print_help
-      exit 1
-      ;;
-  esac
-
-  echo "Running $script"
-  "$ROOT_DIR/$script" "${EXTRA_ARGS[@]}"
-  echo
-
+    case "$component" in
+        packages) script="setup/install-packages.sh" ;;
+        sudo) script="setup/configure-sudo.sh" ;;
+        screen-lock) script="setup/disable-screen-lock.sh" ;;
+        auto-updates) script="setup/disable-auto-updates.sh" ;;
+        shells) script="setup/setup-shell-configs.sh" ;;
+        editors) script="setup/setup-editor-configs.sh" ;;
+        alacritty) script="setup/setup-alacritty-config.sh" ;;
+        vscode) script="setup/setup-vscode-config.sh" ;;
+        chromium) script="setup/setup-chromium-config.sh" ;;
+        gdb) script="setup/setup-gdb-config.sh" ;;
+        firefox-userchrome) script="setup/setup-firefox-userchrome.sh" ;;
+        desktop) script="setup/setup-desktop-configs.sh" ;;
+        *)
+            echo "Unknown component: $component" >&2
+            print_help
+            exit 1
+        ;;
+    esac
+    
+    echo "Running $script"
+    if $OFFLINE; then
+        "$ROOT_DIR/$script" --offline "${EXTRA_ARGS[@]}"
+    else
+        "$ROOT_DIR/$script" "${EXTRA_ARGS[@]}"
+    fi
+    echo
+    
 done
