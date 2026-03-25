@@ -160,14 +160,16 @@ function keep-running {
   build_dir=$(find "$proj_dir" -maxdepth 2 -type f -name build.ninja | xargs -l dirname | sort -u | head -n 1 | xargs -l basename);
   if [ -f "$build_dir/build.ninja" ]; then
     # check build.ninja for the main C++ file so we can find the dependencies of it
-    cpp_file=$(awk "/build .*\.o:.*$1/{ print \$4 }" "$build_dir/build.ninja")
-    "$curdir/clang.deps" "$cpp_file" | entr -crs "$0 --build-dir '${build_dir}' $@";
-  else
-    is_interactive=false
-    build_dir=""
-    calculate_build_dir
-    git -C "$proj_dir" ls-files -cm | entr -rcs "$0 --build-dir '${build_dir}' $@";
+    cpp_file=$(awk "/build .*\.o:.*_${1}_/{ print \$4 }" "$build_dir/build.ninja")
+    if [ -f "$cpp_file" ]; then
+      "$curdir/clang.deps" "$cpp_file" | entr -crs "$0 --build-dir '${build_dir}' $@";
+      return
+    fi
   fi
+  is_interactive=false
+  build_dir=""
+  calculate_build_dir
+  git -C "$proj_dir" ls-files -cm | entr -rcs "$0 --build-dir '${build_dir}' $@";
 }
 
 function build-step {
