@@ -13,7 +13,7 @@ if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
 Usage: ./setup/setup-shell-configs.sh [--uninstall] [--verbose]
 USAGE
-  exit 0
+    exit 0
 fi
 
 log "Managing shell configs"
