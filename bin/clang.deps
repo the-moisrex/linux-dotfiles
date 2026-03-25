@@ -5,11 +5,10 @@ show_help() {
     cat << EOF
 Usage: clang.deps [OPTIONS] <cpp_file>
 
-Extracts clean dependency list from a C++ file using clang++ -MM.
+Extracts clean dependency list from a C++ file using "clang++ -MM".
 
 OPTIONS:
   -h, --help     Show this help
-  -v, --version  Show version
 
 EXAMPLES:
   clang.deps json_test.cpp
@@ -20,7 +19,6 @@ EOF
 }
 
 [[ "$1" == "-h" || "$1" == "--help" ]] && { show_help; exit 0; }
-[[ "$1" == "-v" || "$1" == "--version" ]] && { echo "clang.deps 1.0"; exit 0; }
 
 FILE="$1"
 [[ -z "$FILE" || ! -f "$FILE" ]] && exit 1
