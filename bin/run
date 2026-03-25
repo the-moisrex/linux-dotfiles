@@ -17,6 +17,7 @@ proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
 should_clean=true;
 build_dir="";
 is_interactive=true;
+notify_id=10889
 
 # find the project directories
 function calculate_build_dir {
@@ -130,7 +131,7 @@ function run {
     echo -e "${GRAY}Build command:${NC}   $scan_build $build_cmd"
     echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
     if eval "stdbuf -i0 -o0 -e0 $scan_build $build_cmd"; then
-      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compiled Seccessfully.";
+      [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 800 -i utilities-terminal -a "Compiler" "$execfile Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile";
       else
@@ -141,12 +142,12 @@ function run {
       echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
       echo
       if [ -f "$execfile" ] && eval "$scan_build $debug_cmd $execfile"; then
-        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Passed";
+        [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 1000 -i utilities-terminal -a "Compiler" "$execfile Passed";
       else
-        timeout 1s notify-send -t 1000 -i utilities-terminal -a "Compiler" "Tests Failed";
+        [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 1000 -i utilities-terminal -a "Compiler" "$execfile Failed";
       fi;
     else
-      timeout 1s notify-send -t 800 -i utilities-terminal -a "Compiler" "Compilation Failed.";
+      [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 800 -i utilities-terminal -a "Compiler" "$execfile Compilation Failed.";
     fi;
   else
     echo -e "${RED}Project Root not found.${NC}"
