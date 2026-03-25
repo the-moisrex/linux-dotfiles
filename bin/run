@@ -45,9 +45,6 @@ function calculate_build_dir {
 
 
 function print_cmake_targets {
-    is_interactive=false;
-    calculate_build_dir;
-
     # current_version=$(cmake --version | grep "cmake version" | cut -d" " -f3)
     # version="3.27"
     # if [[ $(echo -e "$version\n$current_version" | sort --version-sort -r | head -n1) == "$current_version" ]]; then
@@ -57,8 +54,40 @@ function print_cmake_targets {
         # older versions of cmake
         # you can also use "ninja -t targets"
         # cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/: phony|\/|CMAKE_SYMLINK_LIBRARY|\.json|^clean|\[|build.ninja|^help/ { print $1 }'
-        cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/\/|CMAKE_SYMLINK_LIBRARY|\.json|^clean|\[|build.ninja|^help/ { print $1 }'
+        cmake --build "$build_dir" --target help | awk 'BEGIN{ FS=":" } !/\/|CMAKE_SYMLINK_LIBRARY|\.json|^clean|\[|build.ninja|^help|^install|^rebuild_cache|^edit_cache|^list_install_components|^codegen|^The following are/ { gsub("... ", "", $1); print $1 }'
     # fi
+}
+
+function print_ninja_targets {
+    if [ -f "$build_dir/build.ninja" ]; then
+      awk '/^build [A-Z\-a-z0-9]*:/{ gsub(":", "", $2); print $2 }' "$build_dir/build.ninja"
+    fi
+}
+
+function print_makefile_targets {
+    if [ -f "$build_dir/Makefile" ]; then
+      awk '/^[a-z\-A-Z0-9]+\s*:/{ gsub(":", "", $1); print $1 }' "$build_dir/Makefile"
+    fi
+}
+
+function filter_targets {
+    sort -u | grep -vE "^(install|clean|help|all|depend|preinstall|codegen|list_install_components|)$" | grep -vE "\s"
+}
+
+function print_targets {
+  is_interactive=false;
+  calculate_build_dir;
+  {
+    ninja_res=$(print_ninja_targets)
+    makefile_res=$(print_makefile_targets)
+    if [ -z "$ninja_res" ] && [ -z "$makefile_res" ]; then
+      # don't run cmake unless ninja and makefile come up empty (because cmake is slow)
+      print_cmake_targets;
+    else
+      echo "$ninja_res";
+      echo "$makefile_res";
+    fi
+  } | filter_targets;
 }
 
 function run {
@@ -238,7 +267,7 @@ for arg in "${args[@]}"; do
             ;;
         print-targets|list|targets)
             shift;
-            print_cmake_targets;
+            print_targets;
             exit;
             ;;
     esac
