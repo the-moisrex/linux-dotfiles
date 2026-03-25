@@ -20,6 +20,9 @@ is_interactive=true;
 
 # find the project directories
 function calculate_build_dir {
+    if [ ! -z "$build_dir" ]; then
+      return
+    fi
     if [ -f "$proj_dir/CMakeLists.txt" ]; then
         build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt \) | xargs -l dirname | sort -u | xargs -l basename);
     else
@@ -230,6 +233,7 @@ function print_help {
     echo "           print-targets                   # List the build targets"
     echo "           report/build-report [targets]   # build targets and see if they compile without errors"
     echo "           --quite --no-interactive -q     # Don't ask questions"
+    echo "           --build-dir [dir]               # Build Directory"
 }
 
 
@@ -240,6 +244,28 @@ arg_pos=-1
 for arg in "${args[@]}"; do
     arg_pos=$((arg_pos + 1))
     case $arg in
+        clang|gcc|build|cmake-build*|build*)
+            build_dir=$(find . -name "*${args[$arg_pos]}*" -type d | head -n 1)
+            unset "args[$arg_pos]"
+            if [ ! -d "$build_dir" ]; then
+              echo "Not a build directory: '${build_dir}'";
+              exit 1;
+            fi 
+            ;;
+        --build-dir|--build|-build-dir|-b)
+            unset "args[$arg_pos]"
+            build_dir="${args[$(($arg_pos + 1))]}"
+            if [ ! -d "$build_dir" ]; then
+              build_dir=$(find . -name "*${build_dir}*" -type d | head -n 1)
+              if [ ! -d "$build_dir" ]; then
+                echo "Not a build directory: '${build_dir}'";
+                exit 1;
+              fi 
+            fi
+            unset "args[$(($arg_pos + 1))]"
+            arg_pos=$((arg_pos + 2))
+            is_interactive=false
+            ;;
         --no-interactive|--quite|-q)
             is_interactive=false
             unset "args[$arg_pos]"
@@ -266,7 +292,7 @@ for arg in "${args[@]}"; do
             exit $?
             ;;
         print-targets|list|targets)
-            shift;
+            unset "args[$arg_pos]"
             print_targets;
             exit;
             ;;
@@ -274,26 +300,31 @@ for arg in "${args[@]}"; do
 done
 
 
-case "${args[0]}" in
-    analyze|scan-build)
-        unset "args[0]"
-        run analyze "${args[@]}";
-        ;;
-    lldb)
-        unset "args[0]"
-        run lldb "${args[@]}";
-        ;;
-    gdb)
-        unset "args[0]"
-        run gdb "${args[@]}";
-        ;;
-    build-report|report)
-        unset "args[0]"
-        build-report "${args[@]}";
-        ;;
-    *)
-        run "${args[@]}";
-        ;;
-esac
-
+for arg in "${args[@]}"; do
+  case "$arg" in
+      analyze|scan-build)
+          unset "args[0]"
+          run analyze "${args[@]}";
+          ;;
+      lldb)
+          unset "args[0]"
+          run lldb "${args[@]}";
+          ;;
+      gdb)
+          unset "args[0]"
+          run gdb "${args[@]}";
+          ;;
+      build-report|report)
+          unset "args[0]"
+          build-report "${args[@]}";
+          ;;
+      "")
+          # skip
+          ;;
+      *)
+          # run the target
+          run "${args[@]}";
+          ;;
+  esac
+done
 
