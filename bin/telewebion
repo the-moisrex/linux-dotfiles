@@ -1,0 +1,63 @@
+#!/bin/bash
+
+if [[ "$1" == "--help" ]]; then
+    echo "Usage: $0 [search_term | --list | list]"
+    echo ""
+    echo "Options:"
+    echo "  --help    Show this help message"
+    echo "  --list    List all channel descriptors"
+    echo "  list      List all channel descriptors"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --list          # List all channel descriptors"
+    echo "  $0 tv1             # Play channel with descriptor 'tv1'"
+    echo "  $0 شبکه 1          # Search for channel with 'شبکه 1' in name/description"
+    echo "  $0 sport           # Search for channels containing 'sport'"
+    exit 0
+fi
+
+metadata=$(curl -sqL "https://gateway.telewebion.ir/kandoo/channel/getChannelsList/")
+
+# Handle --list or list option
+if [[ "$1" == "--list" || "$1" == "list" ]]; then
+    echo "$metadata" | jq -r '.body.queryChannel[].descriptor'
+    exit 0
+fi
+
+# Set search term (if provided)
+search_term="$1"
+
+# Create temporary playlist file
+playlist=$(mktemp --suffix .playlist.m3u8)
+
+# Generate playlist content
+echo "#EXTM3U" > "$playlist"
+# echo "#EXT-X-VERSION:6" >> "$playlist"
+# echo "#EXT-X-PLAYLIST-TYPE:EVENT" >> "$playlist"
+# echo "$metadata" | jq -r '.body.queryChannel[] | "#EXT-X-STREAM-INF:NAME=\"\(.name)\",BANDWIDTH=2560000\nhttps://ncdn.telewebion.ir/\(.descriptor)/live/playlist.m3u8"' >> "$playlist"
+echo "$metadata" | jq -r '.body.queryChannel[] | "#EXTINF:0,\(.name)\nhttps://ncdn.telewebion.ir/\(.descriptor)/live/playlist.m3u8"' >> "$playlist"
+
+# If search term provided, find matching channel index
+if [ -n "$search_term" ]; then
+    index=$(echo "$metadata" | jq -r --arg search "$search_term" '
+        .body.queryChannel | to_entries |
+        map(select( [.value.descriptor, .value.name, .value.name_english, .value.description] | join(" ") | contains($search) )) |
+    .[0].key')
+    
+    if [ -z "$index" ]; then
+        echo "No channels found matching '$search_term'"
+        rm -f "$playlist"
+        exit 1
+    fi
+fi
+
+# Play the playlist
+if [ -n "$search_term" ]; then
+    echo "$playlist" "$index"
+    mpv --playlist-start="$index" --msg-level=hls=trace "$playlist"
+else
+    mpv --playlist="$playlist"
+fi
+
+# Clean up temporary file
+#rm -f "$playlist"
