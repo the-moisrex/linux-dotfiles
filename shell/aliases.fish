@@ -23,6 +23,19 @@ function ..... ; cd ../../../..; end
 function proj  ; cd "$projects_root/$argv"; end
 function cdproj; cd "$projects_root/$argv"; end
 
+function mpv.m3u8;
+    if command -v yt-dlp >/dev/null
+        if ! echo "$argv" | grep -E "^http" >/dev/null
+            set url "https://$argv"
+        else
+            set url "$argv"
+        end
+        yt-dlp --get-url "$url" | sort -u | xargs -l mpv;
+    else
+        curl -sqL "$argv" | urls | grep m3u8 | sort -u | xargs -l mpv;
+    end
+end
+
 
 # Utilities
 function grep     ; command grep --color=auto $argv ; end
