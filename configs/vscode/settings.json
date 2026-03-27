@@ -21,6 +21,7 @@
         "<C-z>": false,
         "<C-b>": false,
         "<C-k>": false,
+        "<C-t>": false
     },
     "editor.formatOnSave": true,
     "editor.mouseWheelZoom": true,
