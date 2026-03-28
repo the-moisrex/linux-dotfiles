@@ -35,7 +35,7 @@ echo "#EXTM3U" > "$playlist"
 # echo "#EXT-X-VERSION:6" >> "$playlist"
 # echo "#EXT-X-PLAYLIST-TYPE:EVENT" >> "$playlist"
 # echo "$metadata" | jq -r '.body.queryChannel[] | "#EXT-X-STREAM-INF:NAME=\"\(.name)\",BANDWIDTH=2560000\nhttps://ncdn.telewebion.ir/\(.descriptor)/live/playlist.m3u8"' >> "$playlist"
-echo "$metadata" | jq -r '.body.queryChannel[] | "#EXTINF:0,\(.name)\nhttps://ncdn.telewebion.ir/\(.descriptor)/live/playlist.m3u8"' >> "$playlist"
+echo "$metadata" | jq -r '.body.queryChannel[] | "#EXTINF:0,\(.descriptor) \(.name)\nhttps://ncdn.telewebion.ir/\(.descriptor)/live/playlist.m3u8"' >> "$playlist"
 
 # If search term provided, find matching channel index
 if [ -n "$search_term" ]; then
@@ -52,12 +52,27 @@ if [ -n "$search_term" ]; then
 fi
 
 # Play the playlist
+args=(
+    --profile=fast
+    --force-window=immediate
+    --script-opt=ytdl_hook-all_formats=yes
+    --hls-bitrate=max
+    --hwdec=auto
+    --force-seekable=yes
+    --cache=yes
+    --demuxer-max-bytes=512MiB
+    --demuxer-readahead-secs=20
+    "$playlist"
+)
 if [ -n "$search_term" ]; then
-    echo "$playlist" "$index"
-    mpv --playlist-start="$index" --msg-level=hls=trace "$playlist"
+    echo "Index $index of the playlist $playlist";
+    echo "mpv --playlist-start=$index ${args[@]}";
+    mpv --playlist-start="$index" "${args[@]}";
 else
-    mpv --playlist="$playlist"
+    echo "Playlist: $playlist";
+    echo "mpv ${args[@]}";
+    mpv "${args[@]}";
 fi
 
 # Clean up temporary file
-#rm -f "$playlist"
+rm -f "$playlist"
