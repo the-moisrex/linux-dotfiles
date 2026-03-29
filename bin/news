@@ -442,6 +442,27 @@ case $WEBSITE in
             'grep "/yjc\.ir/fa/news/"'
         )
         ;;
+    iribnews|iribnews.ir|irib)
+        WEBSITE="iribnews.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep "/iribnews.ir/fa/news/"'
+        )
+        ;;
+    khabarfoori.com|khabarfoori|foori|khabar-fori|khabarfori|fori)
+        WEBSITE="khabarfoori.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "/khabarfoori.com/.+\$"'
+            'grep -vE "/(tags|fa|manifest|Http|advertisement|feed)"'
+        )
+        ;;
     *)
         CURL_COMMANDS=("curl $CURL_OPTIONS $BASE_URL")
         FILTERS=()
