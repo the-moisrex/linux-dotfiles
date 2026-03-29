@@ -190,10 +190,6 @@ else
     browser_group="other"
 fi
 
-# Create a log file
-log_file=$(mktemp --suffix="-$selected_browser")
-echo "Logs: $log_file"
-
 # Determine whether to open all URLs at once
 if [[ ! " ${one_by_one_browsers[@]} " =~ " $selected_browser " ]] || $new_instance; then
     open_all_at_once=true
@@ -212,6 +208,11 @@ if $open_all_at_once; then
         for url in "${urls[@]}"; do
             echo "$url";
         done
+
+        # Create a log file
+        log_file=$(mktemp --suffix="-$selected_browser")
+        echo "Logs: $log_file"
+
         setsid "$selected_browser" "${options[@]}" "${urls[@]}" >>"$log_file" 2>&1
     fi
 else
@@ -220,6 +221,11 @@ else
     echo "Opening URLs one by one in $selected_browser"
     echo "setsid \"$selected_browser\" \"${options[*]}\"";
     echo
+
+    # Create a log file
+    log_file=$(mktemp --suffix="-$selected_browser")
+    echo "Logs: $log_file"
+
     while IFS= read -r url; do
         if [ -n "$url" ]; then
             echo "$url";
