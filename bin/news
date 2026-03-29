@@ -83,9 +83,10 @@ list_agencies() {
     echo "  tabnak, tabnak.ir"
     echo "  sepah, sepahnews.ir"
     echo "  tehran, tehrantimes.com"
+    echo "  farsnews, farsnews.ir"
     echo
     echo "Categories:"
-    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes]"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars]"
 }
 
 sync_parallel_output() {
@@ -558,6 +559,16 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep "tehrantimes.com/news/"'
+        )
+        ;;
+    fars|farsnews|farsnews.ir)
+        WEBSITE="farsnews.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "/farsnews.ir/.+/.+"'
         )
         ;;
     *)
