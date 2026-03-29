@@ -78,9 +78,10 @@ list_agencies() {
     echo "  mehr, mehrnews.com"
     echo "  snn, snn.ir"
     echo "  ilna, ilna.ir"
+    echo "  tabnak, tabnak.ir"
     echo
     echo "Categories:"
-    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna]"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak]"
 }
 
 sync_parallel_output() {
@@ -523,6 +524,16 @@ case $WEBSITE in
         FILTERS=(
             'grep -E "/ilna.ir/.+/.+\$"'
             'grep -vE "/(tags|fa|ar|en|manifest|Http|advertisement|feed)"'
+        )
+        ;;
+    tabnak|tabnak.ir)
+        WEBSITE="tabnak.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep "/tabnak.ir/fa/news/"'
         )
         ;;
     *)
