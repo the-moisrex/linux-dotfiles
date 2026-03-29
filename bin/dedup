@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# Deduplicate input lines using a cache file
+# Usage: dedup [cache-file]
+# Options:
+#   --help      Show this help message and exit
+
+# Check for help option
+if [ "$1" = "--help" ]; then
+    echo "Usage: dedup [cache-file]"
+    echo "Deduplicate input lines by hashing them and storing hashes in a cache file."
+    echo
+    echo "Options:"
+    echo "  --help      Show this help message and exit."
+    echo
+    echo "If no cache file is provided, the default cache file is used (default-cache in XDG_CACHE_HOME)."
+    echo "If a valid relative or absolute path is provided, it will be used as the cache file."
+    echo "Otherwise, the argument is treated as a cache name in XDG_CACHE_HOME."
+    exit 0
+fi
+
+# Determine cache file location
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+cache_file=""
+
+if [ -n "$1" ]; then
+    # Check if argument is a valid path (contains slashes)
+    if [[ "$1" == */* ]]; then
+        cache_file="$1"
+    else
+        cache_file="${XDG_CACHE_HOME}/$1"
+    fi
+else
+    cache_file="${XDG_CACHE_HOME}/default-cache"
+fi
+
+# Ensure cache directory exists
+mkdir -p "$(dirname "$cache_file")"
+
+# Create cache file if it doesn't exist
+touch "$cache_file"
+
+# Process input lines
+while IFS= read -r line; do
+    # Compute SHA hash of the line
+    hash=$(echo "$line" | shasum | awk '{print $1}')
+    
+    # Check if hash exists in cache
+    if ! grep -Fq "$hash" "$cache_file"; then
+        echo "$line"
+        echo "$hash" >> "$cache_file"
+        # Sort and deduplicate cache file
+        sort -u "$cache_file" > "$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
+    fi
+done
