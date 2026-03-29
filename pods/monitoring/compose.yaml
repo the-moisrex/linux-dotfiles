@@ -13,7 +13,7 @@ services:
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
-      - /run/user/1000/podman/podman.sock:/var/run/docker.sock:ro
+      - ${XDG_RUNTIME_DIR}/podman/podman.sock:/var/run/docker.sock:ro
     ports:
       - "19999:19999"
     restart: unless-stopped

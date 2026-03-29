@@ -20,6 +20,15 @@ services:
       PASSWORD: dev
     volumes:
       - code-data:/home/coder
+      - ../../configs/vscode/settings.json:/home/coder/.local/share/code-server/User/settings.json:ro
+      - ../../configs/vscode/projects.json:/home/coder/.local/share/code-server/User/projects.json:ro
+    command: >
+      sh -lc "
+      code-server --install-extension ms-vscode.cpptools --force &&
+      code-server --install-extension ms-vscode.cpptools-extension-pack --force &&
+      code-server --install-extension llvm-vs-code-extensions.vscode-clangd --force &&
+      exec /usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth password
+      "
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.code.entrypoints=web"
@@ -93,4 +102,3 @@ volumes:
   gitea-data:
   sentry-data:
   sentry-postgres-data:
-

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Package Cache Setup</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    pre { background: #111; color: #f4f4f4; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Local Package Caches</h1>
+  <p>This pod provides local package caches for apt and pacman.</p>
+
+  <div class="card">
+    <h2>APT (apt-cacher-ng)</h2>
+    <p>Cache path on host: <code>$HOME/cache/apt</code></p>
+<pre><code>Acquire::http::Proxy "http://apt-cache.localhost:3142";
+Acquire::https::Proxy "false";</code></pre>
+    <p>Save that as <code>/etc/apt/apt.conf.d/01proxy</code> (or equivalent) on clients.</p>
+  </div>
+
+  <div class="card">
+    <h2>Pacman (pacoloco)</h2>
+    <p>Cache path on host: <code>$HOME/cache/pacman</code></p>
+<pre><code>[core]
+Server = http://pacman-cache.localhost:9129/archlinux/$repo/os/$arch
+
+[extra]
+Server = http://pacman-cache.localhost:9129/archlinux/$repo/os/$arch
+
+[multilib]
+Server = http://pacman-cache.localhost:9129/archlinux/$repo/os/$arch</code></pre>
+    <p>Add these entries at the top of <code>/etc/pacman.conf</code>.</p>
+  </div>
+</body>
+</html>
