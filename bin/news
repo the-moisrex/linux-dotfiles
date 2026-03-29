@@ -5,7 +5,9 @@ SCRIPT_DIR=$(dirname "$0")
 URLS_CMD="$SCRIPT_DIR/urls"
 
 # Default curl options with a user-agent to mimic a browser
-CURL_OPTIONS="-sL -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
+cookie_file=$(mktemp --suffix .cookies.txt --dry-run)
+trap 'rm -f "$cookie_file"' EXIT
+CURL_OPTIONS="-sqL --cookie-jar '$cookie_file' --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
 
 # Global exclude patterns for common file types and social media links
 GLOBAL_EXCLUDE_PATTERNS=(
@@ -80,9 +82,10 @@ list_agencies() {
     echo "  ilna, ilna.ir"
     echo "  tabnak, tabnak.ir"
     echo "  sepah, sepahnews.ir"
+    echo "  tehran, tehrantimes.com"
     echo
     echo "Categories:"
-    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah]"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes]"
 }
 
 sync_parallel_output() {
@@ -124,7 +127,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         iran)
-            sync_parallel_output yjc irib fori mehr ilna
+            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes
             exit 0
             ;;
         *)
@@ -545,6 +548,16 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep "/sepahnews.ir/fa/news/"'
+        )
+        ;;
+    tehran|tehrantimes.com|tehrantimes)
+        WEBSITE="www.tehrantimes.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep "tehrantimes.com/news/"'
         )
         ;;
     *)
