@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  apt-cache:
+    image: sameersbn/apt-cacher-ng:latest
+    restart: unless-stopped
+    volumes:
+      - $HOME/cache/apt:/var/cache/apt-cacher-ng
+    ports:
+      - "3142:3142"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.apt-cache.entrypoints=web"
+      - "traefik.http.routers.apt-cache.rule=Host(`apt-cache.localhost`)"
+      - "traefik.http.services.apt-cache.loadbalancer.server.port=3142"
+
+  pacman-cache:
+    image: ghcr.io/anatol/pacoloco:latest
+    restart: unless-stopped
+    command: ["-config", "/etc/pacoloco.yaml"]
+    volumes:
+      - ./pacoloco/pacoloco.yaml:/etc/pacoloco.yaml:ro
+      - $HOME/cache/pacman:/var/cache/pacoloco
+    ports:
+      - "9129:9129"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pacman-cache.entrypoints=web"
+      - "traefik.http.routers.pacman-cache.rule=Host(`pacman-cache.localhost`)"
+      - "traefik.http.services.pacman-cache.loadbalancer.server.port=9129"
+
+  cache-dashboard:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./www/index.html:/usr/share/nginx/html/index.html:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cache-dashboard.entrypoints=web"
+      - "traefik.http.routers.cache-dashboard.rule=Host(`cahce.localhost`) || Host(`cache.localhost`)"
+      - "traefik.http.services.cache-dashboard.loadbalancer.server.port=80"

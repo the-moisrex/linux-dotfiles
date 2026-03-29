@@ -19,7 +19,7 @@ services:
       - "8080:8080"
       # - "443:443"
     volumes:
-      - /run/user/1000/podman/podman.sock:/var/run/docker.sock
+      - ${XDG_RUNTIME_DIR}/podman/podman.sock:/var/run/docker.sock
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
