@@ -50,6 +50,6 @@ while IFS= read -r line; do
         echo "$line"
         echo "$hash" >> "$cache_file"
         # Sort and deduplicate cache file
-        sort -u "$cache_file" > "$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
+        # sort -u "$cache_file" > "$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
     fi
 done
