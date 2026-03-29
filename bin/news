@@ -77,6 +77,29 @@ list_agencies() {
     echo "  fori, khabarfoori.com"
     echo "  mehr, mehrnews.com"
     echo "  snn, snn.ir"
+    echo "  ilna, ilna.ir"
+    echo
+    echo "Categories:"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna]"
+}
+
+sync_parallel_output() {
+    local sites=("$@")
+    local fifos=()
+    
+    # Create FIFOs for each site (special files, not regular temp files)
+    for site in "${sites[@]}"; do
+        file=$(mktemp --suffix ".${site}.fifo" --dry-run)
+        mkfifo "$file"
+        fifos+=("$file")
+        $0 "$site" > "$file" &
+    done
+
+    # Print outputs in order (site list order)
+    for file in "${fifos[@]}"; do
+        cat "$file"
+        rm -f "$fifo"
+    done
 }
 
 # Parse command-line arguments
@@ -96,6 +119,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         list)
             list_agencies
+            exit 0
+            ;;
+        iran)
+            sync_parallel_output yjc irib fori mehr ilna
             exit 0
             ;;
         *)
@@ -485,6 +512,17 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep "snn.ir/fa/news/"'
+        )
+        ;;
+    ilna|ilna.ir)
+        WEBSITE="ilna.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "/ilna.ir/.+/.+\$"'
+            'grep -vE "/(tags|fa|ar|en|manifest|Http|advertisement|feed)"'
         )
         ;;
     *)
