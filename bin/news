@@ -75,6 +75,7 @@ list_agencies() {
     echo "  yjc, yjc.ir"
     echo "  irib, iribnews.ir"
     echo "  fori, khabarfoori.com"
+    echo "  mehr, mehrnews.com"
 }
 
 # Parse command-line arguments
@@ -463,6 +464,16 @@ case $WEBSITE in
         FILTERS=(
             'grep -E "/khabarfoori.com/.+\$"'
             'grep -vE "/(tags|fa|manifest|Http|advertisement|feed)"'
+        )
+        ;;
+    mehr|mehrnews|mehrnews.com)
+        WEBSITE="mehrnews.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "/mehrnews.com/news/.*[^/]\$"'
         )
         ;;
     *)
