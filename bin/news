@@ -71,6 +71,7 @@ list_agencies() {
     echo "  aa, aa.com.tr (Anadolu Agency)"
     echo "  aljazeera, aljazeera.com (Al Jazeera)"
     echo "  cbs, cbsnews.com (CBS News)"
+    echo "  yjc, yjc.ir"
 }
 
 # Parse command-line arguments
@@ -429,6 +430,16 @@ case $WEBSITE in
         FILTERS=(
             'grep -E "cnbc\.com/[0-9]{4}/[0-9]{2}/[0-9]{2}/"'
             'grep -vE "video|video-play|gallery|photos|tag|tags|author|search|sitemap|privacy|terms|newsletter|rss|quotes|symbols|quotes\.html"'
+        )
+        ;;
+    yjc|yjc.ir)
+        WEBSITE="yjc.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep "/yjc\.ir/fa/news/"'
         )
         ;;
     *)
