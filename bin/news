@@ -76,6 +76,7 @@ list_agencies() {
     echo "  irib, iribnews.ir"
     echo "  fori, khabarfoori.com"
     echo "  mehr, mehrnews.com"
+    echo "  snn, snn.ir"
 }
 
 # Parse command-line arguments
@@ -474,6 +475,16 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep -E "/mehrnews.com/news/.*[^/]\$"'
+        )
+        ;;
+    snn|snn.ir)
+        WEBSITE="snn.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep "snn.ir/fa/news/"'
         )
         ;;
     *)
