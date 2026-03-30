@@ -85,9 +85,10 @@ list_agencies() {
     echo "  tehran, tehrantimes.com"
     echo "  farsnews, farsnews.ir"
     echo "  akharinkhabar, akharinkhabar.ir"
+    echo "  irna, irna.ir"
     echo
     echo "Categories:"
-    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars akharinkhabar]"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars akharinkhabar irna]"
 }
 
 sync_parallel_output() {
@@ -129,7 +130,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         iran)
-            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes
+            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes fars akharinkhabar irna
             exit 0
             ;;
         *)
@@ -581,6 +582,17 @@ case $WEBSITE in
         FILTERS=(
             'grep -E "/akharinkhabar.ir/.+/.+"'
             'grep -v "/app/policy"'
+        )
+        ;;
+    irna|irna.ir)
+        WEBSITE="www.irna.ir"
+        BASE_URL="https://${WEBSITE}"
+        sec_cookies=$(curl -sqL $BASE_URL | grep "return {'value_v1" | awk '{print "var res = (function() {" $0 "})(); console.log(`__arcsjs=${res.value_v1}; __arcsjsc=${res.value}`)"}' | node -)
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS -H 'Cookie: $sec_cookies' $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "/www.irna.ir/news/.+/.+"'
         )
         ;;
     *)
