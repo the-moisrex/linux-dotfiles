@@ -595,6 +595,29 @@ case $WEBSITE in
             'grep -E "/www.irna.ir/news/.+/.+"'
         )
         ;;
+    zoomit|zoomit.ir)
+        WEBSITE="zoomit.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "//(www.)?zoomit.ir/.+/.+"'
+            'grep -v "zoomit.ir/product"'
+            'grep -v "zoomit.ir/archive/"'
+        )
+        ;;
+    zoomon|zoomon.ir)
+        WEBSITE="zoomon.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "//(www.)?zoomon.ir/.+/.+"'
+            'grep -v "zoomon.ir/archive/"'
+        )
+        ;;
     *)
         CURL_COMMANDS=("curl $CURL_OPTIONS $BASE_URL")
         FILTERS=()
