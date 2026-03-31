@@ -86,9 +86,12 @@ list_agencies() {
     echo "  farsnews, farsnews.ir"
     echo "  akharinkhabar, akharinkhabar.ir"
     echo "  irna, irna.ir"
+    echo "  zoomit, zoomit.ir"
+    echo "  zoomon, zoomon.ir"
+    echo "  tasnim, tasnimnews.ir"
     echo
     echo "Categories:"
-    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars akharinkhabar irna tasnim]"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim]"
 }
 
 sync_parallel_output() {
@@ -130,7 +133,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         iran)
-            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes fars akharinkhabar irna tasnim
+            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim
             exit 0
             ;;
         *)
