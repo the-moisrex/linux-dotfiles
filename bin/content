@@ -10,6 +10,40 @@ GLOBAL_HTML=(
     -r .author_tools
     -r .news_tools
     -r .mobile_adv
+    -r style
+    -r script
+    -r .copyright
+    -r "[type=hidden]"
+    -r head
+    -r .date_mob
+    -r .hidden-ms
+    -r .hidden-sm
+    -r .hidden-md
+    -r .hidden
+    -r .logo
+    -r .logo_xs
+    -r .nav_share_to
+    -r .nav_services
+    -r aside
+    -r .modal
+    -r footer
+    -r .news_commont_header
+    #-r "a[href=#]"
+    -r .news_like_google
+    -r .home_link
+    -r .news_home_link
+    -r .news_newsletter_link
+    -r .news_comment_header
+    -r .sn_linkdin
+    -r .sn_googleplus
+    -r .sn_telegram
+    -r .sn_list
+    -r .social_nets
+    -r .share_to_container
+    -r svg
+    -r .btn_copy_script
+    -r .adv_col_news_page
+    -r .send_friend_bot
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -26,6 +60,7 @@ show_help() {
 # Parse command-line arguments
 VERBOSE=false
 NO_FILTER=false
+NO_TRANSFORM=false
 WEBSITE=""
 URL=""
 COMMAND=""
@@ -47,6 +82,10 @@ while [[ $# -gt 0 ]]; do
         ;;
         --nofilter|-nofilter|no-filter|-no-filter|--no-filter)
             NO_FILTER=true
+            shift
+        ;;
+        --notransform|no-trans|-no-trans|--no-trans|--notrans|notrans|-notrans|-notransform|no-transform|-no-transform|--no-transform)
+            NO_TRANSFORM=true
             shift
         ;;
         *)
@@ -76,20 +115,26 @@ fi
 
 
 # Configure website-specific settings
+CURL_COMMANDS=("curl $CURL_OPTIONS $URL")
+TRANSFORMS=("pandoc -f html -t plain")
 case $WEBSITE in
-ilna.ir)
-    CURL_COMMANDS=("curl $CURL_OPTIONS $URL")
-    FILTERS=(
-        "htmlq -wp article $HTML"
-        "pandoc -f html -t plain"
+    ilna.ir)
+        FILTERS=(
+            "htmlq -w article $HTML"
         )
         ;;
-        *)
-            CURL_COMMANDS=("curl $CURL_OPTIONS $URL")
-            FILTERS=()
-            if $VERBOSE; then
-                echo "Website '$WEBSITE' not specifically configured. Using default settings."
-            fi
+    iribnews.ir)
+        FILTERS=(
+            "htmlq -w main $HTML -r .sp_ln_news -r .mob_lang -r .desktop-view -r .link_row -r .news_print_link -r .news_link_item -r .news_commont_header"
+        )
+        ;;
+    *)
+        FILTERS=(
+            "htmlq -wp $HTML"
+        )
+        if $VERBOSE; then
+            echo "Website '$WEBSITE' not specifically configured. Using default settings."
+        fi
         ;;
 esac
 
@@ -109,6 +154,12 @@ if ! $NO_FILTER; then
         PIPELINE+=" | $filter"
     done
     # PIPELINE+=" | grep -vE \"${EXCLUDE_REGEX}\""
+fi
+
+if ! $NO_TRANSFORM; then
+    for TRANSFORM in "${TRANSFORMS[@]}"; do
+        PIPELINE+=" | $TRANSFORM"
+    done
 fi
 
 # Display the pipeline if verbose mode is enabled
