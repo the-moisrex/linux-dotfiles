@@ -3,6 +3,7 @@
 SCRIPT_DIR=$(dirname "$0")
 
 GLOBAL_HTML=(
+    -r .carousel-stage
     -r .news_code
     -r .short_link_box
     -r .ita_application
@@ -185,7 +186,7 @@ case $WEBSITE in
             "curl $CURL_OPTIONS -H 'Cookie: $sec_cookies' $URL"
         )
         FILTERS=(
-            "htmlq -wp article $HTML -r nav -r .tags -r .item-code -r .item-foot-nav -r .item-nav -r .item-footer -r .item-boxes"
+            "htmlq -wp article $HTML -r nav -r .tags -r .item-code -r .item-foot-nav -r .item-nav -r .item-footer -r .item-boxes -r .area-item"
         )
         ;;
     ilna.ir)
