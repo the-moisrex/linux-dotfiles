@@ -1,0 +1,120 @@
+#!/bin/bash
+
+SCRIPT_DIR=$(dirname "$0")
+
+GLOBAL_HTML=(
+    -r .news_code
+    -r .short_link_box
+    -r .ita_application
+    -r .noprint
+    -r .author_tools
+    -r .news_tools
+    -r .mobile_adv
+)
+
+HTML="${GLOBAL_HTML[*]}"
+
+# Function to display help information
+show_help() {
+    echo "Usage: $0 [options] <websites...>"
+    echo
+    echo "Options:"
+    echo "  --help       Display this help message"
+    echo "  --verbose    Enable verbose output"
+}
+
+# Parse command-line arguments
+VERBOSE=false
+NO_FILTER=false
+WEBSITE=""
+URL=""
+COMMAND=""
+
+# Default curl options with a user-agent to mimic a browser
+cookie_file=$(mktemp --suffix .cookies.txt --dry-run)
+trap 'rm -f "$cookie_file"' EXIT
+CURL_OPTIONS="-sqL --cookie-jar '$cookie_file' --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help)
+            show_help
+            exit 0
+        ;;
+        --verbose|-v)
+            VERBOSE=true
+            shift
+        ;;
+        --nofilter|-nofilter|no-filter|-no-filter|--no-filter)
+            NO_FILTER=true
+            shift
+        ;;
+        *)
+            if [ -z "$URL" ]; then
+                URL="$1"
+            else
+                if $VERBOSE; then
+                    $0 --verbose "$URL"
+                else
+                    $0 "$URL"
+                fi
+                URL="$1"
+            fi
+            shift
+        ;;
+    esac
+done
+
+WEBSITE=$(node -e "console.log(new URL('${URL}').hostname.replace(/^www\\./, ''))" )
+if [ -z "$WEBSITE" ]; then
+    echo "Error: No website specified in URL ${URL}"
+    show_help
+    exit 1
+elif $VERBOSE; then
+    echo "Website: $WEBSITE"
+fi
+
+
+# Configure website-specific settings
+case $WEBSITE in
+ilna.ir)
+    CURL_COMMANDS=("curl $CURL_OPTIONS $URL")
+    FILTERS=(
+        "htmlq -wp article $HTML"
+        "pandoc -f html -t plain"
+        )
+        ;;
+        *)
+            CURL_COMMANDS=("curl $CURL_OPTIONS $URL")
+            FILTERS=()
+            if $VERBOSE; then
+                echo "Website '$WEBSITE' not specifically configured. Using default settings."
+            fi
+        ;;
+esac
+
+# Build the pipeline
+PIPELINE="( "
+for i in "${!CURL_COMMANDS[@]}"; do
+    PIPELINE+="${CURL_COMMANDS[$i]}"
+    if [ $i -lt $((${#CURL_COMMANDS[@]} - 1)) ]; then
+        PIPELINE+="; "
+    else
+        PIPELINE+=" "
+    fi
+done
+PIPELINE+=")"
+if ! $NO_FILTER; then
+    for filter in "${FILTERS[@]}"; do
+        PIPELINE+=" | $filter"
+    done
+    # PIPELINE+=" | grep -vE \"${EXCLUDE_REGEX}\""
+fi
+
+# Display the pipeline if verbose mode is enabled
+if $VERBOSE; then
+    echo "Executing: $PIPELINE"
+fi
+
+# Execute the pipeline
+eval "$PIPELINE"
