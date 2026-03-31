@@ -1,0 +1,22 @@
+#!/bin/bash
+
+domain="janfada.ir"
+
+if [ "$1" == "--help" ]; then
+    echo "Print ${domain}'s live counter";
+    echo "Usage: watch -tfn 5 janfada";
+    exit
+fi
+
+now=$(curl -sqL --connect-timeout 2 "http://$domain" | awk '/counter-number/ {gsub("[^0-9]", " ", $6); gsub(" +", " ", $6); print $6}' | cut -d" " -f2)
+prev=$(cat /tmp/janfada.txt 2>/dev/null)
+
+if [ -z "$prev" ]; then
+    prev=0
+fi
+if [ -z "$now" ]; then
+    echo "Error $prev"
+    exit 1
+fi
+echo "$now" > /tmp/janfada.txt
+echo "$now +$((now - prev))"
