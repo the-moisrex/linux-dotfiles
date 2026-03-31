@@ -78,6 +78,8 @@ GLOBAL_HTML=(
     -r .social-icon-news
     -r .tags_container_news
     -r .share-box-news
+    -r .video-download
+    -r video
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -87,22 +89,21 @@ show_help() {
     echo "Usage: $0 [options] <websites...>"
     echo
     echo "Options:"
-    echo "  --help       Display this help message"
-    echo "  --verbose    Enable verbose output"
+    echo "  --help          Display this help message"
+    echo "  --verbose       Enable verbose output"
+    echo "  --no-filter     Disable filters"
+    echo "  --no-transform  Disable transforming to plain text"
+    echo "  --no-curl       Don't expect a URL, expect the HTML"
 }
 
 # Parse command-line arguments
 VERBOSE=false
 NO_FILTER=false
 NO_TRANSFORM=false
+NO_CURL=false
 WEBSITE=""
 URL=""
 COMMAND=""
-
-# Default curl options with a user-agent to mimic a browser
-cookie_file=$(mktemp --suffix .cookies.txt --dry-run)
-trap 'rm -f "$cookie_file"' EXIT
-CURL_OPTIONS="-sqL --cookie-jar '$cookie_file' --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -118,8 +119,17 @@ while [[ $# -gt 0 ]]; do
             NO_FILTER=true
             shift
         ;;
+        --nocurl|-nocurl|no-curl|-no-curl|--no-curl)
+            NO_CURL=true
+            shift
+        ;;
         --notransform|no-trans|-no-trans|--no-trans|--notrans|notrans|-notrans|-notransform|no-transform|-no-transform|--no-transform)
             NO_TRANSFORM=true
+            shift
+        ;;
+        --website|-website|website|site|--site|-site)
+            shift
+            WEBSITE="$1"
             shift
         ;;
         *)
@@ -138,18 +148,29 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-WEBSITE=$(node -e "console.log(new URL('${URL}').hostname.replace(/^www\\./, ''))" )
-if [ -z "$WEBSITE" ]; then
-    echo "Error: No website specified in URL ${URL}"
-    show_help
-    exit 1
-elif $VERBOSE; then
-    echo "Website: $WEBSITE"
+if [ -z "$URL" ]; then
+    cat - | xargs -l $0 "$@"
+    exit $?
+fi
+
+if ! $NO_CURL; then
+    # Default curl options with a user-agent to mimic a browser
+    cookie_file=$(mktemp --suffix .cookies.txt --dry-run)
+    trap 'rm -f "$cookie_file"' EXIT
+    CURL_OPTIONS="-sqL --cookie-jar '$cookie_file' --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
+    WEBSITE=$(node -e "console.log(new URL('${URL}').hostname.replace(/^www\\./, ''))" )
+    if [ -z "$WEBSITE" ]; then
+        echo "Error: No website specified in URL ${URL}"
+        show_help
+        exit 1
+    elif $VERBOSE; then
+        echo "Website: $WEBSITE"
+    fi
 fi
 
 
 # Configure website-specific settings
-CURL_COMMANDS=("curl $CURL_OPTIONS $URL")
+CURL_COMMANDS=("curl $CURL_OPTIONS \"$URL\"")
 TRANSFORMS=("pandoc -f html -t plain")
 case $WEBSITE in
     ilna.ir)
@@ -164,12 +185,12 @@ case $WEBSITE in
         ;;
     mehrnews.com)
         FILTERS=(
-            "htmlq -w article $HTML -r .header-sharing -r .item-sharing -r .short-link-container -r .tooltip-link -r .item-boxes -r section.box.tags -r .item-code -r .item-footer -r .item-nav"
+            "htmlq -w article $HTML -r .header-sharing -r .item-sharing -r .short-link-container -r .tooltip-link -r .item-boxes -r section.box.tags -r .item-code -r .item-footer -r .item-nav -r .related-items"
         )
         ;;
     snn.ir)
         FILTERS=(
-            "htmlq -wp main $HTML -r .news_toolbar -r .related-container"
+            "htmlq -wp main $HTML -r .news_toolbar -r .related-container -r .sepehr-key-related-news"
         )
         ;;
     yjc.ir)
@@ -188,16 +209,20 @@ case $WEBSITE in
 esac
 
 # Build the pipeline
-PIPELINE="( "
-for i in "${!CURL_COMMANDS[@]}"; do
-    PIPELINE+="${CURL_COMMANDS[$i]}"
-    if [ $i -lt $((${#CURL_COMMANDS[@]} - 1)) ]; then
-        PIPELINE+="; "
-    else
-        PIPELINE+=" "
-    fi
-done
-PIPELINE+=")"
+if $NO_CURL; then
+    PIPELINE="cat -"
+else
+    PIPELINE="( "
+    for i in "${!CURL_COMMANDS[@]}"; do
+        PIPELINE+="${CURL_COMMANDS[$i]}"
+        if [ $i -lt $((${#CURL_COMMANDS[@]} - 1)) ]; then
+            PIPELINE+="; "
+        else
+            PIPELINE+=" "
+        fi
+    done
+    PIPELINE+=")"
+fi
 if ! $NO_FILTER; then
     for filter in "${FILTERS[@]}"; do
         PIPELINE+=" | $filter"
