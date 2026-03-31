@@ -68,6 +68,7 @@ GLOBAL_HTML=(
     -r .like_shortLink_report_share
     -r .lazyload
     -r i.fa
+    -r span.fa
     -r .box-download
     -r .share-news
     -r .box-number-news
@@ -82,6 +83,8 @@ GLOBAL_HTML=(
     -r video
     -r "'[style*=\"display:none\"]'"
     -r "'[style*=\"display: none\"]'"
+    -r .rating-stars
+    -r "'article nav'"
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -176,6 +179,15 @@ fi
 CURL_COMMANDS=("curl $CURL_OPTIONS \"$URL\"")
 TRANSFORMS=("pandoc -f html -t plain")
 case $WEBSITE in
+    irna.ir)
+        sec_cookies=$(curl -sqL $URL | grep "return {'value_v1" | awk '{print "var res = (function() {" $0 "})(); console.log(`__arcsjs=${res.value_v1}; __arcsjsc=${res.value}`)"}' | node -)
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS -H 'Cookie: $sec_cookies' $URL"
+        )
+        FILTERS=(
+            "htmlq -wp article $HTML -r nav -r .tags -r .item-code -r .item-foot-nav -r .item-nav -r .item-footer -r .item-boxes"
+        )
+        ;;
     ilna.ir)
         FILTERS=(
             "htmlq -w article $HTML"
