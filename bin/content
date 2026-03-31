@@ -59,6 +59,13 @@ GLOBAL_HTML=(
     -r select
     -r .languages-menu
     -r .tooltip-link
+    -r .related_news
+    -r .tags_title
+    -r .tags_container
+    -r .sp_line
+    -r .error
+    -r .like_shortLink_report_share
+    -r .lazyload
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -146,6 +153,11 @@ case $WEBSITE in
     mehrnews.com)
         FILTERS=(
             "htmlq -w article $HTML -r .header-sharing -r .item-sharing -r .short-link-container -r .tooltip-link -r .item-boxes -r section.box.tags -r .item-code -r .item-footer -r .item-nav"
+        )
+        ;;
+    snn.ir)
+        FILTERS=(
+            "htmlq -wp main $HTML -r .news_toolbar -r .related-container"
         )
         ;;
     *)
