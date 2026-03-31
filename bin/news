@@ -93,7 +93,7 @@ list_agencies() {
     echo "  tasnim, tasnimnews.ir"
     echo
     echo "Categories:"
-    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim eslahatnews]"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim eslahatnews snn]"
 }
 
 sync_parallel_output() {
@@ -139,7 +139,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         iran)
-            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim eslahatnews
+            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim eslahatnews snn
             exit 0
             ;;
         *)
