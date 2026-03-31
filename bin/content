@@ -211,7 +211,7 @@ case $WEBSITE in
         ;;
     yjc.ir)
         FILTERS=(
-            "htmlq -wp .news-box $HTML"
+            "htmlq -wp .news-box $HTML -r .comments-pager-news"
         )
         ;;
     tabnak.ir)
