@@ -80,6 +80,8 @@ GLOBAL_HTML=(
     -r .share-box-news
     -r .video-download
     -r video
+    -r "'[style*=\"display:none\"]'"
+    -r "'[style*=\"display: none\"]'"
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -105,6 +107,7 @@ WEBSITE=""
 URL=""
 COMMAND=""
 
+args="$@"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help)
@@ -149,7 +152,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$URL" ]; then
-    cat - | xargs -l $0 "$@"
+    cat - | xargs -l $0 $args
     exit $?
 fi
 
@@ -196,6 +199,11 @@ case $WEBSITE in
     yjc.ir)
         FILTERS=(
             "htmlq -wp .news-box $HTML"
+        )
+        ;;
+    tabnak.ir)
+        FILTERS=(
+            "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_title -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c"
         )
         ;;
     *)
