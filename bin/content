@@ -19,6 +19,7 @@ GLOBAL_HTML=(
     -r .hidden-ms
     -r .hidden-sm
     -r .hidden-md
+    -r .hidden-xs
     -r .hidden
     -r .logo
     -r .logo_xs
@@ -66,6 +67,17 @@ GLOBAL_HTML=(
     -r .error
     -r .like_shortLink_report_share
     -r .lazyload
+    -r i.fa
+    -r .box-download
+    -r .share-news
+    -r .box-number-news
+    -r .content-related
+    -r .suggested-news-cover
+    -r .main-comment-form-news
+    -r form
+    -r .social-icon-news
+    -r .tags_container_news
+    -r .share-box-news
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -158,6 +170,11 @@ case $WEBSITE in
     snn.ir)
         FILTERS=(
             "htmlq -wp main $HTML -r .news_toolbar -r .related-container"
+        )
+        ;;
+    yjc.ir)
+        FILTERS=(
+            "htmlq -wp .news-box $HTML"
         )
         ;;
     *)
