@@ -87,6 +87,10 @@ GLOBAL_HTML=(
     -r .rating-stars
     -r "'article nav'"
     -r noscript
+    -r .comm_title_box
+    -r .comments_container
+    -r .comments_item
+    -r .news_link_item
 )
 
 HTML="${GLOBAL_HTML[*]}"
