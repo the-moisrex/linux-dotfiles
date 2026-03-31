@@ -1,0 +1,14 @@
+#!/bin/bash
+
+
+for url in $@; do
+    case $url in
+        --help|-h)
+            echo "Fix the URL using WHATWG URL Parser. Requires nodejs.";
+            exit
+        ;;
+        *)
+        ;;
+    esac
+    node -e "console.log(new URL('${url}').href)"
+done

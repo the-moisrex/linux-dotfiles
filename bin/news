@@ -3,6 +3,7 @@
 # Determine the directory of the script and set the path to the 'urls' command
 SCRIPT_DIR=$(dirname "$0")
 URLS_CMD="$SCRIPT_DIR/urls"
+URLFIX_CMD="$SCRIPT_DIR/urlfix"
 
 # Default curl options with a user-agent to mimic a browser
 cookie_file=$(mktemp --suffix .cookies.txt --dry-run)
@@ -651,7 +652,7 @@ for i in "${!CURL_COMMANDS[@]}"; do
         PIPELINE+=" "
     fi
 done
-PIPELINE+=") | $URLS_CMD $BASE_URL | sort -u"
+PIPELINE+=") | $URLS_CMD $BASE_URL | xargs $URLFIX_CMD | sort -u"
 for filter in "${FILTERS[@]}"; do
     PIPELINE+=" | $filter"
 done
