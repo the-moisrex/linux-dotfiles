@@ -1,7 +1,7 @@
 #!/bin/bash
 
-
-for url in $@; do
+file=$(mktemp --suffix .urlfix.js)
+for url in "$@"; do
     case $url in
         --help|-h)
             echo "Fix the URL using WHATWG URL Parser. Requires nodejs.";
@@ -10,5 +10,10 @@ for url in $@; do
         *)
         ;;
     esac
-    node -e "console.log(new URL('${url}').href)"
+    # code="$code; console.log(new URL(\"$url\"))"
+    echo "console.log(new URL(\"$url\").href);" >> "$file";
 done
+
+node "$file" 2>/dev/null
+rm -f "$file"
+# echo "$@" | xargs -d" " -l echo | awk '{print "console.log(new URL(\"" $0 "\"));"}'
