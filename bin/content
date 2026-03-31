@@ -25,7 +25,6 @@ GLOBAL_HTML=(
     -r .logo_xs
     -r .nav_share_to
     -r .nav_services
-    -r aside
     -r .modal
     -r footer
     -r .news_commont_header
@@ -85,6 +84,7 @@ GLOBAL_HTML=(
     -r "'[style*=\"display: none\"]'"
     -r .rating-stars
     -r "'article nav'"
+    -r noscript
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -216,6 +216,11 @@ case $WEBSITE in
     tabnak.ir)
         FILTERS=(
             "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_title -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c"
+        )
+        ;;
+    tasnimnews.ir)
+        FILTERS=(
+            "htmlq -wp 'article.single-news' $HTML -r .service -r .footer -r .blog-details-share -r .hideTag"
         )
         ;;
     *)
