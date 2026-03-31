@@ -25,6 +25,7 @@ GLOBAL_EXCLUDE_PATTERNS=(
     "rubika\\.ir" "splus\\.ir" "tamasha\\.com" "tapsi\\.ir"
     "javascript:void\\(0\\)" "gap\\.im" "w3\\.org" "ogp\\.me" "schema\\.org"
     "ble\\.ir" "x\\.com" "data:image" "eitaa\\.com" "#" "\\.m3u8"
+    "javascript:"
 )
 
 # Combine global exclude patterns into a single regex
@@ -92,7 +93,7 @@ list_agencies() {
     echo "  tasnim, tasnimnews.ir"
     echo
     echo "Categories:"
-    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim]"
+    echo "  iran (Multiple Iranian news agencies): [yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim eslahatnews]"
 }
 
 sync_parallel_output() {
@@ -104,7 +105,11 @@ sync_parallel_output() {
         file=$(mktemp --suffix ".${site}.fifo" --dry-run)
         mkfifo "$file"
         fifos+=("$file")
-        $0 "$site" > "$file" &
+        if $VERBOSE; then
+            $0 --verbose "$site" > "$file" &
+        else
+            $0 "$site" > "$file" &
+        fi
     done
 
     # Print outputs in order (site list order)
@@ -134,14 +139,18 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         iran)
-            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim
+            sync_parallel_output yjc irib fori mehr ilna tabnak sepah tehrantimes fars irna tasnim eslahatnews
             exit 0
             ;;
         *)
             if [ -z "$WEBSITE" ]; then
                 WEBSITE="$1"
             else
-                $0 "$WEBSITE"
+                if $VERBOSE; then
+                    $0 --verbose "$WEBSITE"
+                else
+                    $0 "$WEBSITE"
+                fi
                 WEBSITE="$1"
             fi
             shift
@@ -610,6 +619,16 @@ case $WEBSITE in
             'grep -v "/fa/news/overview"'
         )
         ;;
+    eslahatnews|eslahat|eslahatnews.com)
+        WEBSITE="eslahatnews.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "/(www.)?eslahatnews.com/fa/news/"'
+        )
+        ;;
     zoomit|zoomit.ir)
         WEBSITE="zoomit.ir"
         BASE_URL="https://${WEBSITE}"
@@ -652,7 +671,7 @@ for i in "${!CURL_COMMANDS[@]}"; do
         PIPELINE+=" "
     fi
 done
-PIPELINE+=") | $URLS_CMD $BASE_URL | xargs $URLFIX_CMD | sort -u"
+PIPELINE+=") | $URLS_CMD $BASE_URL | sort -u | xargs $URLFIX_CMD | sort -u"
 for filter in "${FILTERS[@]}"; do
     PIPELINE+=" | $filter"
 done
