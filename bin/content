@@ -118,24 +118,26 @@ COMMAND=""
 args="$@"
 flags=()
 URLs=()
+IS_CHILD=false
 
 
 sync_parallel_output() {
     local sites=("$@")
-    local fifos=()
-    
-    # Create FIFOs for each site (special files, not regular temp files)
+    local outputs=()
+    local pids=()
+
     for site in "${sites[@]}"; do
-        file=$(mktemp --suffix ".fifo" --dry-run)
-        mkfifo "$file"
-        fifos+=("$file")
-        $0 ${flags[@]} "$site" > "$file" &
+        out=$(mktemp)
+        outputs+=("$out")
+        $0 ${flags[@]} --child "$site" >"$out" &
+        pids+=($!)
     done
 
-    # Print outputs in order (site list order)
-    for file in "${fifos[@]}"; do
-        cat "$file"
-        rm -f "$fifo"
+    # Wait for each job in order, then print
+    for i in "${!pids[@]}"; do
+        wait "${pids[$i]}"
+        cat "${outputs[$i]}"
+        rm -f "${outputs[$i]}"
     done
 }
 
@@ -145,6 +147,10 @@ while [[ $# -gt 0 ]]; do
         --help)
             show_help
             exit 0
+        ;;
+        --child)
+            IS_CHILD=true
+            shift
         ;;
         --verbose|-v)
             VERBOSE=true
@@ -183,7 +189,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-sync_parallel_output ${URLs[*]}
+if ! $IS_CHILD && [ ${#URLs[@]} -gt 0 ]; then
+    sync_parallel_output "${URLs[@]}"
+    exit 0
+fi
+
 
 if [ -z "$URL" ]; then
     cat - | xargs -l $0 ${flags[*]}
