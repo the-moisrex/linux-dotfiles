@@ -115,8 +115,31 @@ NO_CURL=false
 WEBSITE=""
 URL=""
 COMMAND=""
-
 args="$@"
+flags=()
+URLs=()
+
+
+sync_parallel_output() {
+    local sites=("$@")
+    local fifos=()
+    
+    # Create FIFOs for each site (special files, not regular temp files)
+    for site in "${sites[@]}"; do
+        file=$(mktemp --suffix ".fifo" --dry-run)
+        mkfifo "$file"
+        fifos+=("$file")
+        $0 ${flags[@]} "$site" > "$file" &
+    done
+
+    # Print outputs in order (site list order)
+    for file in "${fifos[@]}"; do
+        cat "$file"
+        rm -f "$fifo"
+    done
+}
+
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help)
@@ -125,22 +148,27 @@ while [[ $# -gt 0 ]]; do
         ;;
         --verbose|-v)
             VERBOSE=true
+            flags+=("--verbose")
             shift
         ;;
         --nofilter|-nofilter|no-filter|-no-filter|--no-filter)
             NO_FILTER=true
+            flags+=("--no-filter")
             shift
         ;;
         --nocurl|-nocurl|no-curl|-no-curl|--no-curl)
             NO_CURL=true
+            flags+=("--no-curl")
             shift
         ;;
         --notransform|no-trans|-no-trans|--no-trans|--notrans|notrans|-notrans|-notransform|no-transform|-no-transform|--no-transform)
             NO_TRANSFORM=true
+            flags+=("--no-trans")
             shift
         ;;
         --website|-website|website|site|--site|-site)
             shift
+            flags+=("--website" "$1")
             WEBSITE="$1"
             shift
         ;;
@@ -148,20 +176,17 @@ while [[ $# -gt 0 ]]; do
             if [ -z "$URL" ]; then
                 URL="$1"
             else
-                if $VERBOSE; then
-                    $0 --verbose "$URL"
-                else
-                    $0 "$URL"
-                fi
-                URL="$1"
+                URLs+=("$1")
             fi
             shift
         ;;
     esac
 done
 
+sync_parallel_output ${URLs[*]}
+
 if [ -z "$URL" ]; then
-    cat - | xargs -l $0 $args
+    cat - | xargs -l $0 ${flags[*]}
     exit $?
 fi
 

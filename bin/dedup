@@ -5,30 +5,45 @@
 # Options:
 #   --help      Show this help message and exit
 
-# Check for help option
-if [ "$1" = "--help" ]; then
-    echo "Usage: dedup [cache-file]"
-    echo "Deduplicate input lines by hashing them and storing hashes in a cache file."
-    echo
-    echo "Options:"
-    echo "  --help      Show this help message and exit."
-    echo
-    echo "If no cache file is provided, the default cache file is used (default-cache in XDG_CACHE_HOME)."
-    echo "If a valid relative or absolute path is provided, it will be used as the cache file."
-    echo "Otherwise, the argument is treated as a cache name in XDG_CACHE_HOME."
-    exit 0
-fi
-
 # Determine cache file location
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 cache_file=""
+DRY_RUN=false
 
-if [ -n "$1" ]; then
+# Check for help option
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|help|-help|-h)
+            echo "Usage: dedup [cache-file]"
+            echo "Deduplicate input lines by hashing them and storing hashes in a cache file."
+            echo
+            echo "Options:"
+            echo "  --help      Show this help message and exit."
+            echo
+            echo "If no cache file is provided, the default cache file is used (default-cache in XDG_CACHE_HOME)."
+            echo "If a valid relative or absolute path is provided, it will be used as the cache file."
+            echo "Otherwise, the argument is treated as a cache name in XDG_CACHE_HOME."
+            exit 0
+        ;;
+        --dry-run|-d)
+            DRY_RUN=true
+            shift
+        ;;
+        *)
+            if [ ! -z "$cache_file" ]; then
+                echo "You're not doing it right. There shouldn't be 2 cache file names"
+                exit 1;
+            fi
+            cache_file="$1"
+            shift
+        ;;
+    esac
+done
+
+if [ -n "$cache_file" ]; then
     # Check if argument is a valid path (contains slashes)
-    if [[ "$1" == */* ]]; then
-        cache_file="$1"
-    else
-        cache_file="${XDG_CACHE_HOME}/$1"
+    if ! [[ "$cache_file" == */* ]]; then
+        cache_file="${XDG_CACHE_HOME}/$cache_file"
     fi
 else
     cache_file="${XDG_CACHE_HOME}/default-cache"
@@ -48,8 +63,11 @@ while IFS= read -r line; do
     # Check if hash exists in cache
     if ! grep -Fq "$hash" "$cache_file"; then
         echo "$line"
-        echo "$hash" >> "$cache_file"
-        # Sort and deduplicate cache file
-        # sort -u "$cache_file" > "$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
+        
+        if ! $DRY_RUN; then
+            echo "$hash" >> "$cache_file"
+            # Sort and deduplicate cache file
+            # sort -u "$cache_file" > "$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
+        fi
     fi
 done

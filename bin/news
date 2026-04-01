@@ -502,6 +502,7 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep "/iribnews.ir/fa/news/"'
+            'grep -v "fa/news/1148469"'
         )
         ;;
     khabarfoori.com|khabarfoori|foori|khabar-fori|khabarfori|fori)
