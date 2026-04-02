@@ -7,6 +7,8 @@ SLEEP=1
 news_args=()
 dedup_args=()
 
+curdir="$(realpath "$(dirname "$0")")";
+
 show_help() {
 cat <<EOF
 Usage: news-popup [options] [news-argumnets]
@@ -70,9 +72,10 @@ while true; do
         --no-markup \
         --modal \
         --cancel-label="" \
-        --ok-label="بعدی" \
-        --title="خبر" \
+        --ok-label="Next" \
+        --title="$(echo "$content" | urls | tail -n 1 | xargs "$curdir/urlfix" --hostname)" \
         --timeout="$TIMEOUT" \
+        --editable \
         2>/dev/null &
         
         sleep "$SLEEP"
