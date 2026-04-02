@@ -73,9 +73,8 @@ while true; do
         --modal \
         --cancel-label="Ok" \
         --ok-label="Open Link" \
-        --title="$("$curdir/urlfix" --hostname "$link")" \
-        --timeout="$TIMEOUT" \
-        --editable \
+        --title="$("$curdir/urlfix" --clean --hostname "$link")" \
+        --timeout="$TIMEOUT" 2>/dev/null \
         && xdg-open "$link" 2>/dev/null &
         
         sleep "$SLEEP"

@@ -1,7 +1,9 @@
 #!/bin/bash
 
 value="href"
+CLEAN=false
 file=$(mktemp --suffix .urlfix.js)
+echo "try {" >> "$file"
 for url in "$@"; do
     case $url in
         --help|-h)
@@ -58,13 +60,23 @@ for url in "$@"; do
             shift;
             continue;
         ;;
+        --clean|--clear|-c)
+            CLEAN=true
+            shift
+            continue
+        ;;
         *)
         ;;
     esac
     # code="$code; console.log(new URL(\"$url\"))"
     echo "console.log(new URL(\"$url\").$value);" >> "$file";
 done
+echo "} catch { console.log('Invalid URL') }" >> "$file"
 
-node "$file" 2>/dev/null
+if $CLEAN; then
+    node "$file" | sed 's/^www.//' | sed 's/\.[a-zA-Z0-9]*$//' 2>/dev/null
+else
+    node "$file" 2>/dev/null
+fi
 rm -f "$file"
 # echo "$@" | xargs -d" " -l echo | awk '{print "console.log(new URL(\"" $0 "\"));"}'
