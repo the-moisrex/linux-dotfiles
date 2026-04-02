@@ -96,6 +96,8 @@ GLOBAL_HTML=(
     -r .videojs-main-container
     -r .bg-related-news
     -r .bread_crump
+    -r .video_news_adv
+    -r .download_full_album
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -223,7 +225,10 @@ fi
 
 # Configure website-specific settings
 CURL_COMMANDS=("curl $CURL_OPTIONS \"$URL\"")
-TRANSFORMS=("pandoc -f html -t plain")
+TRANSFORMS=(
+    "pandoc -f html -t plain"
+    "sed 's/\[\]//g'"
+)
 case $WEBSITE in
     irna.ir)
         sec_cookies=$(curl -sqL $URL | grep "return {'value_v1" | awk '{print "var res = (function() {" $0 "})(); console.log(`__arcsjs=${res.value_v1}; __arcsjsc=${res.value}`)"}' | node -)
@@ -261,7 +266,7 @@ case $WEBSITE in
         ;;
     tabnak.ir)
         FILTERS=(
-            "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_mrg -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c -r .top_news_title -r .border-mobile -r .advNews -r .visible-xs -r .visible-sm -r .visible-md -r .visible-lg -r .visible-ms -r .wrapper -r .col-xs-36 -r .row_tag -r .image_btn"
+            "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_mrg -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c -r .top_news_title -r .border-mobile -r .advNews -r .visible-xs -r .visible-sm -r .visible-md -r .visible-lg -r .visible-ms -r .wrapper -r .row_tag -r .image_btn -r .news_navbox -r .phNewsShareRow -r .phNewsTagsRow -r .srvHeadBox -r .phNewsToolBox -r .phBreadCrumbUl -r .phNewsCmBg"
         )
         ;;
     tasnimnews.ir)

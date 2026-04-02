@@ -89,7 +89,10 @@
     "roo-cline.allowedCommands": [
         "git log",
         "git diff",
-        "git show"
+        "git show",
+        "content",
+        "htmlq",
+        "head"
     ],
     "roo-cline.deniedCommands": []
 }
