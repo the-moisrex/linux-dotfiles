@@ -1,5 +1,6 @@
 #!/bin/bash
 
+value="href"
 file=$(mktemp --suffix .urlfix.js)
 for url in "$@"; do
     case $url in
@@ -7,11 +8,61 @@ for url in "$@"; do
             echo "Fix the URL using WHATWG URL Parser. Requires nodejs.";
             exit
         ;;
+        --hostname)
+            value="hostname"
+            shift;
+            continue;
+        ;;
+        --origin)
+            value="origin"
+            shift;
+            continue;
+        ;;
+        --protocol)
+            value="protocol"
+            shift;
+            continue;
+        ;;
+        --username)
+            value="username"
+            shift;
+            continue;
+        ;;
+        --password)
+            value="password"
+            shift;
+            continue;
+        ;;
+        --host)
+            value="host"
+            shift;
+            continue;
+        ;;
+        --port)
+            value="port"
+            shift;
+            continue;
+        ;;
+        --pathname)
+            value="pathname"
+            shift;
+            continue;
+        ;;
+        --search)
+            value="search"
+            shift;
+            continue;
+        ;;
+        --hash)
+            value="hash"
+            shift;
+            continue;
+        ;;
         *)
         ;;
     esac
     # code="$code; console.log(new URL(\"$url\"))"
-    echo "console.log(new URL(\"$url\").href);" >> "$file";
+    echo "console.log(new URL(\"$url\").$value);" >> "$file";
 done
 
 node "$file" 2>/dev/null
