@@ -260,7 +260,7 @@ case $WEBSITE in
         ;;
     iribnews.ir)
         FILTERS=(
-            "htmlq -wp main $HTML -r .sp_ln_news -r .mob_lang -r .desktop-view -r .link_row -r .news_print_link -r .news_link_item -r .news_commont_header -r .media_comments -r .video_top_news -r .media_last_body_main -r .video_content -r .video_body -r .photo_tags_container -r .photo_body -r .tab_most -r .videojs-main-container"
+            "htmlq -wp main $HTML -r .sp_ln_news -r .mob_lang -r .desktop-view -r .link_row -r .news_print_link -r .news_link_item -r .news_commont_header -r .media_comments -r .video_top_news -r .media_last_body_main -r .video_content -r .video_body -r .photo_tags_container -r .photo_body -r .tab_most -r .videojs-main-container -r .news_nav"
         )
         ;;
     mehrnews.com)

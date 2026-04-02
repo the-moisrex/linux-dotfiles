@@ -56,12 +56,15 @@ if [ -z "${dedup_args[@]}" ]; then
     dedup_args+=("news.live")
 fi
 
+prev_content=""
 while true; do
     news ${news_args[@]} | dedup ${dedup_args[@]} | while read -r link; do
         content="$(content "$link" 2>/dev/null || true)"
         
         # Skip if empty
         [[ -z "${content// }" ]] && continue
+        [[ "$content" == "$prev_content" ]] && continue
+        prev_content="$content"
         
         printf "%s\n" "$content" | zenity \
         --text-info \
