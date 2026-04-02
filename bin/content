@@ -303,6 +303,11 @@ case $WEBSITE in
             "htmlq -wp 'main.news_body_bg' $HTML -r .breadcrumb_news -r .news_toolbar -r .news_left_toolbar -r .time -r .second_news_toolbar -r .authorBox -r .page_text -r .sub_toolbar -r .news_id_c -r .news_pdate_t -r .news_pdate_d -r .zoom-tools -r .shortLink-sec -r .mobile_share_link"
         )
         ;;
+    sepahnews.ir)
+        FILTERS=(
+            "htmlq -wp article $HTML -r .item-header -r .item-title -r .item-nav -r .item-foot-nav -r .item-footer -r .item-boxes -r .item-sharing -r .short-link-container -r .tags -r .tags_container -r .related-items -r .item-code -r .item-author -r .item-date -r .rating-stars -r .breadcrumb -r .item-img -r .item-body -r .item-text -r .summary -r .introtext"
+        )
+        ;;
     *)
         FILTERS=(
             "htmlq -wp $HTML"
