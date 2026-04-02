@@ -261,7 +261,7 @@ case $WEBSITE in
         ;;
     tabnak.ir)
         FILTERS=(
-            "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_title -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c"
+            "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_mrg -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c -r .top_news_title -r .border-mobile -r .advNews -r .visible-xs -r .visible-sm -r .visible-md -r .visible-lg -r .visible-ms -r .wrapper -r .col-xs-36 -r .row_tag -r .image_btn"
         )
         ;;
     tasnimnews.ir)
@@ -277,6 +277,11 @@ case $WEBSITE in
     khabarfoori.com)
         FILTERS=(
             "htmlq -wp article $HTML"
+        )
+        ;;
+    eslahatnews.com)
+        FILTERS=(
+            "htmlq -wp 'main.news_body_bg' $HTML -r .breadcrumb_news -r .news_toolbar -r .news_left_toolbar -r .time -r .second_news_toolbar -r .authorBox -r .page_text -r .sub_toolbar -r .news_id_c -r .news_pdate_t -r .news_pdate_d -r .zoom-tools -r .shortLink-sec -r .mobile_share_link"
         )
         ;;
     *)
