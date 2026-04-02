@@ -71,12 +71,12 @@ while true; do
         --font="Noto Sans Arabic" \
         --no-markup \
         --modal \
-        --cancel-label="" \
-        --ok-label="Next" \
-        --title="$(echo "$content" | urls | tail -n 1 | xargs "$curdir/urlfix" --hostname)" \
+        --cancel-label="Ok" \
+        --ok-label="Open Link" \
+        --title="$("$curdir/urlfix" --hostname "$link")" \
         --timeout="$TIMEOUT" \
         --editable \
-        2>/dev/null &
+        && xdg-open "$link" 2>/dev/null &
         
         sleep "$SLEEP"
     done
