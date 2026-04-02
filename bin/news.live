@@ -1,0 +1,80 @@
+#!/usr/bin/bash
+
+set -euo pipefail
+
+TIMEOUT=15
+SLEEP=1
+news_args=()
+dedup_args=()
+
+show_help() {
+cat <<EOF
+Usage: news-popup [options] [news-argumnets]
+
+Continuously fetches links from 'news iran', deduplicates them, and shows
+their content in a Zenity text window.
+
+Options:
+  --timeout SECONDS   Auto-close popup after N seconds (default: ${TIMEOUT})
+  --sleep SECONDS     Delay between items (default: ${SLEEP})
+  --dedup dedup-args  The name that removes the duplicates based on it (default: news.live)
+  -h, --help          Show this help message
+
+Requirements:
+  news, dedup, content, zenity
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --timeout)
+            TIMEOUT="$2"
+            shift 2
+        ;;
+        --sleep)
+            SLEEP="$2"
+            shift 2
+        ;;
+        -h|--help)
+            show_help
+            exit 0
+        ;;
+        --dedup|-d)
+            dedup_args+=("$2")
+            shift 2
+        ;;
+        *)
+            news_args+=("$1")
+            shift
+        ;;
+    esac
+done
+
+if [ -z "${dedup_args[@]}" ]; then
+    dedup_args+=("news.live")
+fi
+
+while true; do
+    news ${news_args[@]} | dedup ${dedup_args[@]} | while read -r link; do
+        content="$(content "$link" 2>/dev/null || true)"
+        
+        # Skip if empty
+        [[ -z "${content// }" ]] && continue
+        
+        printf "%s\n" "$content" | zenity \
+        --text-info \
+        --filename=/dev/stdin \
+        --width=600 \
+        --height=800 \
+        --font="Noto Sans Arabic" \
+        --no-markup \
+        --modal \
+        --cancel-label="" \
+        --ok-label="بعدی" \
+        --title="خبر" \
+        --timeout="$TIMEOUT" \
+        2>/dev/null &
+        
+        sleep "$SLEEP"
+    done
+done

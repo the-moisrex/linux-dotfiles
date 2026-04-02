@@ -492,6 +492,7 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep "/yjc\.ir/fa/news/"'
+            'grep -v "fa/news/5551663"'
         )
         ;;
     iribnews|iribnews.ir|irib)
@@ -585,6 +586,8 @@ case $WEBSITE in
         )
         FILTERS=(
             'grep -E "/farsnews.ir/.+/.+"'
+            'grep -v "/showcase"'
+            'grep -v "/topic"'
         )
         ;;
     akharinkhabar|akharinkhabar.ir)

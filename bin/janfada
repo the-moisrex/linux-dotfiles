@@ -1,6 +1,7 @@
 #!/bin/bash
 
-domain="janfada.net"
+# janfada.net
+domain="janfadaa.ir"
 
 if [ "$1" == "--help" ]; then
     echo "Print ${domain}'s live counter";

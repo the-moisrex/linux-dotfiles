@@ -264,6 +264,11 @@ case $WEBSITE in
             "htmlq -wp 'article.single-news' $HTML -r .service -r .footer -r .blog-details-share -r .hideTag"
         )
         ;;
+    farsnews.ir)
+        FILTERS=(
+            "htmlq -wp $HTML -r aside -r div[name=list] -r header -r .text-center -r bdi.font-default -r .items-center -r hr -r .text-gray-500 -r img -r .absolute -r .text-primary-500 -r .text-gray-600 -r .select-none"
+        )
+        ;;
     *)
         FILTERS=(
             "htmlq -wp $HTML"
