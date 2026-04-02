@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-TIMEOUT=15
+TIMEOUT=45
 SLEEP=1
 news_args=()
 dedup_args=()

@@ -91,6 +91,11 @@ GLOBAL_HTML=(
     -r .comments_container
     -r .comments_item
     -r .news_link_item
+    -r .video-tool-box
+    -r .path_bottom_body_video
+    -r .videojs-main-container
+    -r .bg-related-news
+    -r .bread_crump
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -226,12 +231,12 @@ case $WEBSITE in
             "curl $CURL_OPTIONS -H 'Cookie: $sec_cookies' $URL"
         )
         FILTERS=(
-            "htmlq -wp article $HTML -r nav -r .tags -r .item-code -r .item-foot-nav -r .item-nav -r .item-footer -r .item-boxes -r .area-item"
+            "htmlq -wp article $HTML -r nav -r .tags -r .item-code -r .item-foot-nav -r .item-nav -r .item-footer -r .item-boxes -r .area-item -r figure.item-img"
         )
         ;;
     ilna.ir)
         FILTERS=(
-            "htmlq -w article $HTML"
+            "htmlq -w article $HTML -r .primary_files"
         )
         ;;
     iribnews.ir)
@@ -241,7 +246,7 @@ case $WEBSITE in
         ;;
     mehrnews.com)
         FILTERS=(
-            "htmlq -w article $HTML -r .header-sharing -r .item-sharing -r .short-link-container -r .tooltip-link -r .item-boxes -r section.box.tags -r .item-code -r .item-footer -r .item-nav -r .related-items"
+            "htmlq -w article $HTML -r .header-sharing -r .item-sharing -r .short-link-container -r .tooltip-link -r .item-boxes -r section.box.tags -r .item-code -r .item-footer -r .item-nav -r .related-items -r '.item-summary figure'"
         )
         ;;
     snn.ir)
@@ -251,7 +256,7 @@ case $WEBSITE in
         ;;
     yjc.ir)
         FILTERS=(
-            "htmlq -wp .news-box $HTML -r .comments-pager-news"
+            "htmlq -wp .news-box $HTML -r .comments-pager-news -r .row_mv_photo_newspage"
         )
         ;;
     tabnak.ir)
@@ -267,6 +272,11 @@ case $WEBSITE in
     farsnews.ir)
         FILTERS=(
             "htmlq -wp $HTML -r aside -r div[name=list] -r header -r .text-center -r bdi.font-default -r .items-center -r hr -r .text-gray-500 -r img -r .absolute -r .text-primary-500 -r .text-gray-600 -r .select-none"
+        )
+        ;;
+    khabarfoori.com)
+        FILTERS=(
+            "htmlq -wp article $HTML"
         )
         ;;
     *)
@@ -314,3 +324,5 @@ fi
 
 # Execute the pipeline
 eval "$PIPELINE"
+echo
+echo "$URL"
