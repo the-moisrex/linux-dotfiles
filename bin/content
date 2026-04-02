@@ -98,6 +98,13 @@ GLOBAL_HTML=(
     -r .bread_crump
     -r .video_news_adv
     -r .download_full_album
+    -r .videojs_main
+    -r .nav-background
+    -r .logo-background
+    -r .no-js
+    -r .js-hidden
+    -r .list-unstyled
+    -r .livePage
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -256,7 +263,7 @@ case $WEBSITE in
         ;;
     snn.ir)
         FILTERS=(
-            "htmlq -wp main $HTML -r .news_toolbar -r .related-container -r .sepehr-key-related-news"
+            "htmlq -wp $HTML -r .news_toolbar -r .related-container -r .sepehr-key-related-news -r .sar_ticker"
         )
         ;;
     yjc.ir)
