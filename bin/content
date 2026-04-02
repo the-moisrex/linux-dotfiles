@@ -119,6 +119,7 @@ show_help() {
     echo "  --no-filter     Disable filters"
     echo "  --no-transform  Disable transforming to plain text"
     echo "  --no-curl       Don't expect a URL, expect the HTML"
+    echo "  --print-url     Print the URL at the end"
 }
 
 # Parse command-line arguments
@@ -133,6 +134,7 @@ args="$@"
 flags=()
 URLs=()
 IS_CHILD=false
+PRINT_URL=false
 
 
 sync_parallel_output() {
@@ -169,6 +171,11 @@ while [[ $# -gt 0 ]]; do
         --verbose|-v)
             VERBOSE=true
             flags+=("--verbose")
+            shift
+        ;;
+        --print-url)
+            VERBOSE=true
+            PRINT_URL=true
             shift
         ;;
         --nofilter|-nofilter|no-filter|-no-filter|--no-filter)
@@ -233,7 +240,7 @@ fi
 # Configure website-specific settings
 CURL_COMMANDS=("curl $CURL_OPTIONS \"$URL\"")
 TRANSFORMS=(
-    "pandoc -f html -t plain"
+    "pandoc -f html -t plain --wrap=none"
     "sed 's/\[\]//g'"
 )
 case $WEBSITE in
@@ -341,5 +348,7 @@ fi
 
 # Execute the pipeline
 eval "$PIPELINE"
-echo
-echo "$URL"
+if $PRINT_URL; then
+    echo
+    echo "$URL"
+fi
