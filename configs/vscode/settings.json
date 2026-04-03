@@ -90,9 +90,10 @@
         "git log",
         "git diff",
         "git show",
-        "content",
         "htmlq",
-        "head"
+        "head",
+        "content",
+        "./bin/content"
     ],
     "roo-cline.deniedCommands": []
 }
