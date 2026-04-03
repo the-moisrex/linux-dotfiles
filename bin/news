@@ -656,6 +656,16 @@ case $WEBSITE in
             'grep -v "zoomon.ir/archive/"'
         )
         ;;
+    diroozban|diroozban.ir)
+        WEBSITE="diroozban.ir"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            "grep -E 'diroozban\.ir/%D8%A8%D8%AE%D8%B4-[^/]+/[0-9]+-'"
+        )
+        ;;
     *)
         CURL_COMMANDS=("curl $CURL_OPTIONS $BASE_URL")
         FILTERS=()
