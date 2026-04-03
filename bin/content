@@ -314,6 +314,11 @@ case $WEBSITE in
             "htmlq -wp article $HTML -r .item-header -r .item-title -r .item-nav -r .item-foot-nav -r .item-footer -r .item-boxes -r .item-sharing -r .short-link-container -r .tags -r .tags_container -r .related-items -r .item-code -r .item-author -r .item-date -r .rating-stars -r .breadcrumb -r .item-img -r .item-body -r .item-text -r .summary -r .introtext"
         )
         ;;
+    diroozban.ir)
+        FILTERS=(
+            "htmlq '#news_article_content, .lead, .primary_files'"
+        )
+        ;;
     *)
         FILTERS=(
             "htmlq -wp $HTML"
