@@ -226,7 +226,7 @@ if ! $NO_CURL; then
     # Default curl options with a user-agent to mimic a browser
     cookie_file=$(mktemp --suffix .cookies.txt --dry-run)
     trap 'rm -f "$cookie_file"' EXIT
-    CURL_OPTIONS="-sqL --cookie-jar '$cookie_file' --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
+    CURL_OPTIONS="-sqL --insecure --cookie-jar '$cookie_file' --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'"
     WEBSITE=$(node -e "console.log(new URL('${URL}').hostname.replace(/^www\\./, ''))" )
     if [ -z "$WEBSITE" ]; then
         echo "Error: No website specified in URL ${URL}"
@@ -281,7 +281,7 @@ case $WEBSITE in
         ;;
     tabnak.ir)
         FILTERS=(
-            "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_mrg -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c -r .top_news_title -r .border-mobile -r .advNews -r .visible-xs -r .visible-sm -r .visible-md -r .visible-lg -r .visible-ms -r .wrapper -r .row_tag -r .image_btn -r .news_navbox -r .phNewsShareRow -r .phNewsTagsRow -r .srvHeadBox -r .phNewsToolBox -r .phBreadCrumbUl -r .phNewsCmBg"
+            "htmlq -wp main $HTML -r .top_title -r .adv_news -r .top_mrg -r .tab_home_inner -r .top_mrg -r .tab_most_body -r .tabs-container -r .linear_news -r .Htag -r .stitle_box -r .pollBox -r '#parentPolls' -r .row_selected_tag -r .news_id_c -r .border-mobile -r .advNews -r .visible-xs -r .visible-sm -r .visible-md -r .visible-lg -r .visible-ms -r .wrapper -r .row_tag -r .image_btn -r .news_navbox -r .phNewsShareRow -r .phNewsTagsRow -r .srvHeadBox -r .phNewsToolBox -r .phBreadCrumbUl -r .phNewsCmBg"
         )
         ;;
     tasnimnews.ir)
@@ -302,6 +302,11 @@ case $WEBSITE in
     eslahatnews.com)
         FILTERS=(
             "htmlq -wp 'main.news_body_bg' $HTML -r .breadcrumb_news -r .news_toolbar -r .news_left_toolbar -r .time -r .second_news_toolbar -r .authorBox -r .page_text -r .sub_toolbar -r .news_id_c -r .news_pdate_t -r .news_pdate_d -r .zoom-tools -r .shortLink-sec -r .mobile_share_link"
+        )
+        ;;
+    aviny.com)
+        FILTERS=(
+            "htmlq -wp '#body-inner' $HTML -r .nav-responsive-wrapper -r '#header' -r '#nav' -r footer -r .messages-wrapper -r table -r .row"
         )
         ;;
     sepahnews.ir)
