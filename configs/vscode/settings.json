@@ -94,7 +94,11 @@
         "head",
         "content",
         "./bin/content",
-        "bin/zarebin"
+        "bin/zarebin",
+        "bin/url",
+        "bin/content --no-curl",
+        "bin/url get",
+        "bin/url list"
     ],
     "roo-cline.deniedCommands": []
 }

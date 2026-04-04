@@ -319,6 +319,11 @@ case $WEBSITE in
             "htmlq '#news_article_content, .lead, .primary_files'"
         )
         ;;
+    rouydad24.ir|roydad24.ir)
+        FILTERS=(
+            "htmlq -r 'section.box31-cover' -r 'div.article.relDesktop' -r 'div.article.relBg' -r 'div.tags_container' -r 'div[id^="pos-article-"]' -r 'div.yn-bnr' 'article.news-article'"
+        )
+        ;;
     *)
         FILTERS=(
             "htmlq -wp $HTML"
