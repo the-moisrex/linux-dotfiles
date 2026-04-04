@@ -106,6 +106,7 @@ GLOBAL_HTML=(
     -r .list-unstyled
     -r .livePage
     -r .newsrelated_media
+    -r .no-print
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -325,7 +326,7 @@ case $WEBSITE in
         )
         ;;
     virgool.io)
-        FILTERS=("htmlq -wp 'h1, p.v-block.v-paragraph'")
+        FILTERS=("htmlq -wp -r '#navbar' -r '#app-portal' -r .is-divider-right -r .color-gray-900 -r aside -r button.no-hover .vrgl-col, p, h1")
         ;;
     *)
         FILTERS=(
