@@ -1,0 +1,146 @@
+#!/bin/bash
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Default values
+QUERY=""
+FETCH_PAGES=2
+SPECIFIC_PAGE=""
+TAG_MODE=false
+URLS_ONLY=false
+HELP=false
+
+show_help() {
+    echo "Usage: $0 [OPTIONS] [SEARCH_TERM]"
+    echo ""
+    echo "Options:"
+    echo "  -f NUM       Fetch first NUM pages (default: 2)"
+    echo "  -n PAGE      Fetch only specific PAGE"
+    echo "  --tag TAG    List posts under a specific tag"
+    echo "  --urls-only  Print only URLs of the results"
+    echo "  --help       Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 test"
+    echo "  $0 -f 5 test"
+    echo "  $0 -n 3 test"
+    echo "  $0 tag software-engineering"
+    echo "  $0 --urls-only test"
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f)
+            FETCH_PAGES="$2"
+            shift 2
+        ;;
+        -n)
+            SPECIFIC_PAGE="$2"
+            FETCH_PAGES=1
+            shift 2
+        ;;
+        --tag)
+            TAG_MODE=true
+            QUERY="$2"
+            shift 2
+        ;;
+        --urls-only)
+            URLS_ONLY=true
+            shift
+        ;;
+        --help)
+            HELP=true
+            shift
+        ;;
+        *)
+            QUERY="$1"
+            shift
+        ;;
+    esac
+done
+
+if [[ "$HELP" == true ]]; then
+    show_help
+    exit 0
+fi
+
+fetch_search_results() {
+    local query="$1"
+    local pages="$2"
+    local specific_page="$3"
+    
+    for ((i = 1; i <= pages; i++)); do
+        if [[ -n "$specific_page" && "$i" != "$specific_page" ]]; then
+            continue
+        fi
+        
+        local url="https://virgool.io/api2/app/search/posts?q=${query}&page=${i}"
+        local response
+        response=$(curl -sqL "$url")
+        
+        if ! echo "$response" | jq -e .success >/dev/null; then
+            echo -e "${RED}Error fetching results.${NC}" >&2
+            return 1
+        fi
+        
+        echo "$response" | jq -c '.data[]' | while read -r post; do
+            local title
+            local author
+            local post_url
+            
+            title=$(echo "$post" | jq -r '.title')
+            author=$(echo "$post" | jq -r '.user.name')
+            post_url=$(echo "$post" | jq -r '.url')
+            
+            if [[ "$URLS_ONLY" == true ]]; then
+                echo "$post_url"
+            else
+                echo -e "${GREEN}${title}${NC}"
+                echo -e "${BLUE}${author}${NC} — ${YELLOW}${post_url}${NC}"
+                echo
+            fi
+        done
+    done
+}
+
+fetch_tag_results() {
+    local tag="$1"
+    local url="https://virgool.io/tag/${tag}"
+    
+    local html
+    html=$(curl -sqL "$url")
+    
+    echo "$html" | htmlq 'article a.title' --attribute href | while read -r slug; do
+        if [[ -z "$slug" ]]; then continue; fi
+        local full_url="https://virgool.io${slug}"
+        
+        if [[ "$URLS_ONLY" == true ]]; then
+            echo "$full_url"
+        else
+            local title
+            title=$(echo "$html" | htmlq "a[href='$slug']" --text)
+            
+            echo -e "${GREEN}${title}${NC}"
+            echo -e "${YELLOW}${full_url}${NC}"
+            echo
+        fi
+    done
+}
+
+main() {
+    if [[ "$TAG_MODE" == true ]]; then
+        fetch_tag_results "$QUERY"
+        elif [[ -n "$QUERY" ]]; then
+        fetch_search_results "$QUERY" "$FETCH_PAGES" "$SPECIFIC_PAGE"
+    else
+        show_help
+    fi
+}
+
+main
