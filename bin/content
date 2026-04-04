@@ -324,6 +324,9 @@ case $WEBSITE in
             "htmlq -r 'section.box31-cover' -r 'div.article.relDesktop' -r 'div.article.relBg' -r 'div.tags_container' -r 'div[id^="pos-article-"]' -r 'div.yn-bnr' 'article.news-article'"
         )
         ;;
+    virgool.io)
+        FILTERS=("htmlq -wp 'h1, p.v-block.v-paragraph'")
+        ;;
     *)
         FILTERS=(
             "htmlq -wp $HTML"
