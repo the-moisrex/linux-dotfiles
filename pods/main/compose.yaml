@@ -132,6 +132,18 @@ services:
     # volumes:
     #   - ./freshrss-data:/var/www/FreshRSS/data
 
+  # squid:
+  #   image: squidfunk/squid:latest
+  #   container_name: squid-cache
+  #   ports:
+  #     - "3128:3128"
+  #   volumes:
+  #     - ./squid.conf:/etc/squid/squid.conf:ro
+  #     # - ./cache:/var/cache/squid
+  #     # - ./logs:/var/log/squid
+  #   restart: unless-stopped
+
+
   # postgres:
   #   image: postgres
   #   environment:

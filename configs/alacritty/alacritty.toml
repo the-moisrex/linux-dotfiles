@@ -25,7 +25,7 @@
 
 # Themes from: https://github.com/alacritty/alacritty-theme
 general.import = [
-    "~/.config/alacritty/alacritty-theme/themes/carbonfox.toml"
+    # "~/.config/alacritty/alacritty-theme/themes/carbonfox.toml"
     # "~/.config/alacritty/alacritty-theme/themes/rose_pine.toml"
     # "~/.config/alacritty/alacritty-theme/themes/gruvbox_dark.toml"
     # "~/.config/alacritty/alacritty-theme/themes/tomorrow_night.toml"
@@ -35,7 +35,8 @@ general.import = [
 ]
 
 [terminal]
-shell = "/usr/bin/nu"
+# shell = "/usr/bin/nu"
+shell = "/usr/bin/fish"
 
 [font]
 normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
@@ -54,7 +55,7 @@ dimensions.lines = 50
 padding.x = 16
 padding.y = 14
 decorations = "none"
-opacity = 0.7
+opacity = 0.95
 dynamic_padding = true
 blur = true
 resize_increments = true # doesn't work on Wayland yet
