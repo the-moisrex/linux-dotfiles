@@ -15,13 +15,16 @@
     "code-runner.enableAppInsights": false,
     // Editor:
     "vim.handleKeys": {
+        "<C-c>": false,
         "<C-p>": false,
         "<C-d>": false,
         "<C-s>": false,
         "<C-z>": false,
         "<C-b>": false,
         "<C-k>": false,
-        "<C-t>": false
+        "<C-t>": false,
+        "<C-f>": false,
+        "<C-a>": false
     },
     "editor.formatOnSave": true,
     "editor.mouseWheelZoom": true,
