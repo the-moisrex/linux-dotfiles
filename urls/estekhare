@@ -1,0 +1,21 @@
+#!/bin/bash
+# URL function for estekhare (aviny.com)
+# Usage: estekhare [page_number]
+# Example: estekhare 215
+
+estekhare_help() {
+    echo "Usage: estekhare [page_number]"
+    echo ""
+    echo "Get an estekhare (divination) result from aviny.com"
+    echo ""
+    echo "Arguments:"
+    echo "  page_number  - Page number for the result (default: 215)"
+    echo ""
+    echo "Example:"
+    echo "  url estekhare 215 | content"
+}
+
+estekhare() {
+    local page="${1:-215}"
+    echo "https://www.aviny.com/%D8%A7%D8%B3%D8%AA%D8%AE%D8%A7%D8%B1%D9%87/$page"
+}
