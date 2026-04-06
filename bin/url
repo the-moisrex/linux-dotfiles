@@ -1,0 +1,175 @@
+#!/bin/bash
+
+# URL utility - run URL functions stored as scripts in urls/
+# Usage: url [command] [args...]
+#   <command> may be a callable function name, for example: url estekhare 215
+#   use '<command> --help' to see command-specific help
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ -d "$REPO_ROOT/urls" ]; then
+    URLS_DIR="$REPO_ROOT/urls"
+    elif [ -d "$HOME/.urls" ]; then
+    URLS_DIR="$HOME/.urls"
+else
+    URLS_DIR="$HOME/.urls"
+    mkdir -p "$URLS_DIR"
+fi
+
+source_url_functions() {
+    [ -d "$URLS_DIR" ] || return
+    for file in "$URLS_DIR"/*; do
+        [ -f "$file" ] && [ -r "$file" ] && source "$file" 2>/dev/null
+    done
+}
+
+get_function_name() {
+    local file="$1"
+    local basename
+    local func_name
+    
+    basename=$(basename "$file")
+    func_name=""
+    
+    func_name=$(awk '
+        /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/ {
+            gsub(/^[[:space:]]*/, "", $0)
+            gsub(/[[:space:]]*\(\)[[:space:]]*\{/, "", $0)
+            if ($0 !~ /_(help|info)$/) {
+                print $0
+                exit
+            }
+        }
+    ' "$file" 2>/dev/null | tr -d '[:space:]')
+    
+    if [ -z "$func_name" ]; then
+        func_name="${basename%.*}"
+    fi
+    
+    echo "$func_name"
+}
+
+get_function_usage() {
+    local file="$1"
+    local name="$2"
+    local usage
+    usage=$(grep -m1 '^# Usage:' "$file" 2>/dev/null | sed 's/^# Usage:[[:space:]]*//')
+    if [ -n "$usage" ]; then
+        usage=${usage#"$name "}
+        usage=${usage#"$name"}
+        usage=$(printf '%s' "$usage" | sed 's/^ //')
+        echo "$usage"
+        return
+    fi
+}
+
+get_function_description() {
+    local file="$1"
+    local desc
+    desc=$(grep -m1 '^# [A-Za-z0-9_].*' "$file" 2>/dev/null | sed 's/^# //')
+    echo "$desc"
+}
+
+list_url_functions() {
+    local found=0
+    [ -d "$URLS_DIR" ] || return 1
+    
+    for file in "$URLS_DIR"/*; do
+        [ -f "$file" ] || continue
+        local name usage desc
+        name=$(get_function_name "$file")
+        [ -n "$name" ] || continue
+        
+        usage=$(get_function_usage "$file" "$name")
+        desc=$(get_function_description "$file")
+        
+        if [ -n "$usage" ] && [ -n "$desc" ]; then
+            echo "$name $usage - $desc"
+            elif [ -n "$usage" ]; then
+            echo "$name $usage"
+            elif [ -n "$desc" ]; then
+            echo "$name - $desc"
+        else
+            echo "$name"
+        fi
+        found=1
+    done
+    
+    return "$found"
+}
+
+show_help() {
+    cat <<'EOF'
+Usage: url [command] [args...]
+
+Commands:
+  <command> [args...]  Run a URL function (for example: url estekhare 215)
+  <command> --help     Show command help and argument details
+  list                  List available URL functions with usage
+  bookmark <name>       Bookmark a URL from browser (future feature)
+  help                  Show this help message
+
+Examples:
+  url estekhare 215 | content
+  url estekhare --help
+  url list
+EOF
+}
+
+show_function_help() {
+    local func_name="$1"
+    
+    if declare -f "${func_name}_help" >/dev/null 2>&1; then
+        "${func_name}_help"
+        return
+    fi
+    
+    if declare -f "url_${func_name}_help" >/dev/null 2>&1; then
+        "url_${func_name}_help"
+        return
+    fi
+    
+    echo "No help available for '$func_name'" >&2
+    return 1
+}
+
+source_url_functions
+
+command="${1:-help}"
+shift 2>/dev/null || true
+
+case "$command" in
+    list)
+        list_url_functions
+    ;;
+    help|--help|-h)
+        show_help
+    ;;
+    *)
+        if [ "$command" = "--help" ] || [ "$command" = "-h" ]; then
+            echo "Error: Missing command name" >&2
+            echo "Usage: url <command> --help" >&2
+            exit 1
+        fi
+        
+        if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+            show_function_help "$command"
+            exit $?
+        fi
+        
+        if declare -f "$command" >/dev/null 2>&1; then
+            "$command" "$@"
+            exit $?
+        fi
+        
+        if declare -f "url_${command}" >/dev/null 2>&1; then
+            "url_${command}" "$@"
+            exit $?
+        fi
+        
+        echo "No URL function found for '$command'" >&2
+        list_url_functions >&2
+        exit 1
+    ;;
+esac
