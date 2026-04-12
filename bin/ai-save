@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+
+# Default variables
+TARGET_DIR="$HOME/Documents/AI-Chats"
+DOMAIN_URL="https://gapgpt.app"
+RECREATE=0
+
+# Help message
+print_help() {
+    echo "Usage: $0 [OPTIONS]"
+    echo "Sync AI chats to local markdown files and commit them to Git."
+    echo ""
+    echo "Options:"
+    echo "  --help          Show this help message"
+    echo "  --dir <path>    Set target directory (default: \$HOME/Documents/AI-Chats)"
+    echo "  --recreate      Recreate markdown files from local .ai cache without fetching APIs"
+}
+
+# Parse arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --help) print_help; exit 0 ;;
+        --dir) TARGET_DIR="$2"; shift 2 ;;
+        --recreate) RECREATE=1; shift 1 ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+done
+
+# Dependency check
+for cmd in curl jq git; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo "Error: '$cmd' is required but not installed."
+        exit 1
+    fi
+done
+
+# Setup directories
+mkdir -p "$TARGET_DIR/.ai/chat-meta"
+mkdir -p "$TARGET_DIR/.ai/chat-content"
+cd "$TARGET_DIR" || exit 1
+
+# Initialize git if it doesn't exist
+if [ ! -d ".git" ]; then
+    git init
+    echo "Initialized empty Git repository."
+fi
+
+AUTH_FILE=".ai/auth.json"
+PROJECT_CACHE=".ai/projects.json"
+
+# Validate Authentication setup
+if [ ! -f "$AUTH_FILE" ]; then
+    echo "Error: Authentication file not found at $TARGET_DIR/$AUTH_FILE"
+    echo "Please create it with the following structure:"
+    echo '{ "Authorization": "Bearer TOKEN", "Cookie": "cookie=value; ..." }'
+    exit 1
+fi
+
+AUTH_HEADER=$(jq -r '.Authorization // empty' "$AUTH_FILE")
+COOKIE_HEADER=$(jq -r '.Cookie // empty' "$AUTH_FILE")
+
+# Helper function to fetch from API and ignore invalid JSON
+fetch_api() {
+    local url="$1"
+    local res
+    
+    # We do not retry on network error, as requested
+    res=$(curl -s --compressed "$url" \
+        -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0" \
+        -H "Accept: application/json, text/plain, */*" \
+        -H "Authorization: $AUTH_HEADER" \
+        -H "Cookie: $COOKIE_HEADER")
+
+    if ! jq empty <<< "$res" 2>/dev/null; then
+        echo "INVALID_JSON"
+        return 1
+    fi
+    echo "$res"
+}
+
+# Resolve folder name from Project Token using local cache
+get_folder_name() {
+    local p_token="$1"
+    if [[ "$p_token" == "null" || -z "$p_token" || ! -f "$PROJECT_CACHE" ]]; then
+        echo "Uncategorized"
+    else
+        local name
+        name=$(jq -r --arg t "$p_token" '.results[] | select(.token == $t) | .name' "$PROJECT_CACHE")
+        if [[ -z "$name" || "$name" == "null" ]]; then
+            echo "Uncategorized"
+        else
+            echo "$name"
+        fi
+    fi
+}
+
+# Generate deterministic file path based on chat metadata
+calculate_expected_path() {
+    local item="$1"
+    local p_token=$(jq -r '.project_token // empty' <<< "$item")
+    local title=$(jq -r '.title // "Untitled"' <<< "$item")
+    local created=$(jq -r '.created_at // empty' <<< "$item")
+
+    local folder=$(get_folder_name "$p_token")
+    
+    # Sanitize title: remove bad characters and trailing dots
+    local safe_title=$(echo "$title" | sed 's/[<>:"/\\|?*]//g' | sed 's/\.*$//')
+    
+    # Format date to YYYY-MM-DD_HH-MM
+    local safe_date=$(echo "$created" | cut -c1-16 | tr 'T' '_' | tr ':' '-')
+
+    echo "${folder}/${safe_date}_${safe_title}.md"
+}
+
+# Parse JSONs and output a Markdown formatted chat
+generate_md() {
+    local token="$1"
+    local expected_path="$2"
+    local meta_path=".ai/chat-meta/${token}.json"
+    local content_path=".ai/chat-content/${token}.json"
+
+    if [[ ! -f "$meta_path" || ! -f "$content_path" ]]; then
+        return
+    fi
+
+    local folder=$(dirname "$expected_path")
+    mkdir -p "$folder"
+
+    local tmp_md=$(mktemp)
+
+    local title=$(jq -r '.title // "Untitled"' "$meta_path")
+    echo "# $title" > "$tmp_md"
+    echo "" >> "$tmp_md"
+
+    # Iterate over chat messages
+    local msg_count=$(jq '.messages | length' "$content_path")
+    for (( i=0; i<msg_count; i++ )); do
+        local text=$(jq -r ".messages[$i].text // empty" "$content_path")
+
+        if [[ -n "$text" ]]; then
+            echo "## User" >> "$tmp_md"
+            echo "$text" >> "$tmp_md"
+            echo "" >> "$tmp_md"
+        fi
+
+        local resp_count=$(jq ".messages[$i].response | length" "$content_path")
+        if [[ $resp_count -gt 0 ]]; then
+            echo "## Assistant" >> "$tmp_md"
+            for (( j=0; j<resp_count; j++ )); do
+                local type=$(jq -r ".messages[$i].response[$j].type // empty" "$content_path")
+                local content=$(jq -r ".messages[$i].response[$j].content // empty" "$content_path")
+
+                if [[ "$type" == "reasoning" ]]; then
+                    echo "<details><summary>Reasoning</summary>" >> "$tmp_md"
+                    echo "" >> "$tmp_md"
+                    echo "$content" >> "$tmp_md"
+                    echo "" >> "$tmp_md"
+                    echo "</details>" >> "$tmp_md"
+                    echo "" >> "$tmp_md"
+                else
+                    echo "$content" >> "$tmp_md"
+                    echo "" >> "$tmp_md"
+                fi
+            done
+        fi
+    done
+
+    # Extract metadata for the footer
+    local model=$(jq -r '.model // "Unknown"' "$meta_path")
+    local created=$(jq -r '.created_at // "Unknown"' "$meta_path")
+    local last_msg=$(jq -r '.last_message_created_at // "Unknown"' "$meta_path")
+    local p_token=$(jq -r '.project_token // "None"' "$meta_path")
+
+    echo "---" >> "$tmp_md"
+    echo "**Model:** \`$model\`  " >> "$tmp_md"
+    echo "**Created At:** \`$created\`  " >> "$tmp_md"
+    echo "**Last Message:** \`$last_msg\`  " >> "$tmp_md"
+    echo "**Chat Token:** \`$token\`  " >> "$tmp_md"
+    echo "**Project Token:** \`$p_token\`" >> "$tmp_md"
+
+    # Move generated file to location
+    mv "$tmp_md" "$expected_path"
+    
+    # Keep track of file location to handle future renames/moves easily
+    echo "$expected_path" > ".ai/chat-meta/${token}.path"
+}
+
+# Assess single chat item, fetch missing/updated data, and generate markdown
+process_chat_item() {
+    local item="$1"
+    local token=$(jq -r '.token' <<< "$item")
+
+    local meta_path=".ai/chat-meta/${token}.json"
+    local path_tracker=".ai/chat-meta/${token}.path"
+
+    local needs_update=0
+    local fetch_content=0
+
+    # 1. Determine if a content fetch is required
+    if [[ ! -f "$meta_path" ]]; then
+        needs_update=1
+        fetch_content=1
+    else
+        local old_last=$(jq -r '.last_message_created_at // empty' "$meta_path")
+        local new_last=$(jq -r '.last_message_created_at // empty' <<< "$item")
+        if [[ "$old_last" != "$new_last" ]]; then
+            needs_update=1
+            fetch_content=1
+        fi
+    fi
+
+    # 2. Check if a folder or file-name move occurred
+    local expected_path=$(calculate_expected_path "$item")
+    local old_path=""
+    if [[ -f "$path_tracker" ]]; then
+        old_path=$(cat "$path_tracker")
+    fi
+
+    if [[ -n "$old_path" && "$old_path" != "$expected_path" ]]; then
+        # File moved or was renamed, clean up old structure
+        if [[ -f "$old_path" ]]; then
+            rm -f "$old_path"
+            rmdir $(dirname "$old_path") 2>/dev/null || true # safely remove empty folder
+        fi
+        needs_update=1
+    elif [[ ! -f "$expected_path" ]]; then
+        # Mark as missing
+        needs_update=1
+    fi
+
+    if [[ "$needs_update" -eq 0 ]]; then
+        return
+    fi
+
+    echo "- Syncing chat: $token"
+
+    if [[ "$fetch_content" -eq 1 ]]; then
+        local content_res
+        content_res=$(fetch_api "https://gapgpt.app/api/v1/get_chat/token/${token}")
+        if [[ "$content_res" == "INVALID_JSON" ]]; then
+            echo "  -> Failed to fetch content API, skipping."
+            return
+        fi
+        echo "$content_res" > ".ai/chat-content/${token}.json"
+        echo "$item" > "$meta_path"
+    fi
+
+    generate_md "$token" "$expected_path"
+}
+
+# --- RECREATION MODE ---
+if [[ "$RECREATE" -eq 1 ]]; then
+    echo "Recreating all markdown files from local JSON cache..."
+    for meta_file in .ai/chat-meta/*.json; do
+        if [[ -f "$meta_file" ]]; then
+            token=$(basename "$meta_file" .json)
+            item=$(cat "$meta_file")
+            expected_path=$(calculate_expected_path "$item")
+            
+            old_path=""
+            if [[ -f ".ai/chat-meta/${token}.path" ]]; then
+                old_path=$(cat ".ai/chat-meta/${token}.path")
+            fi
+            
+            if [[ -n "$old_path" && "$old_path" != "$expected_path" && -f "$old_path" ]]; then
+                rm -f "$old_path"
+                rmdir $(dirname "$old_path") 2>/dev/null || true
+            fi
+            
+            generate_md "$token" "$expected_path"
+        fi
+    done
+    echo "Recreation complete."
+    exit 0
+fi
+
+# --- SYNC MODE ---
+
+echo "Fetching projects..."
+proj_res=$(fetch_api "$DOMAIN_URL/api/v1/projects")
+if [[ "$proj_res" != "INVALID_JSON" ]]; then
+    echo "$proj_res" > "$PROJECT_CACHE"
+fi
+
+if [[ -f "$PROJECT_CACHE" ]]; then
+    proj_count=$(jq '.results | length' "$PROJECT_CACHE")
+    for (( i=0; i<proj_count; i++ )); do
+        p_token=$(jq -r ".results[$i].token" "$PROJECT_CACHE")
+        p_name=$(jq -r ".results[$i].name" "$PROJECT_CACHE")
+        echo "Processing folder: $p_name"
+
+        {
+            chat_list_res=$(fetch_api "$DOMAIN_URL/api/v1/projects/$p_token")
+            if [[ "$chat_list_res" == "INVALID_JSON" ]]; then continue; fi
+
+            chat_count=$(jq '.chats | length' <<< "$chat_list_res")
+            for (( j=0; j<chat_count; j++ )); do
+                chat_item=$(jq -c ".chats[$j]" <<< "$chat_list_res")
+                process_chat_item "$chat_item"
+            done
+        } &
+    done
+    wait
+fi
+
+echo "Processing Uncategorized chats..."
+url="$DOMAIN_URL/api/v1/chat_list?limit=40&offset=0"
+while [[ -n "$url" && "$url" != "null" ]]; do
+    list_res=$(fetch_api "$url")
+    if [[ "$list_res" == "INVALID_JSON" ]]; then break; fi
+
+    count=$(jq '.results | length' <<< "$list_res")
+    if [[ "$count" -eq 0 ]]; then break; fi
+
+    for (( j=0; j<count; j++ )); do
+        chat_item=$(jq -c ".results[$j]" <<< "$list_res")
+        process_chat_item "$chat_item"
+    done
+
+    # Fetch next page url if it exists
+    url=$(jq -r '.next // empty' <<< "$list_res")
+    if [ ! -z "$url" ]; then
+        echo "  Next: $url"
+    fi
+done
+
+# --- COMMIT ---
+echo "Sync complete! Registering git state..."
+if ! grep -q ".ai/auth.json" "$TARGET_DIR/.gitignore"; then
+    echo ".ai/auth.json" >> "$TARGET_DIR/.gitignore";
+fi
+git add .
+git status
+if git status --porcelain | grep -q "^"; then
+    git commit -m "Auto-sync $(date)"
+    echo "Changes successfully committed to Git."
+else
+    echo "No new updates found. Everything is up to date."
+fi
