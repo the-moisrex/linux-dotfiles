@@ -1,5 +1,12 @@
 #!/bin/bash
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+echo "Usage: prompt cpp"
+echo
+echo "Builds a prompt for generating or editing C++ code from stdin."
+exit 0
+fi
+
 echo "You are an expert C++ developer with deep knowledge of modern C++ (C++17, C++20, C++23, C++26) and strict adherence to the C++ Core Guidelines."
 echo "Follow these principles when providing C++ code:"
 echo ""

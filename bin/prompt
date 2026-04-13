@@ -188,9 +188,15 @@ copy_output_to_clipboard() {
   fi
 }
 
+# Normalize prompt output before printing or copying it anywhere.
+sanitize_output() {
+  "$SCRIPT_DIR/strip-colors" | "$SCRIPT_DIR/clean.privacy"
+}
+
 # Function to handle output based on whether it goes to terminal or is piped
 handle_output() {
   local output="$1"
+  output="$(printf "%s" "$output" | sanitize_output)"
   if $STDOUT_TO_TERMINAL; then
     copy_output_to_clipboard "$output"
   else
@@ -202,14 +208,16 @@ handle_output() {
 handle_text_with_stdin() {
   if $STDOUT_TO_TERMINAL; then
     # Capture full output when going to terminal
-    OUTPUT=$(cat -- "$PROMPT_FILE"; if $STDIN_PIPED; then cat -; fi)
+    OUTPUT=$( { cat -- "$PROMPT_FILE"; if $STDIN_PIPED; then cat -; fi; } | sanitize_output )
     copy_output_to_clipboard "$OUTPUT"
   else
     # Direct output without capturing for clipboard
-    cat -- "$PROMPT_FILE"
-    if $STDIN_PIPED; then
-      cat -  # read from stdin and append to stdout
-    fi
+    {
+      cat -- "$PROMPT_FILE"
+      if $STDIN_PIPED; then
+        cat -  # read from stdin and append to stdout
+      fi
+    } | sanitize_output
   fi
 }
 
@@ -219,15 +227,15 @@ if ! $STDIN_PIPED; then
     # For bash prompts, pipe clipboard content to the script and handle output
     if $STDOUT_TO_TERMINAL; then
       # Capture output when stdout goes to terminal
-      OUTPUT=$(exec "$SCRIPT_DIR/c.p" | bash "$PROMPT_FILE" "$@")
+      OUTPUT=$(exec "$SCRIPT_DIR/c.p" | bash "$PROMPT_FILE" "$@" | sanitize_output)
       copy_output_to_clipboard "$OUTPUT"
     else
       # Just pipe clipboard content to the script
-      exec "$SCRIPT_DIR/c.p" | exec bash "$PROMPT_FILE" "$@"
+      exec "$SCRIPT_DIR/c.p" | bash "$PROMPT_FILE" "$@" | sanitize_output
     fi
   else
     # For text prompts, output the file content first, then append clipboard content
-    OUTPUT=$(cat -- "$PROMPT_FILE"; "$SCRIPT_DIR/c.p")
+    OUTPUT=$( { cat -- "$PROMPT_FILE"; "$SCRIPT_DIR/c.p"; } | sanitize_output )
     handle_output "$OUTPUT"
   fi
 else
@@ -237,11 +245,11 @@ else
     # Forward arguments ($@) to the prompt file.
     if $STDOUT_TO_TERMINAL; then
       # Capture output when stdout goes to terminal
-      OUTPUT=$(bash "$PROMPT_FILE" "$@")
+      OUTPUT=$(bash "$PROMPT_FILE" "$@" | sanitize_output)
       copy_output_to_clipboard "$OUTPUT"
     else
       # If stdout is piped, just execute normally
-      exec bash "$PROMPT_FILE" "$@"
+      exec bash "$PROMPT_FILE" "$@" | sanitize_output
     fi
   else
     # text or md - handle text prompts with possible stdin

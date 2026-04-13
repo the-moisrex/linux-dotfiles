@@ -4,6 +4,21 @@ set -euo pipefail
 file_path="${1:-}"
 file=$(basename "$file_path")
 
+show_help() {
+    cat <<'EOF'
+Usage: prompt symbols [file]
+
+Builds a prompt that reviews symbol names.
+If a file path is given, it reads that file; otherwise it reads stdin.
+Usage: `prompt symbols $(fzf)`
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    show_help
+    exit 0
+fi
+
 print_prompt() {
     if [[ -n "$file_path" ]]; then
         echo "Review the symbols in this file and find bad names that should be renamed."

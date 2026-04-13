@@ -1,5 +1,12 @@
 #!/bin/bash
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+echo "Usage: prompt cpp-reviewer"
+echo
+echo "Builds a prompt for reviewing C++ code from stdin."
+exit 0
+fi
+
 echo "You are an expert C++ code reviewer with deep knowledge of modern C++ (C++17, C++20, C++23, C++26) and strict adherence to the C++ Core Guidelines."
 echo "Follow these principles when reviewing C++ code:"
 echo ""

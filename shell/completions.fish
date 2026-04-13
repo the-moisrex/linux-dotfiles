@@ -63,8 +63,20 @@ function __fish_prompt_needs_name
     test (count $tokens) -le 1
 end
 
+function __fish_prompt_is_run
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2; and test "$tokens[2]" = run
+end
+
 complete -c prompt -n '__fish_prompt_needs_name' -s h -l help -d "Show help message"
 complete -c prompt -n '__fish_prompt_needs_name' -xa "list" -d "List available prompts"
 # Only complete prompt names for the first positional argument so later args can fall back to file completion.
 complete -c prompt -n '__fish_prompt_needs_name' -xa '(prompt list 2>/dev/null)' -d "Prompt name"
-
+complete -c prompt -n '__fish_prompt_is_run' -l head -x -d "Trim run output with head"
+complete -c prompt -n '__fish_prompt_is_run' -a '(run print-targets)' -d "Run target"
+complete -c prompt -n '__fish_prompt_is_run' -a lldb -d "Debug in lldb"
+complete -c prompt -n '__fish_prompt_is_run' -a gdb -d "Debug in gdb"
+complete -c prompt -n '__fish_prompt_is_run' -a watch -d "Watch for changes"
+complete -c prompt -n '__fish_prompt_is_run' -a 'less -r -l l' -d "Pipe the results to less"
+complete -c prompt -n '__fish_prompt_is_run' -a print-targets -d "Print Targets"
+complete -c prompt -n '__fish_prompt_is_run' -a help -d "Print Help"

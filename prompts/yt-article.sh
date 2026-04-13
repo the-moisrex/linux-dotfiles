@@ -5,6 +5,20 @@ set -o nounset
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
+show_help() {
+  cat <<'EOF'
+Usage: prompt yt-article
+
+Builds an article-writing prompt from stdin.
+If stdin is a single YouTube URL, it tries to fetch subtitles/text first.
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  show_help
+  exit 0
+fi
+
 print_prompt() {
     if [[ -z "$1" ]]; then
         echo "Turn this into an article and remove the ads, repetition, meaningless stuff and add key takeaways and summary notes at the end as well: "
@@ -66,4 +80,3 @@ process_stdin() {
 }
 
 process_stdin
-
