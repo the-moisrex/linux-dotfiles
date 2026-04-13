@@ -28,9 +28,9 @@ EXT_ORDER=(.sh .txt .md "")
 
 # helper: get script directory
 _script_dir() {
-  # works even if symlinked only roughly; use BASH_SOURCE for bash
-  local src="${BASH_SOURCE[0]:-$0}"
-  printf "%s" "$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+    # works even if symlinked only roughly; use BASH_SOURCE for bash
+    local src="${BASH_SOURCE[0]:-$0}"
+    printf "%s" "$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
 }
 
 SCRIPT_DIR="$(_script_dir)"
@@ -190,7 +190,7 @@ copy_output_to_clipboard() {
 
 # Normalize prompt output before printing or copying it anywhere.
 sanitize_output() {
-  "$SCRIPT_DIR/strip-colors" | "$SCRIPT_DIR/clean.privacy"
+  "$SCRIPT_DIR/strip-osc" | "$SCRIPT_DIR/clean.privacy"
 }
 
 # Function to handle output based on whether it goes to terminal or is piped

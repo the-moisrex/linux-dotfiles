@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
         --help|-h)
             show_help
             exit 0
-            ;;
+        ;;
         --head)
             if [[ $# -lt 2 ]]; then
                 echo "Missing value for --head" >&2
@@ -37,11 +37,11 @@ while [[ $# -gt 0 ]]; do
             fi
             head_lines="$2"
             shift 2
-            ;;
+        ;;
         *)
             run_args+=("$1")
             shift
-            ;;
+        ;;
     esac
 done
 
@@ -59,12 +59,12 @@ if [[ ${#run_args[@]} -gt 0 ]]; then
     else
         run_status=$?
     fi
-    run_output="$("$curdir/strip-colors" < "$tmp_output")"
+    run_output="$("$curdir/strip-osc" < "$tmp_output")"
     rm -f "$tmp_output"
     run_description='the `run` command'
 else
     run_status="unknown"
-    run_output="$(cat - | "$curdir/strip-colors")"
+    run_output="$(cat - | "$curdir/strip-osc")"
     run_description='the piped `run` output'
 fi
 
