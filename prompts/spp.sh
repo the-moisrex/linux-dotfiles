@@ -2,6 +2,13 @@
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "Usage: prompt spp <symbol-or-input>"
+  echo
+  echo "Builds a C++ debugging prompt and expands the given input through \`spp\`."
+  exit 0
+fi
+
 print_prompt() {
   echo "I'm working on a C++ project and need help debugging an issue. Here's the relevant code:"
   echo

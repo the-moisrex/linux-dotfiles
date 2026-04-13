@@ -118,13 +118,24 @@ def complete_telegram_links [spans: list<string>] {
 # === prompt completion ===
 def complete_prompt [spans: list<string>] {
     let word = ($spans | last | default "")
-    let static = [
-        {value: "-h", description: "Show help"},
-        {value: "--help", description: "Show help"},
-        {value: "list", description: "List available prompts"}
-    ]
-    let prompt_names = try { prompt list 2>/dev/null | lines | each {|p| {value: $p, description: "Prompt name"}} } catch { [] }
-    filter_completions $word ($static ++ $prompt_names)
+    let parts = ($spans | where {|x| $x != ""})
+
+    if ($parts | length) > 1 and ($parts | get 1) == "run" {
+        let run_spans = (["run"] ++ ($parts | skip 2))
+        let run_completion = (complete_run $run_spans)
+        let static = [
+            {value: "--head", description: "Trim run output with head"}
+        ]
+        filter_completions $word ($static ++ $run_completion)
+    } else {
+        let static = [
+            {value: "-h", description: "Show help"},
+            {value: "--help", description: "Show help"},
+            {value: "list", description: "List available prompts"}
+        ]
+        let prompt_names = try { prompt list 2>/dev/null | lines | each {|p| {value: $p, description: "Prompt name"}} } catch { [] }
+        filter_completions $word ($static ++ $prompt_names)
+    }
 }
 
 # === Fish & Carapace bridges ===
@@ -172,4 +183,3 @@ $env.config = ($env.config? | default {} | merge {
     algorithm: "prefix"  # can be "fuzzy" for broader matching
   }
 })
-

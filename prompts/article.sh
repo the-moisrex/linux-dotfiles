@@ -5,6 +5,20 @@ set -o nounset
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
+show_help() {
+  cat <<'EOF'
+Usage: prompt article
+
+Builds a prompt that turns stdin into a cleaned-up markdown article.
+If stdin is a single URL, it tries to fetch subtitles/text first.
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  show_help
+  exit 0
+fi
+
 print_prompt() {
   echo "Turn this into an markdown article and remove the ads, repetition, meaningless stuff: "
   echo
@@ -58,4 +72,3 @@ process_stdin() {
 }
 
 process_stdin
-
