@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# OSC (Operating System Commands)
+cat | sed -r 's/\x1B(\[[0-9;]*[A-Za-z]|\][^\x07]*(\x07|\x1B\\)|[()][AB012]|[=>]|[NOM78HcDEFGIJKLMPQRSTUVWXYZ^_]|%[G8]|#[0-9])//g'
+
+
+# What this covers:
+# - `\[[0-9;]*[A-Za-z]` — CSI sequences (colors, cursor movement, erase, `[H`, `[2J`, `[3J`, etc.)
+# - `\][^\x07]*(\x07|\x1B\\)` — OSC sequences (e.g. terminal title)
+# - `[()][AB012]` — character set designations
+# - The rest — various single-char VT escape codes
