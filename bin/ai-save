@@ -3,7 +3,8 @@
 # Default variables
 TARGET_DIR="$HOME/Documents/AI-Chats"
 DOMAIN_URL="https://gapgpt.app"
-RECREATE=0
+MODE="SYNC"
+TARGET_TOKEN=""
 
 # Help message
 print_help() {
@@ -11,9 +12,11 @@ print_help() {
     echo "Sync AI chats to local markdown files and commit them to Git."
     echo ""
     echo "Options:"
-    echo "  --help          Show this help message"
-    echo "  --dir <path>    Set target directory (default: \$HOME/Documents/AI-Chats)"
-    echo "  --recreate      Recreate markdown files from local .ai cache without fetching APIs"
+    echo "  --help           Show this help message"
+    echo "  --dir <path>     Set target directory (default: \$HOME/Documents/AI-Chats)"
+    echo "  --recreate       Recreate markdown files from local .ai cache without fetching APIs"
+    echo "  --remove <token> Remove a specific chat by its token"
+    echo "  --reload <token> Remove a specific chat locally and download it again from scratch"
 }
 
 # Parse arguments
@@ -21,7 +24,9 @@ while [[ "$#" -gt 0 ]]; do
     case $1 in
         --help) print_help; exit 0 ;;
         --dir) TARGET_DIR="$2"; shift 2 ;;
-        --recreate) RECREATE=1; shift 1 ;;
+        --recreate) MODE="RECREATE"; shift 1 ;;
+        --remove) MODE="REMOVE"; TARGET_TOKEN="$2"; shift 2 ;;
+        --reload) MODE="RELOAD"; TARGET_TOKEN="$2"; shift 2 ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -248,8 +253,81 @@ process_chat_item() {
     generate_md "$token" "$expected_path"
 }
 
-# --- RECREATION MODE ---
-if [[ "$RECREATE" -eq 1 ]]; then
+# Completely remove local chat structures
+remove_chat() {
+    local token="$1"
+    if [[ -z "$token" ]]; then
+        echo "Error: Token cannot be empty."
+        exit 1
+    fi
+    echo "Removing chat: $token"
+    
+    local path_tracker=".ai/chat-meta/${token}.path"
+    if [[ -f "$path_tracker" ]]; then
+        local old_path=$(cat "$path_tracker")
+        if [[ -n "$old_path" && -f "$old_path" ]]; then
+            rm -f "$old_path"
+            rmdir "$(dirname "$old_path")" 2>/dev/null || true
+        fi
+        rm -f "$path_tracker"
+    fi
+    
+    rm -f ".ai/chat-meta/${token}.json"
+    rm -f ".ai/chat-content/${token}.json"
+    
+    echo "Chat $token has been completely removed."
+}
+
+# Remove existing contents locally and redownload entirely from scratch
+reload_chat() {
+    local token="$1"
+    if [[ -z "$token" ]]; then
+        echo "Error: Token cannot be empty."
+        exit 1
+    fi
+    echo "Reloading chat: $token"
+    
+    local meta_path=".ai/chat-meta/${token}.json"
+    if [[ ! -f "$meta_path" ]]; then
+        echo "Error: Metadata for $token not found locally. Cannot reconstruct markdown without it."
+        echo "Please run a normal sync without parameters to discover and fetch this chat."
+        exit 1
+    fi
+    
+    local item=$(cat "$meta_path")
+    
+    # 1. Clean up old markdown file
+    local path_tracker=".ai/chat-meta/${token}.path"
+    if [[ -f "$path_tracker" ]]; then
+        local old_path=$(cat "$path_tracker")
+        if [[ -n "$old_path" && -f "$old_path" ]]; then
+            rm -f "$old_path"
+            rmdir "$(dirname "$old_path")" 2>/dev/null || true
+        fi
+    fi
+    
+    # 2. Remove old content block
+    rm -f ".ai/chat-content/${token}.json"
+    
+    # 3. Fetch fresh content from scratch
+    local content_res
+    content_res=$(fetch_api "$DOMAIN_URL/api/v1/get_chat/token/${token}")
+    if [[ "$content_res" == "INVALID_JSON" ]]; then
+        echo "  -> Failed to fetch content API. Reload aborted."
+        exit 1
+    fi
+    echo "$content_res" > ".ai/chat-content/${token}.json"
+    
+    # 4. Generate freshly baked markdown
+    local expected_path=$(calculate_expected_path "$item")
+    generate_md "$token" "$expected_path"
+    
+    echo "Chat $token reloaded successfully."
+}
+
+# --- MODE EXECUTION ---
+
+if [[ "$MODE" == "RECREATE" ]]; then
     echo "Recreating all markdown files from local JSON cache..."
     for meta_file in .ai/chat-meta/*.json; do
         if [[ -f "$meta_file" ]]; then
@@ -272,60 +350,66 @@ if [[ "$RECREATE" -eq 1 ]]; then
     done
     echo "Recreation complete."
     exit 0
-fi
 
-# --- SYNC MODE ---
+elif [[ "$MODE" == "REMOVE" ]]; then
+    remove_chat "$TARGET_TOKEN"
 
-echo "Fetching projects..."
-proj_res=$(fetch_api "$DOMAIN_URL/api/v1/projects")
-if [[ "$proj_res" != "INVALID_JSON" ]]; then
-    echo "$proj_res" > "$PROJECT_CACHE"
-fi
+elif [[ "$MODE" == "RELOAD" ]]; then
+    reload_chat "$TARGET_TOKEN"
 
-if [[ -f "$PROJECT_CACHE" ]]; then
-    proj_count=$(jq '.results | length' "$PROJECT_CACHE")
-    for (( i=0; i<proj_count; i++ )); do
-        p_token=$(jq -r ".results[$i].token" "$PROJECT_CACHE")
-        p_name=$(jq -r ".results[$i].name" "$PROJECT_CACHE")
-        echo "Processing folder: $p_name"
-
-        {
-            chat_list_res=$(fetch_api "$DOMAIN_URL/api/v1/projects/$p_token")
-            if [[ "$chat_list_res" == "INVALID_JSON" ]]; then continue; fi
-
-            chat_count=$(jq '.chats | length' <<< "$chat_list_res")
-            for (( j=0; j<chat_count; j++ )); do
-                chat_item=$(jq -c ".chats[$j]" <<< "$chat_list_res")
-                process_chat_item "$chat_item"
-            done
-        } &
-    done
-    wait
-fi
-
-echo "Processing Uncategorized chats..."
-url="$DOMAIN_URL/api/v1/chat_list?limit=40&offset=0"
-while [[ -n "$url" && "$url" != "null" ]]; do
-    list_res=$(fetch_api "$url")
-    if [[ "$list_res" == "INVALID_JSON" ]]; then break; fi
-
-    count=$(jq '.results | length' <<< "$list_res")
-    if [[ "$count" -eq 0 ]]; then break; fi
-
-    for (( j=0; j<count; j++ )); do
-        chat_item=$(jq -c ".results[$j]" <<< "$list_res")
-        process_chat_item "$chat_item"
-    done
-
-    # Fetch next page url if it exists
-    url=$(jq -r '.next // empty' <<< "$list_res")
-    if [ ! -z "$url" ]; then
-        echo "  Next: $url"
+else
+    # SYNC MODE
+    echo "Fetching projects..."
+    proj_res=$(fetch_api "$DOMAIN_URL/api/v1/projects")
+    if [[ "$proj_res" != "INVALID_JSON" ]]; then
+        echo "$proj_res" > "$PROJECT_CACHE"
     fi
-done
+
+    if [[ -f "$PROJECT_CACHE" ]]; then
+        proj_count=$(jq '.results | length' "$PROJECT_CACHE")
+        for (( i=0; i<proj_count; i++ )); do
+            p_token=$(jq -r ".results[$i].token" "$PROJECT_CACHE")
+            p_name=$(jq -r ".results[$i].name" "$PROJECT_CACHE")
+            echo "Processing folder: $p_name"
+
+            {
+                chat_list_res=$(fetch_api "$DOMAIN_URL/api/v1/projects/$p_token")
+                if [[ "$chat_list_res" == "INVALID_JSON" ]]; then continue; fi
+
+                chat_count=$(jq '.chats | length' <<< "$chat_list_res")
+                for (( j=0; j<chat_count; j++ )); do
+                    chat_item=$(jq -c ".chats[$j]" <<< "$chat_list_res")
+                    process_chat_item "$chat_item"
+                done
+            } &
+        done
+        wait
+    fi
+
+    echo "Processing Uncategorized chats..."
+    url="$DOMAIN_URL/api/v1/chat_list?limit=40&offset=0"
+    while [[ -n "$url" && "$url" != "null" ]]; do
+        list_res=$(fetch_api "$url")
+        if [[ "$list_res" == "INVALID_JSON" ]]; then break; fi
+
+        count=$(jq '.results | length' <<< "$list_res")
+        if [[ "$count" -eq 0 ]]; then break; fi
+
+        for (( j=0; j<count; j++ )); do
+            chat_item=$(jq -c ".results[$j]" <<< "$list_res")
+            process_chat_item "$chat_item"
+        done
+
+        # Fetch next page url if it exists
+        url=$(jq -r '.next // empty' <<< "$list_res")
+        if [ ! -z "$url" ]; then
+            echo "  Next: $url"
+        fi
+    done
+fi
 
 # --- COMMIT ---
-echo "Sync complete! Registering git state..."
+echo "Registering git state..."
 if ! grep -q ".ai/auth.json" "$TARGET_DIR/.gitignore"; then
     echo ".ai/auth.json" >> "$TARGET_DIR/.gitignore";
 fi
