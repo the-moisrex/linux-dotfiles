@@ -374,13 +374,13 @@ else
 
             {
                 chat_list_res=$(fetch_api "$DOMAIN_URL/api/v1/projects/$p_token")
-                if [[ "$chat_list_res" == "INVALID_JSON" ]]; then continue; fi
-
-                chat_count=$(jq '.chats | length' <<< "$chat_list_res")
-                for (( j=0; j<chat_count; j++ )); do
-                    chat_item=$(jq -c ".chats[$j]" <<< "$chat_list_res")
-                    process_chat_item "$chat_item"
-                done
+                if [[ "$chat_list_res" != "INVALID_JSON" ]]; then 
+                    chat_count=$(jq '.chats | length' <<< "$chat_list_res")
+                    for (( j=0; j<chat_count; j++ )); do
+                        chat_item=$(jq -c ".chats[$j]" <<< "$chat_list_res")
+                        process_chat_item "$chat_item"
+                    done
+                fi
             } &
         done
         wait
