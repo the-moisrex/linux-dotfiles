@@ -58,9 +58,13 @@ complete -c telegram.links -f -l list-ids -d "List the stored Telegram IDs"
 complete -c telegram.links -f -a "(telegram.links --list-ids)" -d "Telegram Channel ID"
 
 # prompt
-complete -c prompt -s h -l help -d "Show help message"
-complete -c prompt -xa "list" -d "List available prompts"
-# Complete prompt names from the prompt list command
-complete -c prompt -xa '(prompt list 2>/dev/null)' -d "Prompt name"
+function __fish_prompt_needs_name
+    set -l tokens (commandline -opc)
+    test (count $tokens) -le 1
+end
 
+complete -c prompt -n '__fish_prompt_needs_name' -s h -l help -d "Show help message"
+complete -c prompt -n '__fish_prompt_needs_name' -xa "list" -d "List available prompts"
+# Only complete prompt names for the first positional argument so later args can fall back to file completion.
+complete -c prompt -n '__fish_prompt_needs_name' -xa '(prompt list 2>/dev/null)' -d "Prompt name"
 
