@@ -15,6 +15,7 @@ print_help() {
     echo "  --help           Show this help message"
     echo "  --dir <path>     Set target directory (default: \$HOME/Documents/AI-Chats)"
     echo "  --recreate       Recreate markdown files from local .ai cache without fetching APIs"
+    echo "  --overwrite      Check for broken chats (missing messages) and securely replace them"
     echo "  --remove <token> Remove a specific chat by its token"
     echo "  --reload <token> Remove a specific chat locally and download it again from scratch"
 }
@@ -25,6 +26,7 @@ while [[ "$#" -gt 0 ]]; do
         --help) print_help; exit 0 ;;
         --dir) TARGET_DIR="$2"; shift 2 ;;
         --recreate) MODE="RECREATE"; shift 1 ;;
+        --overwrite) MODE="OVERWRITE"; shift 1 ;;
         --remove) MODE="REMOVE"; TARGET_TOKEN="$2"; shift 2 ;;
         --reload) MODE="RELOAD"; TARGET_TOKEN="$2"; shift 2 ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
@@ -64,23 +66,37 @@ fi
 AUTH_HEADER=$(jq -r '.Authorization // empty' "$AUTH_FILE")
 COOKIE_HEADER=$(jq -r '.Cookie // empty' "$AUTH_FILE")
 
-# Helper function to fetch from API and ignore invalid JSON
+# Helper function to fetch from API and ignore invalid JSON or HTTP errors
 fetch_api() {
     local url="$1"
-    local res
+    local http_code
+    local body
+    local tmp_body
     
+    tmp_body=$(mktemp)
+
     # We do not retry on network error, as requested
-    res=$(curl -s --compressed "$url" \
+    http_code=$(curl -s -o "$tmp_body" -w "%{http_code}" --compressed "$url" \
         -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0" \
         -H "Accept: application/json, text/plain, */*" \
         -H "Authorization: $AUTH_HEADER" \
         -H "Cookie: $COOKIE_HEADER")
 
-    if ! jq empty <<< "$res" 2>/dev/null; then
+    body=$(cat "$tmp_body")
+    rm -f "$tmp_body"
+
+    # Verify that request was successful (ignore 4xx, 5xx, or network failure codes)
+    if [[ "$http_code" -ge 400 || "$http_code" == "000" ]]; then
         echo "INVALID_JSON"
         return 1
     fi
-    echo "$res"
+
+    # Ignore invalid JSON blocks
+    if ! jq empty <<< "$body" 2>/dev/null; then
+        echo "INVALID_JSON"
+        return 1
+    fi
+    echo "$body"
 }
 
 # Resolve folder name from Project Token using local cache
@@ -137,8 +153,12 @@ generate_md() {
     echo "# $title" > "$tmp_md"
     echo "" >> "$tmp_md"
 
-    # Iterate over chat messages
-    local msg_count=$(jq '.messages | length' "$content_path")
+    # Iterate over chat messages gracefully preventing bash syntax errors
+    local msg_count=$(jq '.messages | length' "$content_path" 2>/dev/null)
+    if [[ -z "$msg_count" || "$msg_count" == "null" ]]; then
+        msg_count=0
+    fi
+    
     for (( i=0; i<msg_count; i++ )); do
         local text=$(jq -r ".messages[$i].text // empty" "$content_path")
 
@@ -225,7 +245,7 @@ process_chat_item() {
         # File moved or was renamed, clean up old structure
         if [[ -f "$old_path" ]]; then
             rm -f "$old_path"
-            rmdir $(dirname "$old_path") 2>/dev/null || true # safely remove empty folder
+            rmdir "$(dirname "$old_path")" 2>/dev/null || true # safely remove empty folder
         fi
         needs_update=1
     elif [[ ! -f "$expected_path" ]]; then
@@ -241,11 +261,20 @@ process_chat_item() {
 
     if [[ "$fetch_content" -eq 1 ]]; then
         local content_res
-        content_res=$(fetch_api "https://gapgpt.app/api/v1/get_chat/token/${token}")
+        content_res=$(fetch_api "$DOMAIN_URL/api/v1/get_chat/token/${token}")
         if [[ "$content_res" == "INVALID_JSON" ]]; then
             echo "  -> Failed to fetch content API, skipping."
-            return
+            return 1
         fi
+        
+        # Verify content has messages array to prevent caching error payloads
+        local is_valid_array
+        is_valid_array=$(jq '.messages | type == "array"' <<< "$content_res" 2>/dev/null)
+        if [[ "$is_valid_array" != "true" ]]; then
+            echo "  -> API returned invalid chat data (missing messages array), skipping to prevent corruption."
+            return 1
+        fi
+
         echo "$content_res" > ".ai/chat-content/${token}.json"
         echo "$item" > "$meta_path"
     fi
@@ -258,7 +287,7 @@ remove_chat() {
     local token="$1"
     if [[ -z "$token" ]]; then
         echo "Error: Token cannot be empty."
-        exit 1
+        return 1
     fi
     echo "Removing chat: $token"
     
@@ -283,7 +312,7 @@ reload_chat() {
     local token="$1"
     if [[ -z "$token" ]]; then
         echo "Error: Token cannot be empty."
-        exit 1
+        return 1
     fi
     echo "Reloading chat: $token"
     
@@ -291,7 +320,7 @@ reload_chat() {
     if [[ ! -f "$meta_path" ]]; then
         echo "Error: Metadata for $token not found locally. Cannot reconstruct markdown without it."
         echo "Please run a normal sync without parameters to discover and fetch this chat."
-        exit 1
+        return 1
     fi
     
     local item=$(cat "$meta_path")
@@ -314,8 +343,17 @@ reload_chat() {
     content_res=$(fetch_api "$DOMAIN_URL/api/v1/get_chat/token/${token}")
     if [[ "$content_res" == "INVALID_JSON" ]]; then
         echo "  -> Failed to fetch content API. Reload aborted."
-        exit 1
+        return 1
     fi
+    
+    # Make sure we didn't fetch an API error message
+    local is_valid_array
+    is_valid_array=$(jq '.messages | type == "array"' <<< "$content_res" 2>/dev/null)
+    if [[ "$is_valid_array" != "true" ]]; then
+        echo "  -> Fetched content does not contain messages. Reload aborted."
+        return 1
+    fi
+
     echo "$content_res" > ".ai/chat-content/${token}.json"
     
     # 4. Generate freshly baked markdown
@@ -342,7 +380,7 @@ if [[ "$MODE" == "RECREATE" ]]; then
             
             if [[ -n "$old_path" && "$old_path" != "$expected_path" && -f "$old_path" ]]; then
                 rm -f "$old_path"
-                rmdir $(dirname "$old_path") 2>/dev/null || true
+                rmdir "$(dirname "$old_path")" 2>/dev/null || true
             fi
             
             generate_md "$token" "$expected_path"
@@ -350,6 +388,32 @@ if [[ "$MODE" == "RECREATE" ]]; then
     done
     echo "Recreation complete."
     exit 0
+
+elif [[ "$MODE" == "OVERWRITE" ]]; then
+    echo "Checking for chats with missing content to overwrite them..."
+    for meta_file in .ai/chat-meta/*.json; do
+        if [[ -f "$meta_file" ]]; then
+            token=$(basename "$meta_file" .json)
+            content_file=".ai/chat-content/${token}.json"
+            
+            is_broken=0
+            if [[ ! -f "$content_file" ]]; then
+                is_broken=1
+            else
+                # Find structurally broken caches (caused by the old bug)
+                is_valid_array=$(jq '.messages | type == "array"' "$content_file" 2>/dev/null)
+                if [[ "$is_valid_array" != "true" ]]; then
+                    is_broken=1
+                fi
+            fi
+            
+            if [[ "$is_broken" -eq 1 ]]; then
+                echo "- Broken chat detected: $token. Overwriting..."
+                reload_chat "$token"
+            fi
+        fi
+    done
+    # Falls through to Git commit process below
 
 elif [[ "$MODE" == "REMOVE" ]]; then
     remove_chat "$TARGET_TOKEN"
