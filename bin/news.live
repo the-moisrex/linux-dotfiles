@@ -58,7 +58,13 @@ fi
 
 prev_content=""
 while true; do
-    news ${news_args[@]} | dedup ${dedup_args[@]} | while read -r link; do
+    if ! news_output="$(news "${news_args[@]}" | dedup "${dedup_args[@]}")"; then
+        sleep "$SLEEP"
+        continue
+    fi
+
+    while IFS= read -r link; do
+        [[ -z "$link" ]] && continue
         content="$(content "$link" 2>/dev/null || true)"
         
         # Skip if empty
@@ -81,5 +87,5 @@ while true; do
         && xdg-open "$link" 2>/dev/null &
         
         sleep "$SLEEP"
-    done
+    done <<< "$news_output"
 done
