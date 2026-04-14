@@ -79,17 +79,14 @@ print_prompt() {
         echo "Only suggest renames that materially improve readability or maintainability."
         echo "At the end, provide a git diff that applies the renames."
     fi
-    echo
-    echo '```'
 }
 
 print_prompt
 
 if [[ -n "$file_path" && -f "$file_path" ]]; then
+    echo
+    echo '```'
     trim_context "$(cat -- "$file_path")"
-elif $stdin_piped; then
-    trim_context "$stdin_content"
+    echo
+    echo '```'
 fi
-
-echo
-echo '```'

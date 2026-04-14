@@ -145,17 +145,13 @@ def complete_prompt [spans: list<string>] {
         let static = [
             {value: "-h", description: "Show help"},
             {value: "--help", description: "Show help"},
-            {value: "list", description: "List available prompts"}
+            {value: "list", description: "List available prompts"},
+            {value: "list-prompts", description: "List prompt names only"}
         ]
         let prompt_names = try {
-            prompt list 2>/dev/null
+            prompt list-prompts 2>/dev/null
             | lines
-            | each {|line|
-                let parts = ($line | split row "\t")
-                let name = ($parts | get 0)
-                let desc = ($parts | get 1? | default "Prompt name")
-                {value: $name, description: $desc}
-            }
+            | each {|name| {value: $name, description: "Prompt name"} }
         } catch { [] }
         filter_completions $word ($static ++ $prompt_names)
     }
