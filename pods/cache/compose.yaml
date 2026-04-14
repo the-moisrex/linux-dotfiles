@@ -13,6 +13,9 @@ services:
       - "traefik.http.routers.apt-cache.entrypoints=web"
       - "traefik.http.routers.apt-cache.rule=Host(`apt-cache.localhost`)"
       - "traefik.http.services.apt-cache.loadbalancer.server.port=3142"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   pacman-cache:
     image: ghcr.io/anatol/pacoloco:latest
@@ -28,6 +31,9 @@ services:
       - "traefik.http.routers.pacman-cache.entrypoints=web"
       - "traefik.http.routers.pacman-cache.rule=Host(`pacman-cache.localhost`)"
       - "traefik.http.services.pacman-cache.loadbalancer.server.port=9129"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   cache-dashboard:
     image: nginx:alpine
@@ -39,3 +45,11 @@ services:
       - "traefik.http.routers.cache-dashboard.entrypoints=web"
       - "traefik.http.routers.cache-dashboard.rule=Host(`cache.localhost`)"
       - "traefik.http.services.cache-dashboard.loadbalancer.server.port=80"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
+
+networks:
+  nointernet:
+    name: nointernet
+    internal: true

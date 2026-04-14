@@ -22,6 +22,9 @@ services:
       - "traefik.http.routers.netdata.rule=Host(`netdata.localhost`)"
       - "traefik.http.routers.netdata.entrypoints=web"
       - "traefik.http.services.netdata.loadbalancer.server.port=19999"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   prometheus:
     image: prom/prometheus:latest
@@ -42,6 +45,9 @@ services:
       - "traefik.http.routers.prometheus.rule=Host(`prometheus.localhost`)"
       - "traefik.http.routers.prometheus.entrypoints=web"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   grafana:
     image: grafana/grafana:latest
@@ -60,7 +66,15 @@ services:
       - "traefik.http.routers.grafana.rule=Host(`grafana.localhost`)"
       - "traefik.http.routers.grafana.entrypoints=web"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
 volumes:
   prometheus_data:
   grafana_data:
+
+networks:
+  nointernet:
+    name: nointernet
+    internal: true

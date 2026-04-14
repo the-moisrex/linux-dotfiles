@@ -12,6 +12,9 @@ services:
         || Host(`it.localhost`)
         || Host(`it-tools.localhost`)
       - "traefik.http.services.ittools.loadbalancer.server.port=80"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
     restart: unless-stopped
 
   code-server:
@@ -37,6 +40,9 @@ services:
         Host(`code.localhost`)
         || Host(`vscode.localhost`)
       - "traefik.http.services.code.loadbalancer.server.port=8080"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
     restart: unless-stopped
 
   gitea:
@@ -54,6 +60,9 @@ services:
         Host(`git.localhost`)
         || Host(`gitea.localhost`)
       - "traefik.http.services.gitea.loadbalancer.server.port=3000"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
     restart: unless-stopped
 
   # Minimal Sentry services
@@ -65,11 +74,16 @@ services:
       POSTGRES_DB: sentry
     volumes:
       - sentry-postgres-data:/var/lib/postgresql/data
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
     restart: unless-stopped
 
   sentry-redis:
     image: redis:alpine
     restart: unless-stopped
+    networks:
+      - nointernet
 
   sentry-web:
     image: sentry:latest
@@ -94,6 +108,9 @@ services:
       - "traefik.http.routers.sentry.entrypoints=web"
       - "traefik.http.routers.sentry.rule=Host(`sentry.localhost`)"
       - "traefik.http.services.sentry.loadbalancer.server.port=9000"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
     command: sh -c "sentry upgrade --noinput && sentry createuser --email admin@example.com --password toor --superuser || true && sentry run web"
     restart: unless-stopped
 
@@ -102,3 +119,8 @@ volumes:
   gitea-data:
   sentry-data:
   sentry-postgres-data:
+
+networks:
+  nointernet:
+    name: nointernet
+    internal: true

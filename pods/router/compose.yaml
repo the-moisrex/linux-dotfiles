@@ -26,6 +26,9 @@ services:
       - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`)"
       - "traefik.http.routers.traefik.entrypoints=web"
       - "traefik.http.routers.traefik.service=api@internal"
+    networks:
+      - nointernet
+      - frontend
 
   dashboard:
     build: ../dashboard
@@ -38,6 +41,9 @@ services:
       - "traefik.http.routers.dashboard.rule=Host(`dashboard.localhost`)"
       - "traefik.http.routers.dashboard.entrypoints=web"
       - "traefik.http.services.dashboard.loadbalancer.server.port=8000"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
 # Middleware for redirecting HTTP -> HTTPS
   # traefik-middlewares:
@@ -51,3 +57,9 @@ services:
 #  prometheus_data:
 #  grafana_data:
 
+networks:
+  frontend:
+    driver: bridge
+  nointernet:
+    name: nointernet
+    internal: true   # podman-native internet blocking
