@@ -7,10 +7,10 @@ head_lines=""
 
 show_help() {
   cat <<'EOF'
-Usage: prompt stupid [--head N] [FILE]
-       some-command | prompt stupid [--head N] [FILE]
+Usage: prompt api [--head N] [FILE]
+       some-command | prompt api [--head N] [FILE]
 
-Find the stupid mistakes in this code.
+Review this API design.
 
 Options:
   --head N   Keep only the first N lines of the embedded context
@@ -57,9 +57,9 @@ if $stdin_piped && [[ -n "$stdin_content" ]]; then
 ' "$stdin_content"
 fi
 
-echo "Find the stupid mistakes in this code."
-echo "Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'."
-echo "Be blunt but useful. List each issue with a short explanation and the smallest practical fix."
+echo "Review this API design."
+echo "Look for confusing names, inconsistent behavior, unclear contracts, weak validation, awkward call sites, leaky abstractions, and backward-compatibility risks."
+echo "Suggest the smallest meaningful API improvements, explain the tradeoffs briefly, and provide a git diff for the recommended changes."
 echo
 
 if [[ $# -gt 0 && -f "$1" ]]; then

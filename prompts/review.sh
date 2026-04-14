@@ -7,10 +7,10 @@ head_lines=""
 
 show_help() {
   cat <<'EOF'
-Usage: prompt stupid [--head N] [FILE]
-       some-command | prompt stupid [--head N] [FILE]
+Usage: prompt review [--head N] [FILE]
+       some-command | prompt review [--head N] [FILE]
 
-Find the stupid mistakes in this code.
+Review this code like a strong practical reviewer.
 
 Options:
   --head N   Keep only the first N lines of the embedded context
@@ -57,9 +57,10 @@ if $stdin_piped && [[ -n "$stdin_content" ]]; then
 ' "$stdin_content"
 fi
 
-echo "Find the stupid mistakes in this code."
-echo "Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'."
-echo "Be blunt but useful. List each issue with a short explanation and the smallest practical fix."
+echo "Review this code like a strong practical reviewer."
+echo "Prioritize bugs, behavioral regressions, risky assumptions, edge cases, maintainability problems, and missing tests."
+echo "List the most important findings first with short explanations, then provide a git diff for the most useful fixes."
+echo "If there are no major issues, say that clearly and still suggest a small safe improvement as a git diff if one is worthwhile."
 echo
 
 if [[ $# -gt 0 && -f "$1" ]]; then

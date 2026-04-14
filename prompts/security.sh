@@ -3,20 +3,48 @@ set -euo pipefail
 
 stdin_piped=false
 stdin_content=""
+head_lines=""
 
 show_help() {
   cat <<'EOF'
-Usage: prompt security [FILE]
-       some-command | prompt security [FILE]
+Usage: prompt security [--head N] [FILE]
+       some-command | prompt security [--head N] [FILE]
 
-Builds a prompt that reviews code or text for security and safety issues.
+Review this for security and safety issues.
+
+Options:
+  --head N   Keep only the first N lines of the embedded context
 EOF
 }
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  show_help
-  exit 0
-fi
+trim_context() {
+  local content="$1"
+  if [[ -n "$head_lines" ]]; then
+    printf '%s' "$content" | head -n "$head_lines"
+  else
+    printf '%s' "$content"
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    --head)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --head" >&2
+        exit 2
+      fi
+      head_lines="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 if ! [ -t 0 ]; then
   stdin_piped=true
@@ -24,7 +52,9 @@ if ! [ -t 0 ]; then
 fi
 
 if $stdin_piped && [[ -n "$stdin_content" ]]; then
-  printf '%s\n\n' "$stdin_content"
+  printf '%s
+
+' "$stdin_content"
 fi
 
 echo "Review this for security and safety issues."
@@ -38,10 +68,10 @@ if [[ $# -gt 0 && -f "$1" ]]; then
   echo "File: $file_name"
   echo
   echo '```'
-  cat -- "$1"
+  trim_context "$(cat -- "$1")"
 elif $stdin_piped; then
   echo '```'
-  printf '%s' "$stdin_content"
+  trim_context "$stdin_content"
 else
   echo '```'
 fi

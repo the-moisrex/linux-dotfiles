@@ -7,10 +7,10 @@ head_lines=""
 
 show_help() {
   cat <<'EOF'
-Usage: prompt stupid [--head N] [FILE]
-       some-command | prompt stupid [--head N] [FILE]
+Usage: prompt commit [--head N] [FILE]
+       some-command | prompt commit [--head N] [FILE]
 
-Find the stupid mistakes in this code.
+Write a strong git commit message for this change.
 
 Options:
   --head N   Keep only the first N lines of the embedded context
@@ -57,9 +57,12 @@ if $stdin_piped && [[ -n "$stdin_content" ]]; then
 ' "$stdin_content"
 fi
 
-echo "Find the stupid mistakes in this code."
-echo "Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'."
-echo "Be blunt but useful. List each issue with a short explanation and the smallest practical fix."
+echo "Write a strong git commit message for this change."
+echo "Provide:"
+echo "1. A concise subject line."
+echo "2. A short body explaining what changed and why."
+echo "3. If helpful, an alternative subject line."
+echo "Keep it specific and practical, not generic."
 echo
 
 if [[ $# -gt 0 && -f "$1" ]]; then

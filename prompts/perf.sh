@@ -7,10 +7,10 @@ head_lines=""
 
 show_help() {
   cat <<'EOF'
-Usage: prompt stupid [--head N] [FILE]
-       some-command | prompt stupid [--head N] [FILE]
+Usage: prompt perf [--head N] [FILE]
+       some-command | prompt perf [--head N] [FILE]
 
-Find the stupid mistakes in this code.
+Review this for performance issues.
 
 Options:
   --head N   Keep only the first N lines of the embedded context
@@ -57,9 +57,10 @@ if $stdin_piped && [[ -n "$stdin_content" ]]; then
 ' "$stdin_content"
 fi
 
-echo "Find the stupid mistakes in this code."
-echo "Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'."
-echo "Be blunt but useful. List each issue with a short explanation and the smallest practical fix."
+echo "Review this for performance issues."
+echo "Look for unnecessary allocations, wasteful copies, bad algorithms, blocking work, repeated parsing, excessive syscalls, poor data layout, and avoidable hot-path overhead."
+echo "Call out which issues matter most in practice, and provide a git diff for the smallest high-impact improvements."
+echo "Do not sacrifice correctness or readability for tiny wins."
 echo
 
 if [[ $# -gt 0 && -f "$1" ]]; then
