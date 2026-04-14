@@ -124,7 +124,7 @@ for directory in search_paths:
     if not path.is_dir():
         continue
     for file in sorted(path.iterdir()):
-        if not file.is_file():
+        if not file.is_file() or file.name.startswith('_'):
             continue
         name = file.name
         for ext in exts[:-1]:
@@ -187,7 +187,7 @@ for directory in search_paths:
     if not path.is_dir():
         continue
     for file in sorted(path.iterdir()):
-        if not file.is_file():
+        if not file.is_file() or file.name.startswith('_'):
             continue
         name = file.name
         for ext in exts[:-1]:

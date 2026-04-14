@@ -18,45 +18,10 @@ Options:
 EOF
 }
 
-trim_context() {
-    local content="$1"
-    if [[ -n "$head_lines" ]]; then
-        printf '%s\n' "$content" | head -n "$head_lines"
-    else
-        printf '%s\n' "$content"
-    fi
-}
+source "$(dirname "$0")/_common.sh"
+common_behavior
+set -- "${ARGS[@]}"
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --help|-h)
-            show_help
-            exit 0
-        ;;
-        --head)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for --head" >&2
-                exit 2
-            fi
-            head_lines="$2"
-            shift 2
-        ;;
-        *)
-            # Accumulate positional arguments (files)
-            files+=("$1")
-            shift
-        ;;
-    esac
-done
-
-if ! [ -t 0 ]; then
-    stdin_piped=true
-    stdin_content="$(cat)"
-fi
-
-if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
-    printf '%s\n\n' "$stdin_content"
-fi
 
 echo "Improve the comments and inline documentation here."
 echo "Add only high-value comments, docstrings, or usage notes where they genuinely help understanding."
@@ -65,12 +30,12 @@ echo "Provide the result as a git diff."
 echo
 
 # Process all collected file arguments
-for file in "${files[@]}"; do
+for file in "$@"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"
         echo
-        echo '```'
+        echo "\`\`\`$(infer_lang "$file_name")"
         trim_context "$(cat -- "$file")"
         echo
         echo '```'

@@ -18,45 +18,10 @@ Options:
 EOF
 }
 
-trim_context() {
-    local content="$1"
-    if [[ -n "$head_lines" ]]; then
-        printf '%s\n' "$content" | head -n "$head_lines"
-    else
-        printf '%s\n' "$content"
-    fi
-}
+source "$(dirname "$0")/_common.sh"
+common_behavior
+set -- "${ARGS[@]}"
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --help|-h)
-            show_help
-            exit 0
-        ;;
-        --head)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for --head" >&2
-                exit 2
-            fi
-            head_lines="$2"
-            shift 2
-        ;;
-        *)
-            # Instead of breaking, collect the positional arguments into an array
-            files+=("$1")
-            shift
-        ;;
-    esac
-done
-
-if ! [ -t 0 ]; then
-    stdin_piped=true
-    stdin_content="$(cat)"
-fi
-
-if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
-    printf '%s\n\n' "$stdin_content"
-fi
 
 echo "Explain this clearly and concretely."
 echo "Describe what it does, how the parts fit together, key control flow, important assumptions, and likely failure points."
@@ -64,12 +29,12 @@ echo "If useful, finish with a small git diff that improves readability through 
 echo
 
 # Iterate over all collected files
-for file in "${files[@]}"; do
+for file in "$@"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"
         echo
-        echo '```'
+        echo "\`\`\`$(infer_lang "$file_name")"
         trim_context "$(cat -- "$file")"
         echo '```'
         echo
