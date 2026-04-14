@@ -15,6 +15,6 @@ case $1 in
 
     *)
         # Get the ip address of the specified domain (only one ip)
-        dig +short +timeout=3 $1 | grep '^[.0-9]*$' | head -n 1
+        dig +short +timeout=3 "$1" | grep '^[.0-9]*$' | head -n 1
     ;;
 esac

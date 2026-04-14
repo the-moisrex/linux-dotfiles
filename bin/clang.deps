@@ -20,7 +20,7 @@ EOF
 
 [[ "$1" == "-h" || "$1" == "--help" ]] && { show_help; exit 0; }
 
-clang++ -MM $@ | \
+clang++ -MM "$@" | \
 sed 's|^\(.*\)\.o: ||' | \
 tr ' ' '\n' | \
 grep -vE '^\s*(\\|)\s*$' | \

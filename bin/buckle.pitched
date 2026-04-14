@@ -6,8 +6,8 @@
 tmpdir=$(mktemp -d);
 echo "Files stored at: ${tmpdir}"
 for file in /usr/share/bucklespring/*.wav; do
-  filename=$(basename $file);
-  sox "$file" "$tmpdir/$filename" $@
+  filename=$(basename "$file");
+  sox "$file" "$tmpdir/$filename" "$@"
 done;
 # buckle -p "$tmpdir" -g 75 &>/dev/null
 buckle --fallback-sound -p "$tmpdir" &>/dev/null
