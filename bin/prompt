@@ -250,6 +250,9 @@ Notes:
 USAGE
 }
 
+# unset the environment variable so `prompt ... | prompt ...` wouldn't recieve the variable
+unset -v FROM_CLIPBOARD
+
 # Parse basic options. We don't have many flags; accept --help.
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   usage
@@ -355,11 +358,11 @@ if ! $STDIN_PIPED; then
     # For bash prompts, pipe clipboard content to the script and handle output
     if $STDOUT_TO_TERMINAL; then
       # Capture output when stdout goes to terminal
-      OUTPUT=$(exec "$SCRIPT_DIR/c.p" | bash "$PROMPT_FILE" "$@" | sanitize_output)
+      OUTPUT=$(exec "$SCRIPT_DIR/c.p" | FROM_CLIPBOARD=1 bash "$PROMPT_FILE" "$@" | sanitize_output)
       copy_output_to_clipboard "$OUTPUT"
     else
       # Just pipe clipboard content to the script
-      exec "$SCRIPT_DIR/c.p" | bash "$PROMPT_FILE" "$@" | sanitize_output
+      exec "$SCRIPT_DIR/c.p" | FROM_CLIPBOARD=1 bash "$PROMPT_FILE" "$@" | sanitize_output
     fi
   else
     # For text prompts, output the file content first, then append clipboard content
