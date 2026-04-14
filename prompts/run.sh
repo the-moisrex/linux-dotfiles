@@ -5,6 +5,7 @@ curdir="$(realpath "$(dirname "$0")/../bin")"
 head_lines=""
 run_args=()
 stdin_piped=false
+stdin_content=""
 
 show_help() {
     cat <<'EOF'
@@ -22,6 +23,7 @@ EOF
 
 if ! [ -t 0 ]; then
     stdin_piped=true
+    stdin_content="$(cat)"
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -64,7 +66,7 @@ if [[ ${#run_args[@]} -gt 0 ]]; then
     run_description='the `run` command'
 else
     run_status="unknown"
-    run_output="$(cat - | "$curdir/strip-osc")"
+    run_output="$(printf "%s" "$stdin_content" | "$curdir/strip-osc")"
     run_description='the piped `run` output'
 fi
 
@@ -78,6 +80,10 @@ fi
 #   printf ' %q' "$arg"
 # done
 # printf '`\n\n'
+
+if [[ -n "$stdin_content" && ${#run_args[@]} -gt 0 ]]; then
+    printf '%s\n\n' "$stdin_content"
+fi
 
 printf 'Please debug the output from %s. Identify the root cause, explain the failure clearly, and suggest the smallest useful fix. If the build succeeded but the program failed at runtime, focus on the runtime issue.\n\n' "$run_description"
 printf 'Exit status: %s\n\n' "$run_status"
