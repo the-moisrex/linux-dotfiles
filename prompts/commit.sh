@@ -71,12 +71,6 @@ if [[ $# -gt 0 && -f "$1" ]]; then
   echo
   echo '```'
   trim_context "$(cat -- "$1")"
-elif $stdin_piped; then
-  echo '```'
-  trim_context "$stdin_content"
-else
+  echo
   echo '```'
 fi
-
-echo
-echo '```'

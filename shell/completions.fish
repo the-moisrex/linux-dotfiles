@@ -82,8 +82,9 @@ end
 
 complete -c prompt -n '__fish_prompt_needs_name' -s h -l help -d "Show help message"
 complete -c prompt -n '__fish_prompt_needs_name' -xa "list" -d "List available prompts"
+complete -c prompt -n '__fish_prompt_needs_name' -xa "list-prompts" -d "List prompt names only"
 # Only complete prompt names for the first positional argument so later args can fall back to file completion.
-complete -c prompt -n '__fish_prompt_needs_name' -xa '(prompt list 2>/dev/null | string replace -r "\t.*" "")' -d "Prompt name"
+complete -c prompt -n '__fish_prompt_needs_name' -xa '(prompt list-prompts 2>/dev/null)' -d "Prompt name"
 complete -c prompt -n '__fish_prompt_has_name' -s h -l help -d "Show help for the selected prompt"
 complete -c prompt -n '__fish_prompt_supports_head' -l head -x -d "Keep only the first N lines of embedded context"
 complete -c prompt -n '__fish_prompt_is_run' -l head -x -d "Trim run output with head"

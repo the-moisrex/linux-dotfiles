@@ -80,12 +80,10 @@ _file_type() {
   esac
 }
 
-# List available prompts, unique, one per line as:
-#   <name>\t<short help>
-cmd_list() {
-  local dir ext base name file desc
+# Collect available prompts, unique, preserving search order preference.
+_collect_prompts() {
+  local dir ext base name file
   declare -A seen
-  declare -A files
   # search through paths and files
   while IFS= read -r dir; do
     [[ -d "$dir" ]] || continue
@@ -103,16 +101,50 @@ cmd_list() {
       name="${name%.}"
       if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
         seen[$name]=1
-        files[$name]="$file"
+        printf "%s\t%s\n" "$name" "$file"
       fi
     done < <(find "$dir" -maxdepth 1 -type f -print 2>/dev/null)
   done < <(_search_paths)
-  # print order: sort by name to be deterministic
-  while IFS= read -r name; do
-    file="${files[$name]}"
-    desc="$(_prompt_short_help "$file")"
-    printf "%s\t%s\n" "$name" "$desc"
-  done < <(printf "%s\n" "${!seen[@]}" | sort)
+}
+
+cmd_list_prompts() {
+  _collect_prompts | sort | cut -f1
+}
+
+_print_prompt_table() {
+  local rows="$1"
+  local bold cyan dim reset
+  bold=$'\033[1m'
+  cyan=$'\033[36m'
+  dim=$'\033[2m'
+  reset=$'\033[0m'
+
+  printf "%b%-18s%b %b%s%b\n" "$bold" "Prompt" "$reset" "$bold" "Description" "$reset"
+  printf "%b%-18s%b %b%s%b\n" "$dim" "------" "$reset" "$dim" "-----------" "$reset"
+  while IFS=$'\t' read -r name desc; do
+    printf "%b%-18s%b %s\n" "$cyan" "$name" "$reset" "$desc"
+  done <<< "$rows"
+}
+
+# List available prompts, unique, one per line as:
+#   <name>\t<short help>
+cmd_list() {
+  local rows=""
+  local name file desc
+
+  while IFS=$'\t' read -r name file; do
+    [[ -n "$name" ]] || continue
+    desc="$(_prompt_short_help "$file" || printf "Prompt")"
+    rows+="${name}"$'\t'"${desc}"$'\n'
+  done < <(_collect_prompts | sort)
+
+  rows="${rows%$'\n'}"
+
+  if [[ -t 1 ]]; then
+    _print_prompt_table "$rows"
+  else
+    printf "%s\n" "$rows"
+  fi
 }
 
 _prompt_short_help() {
@@ -142,6 +174,7 @@ usage() {
 Usage:
   prompt --help
   prompt list
+  prompt list-prompts
   prompt <name> [-- arg1 arg2 ...]    # or prompt <name> arg1 arg2 ...
 Examples:
   cat file.cpp | prompt cpp-debug
@@ -152,6 +185,7 @@ Notes:
   - For .sh prompts, the script will be executed with bash and receive STDIN and any additional arguments.
   - For .txt/.md (or no-ext treated as text) prompts the file contents are printed, then STDIN is appended (if any).
   - 'prompt list' prints available prompts with a short help summary.
+  - 'prompt list-prompts' prints only prompt names, one per line.
 USAGE
 }
 
@@ -162,8 +196,12 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 if [[ "${1:-}" == "list" ]]; then
-  # produce only names, nothing else
   cmd_list
+  exit 0
+fi
+
+if [[ "${1:-}" == "list-prompts" ]]; then
+  cmd_list_prompts
   exit 0
 fi
 
