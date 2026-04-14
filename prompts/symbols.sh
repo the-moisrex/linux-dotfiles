@@ -3,6 +3,8 @@ set -euo pipefail
 
 file_path="${1:-}"
 file=$(basename "$file_path")
+stdin_piped=false
+stdin_content=""
 
 show_help() {
     cat <<'EOF'
@@ -17,6 +19,11 @@ EOF
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     show_help
     exit 0
+fi
+
+if ! [ -t 0 ]; then
+    stdin_piped=true
+    stdin_content="$(cat)"
 fi
 
 print_prompt() {
@@ -39,12 +46,16 @@ print_prompt() {
     echo '```'
 }
 
+if $stdin_piped && [[ -n "$stdin_content" ]]; then
+    printf '%s\n\n' "$stdin_content"
+fi
+
 print_prompt
 
 if [[ -n "$file_path" && -f "$file_path" ]]; then
     cat -- "$file_path"
-else
-    cat -
+elif $stdin_piped; then
+    printf '%s' "$stdin_content"
 fi
 
 echo

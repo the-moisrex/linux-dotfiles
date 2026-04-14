@@ -1,35 +1,42 @@
 #!/bin/bash
+set -euo pipefail
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
+stdin_piped=false
+stdin_content=""
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  echo "Usage: prompt spp <symbol-or-input>"
+  echo "Usage: prompt spp <symbol> [symbol...]"
   echo
-  echo "Builds a C++ debugging prompt and expands the given input through \`spp\`."
+  echo "Builds a C++ debugging prompt and expands the given symbols through \`spp\`."
   exit 0
 fi
 
-print_prompt() {
-  echo "I'm working on a C++ project and need help debugging an issue. Here's the relevant code:"
+if ! [ -t 0 ]; then
+  stdin_piped=true
+  stdin_content="$(cat)"
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: prompt spp <symbol> [symbol...]" >&2
+  exit 2
+fi
+
+if $stdin_piped && [[ -n "$stdin_content" ]]; then
+  printf '%s\n\n' "$stdin_content"
+fi
+
+echo "Additional C++ symbol context:"
+echo
+
+for symbol in "$@"; do
+  echo "Symbol: $symbol"
   echo
   echo '```cpp'
-}
-
-process_stdin() {
-  # Read all stdin into a variable while preserving newlines
-  local input
-  input="$1"
-
-
-  # Print the prompt
-  print_prompt
-
-  # Run spp and prompt symbol test_symbol on the input
-  "$curdir/spp" "$input"
+  "$curdir/spp" "$symbol"
   echo
   echo '```'
   echo
-  echo "What's wrong with this code and how can I fix it?"
-}
+done
 
-process_stdin "$1"
+echo "Use the symbol context above when analyzing the issue."
