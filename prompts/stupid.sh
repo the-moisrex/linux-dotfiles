@@ -65,9 +65,14 @@ if ! [ -t 0 ]; then
 fi
 
 if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
-    printf '%s
-
-    ' "$stdin_content"
+    printf '%s\n\n' "$stdin_content"
+    elif [[ $# -eq 0 ]]; then
+    if command -v fzf >/dev/null; then
+        set -- "$(git ls-files | fzf -m --ghost='Select files to operate on')"
+    else
+        echo "No input files and fzf is not installed."
+        exit
+    fi
 fi
 
 echo "Find the stupid mistakes in this code."
