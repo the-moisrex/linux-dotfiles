@@ -23,6 +23,9 @@ services:
       - "traefik.http.routers.neo4j.rule=Host(`neo4j.localhost`)"
       - "traefik.http.routers.neo4j.entrypoints=web"
       - "traefik.http.services.neo4j.loadbalancer.server.port=7474"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # MariaDB (compatible with MySQL)
   mariadb:
@@ -45,6 +48,9 @@ services:
       - "traefik.http.routers.mariadb.rule=Host(`mariadb.localhost`)"
       - "traefik.http.routers.mariadb.entrypoints=web"
       - "traefik.http.services.mariadb.loadbalancer.server.port=3306"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # phpMyAdmin for MariaDB/MySQL management
   phpmyadmin:
@@ -70,6 +76,9 @@ services:
       - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`)"
       - "traefik.http.routers.phpmyadmin.entrypoints=web"
       - "traefik.http.services.phpmyadmin.loadbalancer.server.port=80"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # SQLite Admin interface
   sqlite:
@@ -88,6 +97,9 @@ services:
       - "traefik.http.routers.sqlite.rule=Host(`sqlite.localhost`)"
       - "traefik.http.routers.sqlite.entrypoints=web"
       - "traefik.http.services.sqlite.loadbalancer.server.port=8080"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # DuckDB - Using a Jupyter notebook container with DuckDB installed
   duckdb:
@@ -112,6 +124,9 @@ services:
       - "traefik.http.routers.duckdb.rule=Host(`duckdb.localhost`)"
       - "traefik.http.routers.duckdb.entrypoints=web"
       - "traefik.http.services.duckdb.loadbalancer.server.port=8888"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # PostgreSQL database
   postgres:
@@ -132,6 +147,9 @@ services:
       - "traefik.http.routers.postgres.rule=Host(`postgres.localhost`)"
       - "traefik.http.routers.postgres.entrypoints=web"
       - "traefik.http.services.postgres.loadbalancer.server.port=5432"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # pgAdmin for PostgreSQL management
   pgadmin:
@@ -160,6 +178,9 @@ services:
       - "traefik.http.routers.pgadmin.entrypoints=web"
       - "traefik.http.services.pgadmin.loadbalancer.server.port=80"
       - "traefik.http.services.pgadmin.loadbalancer.server.scheme=http"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # Adminer - Universal database management tool
   adminer:
@@ -183,6 +204,9 @@ services:
       - "traefik.http.routers.adminer.rule=Host(`adminer.localhost`)"
       - "traefik.http.routers.adminer.entrypoints=web"
       - "traefik.http.services.adminer.loadbalancer.server.port=8080"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # Redis - In-memory data structure store
   redis:
@@ -199,6 +223,9 @@ services:
       - "traefik.http.routers.redis.rule=Host(`redis.localhost`)"
       - "traefik.http.routers.redis.entrypoints=web"
       - "traefik.http.services.redis.loadbalancer.server.port=6379"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # MongoDB - NoSQL document database
   mongodb:
@@ -217,6 +244,9 @@ services:
       - "traefik.http.routers.mongodb.rule=Host(`mongodb.localhost`)"
       - "traefik.http.routers.mongodb.entrypoints=web"
       - "traefik.http.services.mongodb.loadbalancer.server.port=27017"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # Supabase - Open source Firebase alternative (PostgreSQL backend)
   # Note: Full Supabase deployment requires additional services (auth, storage, etc.)
@@ -241,6 +271,9 @@ services:
       - "traefik.http.routers.supabase-db.rule=Host(`supabase-db.localhost`)"
       - "traefik.http.routers.supabase-db.entrypoints=web"
       - "traefik.http.services.supabase-db.loadbalancer.server.port=5432"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # Supabase Studio - Web-based interface for managing Supabase projects
   supabase-studio:
@@ -263,6 +296,9 @@ services:
       - "traefik.http.routers.supabase-studio.rule=Host(`supabase-studio.localhost`)"
       - "traefik.http.routers.supabase-studio.entrypoints=web"
       - "traefik.http.services.supabase-studio.loadbalancer.server.port=3000"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
 
   # MinIO - Object storage compatible with Amazon S3
   minio:
@@ -293,4 +329,13 @@ services:
       - "traefik.http.routers.minio-console.rule=Host(`minio.localhost`)"
       - "traefik.http.routers.minio-console.service=minio-console"
       - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+      - "traefik.docker.network=nointernet"
     restart: unless-stopped
+    networks:
+      - nointernet
+
+
+networks:
+  nointernet:
+    name: nointernet
+    internal: true
