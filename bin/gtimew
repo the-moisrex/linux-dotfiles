@@ -7,12 +7,12 @@ fi
 
 TIMEWARRIORDB=".timewarrior";
 
-until [ "$(realpath "$TIMEWARRIORDB")" = "/" -o -d "$TIMEWARRIORDB" ]; do
+until [ "$(realpath "$TIMEWARRIORDB")" = "/" ] || [ -d "$TIMEWARRIORDB" ]; do
   TIMEWARRIORDB="../${TIMEWARRIORDB}";
 done;
 
 if [ -d "$TIMEWARRIORDB" ]; then
-  TIMEWARRIORDB="$TIMEWARRIORDB" timew $@;
+  TIMEWARRIORDB="$TIMEWARRIORDB" timew "$@";
 else
-  timew $@;
+  timew "$@";
 fi;
