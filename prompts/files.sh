@@ -18,77 +18,11 @@ Options:
 EOF
 }
 
-infer_lang() {
-  local file="$1"
-  local base ext
 
-  base="$(basename "$file")"
-  ext="${base##*.}"
+source "$(dirname "$0")/_common.sh"
+common_behavior
+set -- "${ARGS[@]}"
 
-  case "$base" in
-    Dockerfile) echo "dockerfile" ;;
-    Makefile|makefile|GNUmakefile) echo "makefile" ;;
-    CMakeLists.txt) echo "cmake" ;;
-    *) case "$ext" in
-      c) echo "c" ;;
-      h) echo "c" ;;
-      cc|cp|cpp|cxx|c++|hpp|hxx|hh|h++) echo "cpp" ;;
-      m) echo "objectivec" ;;
-      mm) echo "objective-cpp" ;;
-      rs) echo "rust" ;;
-      py|pyi) echo "python" ;;
-      sh|bash) echo "bash" ;;
-      zsh) echo "zsh" ;;
-      fish) echo "fish" ;;
-      nu) echo "nu" ;;
-      js|cjs|mjs) echo "javascript" ;;
-      ts|mts|cts) echo "typescript" ;;
-      jsx) echo "jsx" ;;
-      tsx) echo "tsx" ;;
-      java) echo "java" ;;
-      kt|kts) echo "kotlin" ;;
-      swift) echo "swift" ;;
-      go) echo "go" ;;
-      rb) echo "ruby" ;;
-      php) echo "php" ;;
-      lua) echo "lua" ;;
-      pl|pm) echo "perl" ;;
-      r) echo "r" ;;
-      scala) echo "scala" ;;
-      cs) echo "csharp" ;;
-      fs|fsx) echo "fsharp" ;;
-      vb) echo "vbnet" ;;
-      dart) echo "dart" ;;
-      ex|exs) echo "elixir" ;;
-      erl|hrl) echo "erlang" ;;
-      clj|cljs|cljc) echo "clojure" ;;
-      ml|mli) echo "ocaml" ;;
-      sql) echo "sql" ;;
-      html|htm) echo "html" ;;
-      css) echo "css" ;;
-      scss) echo "scss" ;;
-      sass) echo "sass" ;;
-      less) echo "less" ;;
-      xml) echo "xml" ;;
-      xsl|xslt) echo "xslt" ;;
-      svg) echo "svg" ;;
-      json) echo "json" ;;
-      jsonc) echo "jsonc" ;;
-      yaml|yml) echo "yaml" ;;
-      toml) echo "toml" ;;
-      ini|cfg|conf) echo "ini" ;;
-      env) echo "dotenv" ;;
-      md) echo "markdown" ;;
-      txt|log) echo "text" ;;
-      diff|patch) echo "diff" ;;
-      proto) echo "proto" ;;
-      asm|s|S) echo "asm" ;;
-      tex) echo "tex" ;;
-      vim) echo "vim" ;;
-      *) echo "text" ;;
-    esac ;;
-  esac
-}
 
 relative_path() {
   local file="$1"
@@ -96,15 +30,6 @@ relative_path() {
     realpath --relative-to="$GIT_ROOT" "$file"
   else
     realpath --relative-to="$PWD" "$file"
-  fi
-}
-
-trim_context() {
-  local content="$1"
-  if [[ -n "$head_lines" ]]; then
-    printf '%s' "$content" | head -n "$head_lines"
-  else
-    printf '%s' "$content"
   fi
 }
 
@@ -150,33 +75,6 @@ select_files() {
   done <<< "$selected"
 }
 
-# Collect positional arguments (files) here
-positional_args=()
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --help|-h)
-      show_help
-      exit 0
-      ;;
-    --head)
-      if [[ $# -lt 2 ]]; then
-        echo "Missing value for --head" >&2
-        exit 2
-      fi
-      head_lines="$2"
-      shift 2
-      ;;
-    *)
-      # Save non-option arguments to the array instead of breaking
-      positional_args+=("$1")
-      shift
-      ;;
-  esac
-done
-
-# Put the collected positional arguments back into $@
-set -- "${positional_args[@]}"
 
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
   GIT_ROOT="$(git rev-parse --show-toplevel)"
@@ -184,27 +82,6 @@ else
   GIT_ROOT=""
 fi
 
-stdin_content=""
-if ! [ -t 0 ]; then
-  stdin_content="$(cat)"
-fi
-
-if ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
-  printf '%s' "$stdin_content"
-fi
-
-if [[ $# -eq 0 ]]; then
-  mapfile -d '' -t selected_files < <(select_files)
-  set -- "${selected_files[@]}"
-fi
-
-if [[ $# -eq 0 ]]; then
-  exit 0
-fi
-
-if [[ -n "$stdin_content" ]]; then
-  printf '\n\n'
-fi
 
 # printf 'Additional file context:\n\n'
 

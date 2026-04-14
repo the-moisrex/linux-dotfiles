@@ -18,46 +18,11 @@ Options:
 EOF
 }
 
-trim_context() {
-    local content="$1"
-    if [[ -n "$head_lines" ]]; then
-        printf '%s\n' "$content" | head -n "$head_lines"
-    else
-        printf '%s\n' "$content"
-    fi
-}
 
-# Parse arguments regardless of their position
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --help|-h)
-            show_help
-            exit 0
-        ;;
-        --head)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for --head" >&2
-                exit 2
-            fi
-            head_lines="$2"
-            shift 2
-        ;;
-        *)
-            # Add non-flag arguments to the files array
-            files+=("$1")
-            shift
-        ;;
-    esac
-done
+source "$(dirname "$0")/_common.sh"
+common_behavior
+set -- "${ARGS[@]}"
 
-if ! [ -t 0 ]; then
-    stdin_piped=true
-    stdin_content="$(cat)"
-fi
-
-if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
-    printf '%s\n\n' "$stdin_content"
-fi
 
 echo "Review this code like a strong practical reviewer."
 echo "Prioritize bugs, behavioral regressions, risky assumptions, edge cases, maintainability problems, and missing tests."
@@ -66,12 +31,12 @@ echo "If there are no major issues, say that clearly and still suggest a small s
 echo
 
 # Process all collected files
-for file in "${files[@]}"; do
+for file in "$@"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"
         echo
-        echo '```'
+        echo "\`\`\`$(infer_lang "$file_name")"
         trim_context "$(cat -- "$file")"
         echo '```'
         echo
