@@ -68,10 +68,24 @@ function __fish_prompt_is_run
     test (count $tokens) -ge 2; and test "$tokens[2]" = run
 end
 
+function __fish_prompt_has_name
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2
+end
+
+function __fish_prompt_supports_head
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2
+    or return 1
+    contains -- "$tokens[2]" spp files symbols stupid security tests refactor api review fix comments explain perf commit
+end
+
 complete -c prompt -n '__fish_prompt_needs_name' -s h -l help -d "Show help message"
 complete -c prompt -n '__fish_prompt_needs_name' -xa "list" -d "List available prompts"
 # Only complete prompt names for the first positional argument so later args can fall back to file completion.
-complete -c prompt -n '__fish_prompt_needs_name' -xa '(prompt list 2>/dev/null)' -d "Prompt name"
+complete -c prompt -n '__fish_prompt_needs_name' -xa '(prompt list 2>/dev/null | string replace -r "\t.*" "")' -d "Prompt name"
+complete -c prompt -n '__fish_prompt_has_name' -s h -l help -d "Show help for the selected prompt"
+complete -c prompt -n '__fish_prompt_supports_head' -l head -x -d "Keep only the first N lines of embedded context"
 complete -c prompt -n '__fish_prompt_is_run' -l head -x -d "Trim run output with head"
 complete -c prompt -n '__fish_prompt_is_run' -a '(run print-targets)' -d "Run target"
 complete -c prompt -n '__fish_prompt_is_run' -a lldb -d "Debug in lldb"

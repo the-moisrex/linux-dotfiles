@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+head_lines=""
+
 show_help() {
   cat <<'EOF'
-Usage: prompt files [FILE...]
-       some-command | prompt files [FILE...]
+Usage: prompt files [--head N] [FILE...]
+       some-command | prompt files [--head N] [FILE...]
 
 Appends the given files as Markdown code blocks.
 If you're inside a Git repository, file headings are printed relative to the
 repository root.
 If no files are provided, `fzf -m` is used to choose them interactively.
+
+Options:
+  --head N   Keep only the first N lines of each embedded file
 EOF
 }
 
@@ -94,6 +99,15 @@ relative_path() {
   fi
 }
 
+trim_context() {
+  local content="$1"
+  if [[ -n "$head_lines" ]]; then
+    printf '%s' "$content" | head -n "$head_lines"
+  else
+    printf '%s' "$content"
+  fi
+}
+
 resolve_input_file() {
   local file="$1"
 
@@ -136,10 +150,25 @@ select_files() {
   done <<< "$selected"
 }
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  show_help
-  exit 0
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    --head)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --head" >&2
+        exit 2
+      fi
+      head_lines="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
   GIT_ROOT="$(git rev-parse --show-toplevel)"
@@ -187,6 +216,6 @@ for file in "$@"; do
 
   printf '### %s\n\n' "$rel_file"
   printf '```%s\n' "$lang"
-  cat -- "$resolved_file"
+  trim_context "$(cat -- "$resolved_file")"
   printf '\n```\n\n'
 done

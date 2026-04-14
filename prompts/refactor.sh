@@ -7,10 +7,10 @@ head_lines=""
 
 show_help() {
   cat <<'EOF'
-Usage: prompt stupid [--head N] [FILE]
-       some-command | prompt stupid [--head N] [FILE]
+Usage: prompt refactor [--head N] [FILE]
+       some-command | prompt refactor [--head N] [FILE]
 
-Find the stupid mistakes in this code.
+Refactor this while preserving behavior.
 
 Options:
   --head N   Keep only the first N lines of the embedded context
@@ -57,9 +57,10 @@ if $stdin_piped && [[ -n "$stdin_content" ]]; then
 ' "$stdin_content"
 fi
 
-echo "Find the stupid mistakes in this code."
-echo "Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'."
-echo "Be blunt but useful. List each issue with a short explanation and the smallest practical fix."
+echo "Refactor this while preserving behavior."
+echo "Focus on clarity, structure, duplication removal, naming, cohesion, and simplifying control flow without changing the intended behavior."
+echo "Briefly explain the refactor plan, then provide a git diff for the recommended changes."
+echo "Keep the diff as small and safe as possible."
 echo
 
 if [[ $# -gt 0 && -f "$1" ]]; then

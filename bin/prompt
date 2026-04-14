@@ -80,10 +80,12 @@ _file_type() {
   esac
 }
 
-# List available prompt *names* (no extensions), unique, one per line
+# List available prompts, unique, one per line as:
+#   <name>\t<short help>
 cmd_list() {
-  local dir ext base name
+  local dir ext base name file desc
   declare -A seen
+  declare -A files
   # search through paths and files
   while IFS= read -r dir; do
     [[ -d "$dir" ]] || continue
@@ -101,11 +103,38 @@ cmd_list() {
       name="${name%.}"
       if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
         seen[$name]=1
+        files[$name]="$file"
       fi
     done < <(find "$dir" -maxdepth 1 -type f -print 2>/dev/null)
   done < <(_search_paths)
   # print order: sort by name to be deterministic
-  printf "%s\n" "${!seen[@]}" | sort
+  while IFS= read -r name; do
+    file="${files[$name]}"
+    desc="$(_prompt_short_help "$file")"
+    printf "%s\t%s\n" "$name" "$desc"
+  done < <(printf "%s\n" "${!seen[@]}" | sort)
+}
+
+_prompt_short_help() {
+  local file="$1"
+  local type help_text line
+
+  type="$(_file_type "$file")"
+  if [[ "$type" == "bash" ]]; then
+    if help_text="$(bash "$file" --help 2>/dev/null)"; then
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" == Usage:* ]] && continue
+        [[ "$line" == '       '* ]] && continue
+        [[ "$line" == Options:* ]] && continue
+        [[ "$line" == *'| prompt '* ]] && continue
+        printf "%s" "$line"
+        return 0
+      done <<< "$help_text"
+    fi
+  fi
+
+  printf "Prompt"
 }
 
 usage() {
@@ -122,7 +151,7 @@ Notes:
   - Recognized extensions (in search order): .sh .txt .md then no extension.
   - For .sh prompts, the script will be executed with bash and receive STDIN and any additional arguments.
   - For .txt/.md (or no-ext treated as text) prompts the file contents are printed, then STDIN is appended (if any).
-  - 'prompt list' prints available prompt names (one per line).
+  - 'prompt list' prints available prompts with a short help summary.
 USAGE
 }
 
