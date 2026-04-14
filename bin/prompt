@@ -108,7 +108,37 @@ _collect_prompts() {
 }
 
 cmd_list_prompts() {
-  _collect_prompts | sort | cut -f1
+  local search_paths
+  search_paths="$(_search_paths)"
+  SEARCH_PATHS="$search_paths" python3 - <<'PY'
+import os
+from pathlib import Path
+
+search_paths = [p for p in os.environ.get("SEARCH_PATHS", "").splitlines() if p]
+exts = [".sh", ".txt", ".md", ""]
+seen = set()
+rows = []
+
+for directory in search_paths:
+    path = Path(directory)
+    if not path.is_dir():
+        continue
+    for file in sorted(path.iterdir()):
+        if not file.is_file():
+            continue
+        name = file.name
+        for ext in exts[:-1]:
+            if name.endswith(ext):
+                name = name[: -len(ext)]
+                break
+        name = name.rstrip(".")
+        if name and name not in seen:
+            seen.add(name)
+            rows.append(name)
+
+for name in sorted(rows):
+    print(name)
+PY
 }
 
 _print_prompt_table() {
@@ -129,16 +159,49 @@ _print_prompt_table() {
 # List available prompts, unique, one per line as:
 #   <name>\t<short help>
 cmd_list() {
-  local rows=""
-  local name file desc
+  local rows
+  local search_paths
+  search_paths="$(_search_paths)"
+  rows="$(
+    SEARCH_PATHS="$search_paths" python3 - <<'PY'
+import os
+import subprocess
+from pathlib import Path
 
-  while IFS=$'\t' read -r name file; do
-    [[ -n "$name" ]] || continue
-    desc="$(_prompt_short_help "$file" || printf "Prompt")"
-    rows+="${name}"$'\t'"${desc}"$'\n'
-  done < <(_collect_prompts | sort)
+search_paths = [p for p in os.environ.get("SEARCH_PATHS", "").splitlines() if p]
+exts = [".sh", ".txt", ".md", ""]
+seen = {}
 
-  rows="${rows%$'\n'}"
+def short_help(file: Path) -> str:
+    if file.suffix != ".sh":
+        return "Prompt"
+    proc = subprocess.run(["bash", str(file), "--help"], capture_output=True, text=True)
+    for line in proc.stdout.splitlines():
+        if not line or line.startswith("Usage:") or line.startswith("       ") or line.startswith("Options:") or "| prompt " in line:
+            continue
+        return line
+    return "Prompt"
+
+for directory in search_paths:
+    path = Path(directory)
+    if not path.is_dir():
+        continue
+    for file in sorted(path.iterdir()):
+        if not file.is_file():
+            continue
+        name = file.name
+        for ext in exts[:-1]:
+            if name.endswith(ext):
+                name = name[: -len(ext)]
+                break
+        name = name.rstrip(".")
+        if name and name not in seen:
+            seen[name] = file
+
+for name in sorted(seen):
+    print(f"{name}\t{short_help(seen[name])}")
+PY
+  )"
 
   if [[ -t 1 ]]; then
     _print_prompt_table "$rows"
@@ -149,21 +212,19 @@ cmd_list() {
 
 _prompt_short_help() {
   local file="$1"
-  local type help_text line
+  local type
 
   type="$(_file_type "$file")"
   if [[ "$type" == "bash" ]]; then
-    if help_text="$(bash "$file" --help 2>/dev/null)"; then
-      while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        [[ "$line" == Usage:* ]] && continue
-        [[ "$line" == '       '* ]] && continue
-        [[ "$line" == Options:* ]] && continue
-        [[ "$line" == *'| prompt '* ]] && continue
-        printf "%s" "$line"
-        return 0
-      done <<< "$help_text"
-    fi
+    bash "$file" --help 2>/dev/null | awk '
+      NF == 0 { next }
+      /^Usage:/ { next }
+      /^       / { next }
+      /^Options:/ { next }
+      /\| prompt / { next }
+      { print; exit }
+    '
+    return 0
   fi
 
   printf "Prompt"
