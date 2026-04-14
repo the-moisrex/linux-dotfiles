@@ -81,7 +81,7 @@ fi
 # done
 # printf '`\n\n'
 
-if [[ -n "$stdin_content" && ${#run_args[@]} -gt 0 ]]; then
+if ! [-v FROM_CLIPBOARD ] && [[ -n "$stdin_content" && ${#run_args[@]} -gt 0 ]]; then
     printf '%s\n\n' "$stdin_content"
 fi
 

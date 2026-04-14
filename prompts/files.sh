@@ -150,6 +150,9 @@ select_files() {
   done <<< "$selected"
 }
 
+# Collect positional arguments (files) here
+positional_args=()
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h)
@@ -165,10 +168,15 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      break
+      # Save non-option arguments to the array instead of breaking
+      positional_args+=("$1")
+      shift
       ;;
   esac
 done
+
+# Put the collected positional arguments back into $@
+set -- "${positional_args[@]}"
 
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
   GIT_ROOT="$(git rev-parse --show-toplevel)"
@@ -181,7 +189,7 @@ if ! [ -t 0 ]; then
   stdin_content="$(cat)"
 fi
 
-if [[ -n "$stdin_content" ]]; then
+if ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
   printf '%s' "$stdin_content"
 fi
 
@@ -214,7 +222,7 @@ for file in "$@"; do
   rel_file="$(relative_path "$resolved_file")"
   lang="$(infer_lang "$resolved_file")"
 
-  printf '### %s\n\n' "$rel_file"
+  printf 'File %s\n\n' "$rel_file"
   printf '```%s\n' "$lang"
   trim_context "$(cat -- "$resolved_file")"
   printf '\n```\n\n'
