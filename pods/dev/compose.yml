@@ -6,11 +6,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ittools.entrypoints=web"
-      - >
-        traefik.http.routers.ittools.rule=
-        Host(`tools.localhost`)
-        || Host(`it.localhost`)
-        || Host(`it-tools.localhost`)
+      - "traefik.http.routers.ittools.rule= Host(`tools.localhost`) || Host(`it.localhost`) || Host(`it-tools.localhost`)"
       - "traefik.http.services.ittools.loadbalancer.server.port=80"
       - "traefik.docker.network=nointernet"
     networks:
@@ -24,21 +20,19 @@ services:
     volumes:
       - code-data:/home/coder
       - ../../configs/vscode/settings.json:/home/coder/.local/share/code-server/User/settings.json:ro
-      - ../../configs/vscode/projects.json:/home/coder/.local/share/code-server/User/projects.json:ro
-    command: >
-      sh -lc "
-      code-server --install-extension ms-vscode.cpptools --force &&
-      code-server --install-extension ms-vscode.cpptools-extension-pack --force &&
-      code-server --install-extension llvm-vs-code-extensions.vscode-clangd --force &&
-      exec /usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth password
-      "
+      - ../../configs/vscode/projects.json:/home/coder/.local/share/code-server/User/projects.json:rw
+      - ../../../Projects:/home/coder/Projects:rw
+    # command: >
+    #   sh -c "
+    #   code-server --install-extension ms-vscode.cpptools --force &&
+    #   code-server --install-extension ms-vscode.cpptools-extension-pack --force &&
+    #   code-server --install-extension llvm-vs-code-extensions.vscode-clangd --force &&
+    #   exec /usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth password
+    #   "
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.code.entrypoints=web"
-      - >
-        traefik.http.routers.code.rule=
-        Host(`code.localhost`)
-        || Host(`vscode.localhost`)
+      - "traefik.http.routers.code.rule= Host(`code.localhost`) || Host(`vscode.localhost`)"
       - "traefik.http.services.code.loadbalancer.server.port=8080"
       - "traefik.docker.network=nointernet"
     networks:
@@ -55,10 +49,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.gitea.entrypoints=web"
-      - >
-        traefik.http.routers.gitea.rule=
-        Host(`git.localhost`)
-        || Host(`gitea.localhost`)
+      - "traefik.http.routers.gitea.rule= Host(`git.localhost`) || Host(`gitea.localhost`)"
       - "traefik.http.services.gitea.loadbalancer.server.port=3000"
       - "traefik.docker.network=nointernet"
     networks:
@@ -74,7 +65,6 @@ services:
       POSTGRES_DB: sentry
     volumes:
       - sentry-postgres-data:/var/lib/postgresql/data
-      - "traefik.docker.network=nointernet"
     networks:
       - nointernet
     restart: unless-stopped
@@ -119,6 +109,7 @@ volumes:
   gitea-data:
   sentry-data:
   sentry-postgres-data:
+
 
 networks:
   nointernet:
