@@ -1,3 +1,16 @@
+# Determine the XDG cache directory (fallback to ~/.cache if not set)
+set -q XDG_CACHE_HOME; and set -g FISH_CACHE_DIR "$XDG_CACHE_HOME/fish"; or set -g FISH_CACHE_DIR "$HOME/.cache/fish"
+set -g LAST_DIR_FILE "$FISH_CACHE_DIR/last_dir"
+
+# Save the current directory to a file every time it changes
+function save_last_dir --on-variable PWD
+    # Ensure the cache directory exists
+    if not test -d "$FISH_CACHE_DIR"
+        mkdir -p "$FISH_CACHE_DIR"
+    end
+    echo $PWD > "$LAST_DIR_FILE"
+end
+
 if status is-interactive
     # Commands to run in interactive sessions can go here
 
@@ -100,6 +113,20 @@ if status is-interactive
     abbr -a "yt.save" "c.p | yt.links >> ~/YouTube/tmp/links.txt; exit"
     abbr -a "yt.dl" "c.p | yt.links | xargs download --cookies-from-browser firefox 1440p; exit"
     abbr -a hx helix
+
+
+
+    # On startup, read the file and cd into it
+    # Only cd if we are starting in the home directory
+    if test "$PWD" = "$HOME"
+        if test -f "$LAST_DIR_FILE"
+            set -l last_dir (cat "$LAST_DIR_FILE")
+            if test -d "$last_dir"
+                builtin cd "$last_dir"
+            end
+        end
+    end
+
 end
 
 # function try -d "try a command until it works."
