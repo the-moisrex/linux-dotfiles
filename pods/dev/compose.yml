@@ -94,7 +94,7 @@ services:
       - "traefik.http.routers.sentry.entrypoints=web"
       - "traefik.http.routers.sentry.rule=Host(`sentry.localhost`)"
       - "traefik.http.services.sentry.loadbalancer.server.port=9000"
-    command: sh -c "sentry upgrade --noinput && sentry createuser --email admin@example.com --password toor --superuser --no-password || true && sentry run web"
+    command: sh -c "sentry upgrade --noinput && sentry createuser --email admin@example.com --password toor --superuser || true && sentry run web"
     restart: unless-stopped
 
 volumes:

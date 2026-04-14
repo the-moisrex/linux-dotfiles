@@ -37,5 +37,5 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.cache-dashboard.entrypoints=web"
-      - "traefik.http.routers.cache-dashboard.rule=Host(`cahce.localhost`) || Host(`cache.localhost`)"
+      - "traefik.http.routers.cache-dashboard.rule=Host(`cache.localhost`)"
       - "traefik.http.services.cache-dashboard.loadbalancer.server.port=80"
