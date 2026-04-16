@@ -95,3 +95,13 @@ complete -c prompt -n '__fish_prompt_is_run' -a watch -d "Watch for changes"
 complete -c prompt -n '__fish_prompt_is_run' -a 'less -r -l l' -d "Pipe the results to less"
 complete -c prompt -n '__fish_prompt_is_run' -a print-targets -d "Print Targets"
 complete -c prompt -n '__fish_prompt_is_run' -a help -d "Print Help"
+
+
+
+# fish completion for detach
+
+# If no command has been given yet, complete with available commands
+complete -c detach -f -n "not __fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"
+
+# After the first argument (the command), fall back to normal commandline completion
+complete -c detach -f -n "__fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"

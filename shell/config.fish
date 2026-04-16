@@ -76,6 +76,7 @@ if status is-interactive
     # end
 
     source $HOME/.config/fish/aliases.fish
+    source $HOME/.config/fish/functions.fish
 
     source $HOME/.config/fish/completions/completions.fish
 

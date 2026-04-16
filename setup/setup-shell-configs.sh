@@ -23,6 +23,7 @@ link_path "$ROOT_DIR/shell/aliases.fish" "$HOME/.config/fish/aliases.fish"
 link_path "$ROOT_DIR/shell/config.fish" "$HOME/.config/fish/config.fish"
 link_path "$ROOT_DIR/shell/cmd_timer.fish" "$HOME/.config/fish/cmd_timer.fish"
 link_path "$ROOT_DIR/shell/completions.fish" "$HOME/.config/fish/completions/completions.fish"
+link_path "$ROOT_DIR/shell/functions.fish" "$HOME/.config/fish/functions.fish"
 link_path "$ROOT_DIR/assets/ok.oga" "$HOME/.config/fish/assets/ok.oga"
 link_path "$ROOT_DIR/assets/error.oga" "$HOME/.config/fish/assets/error.oga"
 
