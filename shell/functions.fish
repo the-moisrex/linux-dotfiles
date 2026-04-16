@@ -41,12 +41,6 @@ function up
     end
 end
 
-# List recently modified files.
-function recent
-    set count (or $argv[1] 20)
-    ls -lt | head -n $count
-end
-
 # See what process is listening on a port.
 function whichport
     if test (count $argv) -eq 0
