@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+signal="TERM"
+
+usage() {
+    echo "Usage: fkill [-s SIGNAL]"
+    echo "Example: fkill -s KILL"
+    exit 1
+}
+
+while getopts "s:h" opt; do
+    case "$opt" in
+        s) signal="$OPTARG" ;;
+        h) usage ;;
+        *) usage ;;
+    esac
+done
+
+command -v fzf >/dev/null || {
+    echo "Error: fzf is required."
+    exit 1
+}
+
+# Select processes
+selection=$(
+    ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu |
+    sed 1d |
+    fzf -m --header="Select process(es) to kill (TAB to mark)"
+)
+
+[ -z "$selection" ] && exit 0
+
+pids=$(echo "$selection" | awk '{print $1}')
+
+echo "About to send SIG$signal to:"
+echo "$selection"
+echo
+
+read -rp "Proceed? [Y/n] " confirm
+
+case "$confirm" in
+    *)
+        kill "-$signal" $pids
+    ;;
+    n|N|no|No|NO)
+        echo "Aborted."
+    ;;
+esac
