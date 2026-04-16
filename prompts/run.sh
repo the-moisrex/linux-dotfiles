@@ -3,7 +3,6 @@ set -u
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 head_lines=""
-run_args=()
 stdin_piped=false
 stdin_content=""
 
@@ -21,42 +20,14 @@ Options:
 EOF
 }
 
-if ! [ -t 0 ]; then
-    stdin_piped=true
-    stdin_content="$(cat)"
-fi
+source "$(dirname "$0")/_common.sh"
+common_behavior
+set -- "${ARGS[@]}"
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --help|-h)
-            show_help
-            exit 0
-        ;;
-        --head)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for --head" >&2
-                exit 2
-            fi
-            head_lines="$2"
-            shift 2
-        ;;
-        *)
-            run_args+=("$1")
-            shift
-        ;;
-    esac
-done
 
-if [[ ${#run_args[@]} -eq 0 ]] && ! $stdin_piped; then
-    echo "Debug the output from this run command."
-    echo
-    echo 'No target was provided to `run`. Ask for the exact target or arguments needed.'
-    exit 0
-fi
-
-if [[ ${#run_args[@]} -gt 0 ]]; then
+if [[ $# -gt 0 ]]; then
     tmp_output="$(mktemp)"
-    if "$curdir/run" "${run_args[@]}" >"$tmp_output" 2>&1; then
+    if "$curdir/run" "$@" >"$tmp_output" 2>&1; then
         run_status=0
     else
         run_status=$?
@@ -76,15 +47,11 @@ fi
 
 # printf 'The following command was run:\n\n'
 # printf '`run'
-# for arg in "${run_args[@]}"; do
+# for arg in "$@"; do
 #   printf ' %q' "$arg"
 # done
 # printf '`\n\n'
 
-if ! [-v FROM_CLIPBOARD ] && [[ -n "$stdin_content" && ${#run_args[@]} -gt 0 ]]; then
-    printf '%s\n\n' "$stdin_content"
-fi
-
-printf 'Please debug the output from %s. Identify the root cause, explain the failure clearly, and suggest the smallest useful fix. If the build succeeded but the program failed at runtime, focus on the runtime issue.\n\n' "$run_description"
+printf 'Debug the output from %s. Identify the root cause, explain the failure clearly, and suggest the smallest useful fix. If the build succeeded but the program failed at runtime, focus on the runtime issue.\n\n' "$run_description"
 printf 'Exit status: %s\n\n' "$run_status"
 printf '```text\n%s\n```\n' "$run_output"
