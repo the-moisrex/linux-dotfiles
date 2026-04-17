@@ -71,7 +71,7 @@ select_files() {
   fi
 
   while IFS= read -r file; do
-    [[ -n "$file" ]] && printf '%s\0' "$file"
+    [[ -n "$file" ]] && echo "$file"
   done <<< "$selected"
 }
 
@@ -84,6 +84,10 @@ fi
 
 
 # printf 'Additional file context:\n\n'
+
+if [ -z "$@" ]; then
+  set -- $(select_files)
+fi
 
 for file in "$@"; do
   if ! resolved_file="$(resolve_input_file "$file")"; then
