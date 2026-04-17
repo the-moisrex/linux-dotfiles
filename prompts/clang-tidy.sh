@@ -40,7 +40,7 @@ find_build_dir() {
     local search_bases=("$PWD")
     [[ -n "$GIT_ROOT" ]] && search_bases+=("$GIT_ROOT")
     
-    local common_dirs=("build" "build-dev" "build-dev-clang" "out" "build/Debug" "build/Release" ".")
+    local common_dirs=("build" "build-dev" "build-dev-clang" "build-dev-gcc" "cmake-build-debug" "cmake-build-release" "out" "build/Debug" "build/Release" ".")
     
     for base in "${search_bases[@]}"; do
         for dir in "${common_dirs[@]}"; do
@@ -55,48 +55,30 @@ find_build_dir() {
     return 1
 }
 
-find_clang_tidy_config() {
-    local curr="$PWD"
-    while [[ -n "$curr" && "$curr" != "/" ]]; do
-        if [[ -f "$curr/.clang-tidy" ]]; then
-            realpath "$curr/.clang-tidy"
-            return 0
-        fi
-        [[ -n "$GIT_ROOT" && "$curr" == "$GIT_ROOT" ]] && break
-        curr="$(dirname "$curr")"
-    done
-    return 1
-}
-
 BUILD_DIR="$(find_build_dir || true)"
-CONFIG_FILE="$(find_clang_tidy_config || true)"
 
-CT_ARGS=()
-if [[ -n "$CONFIG_FILE" ]]; then
-    CT_ARGS+=("--config-file=$CONFIG_FILE")
-fi
+CT_ARGS=(
+    --quiet
+)
 if [[ -n "$BUILD_DIR" ]]; then
     CT_ARGS+=("-p" "$BUILD_DIR")
 fi
 
-tmp_output="$(mktemp)"
 # Run clang-tidy
-clang-tidy "${CT_ARGS[@]}" "$@" > "$tmp_output" 2>&1 || true
-
-run_output="$(cat "$tmp_output")"
-rm -f "$tmp_output"
+command_str="clang-tidy ${CT_ARGS[@]} $@"
+run_output=$(clang-tidy "${CT_ARGS[@]}" "$@"  2>&1)
 
 if [[ -n "$head_lines" ]]; then
     run_output="$(printf "%s" "$run_output" | head -n "$head_lines")"
 fi
 
-echo "I ran \`clang-tidy\` on the following files:"
-for f in "$@"; do
-    echo "- \`$f\`"
-done
+# echo "I ran \`clang-tidy\` on the following files:"
+# for f in "$@"; do
+#     echo "- \`$f\`"
+# done
 
 echo ""
-echo "Please review the following \`clang-tidy\` output. Identify the issues, explain why they were flagged, and provide the most robust and idiomatic fixes. Suggest small git patches or refactored code blocks where appropriate."
+echo "Review the following \`${command_str}\` output. Identify the issues, explain why they were flagged, and provide the most robust and idiomatic fixes. Suggest small git patches or refactored code blocks where appropriate."
 echo ""
 echo '
 ```text'
