@@ -28,7 +28,7 @@ print_stdin() {
         # Check the length of the global ARGS array instead of $#
         elif [[ ${#ARGS[@]} -eq 0 ]]; then
         if command -v fzf >/dev/null; then
-            mapfile -t ARGS < <(git ls-files | fzf -m --prompt='Select files to operate on: ')
+            mapfile -t ARGS < <(git ls-files | fzf -m)
         else
             echo "No input files and fzf is not installed." >&2
             return 1
