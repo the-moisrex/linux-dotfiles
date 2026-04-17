@@ -7,14 +7,20 @@ NC="\033[0m" # No Color
 
 curdir=$(realpath "$(dirname "$0")")
 
-gitroot=".git";
-until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" ] || \
-      [ "$(realpath "$gitroot" 2>/dev/null)" = "/" ] || \
-      [ -d "$gitroot" ]; do
-  gitroot="../${gitroot}";
-done;
 
-proj_dir="$(realpath "$gitroot/.." 2>/dev/null)";
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    GIT_ROOT="$(git rev-parse --show-toplevel)"
+else
+    gitroot=".git";
+    until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" ] || \
+          [ "$(realpath "$gitroot" 2>/dev/null)" = "/" ] || \
+          [ -d "$gitroot" ]; do
+      gitroot="../${gitroot}";
+    done;
+    GIT_ROOT="$(basename "$gitroot/..")"
+fi
+
+proj_dir="$GIT_ROOT";
 should_clean=true;
 build_dir="";
 is_interactive=true;
@@ -113,7 +119,7 @@ function run {
 
   execfile="$*";
 
-  if [ -d "$gitroot" ] && [ -d "$proj_dir" ] && [ -d "$build_dir" ]; then
+  if [ -d "$GIT_ROOT" ] && [ -d "$proj_dir" ] && [ -d "$build_dir" ]; then
     if [ -f "$build_dir/CMakeCache.txt" ]; then
       build_cmd="cmake --build '$build_dir' --target $execfile";
     elif [ -f "$build_dir/build.ninja" ]; then
@@ -200,7 +206,7 @@ function build-report {
 
   calculate_build_dir
 
-  if [ -d "$gitroot" ] && [ -d "$proj_dir" ] && [ -d "$build_dir" ]; then
+  if [ -d "$GIT_ROOT" ] && [ -d "$proj_dir" ] && [ -d "$build_dir" ]; then
     if $should_clean; then
         clear;
     fi
