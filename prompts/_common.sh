@@ -147,6 +147,34 @@ infer_lang() {
     esac
 }
 
+select_files() {
+    local selected=""
+
+    if ! command -v fzf >/dev/null 2>&1; then
+        printf 'prompt clang-tidy: fzf is required when no files are specified\n' >&2
+        exit 1
+    fi
+
+    if [[ -n "${GIT_ROOT:-}" ]]; then
+        selected="$(
+            cd "$GIT_ROOT" &&
+            git ls-files --cached --others --exclude-standard | fzf -m
+        )"
+    else
+        selected="$(rg --files 2>/dev/null || find . -type f | fzf -m)"
+    fi
+
+    if [[ -z "$selected" ]]; then
+        exit 0
+    fi
+
+    while IFS= read -r file; do
+        [[ -n "$file" ]] && echo "$file"
+    done <<< "$selected"
+}
+
+
+
 common_behavior() {
     parse_arguments
     print_stdin
