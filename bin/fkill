@@ -34,17 +34,8 @@ selection=$(
 
 pids=$(echo "$selection" | awk '{print $1}')
 
-echo "About to send SIG$signal to:"
+echo "Sending SIG$signal to:"
 echo "$selection"
 echo
 
-read -rp "Proceed? [Y/n] " confirm
-
-case "$confirm" in
-    *)
-        kill "-$signal" $pids
-    ;;
-    n|N|no|No|NO)
-        echo "Aborted."
-    ;;
-esac
+kill "-$signal" $pids
