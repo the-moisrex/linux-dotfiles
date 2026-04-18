@@ -44,4 +44,4 @@ printf '```text\n'
 if [[ -n "$man_output" ]]; then
     trim_context "$man_output"
 fi
-printf '```\n\n'
+printf '\n```\n\n'

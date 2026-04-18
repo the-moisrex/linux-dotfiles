@@ -1,8 +1,28 @@
 #!/bin/bash
 
 # Prefill ARGS with the global script arguments
+curfile="$0"
 ARGS=("$@")
 head_lines=""
+GIT_ROOT=""
+
+find_git_root() {
+    if [ ! -z "$GIT_ROOT" ]; then
+        return
+    fi
+    if git rev-parse --show-toplevel >/dev/null 2>&1; then
+        GIT_ROOT="$(git rev-parse --show-toplevel)"
+    else
+        gitroot=".git";
+        until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" ] || \
+            [ "$(realpath "$gitroot" 2>/dev/null)" = "/" ] || \
+            [ -d "$gitroot" ]; do
+            gitroot="../${gitroot}";
+        done;
+        GIT_ROOT="$(basename "$gitroot/..")"
+    fi
+}
+
 
 trim_context() {
     local content="$1"
@@ -155,6 +175,8 @@ select_files() {
         exit 1
     fi
 
+    find_git_root
+
     if [[ -n "${GIT_ROOT:-}" ]]; then
         selected="$(
             cd "$GIT_ROOT" &&
@@ -171,6 +193,39 @@ select_files() {
     while IFS= read -r file; do
         [[ -n "$file" ]] && echo "$file"
     done <<< "$selected"
+}
+
+resolve_input_file() {
+    local file="$1"
+    
+    if [[ -f "$file" ]]; then
+        printf '%s\n' "$file"
+        return 0
+    fi
+
+    find_git_root
+    
+    if [[ -n "${GIT_ROOT:-}" && -f "$GIT_ROOT/$file" ]]; then
+        printf '%s\n' "$GIT_ROOT/$file"
+        return 0
+    fi
+
+    if command -v fzf >/dev/null; then
+        if [[ -n "${GIT_ROOT:-}" ]]; then
+            selected="$(
+                cd "$GIT_ROOT" &&
+                git ls-files --cached --others --exclude-standard | fzf -f "$file" | head -n 1
+            )"
+        else
+            selected="$(rg --files 2>/dev/null || find . -type f | fzf -f "$file" | head -n 1)"
+        fi
+        if [ -f "$selected" ]; then
+            echo "$selected"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 
