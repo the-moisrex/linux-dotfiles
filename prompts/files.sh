@@ -26,35 +26,13 @@ set -- "${ARGS[@]}"
 
 relative_path() {
     local file="$1"
+    find_git_root
     if [[ -n "${GIT_ROOT:-}" ]]; then
         realpath --relative-to="$GIT_ROOT" "$file"
     else
         realpath --relative-to="$PWD" "$file"
     fi
 }
-
-resolve_input_file() {
-    local file="$1"
-    
-    if [[ -f "$file" ]]; then
-        printf '%s\n' "$file"
-        return 0
-    fi
-    
-    if [[ -n "${GIT_ROOT:-}" && -f "$GIT_ROOT/$file" ]]; then
-        printf '%s\n' "$GIT_ROOT/$file"
-        return 0
-    fi
-    
-    return 1
-}
-
-
-if git rev-parse --show-toplevel >/dev/null 2>&1; then
-    GIT_ROOT="$(git rev-parse --show-toplevel)"
-else
-    GIT_ROOT=""
-fi
 
 
 # printf 'Additional file context:\n\n'
@@ -70,7 +48,7 @@ for file in "$@"; do
     fi
     
     if [[ ! -r "$resolved_file" ]]; then
-        printf 'prompt files: file not readable: %s\n' "$file" >&2
+        printf 'prompt files: file not readable: "%s"; resolved to "%s"\n' "$file" "$resolved_file" >&2
         continue
     fi
     
