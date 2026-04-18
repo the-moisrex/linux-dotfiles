@@ -1,0 +1,226 @@
+#!/bin/bash
+
+print_help() {
+    echo "Usage: patch.fix [OPTIONS] [FILE]"
+    echo ""
+    echo "Reads a unified diff (from stdin or FILE), attempts to fix common formatting mistakes"
+    echo "(especially from AI-generated patches), and outputs the fixed diff."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help               Show this help message"
+    echo "  -i, --inplace            Modify the given file in-place (requires FILE)"
+    echo "  -t, --threshold PERCENT  Fuzzy match threshold percentage (default: 90)"
+    echo ""
+    echo "Examples:"
+    echo "  paste-from-clipboard | patch.fix | patch -p1"
+    echo "  patch.fix -i file.patch                   # Fixes file.patch in-place"
+    echo "  patch.fix --threshold 85 file.patch       # Prints fixed patch to stdout"
+    echo "  patch.fix 85 file.patch                   # (Legacy syntax) Prints to stdout"
+}
+
+INPLACE=0
+THRESHOLD=90
+FILE=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        -i|--inplace)
+            INPLACE=1
+            shift
+            ;;
+        -t|--threshold)
+            THRESHOLD="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            # If it is a purely numeric argument and we don't have a file yet,
+            # it might be the threshold (legacy support).
+            if [[ "$1" =~ ^[0-9]+$ ]] && [[ -z "$FILE" && $# -gt 1 ]]; then
+                THRESHOLD="$1"
+            else
+                FILE="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ $INPLACE == 1 && -z "$FILE" ]]; then
+    echo "Error: --inplace requires a FILE argument." >&2
+    exit 1
+fi
+
+export PATCH_FIX_THRESHOLD="$THRESHOLD"
+
+# Python logic to parse the diff cleanly, fix missing spaces, fuzzy match, and recalculate
+read -r -d '' PYTHON_SCRIPT << 'EOF'
+import sys
+import re
+import difflib
+import os
+
+try:
+    threshold = float(os.environ.get("PATCH_FIX_THRESHOLD", "90")) / 100.0
+except ValueError:
+    print("Error: Threshold must be a number.", file=sys.stderr)
+    sys.exit(1)
+
+def parse_file_path(line):
+    # Extract file path from "+++ b/src/main.py" or "+++ ./src/main.py"
+    m = re.match(r'^(?:---|\+\+\+)\s+(.+)$', line)
+    if not m: return None
+    path = m.group(1).split('\t')[0].strip()
+    # Strip a/ or b/ or ./
+    if path.startswith('a/') or path.startswith('b/') or path.startswith('./'):
+        path = path[2:]
+    return path
+
+def process_diff(diff_text):
+    lines = diff_text.splitlines(True)
+    out = []
+    i = 0
+    current_file = None
+    file_lines = []
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Detect target file
+        if line.startswith("+++ "):
+            current_file = parse_file_path(line)
+            try:
+                if current_file and os.path.exists(current_file):
+                    with open(current_file, "r", encoding="utf-8") as f:
+                        file_lines = f.readlines()
+                else:
+                    file_lines = []
+            except Exception:
+                file_lines = []
+            out.append(line)
+            i += 1
+            continue
+
+        # Detect hunk header
+        if line.startswith("@@ "):
+            header = line
+            i += 1
+            hunk_lines = []
+            while i < len(lines) and not lines[i].startswith("@@ ") and not lines[i].startswith("--- "):
+                hunk_lines.append(lines[i])
+                i += 1
+            
+            # 1. Fix missing leading spaces (AI often forgets the space for context lines)
+            cleaned_hunk = []
+            for hl in hunk_lines:
+                if hl == "\n" or hl == "\r\n":
+                    # Empty context line
+                    cleaned_hunk.append(" " + hl)
+                elif not hl.startswith(" ") and not hl.startswith("+") and not hl.startswith("-") and not hl.startswith("\\"):
+                    # Missing context space
+                    cleaned_hunk.append(" " + hl)
+                else:
+                    cleaned_hunk.append(hl)
+            hunk_lines = cleaned_hunk
+
+            if not file_lines:
+                out.extend(recalculate_hunk(header, hunk_lines))
+                continue
+            
+            # Extract "old" text lines to search in the original file
+            old_text_lines = [l[1:] for l in hunk_lines if l.startswith(" ") or l.startswith("-")]
+            if not old_text_lines:
+                out.extend(recalculate_hunk(header, hunk_lines))
+                continue
+
+            old_text = "".join(old_text_lines)
+            best_ratio = 0
+            best_match_idx = -1
+            window_size = len(old_text_lines)
+
+            # Sliding window fuzzy search
+            for j in range(len(file_lines) - window_size + 1):
+                window_text = "".join(file_lines[j:j+window_size])
+                ratio = difflib.SequenceMatcher(None, old_text, window_text).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_match_idx = j
+                    if ratio == 1.0:
+                        break # perfect match found
+
+            # 2. If it's a good but imperfect match, replace the patch's context with the actual file's context
+            if threshold <= best_ratio < 1.0:
+                actual_file_slice = file_lines[best_match_idx:best_match_idx+window_size]
+                new_hunk = []
+                actual_idx = 0
+                for hl in hunk_lines:
+                    if hl.startswith(" "):
+                        new_hunk.append(" " + actual_file_slice[actual_idx])
+                        actual_idx += 1
+                    elif hl.startswith("-"):
+                        new_hunk.append("-" + actual_file_slice[actual_idx])
+                        actual_idx += 1
+                    elif hl.startswith("+") or hl.startswith("\\"):
+                        new_hunk.append(hl)
+                hunk_lines = new_hunk
+
+            # 3. Recalculate line offsets and counts
+            out.extend(recalculate_hunk(header, hunk_lines))
+            continue
+
+        out.append(line)
+        i += 1
+
+    return "".join(out)
+
+def recalculate_hunk(header, lines):
+    old_count = sum(1 for l in lines if l.startswith(" ") or l.startswith("-"))
+    new_count = sum(1 for l in lines if l.startswith(" ") or l.startswith("+"))
+    
+    # Parse original header to keep starting lines
+    m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)", header)
+    if m:
+        old_start = m.group(1)
+        new_start = m.group(2)
+        tail = m.group(3)
+        
+        # Omit count if it is exactly 1 (standard diff format)
+        old_part = f"{old_start}" if old_count == 1 else f"{old_start},{old_count}"
+        new_part = f"{new_start}" if new_count == 1 else f"{new_start},{new_count}"
+        
+        new_header = f"@@ -{old_part} +{new_part} @@{tail}\n"
+        return [new_header] + lines
+    return [header] + lines
+
+if __name__ == "__main__":
+    input_data = sys.stdin.read()
+    sys.stdout.write(process_diff(input_data))
+EOF
+
+# Setup input command
+if [[ -n "$FILE" ]]; then
+    if [[ ! -f "$FILE" ]]; then
+        echo "Error: File '$FILE' not found." >&2
+        exit 1
+    fi
+    INPUT_CMD="cat \"$FILE\""
+else
+    INPUT_CMD="cat"
+fi
+
+# Execute: dos2unix equivalent (sed \r removal) -> python script
+if [[ $INPLACE == 1 ]]; then
+    TMPFILE=$(mktemp)
+    eval "$INPUT_CMD" | sed 's/\r$//' | python3 -c "$PYTHON_SCRIPT" > "$TMPFILE"
+    mv "$TMPFILE" "$FILE"
+else
+    eval "$INPUT_CMD" | sed 's/\r$//' | python3 -c "$PYTHON_SCRIPT"
+fi
