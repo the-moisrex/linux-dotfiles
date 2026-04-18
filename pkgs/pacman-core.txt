@@ -24,6 +24,8 @@ ripgrep      # grep foo . -R (rg foo)
 ripgrep-all
 fd           # find . -name '*foo*'
 jq           # JSON processor
+fzf          # Fuzzy file picker
+patchutils   # contains recountdiff which allows for fixing patches
 
 # Shells
 zsh
