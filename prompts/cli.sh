@@ -29,7 +29,8 @@ cmd_description="$*"
 
 # Temporarily disable exit on error so we can capture failed commands gracefully
 set +e
-cmd_output="$("$@" 2>&1)"
+# Use eval so pipes, redirects, and quotes work correctly
+cmd_output="$(eval "$@" 2>&1)"
 cmd_status=$?
 set -e
 
@@ -39,8 +40,10 @@ if [[ $cmd_status -ne 0 ]]; then
     printf '(Exited with status: %s)\n\n' "$cmd_status"
 fi
 
-printf '```text\n'
+printf '
+```text\n'
 if [[ -n "$cmd_output" ]]; then
     trim_context "$cmd_output"
 fi
-printf '\n```\n'
+printf '\n
+```\n'
