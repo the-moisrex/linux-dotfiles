@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eo pipefail  # Removed -u to prevent unbound variable issues
+# set -eo pipefail  # Removed -u to prevent unbound variable issues
 
 # Default values
 FORMAT="full"  # Options: full, body, comments
@@ -273,34 +273,37 @@ main() {
     echo ""
     
     # Download each issue
-    local success_count=0
-    local skip_count=0
-    local fail_count=0
+    # local success_count=0
+    # local skip_count=0
+    # local fail_count=0
     
     for issue_num in "${issues_to_download[@]}"; do
-        download_issue "$issue_num"
-        local result=$?
-        
-        case $result in
-            0)
-                ((success_count++))
-                ;;
-            2)
-                ((skip_count++))
-                ;;
-            *)
-                ((fail_count++))
-                ;;
-        esac
+        {
+            download_issue "$issue_num"
+            # local result=$?
+            
+            # case $result in
+            #     0)
+            #         ((success_count++))
+            #         ;;
+            #     2)
+            #         ((skip_count++))
+            #         ;;
+            #     *)
+            #         ((fail_count++))
+            #         ;;
+            # esac
+        } &
     done
+    wait
     
     echo ""
-    echo -e "${GREEN}=== Download Summary ===${NC}"
-    echo -e "${GREEN}Successfully downloaded: $success_count${NC}"
-    echo -e "${YELLOW}Skipped (already exist): $skip_count${NC}"
-    if [[ $fail_count -gt 0 ]]; then
-        echo -e "${RED}Failed: $fail_count${NC}"
-    fi
+    # echo -e "${GREEN}=== Download Summary ===${NC}"
+    # echo -e "${GREEN}Successfully downloaded: $success_count${NC}"
+    # echo -e "${YELLOW}Skipped (already exist): $skip_count${NC}"
+    # if [[ $fail_count -gt 0 ]]; then
+    #     echo -e "${RED}Failed: $fail_count${NC}"
+    # fi
     echo -e "${GREEN}Files saved in: $OUTPUT_DIR${NC}"
 }
 
