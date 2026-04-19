@@ -16,6 +16,7 @@ ENABLE_SMART_ANSWERS="true"
 VERBOSE=false
 PRINT_JSON=false
 OUTPUT_FILE=""
+URL_ONLY_COUNT=0
 
 # Colors for output
 RED='\033[0;31m'
@@ -40,10 +41,12 @@ Options:
   --json            Output as JSON instead of plain text
   -o, --output FILE Write output to file
   -v, --verbose     Enable verbose output
+  -<number>         Print ONLY the first <number> URLs (e.g., -1, -5)
   -h, --help        Display this help message
 
 Examples:
   $0 "test"
+  $0 "test" -1
   $0 "technology" --page 2 --limit 20
   $0 "news" --json --verbose
   $0 "search term" -p 1 -l 50 -d m
@@ -84,6 +87,10 @@ while [[ $# -gt 0 ]]; do
         -d|--device)
             DEVICE="$2"
             shift 2
+        ;;
+        -[0-9]*)
+            URL_ONLY_COUNT="${1#-}"
+            shift
         ;;
         *)
             if [ -z "$QUERY" ]; then
@@ -131,6 +138,18 @@ fetch_results() {
     rm -f "$cookie_file"
     
     echo "$response"
+}
+
+# Function to extract only the URLs
+display_urls_only() {
+    local json="$1"
+    local count="$2"
+    
+    if command -v jq &> /dev/null; then
+        echo "$json" | jq -r '.result.all.results.webs[].web_link // empty' 2>/dev/null | head -n "$count"
+    else
+        echo "$json" | grep -oP '"web_link"\s*:\s*"\K[^"]+' | head -n "$count"
+    fi
 }
 
 # Function to extract and display results in plain text
@@ -183,17 +202,25 @@ if [ -z "$JSON_RESPONSE" ]; then
 fi
 
 # Output results
-if [ -n "$OUTPUT_FILE" ]; then
-    if $PRINT_JSON; then
-        echo "$JSON_RESPONSE" > "$OUTPUT_FILE"
+if [ "$URL_ONLY_COUNT" -gt 0 ]; then
+    if [ -n "$OUTPUT_FILE" ]; then
+        display_urls_only "$JSON_RESPONSE" "$URL_ONLY_COUNT" > "$OUTPUT_FILE"
     else
-        display_table "$JSON_RESPONSE" > "$OUTPUT_FILE"
+        display_urls_only "$JSON_RESPONSE" "$URL_ONLY_COUNT"
     fi
 else
-    if $PRINT_JSON; then
-        echo "$JSON_RESPONSE"
+    if [ -n "$OUTPUT_FILE" ]; then
+        if $PRINT_JSON; then
+            echo "$JSON_RESPONSE" > "$OUTPUT_FILE"
+        else
+            display_table "$JSON_RESPONSE" > "$OUTPUT_FILE"
+        fi
     else
-        display_table "$JSON_RESPONSE"
+        if $PRINT_JSON; then
+            echo "$JSON_RESPONSE"
+        else
+            display_table "$JSON_RESPONSE"
+        fi
     fi
 fi
 
