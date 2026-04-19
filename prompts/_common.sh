@@ -5,6 +5,7 @@ curfile="$0"
 ARGS=("$@")
 head_lines=""
 GIT_ROOT=""
+NO_FILES=false
 
 find_git_root() {
     if [ ! -z "$GIT_ROOT" ]; then
@@ -38,6 +39,11 @@ trim_context() {
 print_stdin() {
     local stdin_piped=false
     local stdin_content=""
+
+    if $NO_FILES; then
+        return
+    fi
+
     if ! [ -t 0 ]; then
         stdin_piped=true
         stdin_content="$(cat)"
