@@ -45,5 +45,4 @@ printf '
 if [[ -n "$cmd_output" ]]; then
     trim_context "$cmd_output"
 fi
-printf '\n
-```\n'
+printf '\n```\n'
