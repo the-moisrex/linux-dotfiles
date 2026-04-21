@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Check if jq is installed
+if ! command -v jq &> /dev/null; then
+    echo "Error: 'jq' is not installed. Please install it to parse JSON." >&2
+    exit 1
+fi
+
+get_suggestions() {
+    local query="$1"
+    [ -z "$query" ] && return
+
+    # URL-encode the query using jq
+    local encoded_query=$(printf "%s" "$query" | jq -sRr @uri)
+    local url="http://suggestqueries.google.com/complete/search?client=firefox&q=${encoded_query}"
+
+    # Fetch data: -s (silent), -k (insecure/don't verify SSL)
+    local response=$(curl -sqL -k "$url")
+
+    # Parse the JSON response. The API returns: ["query", ["sugg1", "sugg2"]]
+    echo "$response" | jq -r '.[1][]' 2>/dev/null
+}
+
+# If arguments are provided, use them as the query and exit
+if [ $# -gt 0 ]; then
+    get_suggestions "$*"
+    exit 0
+fi
+
+# Otherwise, start the interactive loop
+echo "Google Autocomplete CLI"
+echo "Type your text and press Enter to get suggestions."
+echo "Type 'exit' or 'quit' to close the program."
+echo "--------------------"
+
+while true; do
+    read -r -p "> " user_input
+
+    # Convert input to lowercase for exit check
+    input_lower=$(echo "$user_input" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$input_lower" == "exit" || "$input_lower" == "quit" ]]; then
+        echo "Exiting..."
+        break
+    elif [[ -n "$user_input" ]]; then
+        suggestions=$(get_suggestions "$user_input")
+        
+        if [ -n "$suggestions" ]; then
+            echo -e "\n--- Suggestions ---"
+            # Add line numbers using awk
+            echo "$suggestions" | awk '{print NR". "$0}'
+            echo -e "-------------------\n"
+        else
+            echo -e "No suggestions found.\n"
+        fi
+    fi
+done
