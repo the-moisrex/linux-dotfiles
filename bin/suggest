@@ -6,29 +6,126 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
+# Configuration flags
+USE_GOOGLE=0
+USE_ZAREBIN=0
+USE_DDG=0
+USE_BING=0
+WAIT_ALL=0
+
+# Parse arguments
+QUERY_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -a|--all) WAIT_ALL=1; shift ;;
+        -g|--google) USE_GOOGLE=1; shift ;;
+        -z|--zarebin) USE_ZAREBIN=1; shift ;;
+        -d|--duckduckgo|--ddg) USE_DDG=1; shift ;;
+        -b|--bing) USE_BING=1; shift ;;
+        -*) echo "Unknown option: $1" >&2; exit 1 ;;
+        *) QUERY_ARGS+=("$1"); shift ;;
+    esac
+done
+
+# If no specific API is selected, use all of them
+if [[ $USE_GOOGLE == 0 && $USE_ZAREBIN == 0 && $USE_DDG == 0 && $USE_BING == 0 ]]; then
+    USE_GOOGLE=1; USE_ZAREBIN=1; USE_DDG=1; USE_BING=1
+fi
+
 get_suggestions() {
     local query="$1"
     [ -z "$query" ] && return
 
-    # URL-encode the query using jq
+    # URL-encode the query
     local encoded_query=$(printf "%s" "$query" | jq -sRr @uri)
-    local url="http://suggestqueries.google.com/complete/search?client=firefox&q=${encoded_query}"
+    
+    # Setup IPC (Inter-Process Communication)
+    local TMP_DIR=$(mktemp -d)
+    local FIFO="$TMP_DIR/fifo"
+    mkfifo "$FIFO"
+    exec 3<> "$FIFO" # Open FIFO for reading and writing to avoid blocking
+    
+    local pids=()
 
-    # Fetch data: -s (silent), -k (insecure/don't verify SSL)
-    local response=$(curl -sqL -k "$url")
+    # Worker function for parallel execution
+    fetch_api() {
+        local name="$1"
+        local url="$2"
+        local filter="$3"
 
-    # Parse the JSON response. The API returns: ["query", ["sugg1", "sugg2"]]
-    echo "$response" | jq -r '.[1][]' 2>/dev/null
+        local res
+        res=$(curl -sqL -k "$url" | jq -r "$filter" 2>/dev/null | sed '/^\s*$/d')
+
+        if [ -n "$res" ]; then
+            echo "$res" > "$TMP_DIR/$name"
+            echo "$name" >&3
+        else
+            echo "FAIL_$name" >&3
+        fi
+    }
+
+    # Start API requests in background
+    if [[ $USE_GOOGLE == 1 ]]; then
+        fetch_api "Google" "http://suggestqueries.google.com/complete/search?client=firefox&q=${encoded_query}" '.[1][]' &
+        pids+=($!)
+    fi
+    if [[ $USE_ZAREBIN == 1 ]]; then
+        fetch_api "Zarebin" "https://zarebin.ir/gse/api/suggest/?q=${encoded_query}&type=all&num=10&pl=0" '.results.suggestions[].q' &
+        pids+=($!)
+    fi
+    if [[ $USE_DDG == 1 ]]; then
+        fetch_api "DuckDuckGo" "https://duckduckgo.com/ac/?q=${encoded_query}" '.[].phrase' &
+        pids+=($!)
+    fi
+    if [[ $USE_BING == 1 ]]; then
+        fetch_api "Bing" "https://api.bing.com/osjson.aspx?query=${encoded_query}" '.[1][]' &
+        pids+=($!)
+    fi
+
+    local total_jobs=${#pids[@]}
+    local printed_any=0
+
+    # Wait for results
+    for (( i=0; i<total_jobs; i++ )); do
+        read -r msg <&3
+        
+        if [[ "$msg" != FAIL_* ]]; then
+            printed_any=1
+            echo -e "\n--- $msg ---"
+            awk '{print NR". "$0}' "$TMP_DIR/$msg"
+            
+            # If we don't want all results, break after the first successful response
+            if [[ $WAIT_ALL == 0 ]]; then
+                break
+            fi
+        fi
+    done
+
+    if [[ $printed_any == 0 ]]; then
+        echo -e "\nNo suggestions found."
+    fi
+
+    # Cleanup: close FIFO, kill any still-running background jobs, remove temp files
+    exec 3>&-
+    kill "${pids[@]}" 2>/dev/null
+    wait 2>/dev/null
+    rm -rf "$TMP_DIR"
 }
 
-# If arguments are provided, use them as the query and exit
-if [ $# -gt 0 ]; then
-    get_suggestions "$*"
+# If positional arguments are provided, use them as the query and exit
+if [ ${#QUERY_ARGS[@]} -gt 0 ]; then
+    get_suggestions "${QUERY_ARGS[*]}"
     exit 0
 fi
 
-# Otherwise, start the interactive loop
-echo "Google Autocomplete CLI"
+# Interactive loop
+echo "Multi-API Autocomplete CLI (Parallel Mode)"
+echo "Enabled: Google($USE_GOOGLE) Zarebin($USE_ZAREBIN) DDG($USE_DDG) Bing($USE_BING)"
+if [[ $WAIT_ALL == 1 ]]; then
+    echo "Mode: ALL (Streaming results as they arrive)"
+else
+    echo "Mode: FASTEST (Showing only the first API to respond)"
+fi
 echo "Type your text and press Enter to get suggestions."
 echo "Type 'exit' or 'quit' to close the program."
 echo "--------------------"
@@ -36,22 +133,13 @@ echo "--------------------"
 while true; do
     read -r -p "> " user_input
 
-    # Convert input to lowercase for exit check
     input_lower=$(echo "$user_input" | tr '[:upper:]' '[:lower:]')
 
     if [[ "$input_lower" == "exit" || "$input_lower" == "quit" ]]; then
         echo "Exiting..."
         break
     elif [[ -n "$user_input" ]]; then
-        suggestions=$(get_suggestions "$user_input")
-        
-        if [ -n "$suggestions" ]; then
-            echo -e "\n--- Suggestions ---"
-            # Add line numbers using awk
-            echo "$suggestions" | awk '{print NR". "$0}'
-            echo -e "-------------------\n"
-        else
-            echo -e "No suggestions found.\n"
-        fi
+        get_suggestions "$user_input"
+        echo "-------------------"
     fi
 done
