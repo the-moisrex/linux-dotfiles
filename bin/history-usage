@@ -1,3 +1,69 @@
 #!/bin/bash
 
-cat | sed -E 's/^[[:space:]]*[0-9]+\*?[[:space:]]+//' | sed -E 's/^[[:space:]]*sudo[[:space:]]*//' | sed -E 's/^([[:space:]]*(\-[^[:space:]]*)*([^[:space:]]+=("[^"]*"|[^[:space:]]*|\$?[(]+[^)]*[)]+)*)*[[:space:]]*)*//g' | sed -E 's/^[[:space:]]*//' | cut -d" " -f1 | sort | uniq -c | sort -nb
+# Default variables
+TOP_N=0
+
+# Help function
+show_help() {
+    cat << EOF
+Usage: history | $(basename "$0") [OPTIONS]
+
+Analyzes shell history from standard input and counts command usage frequency.
+
+Options:
+    -h, --help      Show this help message and exit
+    -n, --top N     Show only the top N most frequently used commands
+EOF
+    exit 0
+}
+
+# Parse command-line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -h|--help) show_help ;;
+        -n|--top)
+            TOP_N="$2"
+            shift 2
+        ;;
+        *)
+            echo "Unknown parameter passed: $1"
+            show_help
+        ;;
+    esac
+done
+
+if [ -t 0 ]; then
+    echo "Error: No input provided. Please pipe your history into this script."
+    exit 1
+fi
+
+output=$(cat | \
+    # 1. Replace pipes, semicolons, and boolean operators with newlines
+    sed -E 's/(\||;|&\|\|)/\n/g' | \
+    # 2. Remove leading spaces and history line numbers
+    sed -E 's/^[[:space:]]*[0-9]+\*?[[:space:]]+//' | \
+    # 3. Remove leading 'sudo'
+    sed -E 's/^[[:space:]]*sudo[[:space:]]+//' | \
+    # 4. Remove leading environment variable assignments
+    sed -E 's/^([[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*=("[^"]*"|[^[:space:]]*)[[:space:]]*)*//g' | \
+    # 5. Remove remaining leading spaces
+    sed -E 's/^[[:space:]]*//' | \
+    # 6. Extract the first word
+    awk '{print $1}' | \
+    # 7. FILTER OUT GARBAGE:
+    # Drop anything starting with a hyphen (e.g., -E, -H)
+    grep -v '^-' | \
+    # Keep only valid-looking command names (alphanumeric, dashes, underscores, dots, slashes, pluses for g++)
+    # This specifically kills strings with {, }, ", \, <, >, commas, etc.
+    grep -E '^[a-zA-Z0-9_./+-]+$' | \
+    # 8. Remove empty lines
+    grep -v '^$' | \
+    # 9. Sort, count, and sort by frequency
+sort | uniq -c | sort -nb)
+
+# Apply the "Top N" filter
+if [[ "$TOP_N" -gt 0 ]]; then
+    echo "$output" | tail -n "$TOP_N"
+else
+    echo "$output"
+fi
