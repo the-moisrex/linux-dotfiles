@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-head_lines=""
-
 show_help() {
   cat <<'EOF'
 Usage: prompt files [--head N] [FILE...]
@@ -57,7 +55,11 @@ for file in "$@"; do
     content="$(cat -- "$resolved_file")"
     
     if [ ! -z "$content" ]; then
-        printf 'File %s\n\n' "$rel_file"
+        if [[ -n "$head_lines" ]]; then
+            printf 'File %s (first %s lines)\n\n' "$rel_file" "$head_lines"
+        else
+            printf 'File %s\n\n' "$rel_file"
+        fi
         printf '```%s\n' "$lang"
         trim_context "$content"
         printf '\n```\n\n'
