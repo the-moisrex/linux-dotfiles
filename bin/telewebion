@@ -55,13 +55,23 @@ fi
 args=(
     --profile=fast
     --force-window=immediate
-    --script-opt=ytdl_hook-all_formats=yes
-    --hls-bitrate=max
+    --ytdl=no
     --hwdec=auto
+    --icc-profile-auto
+    # --script-opt=ytdl_hook-all_formats=yes
+    # --hls-bitrate=max
     --force-seekable=yes
     --cache=yes
-    --demuxer-max-bytes=512MiB
-    --demuxer-readahead-secs=20
+    --hls-bitrate=min             # Or specify a rate
+    --demuxer-max-bytes=32MiB     # Lower from default
+    --demuxer-readahead-secs=2    # Keep the forward buffer very small
+    # --demuxer-max-bytes=128MiB
+    # --demuxer-max-back-bytes=512MiB
+    # --demuxer-lavf-format=hls # Force the standard HLS demuxer
+    # --demuxer-lavf-analyzeduration=0.1
+    # --demuxer-lavf-probesize=131072
+    --untimed=yes          # Helps with live stream latency
+    --hls-bitrate=2000000  # Caps auto-selection around the 720p/1080p standard tracks
     "$playlist"
 )
 if [ -n "$search_term" ]; then
