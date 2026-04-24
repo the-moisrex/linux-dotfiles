@@ -1,0 +1,119 @@
+#!/bin/bash
+
+# Function to display help
+show_help() {
+    echo "Usage: $0 [OPTIONS]"
+    echo "A script to clone or update multiple Git repositories."
+    echo ""
+    echo "Options:"
+    echo "  -f, --file FILE   Path to a text file containing git URLs (one per line)."
+    echo "                    It will clone missing repos or update existing ones in the current directory."
+    echo "  -d, --dir DIR     Path to a directory containing existing git repositories."
+    echo "                    It will iterate through subdirectories and pull updates."
+    echo "  -h, --help        Show this help message and exit."
+    echo ""
+    echo "Examples:"
+    echo "  $0 -f repos.txt"
+    echo "  $0 -d /path/to/cpp_libraries"
+}
+
+# Function to update a single git repository
+update_repo() {
+    local repo_path="$1"
+    echo ">>> Updating repository at: $repo_path"
+    (
+        cd "$repo_path" || exit
+        git pull
+        git submodule update --init --recursive
+    )
+}
+
+# Function to clone a git repository
+clone_repo() {
+    local url="$1"
+    echo ">>> Cloning repository: $url"
+    git clone --recursive "$url"
+}
+
+# Process file containing URLs
+process_file() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        echo "Error: File '$file' not found."
+        exit 1
+    fi
+
+    echo "Reading URLs from '$file'..."
+    while IFS= read -r url || [[ -n "$url" ]]; do
+        # Skip empty lines and comments
+        [[ -z "$url" || "$url" == \#* ]] && continue
+
+        # Extract the repository name from the URL (e.g., gets 'nghttp2' from '.../nghttp2.git')
+        repo_name=$(basename "$url" .git)
+
+        if [[ -d "$repo_name/.git" ]]; then
+            update_repo "$repo_name"
+        else
+            clone_repo "$url"
+        fi
+        echo "----------------------------------------"
+    done < "$file"
+}
+
+# Process a directory of existing repositories
+process_dir() {
+    local target_dir="$1"
+    if [[ ! -d "$target_dir" ]]; then
+        echo "Error: Directory '$target_dir' not found."
+        exit 1
+    fi
+
+    echo "Scanning '$target_dir' for git repositories..."
+    # Iterate over subdirectories
+    for d in "$target_dir"/*/; do
+        if [[ -d "${d}.git" ]]; then
+            update_repo "$d"
+            echo "----------------------------------------"
+        fi
+    done
+}
+
+# Parse command line arguments
+if [[ "$#" -eq 0 ]]; then
+    show_help
+    exit 0
+fi
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -f|--file)
+            if [[ -n "$2" ]]; then
+                process_file "$2"
+                shift 2
+            else
+                echo "Error: --file requires a file path argument."
+                exit 1
+            fi
+            ;;
+        -d|--dir)
+            if [[ -n "$2" ]]; then
+                process_dir "$2"
+                shift 2
+            else
+                echo "Error: --dir requires a directory path argument."
+                exit 1
+            fi
+            ;;
+        *)
+            echo "Unknown parameter passed: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+echo "All operations completed successfully."
