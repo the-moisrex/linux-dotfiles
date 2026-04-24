@@ -302,7 +302,7 @@ for arg in "${args[@]}"; do
             $0 --no-clean "${args[@]}" | less --RAW-CONTROL-CHARS --buffers=-1;
             exit $?
             ;;
-        help)
+        help|-help|--help)
             print_help;
             exit 0;
             ;;
