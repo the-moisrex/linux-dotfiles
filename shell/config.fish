@@ -45,8 +45,19 @@ if status is-interactive
     # Enabling Colors
     set -gx CMAKE_COLOR_DIAGNOSTICS ON
     set -gx CLICOLOR_FORCE 1
-    set -gx NINJA_STATUS '\033[32m[%f/%t] \033[0m'
+    set -gx NINJA_STATUS "\033[32m[%f/%t] \033[0m"
     set -gx FORCE_COLOR 1
+    set -gx CARGO_TERM_COLOR always # Rust
+    set -gx GL_COLOR always # Go
+    set -gx GCC_COLORS 'error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
+    set -gx NPM_CONFIG_COLOR always
+    set -gx PY_COLORS 1 # Python
+    set -gx RSPEC_COLOR 1 # Ruby
+    set -gx BUILDKIT_COLORS 'run=green:info=cyan:warning=yellow:error=red' # Docker BuildKit
+    set -gx GH_FORCE_TTY 100% # GitHub CLI
+    set -gx TF_CLI_ARGS "-color" # Terraform
+
+
 
     # There are conflicts for "clang-format" for example
     # if [ -d /opt/depot_tools ];

@@ -1,0 +1,67 @@
+#!/bin/bash
+
+show_help() {
+    echo "Usage: $0 [OPTIONS] <filepath:line:column:>"
+    echo "Parses a file path with line/column numbers and opens it in a running IDE."
+    echo ""
+    echo "Options:"
+    echo "  --help    Show this help message and exit"
+    echo ""
+    echo "Supported IDEs (auto-detected): VS Code, CLion, Neovim (via nvr), QtCreator"
+}
+
+if [[ "$1" == "--help" || -z "$1" ]]; then
+    show_help
+    exit 0
+fi
+
+INPUT="$1"
+
+# Remove trailing colon if present
+INPUT="${INPUT%:}"
+
+# Parse path, line, and column using IFS
+IFS=':' read -r FILEPATH LINE COL <<< "$INPUT"
+
+# Resolve absolute path
+FILEPATH=$(readlink -f "$FILEPATH")
+
+if [[ ! -f "$FILEPATH" ]]; then
+    echo "Error: File '$FILEPATH' does not exist."
+    exit 1
+fi
+
+LINE=${LINE:-1}
+COL=${COL:-1}
+
+echo "Opening $FILEPATH at line $LINE, column $COL..."
+
+# Check running processes to determine which IDE to use
+if pgrep "code" > /dev/null; then
+    echo "Detected VS Code..."
+    code -g "${FILEPATH}:${LINE}:${COL}"
+
+elif pgrep "clion" > /dev/null || pgrep -f "clion.sh" > /dev/null; then
+    echo "Detected CLion..."
+    # CLion CLI doesn't natively support column, only line
+    clion --line "$LINE" "$FILEPATH"
+
+elif pgrep "nvim" > /dev/null && command -v nvr > /dev/null; then
+    echo "Detected Neovim (using nvr)..."
+    # Requires neovim-remote (nvr) and nvim started with a socket
+    nvr +"cal cursor($LINE, $COL)" "$FILEPATH"
+
+elif pgrep "qtcreator" > /dev/null; then
+    echo "Detected QtCreator..."
+    qtcreator -client "${FILEPATH}:${LINE}"
+
+else
+    echo "No supported running IDE detected. Falling back to default editor ($EDITOR)..."
+    if [[ "$EDITOR" == *"nvim"* || "$EDITOR" == *"vim"* ]]; then
+        $EDITOR "+call cursor($LINE, $COL)" "$FILEPATH"
+    elif [[ "$EDITOR" == *"hx"* ]]; then
+        $EDITOR "${FILEPATH}:${LINE}:${COL}"
+    else
+        $EDITOR "$FILEPATH"
+    fi
+fi
