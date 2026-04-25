@@ -1,0 +1,32 @@
+#!/bin/bash
+
+if [[ "$1" == "--help" ]]; then
+    echo "Usage: $0 [input_string]"
+    echo "       command | $0"
+    echo "Extracts paths of existing files (with optional line and column numbers) from the input."
+    exit 0
+fi
+
+if [ ! -t 0 ]; then
+    input=$(cat)
+else
+    input="$*"
+fi
+
+# Match paths with optional :line or :line:column
+# [a-zA-Z0-9_./~-]+ matches the file path characters
+# (:[0-9]+){0,2} matches up to two colon-number pairs (line and col)
+echo "$input" | grep -oE '[a-zA-Z0-9_./~-]+(:[0-9]+){0,2}' | while read -r match; do
+    
+    # Extract just the file path part (everything before the first colon)
+    filepath="${match%%:*}"
+    
+    # Strip trailing colons just in case
+    filepath="${filepath%:}"
+    
+    # Only print if the file actually exists on the filesystem
+    # (Note: For this to print anything, the files must exist relative to where you run this script)
+    if [[ -f "$filepath" ]]; then
+        echo "$match"
+    fi
+done
