@@ -55,7 +55,7 @@ $env.config.display_errors.exit_code = true
 # 
 #             # Run the sound command in the background, ignore its output/errors
 #             try {
-#                 # Use start to run in background and detach
+#                 # Use start to run in background and detatch
 #                 start --background {|| run-external --redirect-stdout null --redirect-stderr null $play_sound_cmd $last_exit_code } | ignore
 #             } catch {
 #                 # Optionally log if the sound command fails
