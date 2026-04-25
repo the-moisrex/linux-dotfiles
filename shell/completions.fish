@@ -98,10 +98,10 @@ complete -c prompt -n '__fish_prompt_is_run' -a help -d "Print Help"
 
 
 
-# fish completion for detach
+# fish completion for detatch
 
 # If no command has been given yet, complete with available commands
-complete -c detach -f -n "not __fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"
+complete -c detatch -f -n "not __fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"
 
 # After the first argument (the command), fall back to normal commandline completion
-complete -c detach -f -n "__fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"
+complete -c detatch -f -n "__fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"
