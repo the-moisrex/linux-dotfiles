@@ -7,6 +7,14 @@ NC="\033[0m" # No Color
 
 curdir=$(realpath "$(dirname "$0")")
 
+# Force compilers and build systems to output color
+export CLICOLOR_FORCE=1
+export FORCE_COLOR=1
+export GCC_COLORS="error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01"
+export CMAKE_COLOR_DIAGNOSTICS=ON
+export NINJA_STATUS=$'\033[32m[%f/%t] \033[0m'
+
+
 
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
     GIT_ROOT="$(git rev-parse --show-toplevel)"
@@ -137,7 +145,8 @@ function run {
     echo -e "${GRAY}Build Directory:${NC} $build_dir"
     echo -e "${GRAY}Build command:${NC}   $scan_build $build_cmd"
     echo -e "${GRAY}Exec command:${NC}    $scan_build $debug_cmd $execfile"
-    if eval "stdbuf -i0 -o0 -e0 $scan_build $build_cmd"; then
+    #if eval "stdbuf -i0 -o0 -e0 $scan_build $build_cmd"; then
+    if script -q -e -c "stdbuf -i0 -o0 -e0 $scan_build $build_cmd" /dev/null; then
       [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 800 -i utilities-terminal -a "Compiler" "$execfile Compiled Seccessfully.";
       if [ -f "$build_dir/$execfile" ]; then
         execfile="$build_dir/$execfile";

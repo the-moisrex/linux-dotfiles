@@ -42,6 +42,12 @@ if status is-interactive
     set -gx MAKEFLAGS "-j$(nproc)"
     set -gx LDFLAGS "-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now -fuse-ld=mold"
 
+    # Enabling Colors
+    set -gx CMAKE_COLOR_DIAGNOSTICS ON
+    set -gx CLICOLOR_FORCE 1
+    set -gx NINJA_STATUS '\033[32m[%f/%t] \033[0m'
+    set -gx FORCE_COLOR 1
+
     # There are conflicts for "clang-format" for example
     # if [ -d /opt/depot_tools ];
     #   fish_add_path /opt/depot_tools
