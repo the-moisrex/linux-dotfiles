@@ -51,6 +51,7 @@ abbr bwre brew
 abbr brwe brew
 abbr tg telegram.links
 abbr tg.link telegram.links
+abbr d detatch
 
 if command -v exa >/dev/null
     set ls_exec "exa --icons"

@@ -3,6 +3,7 @@
 RED="\033[0;31m"
 GRAY="\033[0;37m"
 GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
 NC="\033[0m" # No Color
 
 curdir=$(realpath "$(dirname "$0")")
@@ -32,6 +33,7 @@ proj_dir="$GIT_ROOT";
 should_clean=true;
 build_dir="";
 is_interactive=true;
+is_oneline=false;
 notify_id=10889
 
 # find the project directories
@@ -126,6 +128,7 @@ function run {
   calculate_build_dir
 
   execfile="$*";
+  orig_execfile="$execfile"
 
   if [ -d "$GIT_ROOT" ] && [ -d "$proj_dir" ] && [ -d "$build_dir" ]; then
     if [ -f "$build_dir/CMakeCache.txt" ]; then
@@ -138,6 +141,35 @@ function run {
       echo -e "${RED}Wrong build directory: '${build_dir}'${NC}";
       return;
     fi;
+
+    if $is_oneline; then
+        if eval "$scan_build $build_cmd" &>/dev/null; then
+            if [ -f "$build_dir/$execfile" ]; then
+                execfile="$build_dir/$execfile";
+            else
+                execfile="$(find "$build_dir" -type f -executable -name "$execfile" -print -quit)";
+            fi
+            
+            if [ -f "$execfile" ]; then
+                if eval "$scan_build $debug_cmd $execfile" &>/dev/null; then
+                    echo -e "${GREEN}[SUCCESS] Build & Run Passed:${NC} $orig_execfile"
+                    exit 0
+                else
+                    echo -e "${YELLOW}[FAILED RUN] Build Succeeded, Run Failed:${NC} $orig_execfile"
+                    exit 1
+                fi
+            else
+                # Sometimes a target doesn't produce an executable (e.g. object file)
+                echo -e "${GREEN}[SUCCESS] Build Passed (No Executable Found):${NC} $orig_execfile"
+                exit 0
+            fi
+        else
+            echo -e "${RED}[FAILED BUILD] Compilation Failed:${NC} $orig_execfile"
+            exit 1
+        fi
+        return
+    fi
+
     if $should_clean; then
         clear;
     fi
@@ -159,11 +191,14 @@ function run {
       echo
       if [ -f "$execfile" ] && eval "$scan_build $debug_cmd $execfile"; then
         [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 1000 -i utilities-terminal -a "Compiler" "$execfile Passed";
+        exit 0
       else
         [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 1000 -i utilities-terminal -a "Compiler" "$execfile Failed";
+        exit 1
       fi;
     else
       [ ! $is_interactive ] && timeout 1s notify-send --replace-id ${notify_id} -t 800 -i utilities-terminal -a "Compiler" "$execfile Compilation Failed.";
+      exit 1
     fi;
   else
     echo -e "${RED}Project Root not found.${NC}"
@@ -263,6 +298,7 @@ function print_help {
     echo "           report/build-report [targets]   # build targets and see if they compile without errors"
     echo "           --quite --no-interactive -q     # Don't ask questions"
     echo "           --build-dir [dir]               # Build Directory"
+    echo "           --oneline                       # Compile and run quietly, print result in one line"
 }
 
 
@@ -300,6 +336,12 @@ for arg in "${args[@]}"; do
             is_interactive=false
             unset "args[$arg_pos]"
             ;;
+        oneline|one-line|--oneline|-oneline)
+            is_oneline=true
+            is_interactive=false
+            should_clean=false
+            unset "args[$arg_pos]"
+            ;;
         --clean=false|--no-clean)
             should_clean=false;
             unset "args[$arg_pos]"
@@ -330,7 +372,9 @@ for arg in "${args[@]}"; do
     arg_pos=$((arg_pos + 1))
 done
 
-          echo "---------${args[@]}";
+if ! $is_oneline; then
+  echo "---------${args[@]}";
+fi
 
 for arg in "${args[@]}"; do
   case "$arg" in
@@ -359,4 +403,3 @@ for arg in "${args[@]}"; do
           ;;
   esac
 done
-
