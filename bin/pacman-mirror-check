@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+
+# A robust script to test and rank Arch Linux mirrors.
+#
+# Features:
+# - Parallel testing for speed.
+# - Sort by download speed, sync recency, or country.
+# - Filter by country.
+# - Configurable timeout and number of results.
+# - Color-coded, human-readable output.
+
+set -o pipefail
+# set -u # Uncomment for stricter debugging
+
+# --- Configuration & Defaults ---
+DEFAULT_MIRRORLIST="/etc/pacman.d/mirrorlist"
+DEFAULT_LIMIT=20
+DEFAULT_TIMEOUT=5
+DEFAULT_SORT="speed"
+TEST_FILE="core/os/x86_64/core.db.tar.gz" # A reasonably sized file for speed tests
+
+# --- Colors ---
+C_GREEN='\033[0;32m'
+C_RED='\033[0;31m'
+C_YELLOW='\033[1;33m'
+C_BLUE='\033[0;34m'
+C_CYAN='\033[0;36m'
+C_BOLD='\033[1m'
+C_NC='\033[0m' # No Color
+
+# --- Script Functions ---
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+A script to test and rank Arch Linux mirrors from a mirrorlist file.
+
+Options:
+  -f <file>       Path to the mirrorlist file.
+                  (Default: ${DEFAULT_MIRRORLIST})
+  -s <key>        Sort results by 'speed' (default), 'sync', or 'country'.
+  -n <number>     Show the top N results.
+                  (Default: ${DEFAULT_LIMIT})
+  -t <seconds>    Set the connection timeout for curl.
+                  (Default: ${DEFAULT_TIMEOUT})
+  -c <country>    Filter mirrors by a specific country (e.g., "United States", "Germany").
+                  Case-insensitive partial match is supported.
+  -h              Show this help message.
+EOF
+}
+
+# Function to test a single mirror URL
+# This function is designed to be run in a subshell for parallelism.
+# Output format (tab-separated):
+# SPEED_BYTES  SYNC_EPOCH  COUNTRY  URL  STATUS_MSG
+# --- Test Function (run in parallel) ---
+# --- Test Function (run in parallel) ---
+test_mirror() {
+    local url="$1"
+    local country="$2"
+    local timeout="$3"
+    local core_repo_url="${url}core/os/x88_64/core.db"
+
+    # 1. Get last sync time
+    local lastsync
+    lastsync=$(curl -s --connect-timeout "$timeout" "${url}lastsync" | tr -d '\r\n')
+
+    if [[ $? -ne 0 || -z "$lastsync" ]]; then
+        printf "[%-16s] %s (%s)\n" "Sync Fail" "$url" "$country" >&2
+        return 1
+    fi
+
+    # 2. Parse date string, now handling both epoch and formatted dates
+    local lastsync_seconds
+    if [[ "$lastsync" =~ ^[0-9]+$ ]]; then
+        # The string is purely numeric, so it's an epoch timestamp. Use it directly.
+        lastsync_seconds="$lastsync"
+    else
+        # The string is a formatted date. Sanitize and parse it.
+        local normalized_date
+        normalized_date=$(echo "$lastsync" | sed -e 's/ /T/' -e 's/Z$//' -e 's/$/Z/')
+        lastsync_seconds=$(date --date="$normalized_date" +%s 2>/dev/null)
+    fi
+
+    # Check if we successfully got a numeric timestamp
+    if [[ -z "$lastsync_seconds" ]]; then
+        printf "[%-16s] %s (%s) (Raw value: '%s')\n" "Date Parse Fail" "$url" "$country" "$lastsync" >&2
+        return 1
+    fi
+
+    # 3. Measure download speed
+    local speed
+    speed=$(curl -fs -o /dev/null -w "%{speed_download}" --connect-timeout "$timeout" "$core_repo_url")
+
+    if [[ $? -ne 0 || -z "$speed" ]]; then
+        printf "[%-16s] %s (%s) (Last Sync: %s)\n" "Speed Test Fail" "$url" "$country" "$lastsync" >&2
+        return 1
+    fi
+
+    # Output tab-separated data for sorting
+    local speed_bps=${speed%.*}
+    echo -e "${speed_bps}\t${lastsync_seconds}\t${country}\t${url}"
+}
+export -f test_mirror # Export function so it can be used by subshells (e.g., with xargs)
+
+# --- Main Logic ---
+
+main() {
+    # --- Parse Arguments ---
+    local mirrorlist_file="$DEFAULT_MIRRORLIST"
+    local sort_key="$DEFAULT_SORT"
+    local limit="$DEFAULT_LIMIT"
+    local timeout="$DEFAULT_TIMEOUT"
+    local country_filter=""
+
+    while getopts ":f:s:n:t:c:h" opt; do
+        case $opt in
+            f) mirrorlist_file="$OPTARG" ;;
+            s) sort_key="$OPTARG" ;;
+            n) limit="$OPTARG" ;;
+            t) timeout="$OPTARG" ;;
+            c) country_filter="$OPTARG" ;;
+            h) usage; exit 0 ;;
+            \?) echo "Invalid option: -$OPTARG" >&2; usage; exit 1 ;;
+            :) echo "Option -$OPTARG requires an argument." >&2; usage; exit 1 ;;
+        esac
+    done
+
+    if [[ ! -f "$mirrorlist_file" ]]; then
+        echo -e "${C_RED}Error: Mirrorlist file not found at '$mirrorlist_file'${C_NC}" >&2
+        exit 1
+    fi
+    
+    if ! [[ "$limit" =~ ^[0-9]+$ ]] || ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
+        echo -e "${C_RED}Error: Limit and timeout must be positive integers.${C_NC}" >&2
+        exit 1
+    fi
+
+    # --- Parse Mirrorlist ---
+    # Use awk to find country headers (## Country Name) and their subsequent servers.
+    # It now sets a default country to prevent errors on poorly formatted mirrorlists.
+    local mirrors
+    mirrors=$(awk '
+        BEGIN { country="Unknown" }
+        /^## / {
+            # Line starts with ##, so treat it as a country header
+            sub(/^## /, "");      # Remove "## "
+            gsub(/ \([A-Z]{2}\)$/, ""); # Remove trailing country code like (US)
+            if ($0 ~ /./) {       # If the line is not empty after substitution
+                country = $0;
+            }
+            next;
+        }
+        /^Server = / {
+            url = $3;
+            sub(/\$repo\/os\/\$arch/, "", url);
+            print country "\t" url;
+        }
+    ' "$mirrorlist_file")
+
+    # Filter by country if -c flag is used
+    if [[ -n "$filter_country" ]]; then
+        mirrors=$(echo "$mirrors" | grep -i "^${filter_country}")
+    fi
+
+    local mirror_count
+    mirror_count=$(echo "$mirrors" | wc -l)
+
+    if [[ "$mirror_count" -eq 0 ]]; then
+        echo "--> No mirrors found matching your criteria. Exiting."
+        exit 1
+    fi
+
+    echo "--> Found $mirror_count mirrors. Starting tests (in parallel)..."
+
+
+    
+    # --- Run Tests in Parallel ---
+    export MIRROR_TIMEOUT="$timeout"
+    local results
+    results=$(echo "$mirrors" | \
+        xargs -I {} bash -c '
+            line="$1"
+            country="${line%%$'\''\t'\''*}"
+            url="${line#*$'\''\t'\''}"
+            test_mirror "$url" "$country" "$MIRROR_TIMEOUT"
+        ' _ "{}"
+    )
+
+    
+    # --- Sort Results ---
+    local sort_options
+    case "$sort_key" in
+        speed) sort_options="-k1,1nr -k2,2nr" ;; # Primary: speed (desc), Secondary: sync (desc)
+        sync)  sort_options="-k2,2nr -k1,1nr" ;; # Primary: sync (desc), Secondary: speed (desc)
+        country) sort_options="-k3,3 -k1,1nr" ;; # Primary: country (asc), Secondary: speed (desc)
+        *)
+            echo -e "${C_RED}Error: Invalid sort key '$sort_key'. Use 'speed', 'sync', or 'country'.${C_NC}" >&2
+            exit 1
+            ;;
+    esac
+    
+    local sorted_results
+    sorted_results=$(echo "$results" | grep -v "Fail" | sort -t$'\t' $sort_options)
+    local failed_results
+    failed_results=$(echo "$results" | grep "Fail")
+
+    # --- Display Results ---
+    echo ""
+    printf "${C_BOLD}%-11s %-12s %-20s %s${C_NC}\n" "Speed" "Sync Age" "Country" "Mirror URL"
+    printf "${C_BOLD}%s${C_NC}\n" "================================================================================================="
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local count=0
+
+    # Print successful results
+    while IFS=$'\t' read -r speed_b sync_e country url status; do
+        if [[ $count -ge $limit ]]; then break; fi
+        
+        # Format speed
+        local speed_formatted
+        if (( speed_b > 1048576 )); then
+            speed_formatted=$(awk -v s="$speed_b" 'BEGIN { printf "%.2f MB/s", s/1048576 }')
+        elif (( speed_b > 1024 )); then
+            speed_formatted=$(awk -v s="$speed_b" 'BEGIN { printf "%.2f KB/s", s/1024 }')
+        else
+            speed_formatted="$speed_b B/s"
+        fi
+
+        # Format sync age
+        local age_s=$((now_epoch - sync_e))
+        local age_h=$((age_s / 3600))
+        local age_color="$C_GREEN"
+        if (( age_h > 12 )); then age_color="$C_YELLOW"; fi
+        if (( age_h > 48 )); then age_color="$C_RED"; fi
+        local age_formatted="${age_h}h ago"
+
+        printf "%-11s ${age_color}%-12s${C_NC} ${C_CYAN}%-20s${C_NC} %s\n" "$speed_formatted" "$age_formatted" "$country" "$url"
+        ((count++))
+    done <<< "$sorted_results"
+    
+    # Print failed results if any
+    if [[ -n "$failed_results" ]]; then
+        echo ""
+        printf "${C_RED}${C_BOLD}%s${C_NC}\n" "--- Failed or Timed Out Mirrors ---"
+        while IFS=$'\t' read -r _ _ country url status; do
+            printf "${C_RED}[%-15s]${C_NC} ${C_CYAN}%-20s${C_NC} %s\n" "$status" "$country" "$url"
+        done <<< "$failed_results"
+    fi
+}
+
+# --- Run Script ---
+main "$@"
