@@ -1,5 +1,5 @@
 flags = -std=c++23 -isystem /usr/local/include -L/usr/local/lib -lpthread -lbenchmark_main -lbenchmark
-optflags = -flto -Ofast -DNDEBUG -march=native -mtune=native
+optflags = -flto -O3 -ffast-math -DNDEBUG -march=native -mtune=native
 files = main.cpp
 
 all: gcc

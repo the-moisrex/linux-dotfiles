@@ -328,6 +328,9 @@ case $WEBSITE in
     virgool.io)
         FILTERS=("htmlq -wp -r '#navbar' -r '#app-portal' -r .is-divider-right -r .color-gray-900 -r aside -r button.no-hover .vrgl-col, p, h1")
         ;;
+    digiato.ir|digiato.com)
+        FILTERS=("htmlq -wp '.articlePost, .dailyNewsPageHead h1, .dailyNewsPageHead p' -r .notfluidbox -r .app__download--link -r .app__download--leftside -r .app__download")
+        ;;
     *)
         FILTERS=(
             "htmlq -wp $HTML"
