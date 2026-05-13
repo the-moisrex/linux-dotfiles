@@ -52,7 +52,6 @@
     "window.closeWhenEmpty": true,
     "window.confirmBeforeClose": "never",
     "window.autoDetectColorScheme": false,
-    "window.commandCenter": false,
     "zenMode.showTabs": "none",
     "zenMode.centerLayout": true,
     // debug:

@@ -670,6 +670,21 @@ case $WEBSITE in
             'grep -v "zoomon.ir/archive/"'
         )
         ;;
+    digiato|digiato.ir|digiato.com)
+        WEBSITE="digiato.com"
+        BASE_URL="https://${WEBSITE}"
+        CURL_COMMANDS=(
+            "curl $CURL_OPTIONS $BASE_URL"
+        )
+        FILTERS=(
+            'grep -E "//(www.)?digiato(\.com|\.ir)/.+/.+"'
+            'grep -v "/comments/feed"'
+            'grep -v "/offlinegames"'
+            'grep -v ".jpeg"'
+            'grep -v "/topic"'
+            'grep -v "/author"'
+        )
+        ;;
     diroozban|diroozban.ir)
         WEBSITE="diroozban.ir"
         BASE_URL="https://${WEBSITE}"
