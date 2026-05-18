@@ -16,7 +16,7 @@ format_duration() {
     local hours=$(echo "scale=0; ($duration % 86400) / 3600" | bc)
     local minutes=$(echo "scale=0; ($duration % 3600) / 60" | bc)
     local seconds=$(echo "scale=0; ($duration % 60) / 1" | bc)
-
+    
     local formatted=""
     if [ "$days" -gt 0 ]; then
         formatted+="${days}d "
@@ -28,27 +28,27 @@ format_duration() {
         formatted+="${minutes}m "
     fi
     formatted+="${seconds}s"
-
+    
     echo "$formatted"
 }
 
 # Function to process a single video file
 process_video() {
-    local video_file=$1
+    local video_file="$1"
     if [ ! -f "$video_file" ]; then
         echo "Error: File '$video_file' not found!"
         return
     fi
-
+    
     local duration=$(get_duration "$video_file")
     if [ -z "$duration" ]; then
         echo "Error: Could not retrieve the duration of the video '$video_file'."
         return
     fi
-
+    
     local formatted_duration=$(format_duration "$duration")
     echo -e "$formatted_duration: \t\t $video_file"
-
+    
     # Write the duration to the named pipe
     echo "$duration" > "$pipe"
 }
