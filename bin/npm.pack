@@ -1,223 +1,215 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
-# Default version for packages specified via list files or direct arguments
+# Default variables
 VERSION="latest"
+OUT_DIR="."
+MAX_JOBS=8
+declare -a INPUT_PACKAGE_LIST_FILES=()
+PACKAGE_JSON_PATH=""
+RECURSIVE_PATH=""
 
-# Variables to store input types
-declare -a INPUT_PACKAGE_LIST_FILES=() # Stores paths to files containing package lists
-PACKAGE_JSON_PATH=""                 # Stores path to a specific package.json or directory
-RECURSIVE_PATH=""                    # Stores path for recursive scanning
+# Temporary file to collect all package specs to process
+SPECS_FILE=$(mktemp)
+trap 'rm -f "$SPECS_FILE"' EXIT
 
 # --- Helper functions ---
 
-# Print usage and exit
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS] [PACKAGE_LIST_FILES...]
 
-Pack npm packages using 'npm pack'.
+Pack npm packages using 'npm pack', skipping existing tarballs.
+Highly optimized: runs in parallel and predicts tarball names locally for exact versions.
 
-Input Methods (choose only one primary method):
-  -f, --file <file>       Read package names (one per line) from FILE.
-                          Multiple -f options are allowed, or provide files as positional
-                          arguments. The -v/--version option applies to these packages.
-  -p, --package-json <path>  Read 'dependencies', 'devDependencies', 'peerDependencies',
-                          and 'optionalDependencies' from a package.json file or a
-                          directory containing one. Versions specified in package.json
-                          are used; -v/--version is ignored in this mode.
-  -r, --recursive <dir>   Recursively find package.json files within <dir> and pack
-                          all their dependencies. Versions specified in package.json
-                          are used; -v/--version is ignored in this mode.
+Input Methods:
+  -f, --file <file>          Read package names (one per line) from FILE.
+  -p, --package-json <path>  Read dependencies from a package.json file/dir.
+  -r, --recursive <dir>      Recursively find package.json files and pack dependencies.
 
 Options:
-  -v, --version VERSION   Use a specific version, a semver range, or "latest"
-                          for packages specified via -f or positional arguments.
-                          Examples: "1.2.3", ">=2.0.0 <3.0.0", "latest".
-                          Default: "latest".
-  -h, --help              Show this help message and exit.
-
-The script runs 'npm pack <package>@<version>' for each identified package.
-Requires 'jq' for processing package.json files (-p and -r options).
+  -o, --output <dir>         Output directory for tarballs. Default is current directory ('.').
+  -v, --version VERSION      Use a specific version/range for packages from files (-f). Default is 'latest'.
+  -j, --jobs N               Number of concurrent downloads (default: 8).
+  -h, --help                 Show this help message and exit.
 EOF
     exit 0
 }
 
-# Packs a single package specification (e.g., "lodash@^4.0.0" or "express@latest")
+check_dependencies() {
+    if ! command -v jq &> /dev/null; then
+        echo "Error: 'jq' is required but not installed." >&2
+        exit 1
+    fi
+    if ! command -v npm &> /dev/null; then
+        echo "Error: 'npm' is required but not installed." >&2
+        exit 1
+    fi
+}
+
+extract_deps_from_json() {
+    local json_file="$1"
+    if [[ ! -f "$json_file" ]]; then
+        echo "Warning: package.json not found at '$json_file'" >&2
+        return 1
+    fi
+    
+    # Extract all dependency types and append to the specs file
+    jq -r '
+        (.dependencies // {}) +
+        (.devDependencies // {}) +
+        (.peerDependencies // {}) +
+        (.optionalDependencies // {})
+        | to_entries[]
+        | select(.key != null and .value != null)
+        | .key + "@" + .value
+    ' "$json_file" 2>/dev/null >> "$SPECS_FILE" || true
+}
+
 pack_package_spec() {
     local pkg_spec="$1"
-    echo "Packing: $pkg_spec"
-    if npm pack "$pkg_spec"; then
-        echo "→ Success"
+    
+    # 1. Fast Path: If it's an exact version, predict tarball name without network request
+    if [[ "$pkg_spec" =~ ^(@?[^@]+)@([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9.-]*)$ ]]; then
+        local pkg_name="${BASH_REMATCH[1]}"
+        local pkg_version="${BASH_REMATCH[2]}"
+        
+        local safe_name="${pkg_name#@}"
+        safe_name="${safe_name//\//-}"
+        local predicted_tarball="${safe_name}-${pkg_version}.tgz"
+        
+        if [[ -f "$OUT_DIR/$predicted_tarball" ]]; then
+            echo "✔ Skipped (cached): $pkg_spec"
+            return 0
+        fi
+    fi
+    
+    # 2. Slow Path: If it's a tag (latest) or range (^1.0.0), hit the registry
+    local view_json
+    view_json=$(npm view "$pkg_spec" name version --json 2>/dev/null || echo "")
+    
+    if [[ -n "$view_json" ]]; then
+        local resolved_name
+        local resolved_version
+        
+        if [[ $(echo "$view_json" | jq -r 'type') == "array" ]]; then
+            resolved_name=$(echo "$view_json" | jq -r '.[-1].name // empty')
+            resolved_version=$(echo "$view_json" | jq -r '.[-1].version // empty')
+        else
+            resolved_name=$(echo "$view_json" | jq -r '.name // empty')
+            resolved_version=$(echo "$view_json" | jq -r '.version // empty')
+        fi
+        
+        if [[ -n "$resolved_name" && -n "$resolved_version" ]]; then
+            local safe_name="${resolved_name#@}"
+            safe_name="${safe_name//\//-}"
+            local tarball_name="${safe_name}-${resolved_version}.tgz"
+            
+            if [[ -f "$OUT_DIR/$tarball_name" ]]; then
+                echo "✔ Skipped (cached): $pkg_spec (Resolved to $resolved_version)"
+                return 0
+            fi
+        fi
+    fi
+    
+    # 3. Actually pack the package
+    echo "↓ Packing: $pkg_spec"
+    if npm pack "$pkg_spec" --pack-destination "$OUT_DIR" >/dev/null 2>&1; then
+        echo "→ Success: $pkg_spec"
     else
-        echo "→ Failed (exit code $?)" >&2
+        echo "→ Failed : $pkg_spec" >&2
     fi
-    echo
 }
-
-# Packs dependencies from a given package.json file
-pack_dependencies_from_package_json() {
-    local json_file="$1"
-
-    if [[ ! -f "$json_file" ]]; then
-        echo "Error: package.json file not found: '$json_file'" >&2
-        return 1
-    fi
-
-    echo "--- Processing dependencies from: $json_file ---"
-
-    if ! command -v jq &> /dev/null; then
-        echo "Warning: 'jq' is not installed. Cannot parse package.json for dependencies." >&2
-        echo "Please install 'jq' to use -p or -r options (e.g., apt install jq, brew install jq)." >&2
-        return 1
-    fi
-
-    # Extract all dependency types (dependencies, devDependencies, peerDependencies, optionalDependencies)
-    # and format them as "package_name@version_spec"
-    local dependencies_string
-    dependencies_string=$(jq -r '
-        .dependencies // {} +
-        .devDependencies // {} +
-        .peerDependencies // {} +
-        .optionalDependencies // {}
-        | to_entries[]
-        | select(.key != null and .value != null) # Ensure key and value exist
-        | .key + "@" + .value
-    ' "$json_file" 2>/dev/null) # Redirect jq errors to /dev/null for cleaner output
-
-    if [[ -z "$dependencies_string" ]]; then
-        echo "No dependencies found in $json_file."
-        return 0
-    fi
-
-    # Loop through each dependency specification and pack it
-    while IFS= read -r spec_line; do
-        # Trim leading/trailing whitespace
-        spec_line="$(echo "$spec_line" | xargs)"
-        [[ -z "$spec_line" ]] && continue # Skip empty lines after trim
-        pack_package_spec "$spec_line"
-    done <<< "$dependencies_string"
-}
-
 
 # --- Option Parsing ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -v|--version)
-            if [[ -z "${2:-}" ]]; then
-                echo "Error: --version requires a value" >&2
-                exit 1
-            fi
-            VERSION="$2"
-            shift 2
-            ;;
-        -f|--file)
-            if [[ -z "${2:-}" ]]; then
-                echo "Error: --file requires a value" >&2
-                exit 1
-            fi
-            INPUT_PACKAGE_LIST_FILES+=("$2")
-            shift 2
-            ;;
-        -p|--package-json)
-            if [[ -z "${2:-}" ]]; then
-                echo "Error: --package-json requires a value" >&2
-                exit 1
-            fi
-            # Check for conflicting input methods
-            if [[ -n "$PACKAGE_JSON_PATH" || -n "$RECURSIVE_PATH" || ${#INPUT_PACKAGE_LIST_FILES[@]} -gt 0 ]]; then
-                echo "Error: Cannot combine -p with -f, -r, or positional arguments." >&2
-                usage >&2
-                exit 1
-            fi
-            PACKAGE_JSON_PATH="$2"
-            shift 2
-            ;;
-        -r|--recursive)
-            if [[ -z "${2:-}" ]]; then
-                echo "Error: --recursive requires a value" >&2
-                exit 1
-            fi
-            # Check for conflicting input methods
-            if [[ -n "$PACKAGE_JSON_PATH" || -n "$RECURSIVE_PATH" || ${#INPUT_PACKAGE_LIST_FILES[@]} -gt 0 ]]; then
-                echo "Error: Cannot combine -r with -f, -p, or positional arguments." >&2
-                usage >&2
-                exit 1
-            fi
-            RECURSIVE_PATH="$2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            ;;
-        --) # End of options
-            shift
-            # Remaining arguments are treated as package list files
-            INPUT_PACKAGE_LIST_FILES+=("$@")
-            break
-            ;;
-        -*) # Unknown option
-            echo "Error: Unknown option: $1" >&2
-            usage >&2
-            exit 1
-            ;;
-        *)  # Positional arguments are treated as package list files
-            INPUT_PACKAGE_LIST_FILES+=("$1")
-            shift
-            ;;
+        -o|--output) OUT_DIR="$2"; shift 2 ;;
+        -v|--version) VERSION="$2"; shift 2 ;;
+        -f|--file) INPUT_PACKAGE_LIST_FILES+=("$2"); shift 2 ;;
+        -p|--package-json) PACKAGE_JSON_PATH="$2"; shift 2 ;;
+        -r|--recursive) RECURSIVE_PATH="$2"; shift 2 ;;
+        -j|--jobs) MAX_JOBS="$2"; shift 2 ;;
+        -h|--help) usage ;;
+        --) shift; INPUT_PACKAGE_LIST_FILES+=("$@"); break ;;
+        -*) echo "Error: Unknown option: $1" >&2; usage >&2 ;;
+        *)  INPUT_PACKAGE_LIST_FILES+=("$1"); shift ;;
     esac
 done
 
-# Ensure at least one input method is specified
 if [[ -z "$PACKAGE_JSON_PATH" && -z "$RECURSIVE_PATH" && ${#INPUT_PACKAGE_LIST_FILES[@]} -eq 0 ]]; then
-    echo "Error: No input method specified. Please use -f, -p, -r, or provide package list files as arguments." >&2
+    echo "Error: No input method specified." >&2
     usage >&2
-    exit 1
 fi
 
-# --- Main Execution Logic ---
+check_dependencies
+mkdir -p "$OUT_DIR"
 
-# Case 1: Recursive scan for package.json files
+# --- 1. Gather all specs ---
+
+# From recursive package.json files
 if [[ -n "$RECURSIVE_PATH" ]]; then
-    if [[ ! -d "$RECURSIVE_PATH" ]]; then
-        echo "Error: Recursive path '$RECURSIVE_PATH' is not a directory." >&2
-        exit 1
-    fi
-    echo "Scanning '$RECURSIVE_PATH' recursively for package.json files..."
-    # Use -print0 and read -r -d $'\0' for robust handling of filenames with spaces
-    find "$RECURSIVE_PATH" -type f -name 'package.json' -print0 | while IFS= read -r -d $'\0' json_file; do
-        pack_dependencies_from_package_json "$json_file"
-    done
-    exit 0
+    echo "Scanning recursively for package.json in '$RECURSIVE_PATH'..."
+    while IFS= read -r -d $'\0' json_file; do
+        extract_deps_from_json "$json_file"
+    done < <(find "$RECURSIVE_PATH" -type f -name 'package.json' -print0)
 fi
 
-# Case 2: Specific package.json file or directory
+# From specific package.json
 if [[ -n "$PACKAGE_JSON_PATH" ]]; then
     target_json_file="$PACKAGE_JSON_PATH"
-    if [[ -d "$PACKAGE_JSON_PATH" ]]; then
-        # If a directory is provided, look for package.json inside it
-        target_json_file="$PACKAGE_JSON_PATH/package.json"
-    fi
-    pack_dependencies_from_package_json "$target_json_file"
-    exit 0
+    [[ -d "$PACKAGE_JSON_PATH" ]] && target_json_file="$PACKAGE_JSON_PATH/package.json"
+    extract_deps_from_json "$target_json_file"
 fi
 
-# Case 3: Package list files (default or via -f)
-# This block is executed only if -p or -r were not used and exited
+# From flat text files
 for file in "${INPUT_PACKAGE_LIST_FILES[@]}"; do
     if [[ ! -f "$file" ]]; then
         echo "Warning: Package list file '$file' not found, skipping." >&2
         continue
     fi
-
-    echo "=== Processing packages from: $file ==="
     while IFS= read -r pkg || [[ -n "$pkg" ]]; do
-        # Trim whitespace, skip empty lines and lines starting with #
-        pkg="$(echo "$pkg" | xargs)"
+        pkg="$(echo "$pkg" | xargs)" # trim whitespace
         [[ -z "$pkg" || "$pkg" == \#* ]] && continue
-
-        # Construct npm pack argument: <package>@<version>
-        spec="${pkg}@${VERSION}"
-        pack_package_spec "$spec"
+        # If the user provided a version in the text file, keep it; otherwise append $VERSION
+        if [[ "$pkg" == *@* && "$pkg" != \@*@* ]]; then
+            echo "$pkg" >> "$SPECS_FILE"
+        else
+            echo "${pkg}@${VERSION}" >> "$SPECS_FILE"
+        fi
     done < "$file"
 done
+
+# --- 2. Deduplicate and Process ---
+
+# Sort and deduplicate specs
+mapfile -t UNIQUE_SPECS < <(sort -u "$SPECS_FILE" | grep -v '^$')
+
+if [[ ${#UNIQUE_SPECS[@]} -eq 0 ]]; then
+    echo "No dependencies found to process."
+    exit 0
+fi
+
+echo "Found ${#UNIQUE_SPECS[@]} unique packages to process. Output dir: $OUT_DIR"
+echo "Starting downloads with concurrency: $MAX_JOBS"
+echo "---------------------------------------------------"
+
+# Concurrent execution loop
+running_jobs=0
+for spec in "${UNIQUE_SPECS[@]}"; do
+    # echo "> $spec"
+    pack_package_spec "$spec" &
+    running_jobs=$(( running_jobs + 1 ))
+    
+    # Throttle the number of concurrent jobs
+    if (( running_jobs >= MAX_JOBS )); then
+        wait -n 2>/dev/null || true # Wait for at least one job to finish
+        running_jobs=$(( running_jobs - 1 ))
+    fi
+done
+
+# Wait for all remaining background jobs to finish
+wait
+
+echo "---------------------------------------------------"
+echo "Done! Packages are located in '$OUT_DIR'."
