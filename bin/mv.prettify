@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_NAME="$(basename "$0")"
+
+# XDG Cache directory for storing rename history
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+CACHE_DIR="$XDG_CACHE_HOME/filename-prettifier"
+HISTORY_FILE="$CACHE_DIR/rename_history.log"
+
+# Ensure cache directory exists
+mkdir -p "$CACHE_DIR"
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+show_help() {
+    cat << EOF
+$SCRIPT_NAME v$VERSION - Prettify file and directory names
+
+USAGE:
+    $SCRIPT_NAME [OPTIONS] <file_or_directory>...
+
+OPTIONS:
+    -h, --help              Show this help message
+    -r, --reverse <path>    Reverse a previous rename operation
+    -n, --dry-run           Show what would be renamed without doing it
+    -v, --verbose           Show detailed information
+    --list-history          Show all rename operations from history
+
+DESCRIPTION:
+    This script prettifies filenames by:
+    - Removing advertisement suffixes (YasDL.com, p30download, etc.)
+    - Replacing dots with spaces
+    - Trimming excessive whitespace
+    - Preserving file extensions
+
+    All rename operations are logged to:
+    $HISTORY_FILE
+
+EXAMPLES:
+    # Prettify a single file
+    $SCRIPT_NAME ./The.Complete.Course-Udemy_YasDL.com
+
+    # Prettify multiple files
+    $SCRIPT_NAME *.mp4 *.pdf
+
+    # Dry run to see what would change
+    $SCRIPT_NAME --dry-run ./Some.File.Name_YasDL.com
+
+    # Reverse a rename
+    $SCRIPT_NAME --reverse "The Complete Course"
+
+    # Show rename history
+    $SCRIPT_NAME --list-history
+
+EOF
+}
+
+log_rename() {
+    local original="$1"
+    local new="$2"
+    local timestamp
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "$timestamp|$original|$new" >> "$HISTORY_FILE"
+}
+
+list_history() {
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        echo "No rename history found."
+        return
+    fi
+    
+    echo -e "${BLUE}Rename History:${NC}"
+    echo "----------------------------------------"
+    while IFS='|' read -r timestamp original new; do
+        echo -e "${YELLOW}[$timestamp]${NC}"
+        echo -e "  ${RED}From:${NC} $original"
+        echo -e "  ${GREEN}To:${NC}   $new"
+        echo ""
+    done < "$HISTORY_FILE"
+}
+
+reverse_rename() {
+    local target="$1"
+    local found=false
+    
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        echo -e "${RED}Error: No rename history found.${NC}"
+        return 1
+    fi
+    
+    # Search for the target in the history (could be in either column)
+    while IFS='|' read -r timestamp original new; do
+        if [[ "$new" == "$target" ]] || [[ "$(basename "$new")" == "$(basename "$target")" ]]; then
+            if [[ -e "$new" ]]; then
+                if [[ -e "$original" ]]; then
+                    echo -e "${RED}Error: Original name '$original' already exists.${NC}"
+                    return 1
+                fi
+                mv -v "$new" "$original"
+                echo -e "${GREEN}Reversed: '$new' → '$original'${NC}"
+                found=true
+                break
+            else
+                echo -e "${RED}Error: File '$new' not found.${NC}"
+                return 1
+            fi
+        fi
+    done < "$HISTORY_FILE"
+    
+    if [[ "$found" == false ]]; then
+        echo -e "${RED}Error: No rename record found for '$target'.${NC}"
+        return 1
+    fi
+}
+
+prettify_name() {
+    local input="$1"
+    local name
+    local ext=""
+    local dir
+    local base
+    
+    # Get directory and basename
+    dir="$(dirname "$input")"
+    base="$(basename "$input")"
+    
+    # Separate extension if it's a file
+    if [[ -f "$input" ]]; then
+        if [[ "$base" =~ \.[^.]+$ ]]; then
+            ext="${base##*.}"
+            name="${base%.*}"
+        else
+            name="$base"
+        fi
+    else
+        name="$base"
+    fi
+    
+    # Store original for comparison
+    local original_name="$name"
+    
+    # Rule 1: Remove common download site suffixes
+    # Add more patterns here as needed
+    name="${name%%-Udemy_YasDL.com}"
+    name="${name%%-Udemy_YasDL}"
+    name="${name%%_YasDL.com}"
+    name="${name%%_YasDL}"
+    name="${name%%-Lynda_YasDL.com}"
+    name="${name%%-Lynda_YasDL}"
+    name="${name%%-Real.Python_YasDL.com}"
+    name="${name%%-Real.Python_YasDL}"
+    name="${name%%-Code.With.Mosh_YasDL.com}"
+    name="${name%%-Code.With.Mosh_YasDL}"
+    name="${name%%-Code.with.Mosh_YasDL.com}"
+    name="${name%%-Code.with.Mosh_YasDL}"
+    name="${name%%_p30download.com}"
+    name="${name%%_p30download}"
+    name="${name%%-p30download.com}"
+    name="${name%%-p30download}"
+    name="${name%% – Udemy}"
+    name="${name%% - Udemy}"
+    
+    # Rule 2: Replace dots with spaces (but not leading dots for hidden files)
+    if [[ "$name" =~ ^\. ]]; then
+        # Hidden file - preserve leading dot
+        local leading_dot="."
+        name="${name#.}"
+        name="${name//./ }"
+        name="$leading_dot$name"
+    else
+        name="${name//./ }"
+    fi
+    
+    # Rule 3: Trim excessive whitespace
+    # Remove leading/trailing whitespace
+    name="${name#"${name%%[![:space:]]*}"}"
+    name="${name%"${name##*[![:space:]]}"}"
+    
+    # Replace multiple spaces with single space
+    name="$(echo "$name" | tr -s ' ')"
+    
+    # Check if we made any meaningful changes
+    if [[ "$name" == "$original_name" ]]; then
+        return 1  # No changes needed
+    fi
+    
+    # Reconstruct full name with extension
+    if [[ -n "$ext" ]]; then
+        name="$name.$ext"
+    fi
+    
+    # Return the new full path
+    if [[ "$dir" == "." ]]; then
+        echo "$name"
+    else
+        echo "$dir/$name"
+    fi
+}
+
+main() {
+    local dry_run=false
+    local verbose=false
+    local reverse_mode=false
+    local reverse_target=""
+    local files=()
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -n|--dry-run)
+                dry_run=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -r|--reverse)
+                reverse_mode=true
+                reverse_target="$2"
+                shift 2
+                ;;
+            --list-history)
+                list_history
+                exit 0
+                ;;
+            -*)
+                echo -e "${RED}Error: Unknown option '$1'${NC}"
+                echo "Use --help for usage information."
+                exit 1
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    # Handle reverse mode
+    if [[ "$reverse_mode" == true ]]; then
+        reverse_rename "$reverse_target"
+        exit $?
+    fi
+    
+    # Check if files were provided
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo -e "${RED}Error: No files or directories specified.${NC}"
+        echo "Use --help for usage information."
+        exit 1
+    fi
+    
+    # Process each file/directory
+    local renamed_count=0
+    local skipped_count=0
+    
+    for item in "${files[@]}"; do
+        if [[ ! -e "$item" ]]; then
+            echo -e "${RED}Error: '$item' does not exist.${NC}"
+            ((++skipped_count))
+            continue
+        fi
+        
+        new_name="$(prettify_name "$item")" || {
+            if [[ "$verbose" == true ]]; then
+                echo -e "${YELLOW}Skipped: '$item' (no changes needed)${NC}"
+            fi
+            ((++skipped_count))
+            continue
+        }
+        
+        # Check if target already exists
+        if [[ -e "$new_name" ]] && [[ "$item" != "$new_name" ]]; then
+            echo -e "${RED}Error: '$new_name' already exists. Skipping '$item'.${NC}"
+            ((++skipped_count))
+            continue
+        fi
+        
+        if [[ "$dry_run" == true ]]; then
+            echo -e "${BLUE}Would rename:${NC}"
+            echo -e "  ${RED}From:${NC} $item"
+            echo -e "  ${GREEN}To:${NC}   $new_name"
+        else
+            mv "$item" "$new_name"
+            log_rename "$item" "$new_name"
+            echo -e "${GREEN}Renamed:${NC} '$item' → '$new_name'"
+            ((++renamed_count))
+        fi
+    done
+    
+    # Summary
+    echo ""
+    if [[ "$dry_run" == true ]]; then
+        echo -e "${BLUE}Dry run complete. No files were renamed.${NC}"
+    else
+        echo -e "${GREEN}Renamed: $renamed_count${NC} | ${YELLOW}Skipped: $skipped_count${NC}"
+    fi
+}
+
+main "$@"
