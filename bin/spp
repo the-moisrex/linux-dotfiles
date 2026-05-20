@@ -61,8 +61,12 @@ def normalize_language(language):
         return "c++"
     return language
 
-def detect_language(path):
+def detect_language(path, c_as_cxx=False, cxx_as_c=False):
     suffix = Path(path).suffix.lower()
+    if c_as_cxx and suffix in C_EXTENSIONS:
+        return "c++"
+    if cxx_as_c and suffix in CXX_EXTENSIONS:
+        return "c"
     if suffix in CXX_EXTENSIONS:
         return "c++"
     if suffix in C_EXTENSIONS:
@@ -90,8 +94,14 @@ def filter_std_flags(flags, language):
 # ----------------------------
 # Find files using git grep
 # ----------------------------
-def git_grep_files(function_name, language=None, verbose=False):
-    patterns = C_FILE_PATTERNS if language == "c" else CXX_FILE_PATTERNS if language == "c++" else C_FILE_PATTERNS + CXX_FILE_PATTERNS
+def git_grep_files(function_name, language=None, verbose=False, c_as_cxx=False, cxx_as_c=False):
+    if language == "c":
+        patterns = C_FILE_PATTERNS + (CXX_FILE_PATTERNS if cxx_as_c else [])
+    elif language == "c++":
+        patterns = CXX_FILE_PATTERNS + (C_FILE_PATTERNS if c_as_cxx else [])
+    else:
+        patterns = C_FILE_PATTERNS + CXX_FILE_PATTERNS
+    patterns = list(dict.fromkeys(patterns))
     cmd = ["git", "grep", "-l", function_name, "--", *patterns]
     if verbose:
         print(f"[verbose] Running: {' '.join(cmd)}")
@@ -104,21 +114,21 @@ def git_grep_files(function_name, language=None, verbose=False):
 # ----------------------------
 # Extract function from single file
 # ----------------------------
-def extract_file(function_name, file, include_dirs, extra_flags, language=None, verbose=False):
+def extract_file(function_name, file, include_dirs, extra_flags, language=None, verbose=False, c_as_cxx=False, cxx_as_c=False):
     path = Path(file)
     if not path.exists():
         if verbose:
             print(f"[verbose] Skipping non-existent file: {file}")
         return ""
 
-    file_language = language or detect_language(path)
+    file_language = language or detect_language(path, c_as_cxx=c_as_cxx, cxx_as_c=cxx_as_c)
     filtered_extra_flags = filter_std_flags(extra_flags, file_language)
 
     # Handle headers with temporary TU
     if is_header(path):
         tu_suffix = ".cpp" if file_language == "c++" else ".c"
         tu_file = tempfile.NamedTemporaryFile(suffix=tu_suffix, delete=False)
-        tu_file.write(f'#include "{path}"\n'.encode())
+        tu_file.write(f'#include "{path.resolve()}"\n'.encode())
         tu_file.close()
         target_file = tu_file.name
         if verbose:
@@ -130,6 +140,7 @@ def extract_file(function_name, file, include_dirs, extra_flags, language=None, 
     # clang command
     cmd = [
         "clang",
+        "-x", file_language,
         "-Xclang", f"-ast-dump-filter={function_name}",
         "-fsyntax-only",
         "-Xclang", "-ast-print",
@@ -167,10 +178,23 @@ def extract_file(function_name, file, include_dirs, extra_flags, language=None, 
 # ----------------------------
 # Parallel extraction and deduplication
 # ----------------------------
-def extract_function(function_name, files, include_dirs, extra_flags, language=None, verbose=False, max_workers=4):
+def extract_function(function_name, files, include_dirs, extra_flags, language=None, verbose=False, max_workers=4, c_as_cxx=False, cxx_as_c=False):
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {executor.submit(extract_file, function_name, f, include_dirs, extra_flags, language, verbose): f for f in files}
+        future_to_file = {
+            executor.submit(
+                extract_file,
+                function_name,
+                f,
+                include_dirs,
+                extra_flags,
+                language,
+                verbose,
+                c_as_cxx,
+                cxx_as_c,
+            ): f
+            for f in files
+        }
         for future in as_completed(future_to_file):
             content = future.result()
             if content:
@@ -201,6 +225,8 @@ def main():
     parser.add_argument("--lang", "--language", choices=["c", "c++", "cpp", "cxx"], help="Force language instead of detecting from file extension")
     parser.add_argument("--c", action="store_const", const="c", dest="lang", help="Force C mode")
     parser.add_argument("--c++", "--cpp", action="store_const", const="c++", dest="lang", help="Force C++ mode")
+    parser.add_argument("--c-as-c++", "--c-as-cpp", action="store_true", dest="c_as_cxx", help="Treat .c and .h files as C++ unless --lang/--c overrides all files")
+    parser.add_argument("--c++-as-c", "--cpp-as-c", action="store_true", dest="cxx_as_c", help="Treat C++ extension files as C unless --lang/--cpp overrides all files")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--jobs", "-j", type=int, default=4, help="Number of parallel workers")
     args = parser.parse_args()
@@ -208,14 +234,30 @@ def main():
 
     files = args.files
     if not files:
-        files = git_grep_files(args.function, language=language, verbose=args.verbose)
+        files = git_grep_files(
+            args.function,
+            language=language,
+            verbose=args.verbose,
+            c_as_cxx=args.c_as_cxx,
+            cxx_as_c=args.cxx_as_c,
+        )
         if not files:
             if args.verbose:
                 print(f"[verbose] No files found containing function '{args.function}'")
             return
 
     extra_flags = read_clang_flags(verbose=args.verbose)
-    extract_function(args.function, files, args.include, extra_flags, language=language, verbose=args.verbose, max_workers=args.jobs)
+    extract_function(
+        args.function,
+        files,
+        args.include,
+        extra_flags,
+        language=language,
+        verbose=args.verbose,
+        max_workers=args.jobs,
+        c_as_cxx=args.c_as_cxx,
+        cxx_as_c=args.cxx_as_c,
+    )
 
 if __name__ == "__main__":
     main()
