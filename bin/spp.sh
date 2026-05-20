@@ -1,10 +1,11 @@
 #!/bin/bash
 
-# Script name: spp (Search C++)
-# Purpose: Extract a function's source code from a C++ file using clang-check AST tools
+# Script name: spp (Search C/C++)
+# Purpose: Extract a function's source code from a C/C++ file using clang-check AST tools
 
 # Default values
 verbose=false
+language=""
 files=()
 
 cur_file=$(basename "$0");
@@ -14,10 +15,13 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h)
             echo "Usage: $cur_file [OPTIONS] [FILES...] FUNCTION_NAME"
-            echo "Extract a function's source code from a C++ file using clang-check AST tools."
+            echo "Extract a function's source code from a C/C++ file using clang-check AST tools."
             echo ""
             echo "Options:"
             echo "  --help, -h          Display this help message and exit"
+            echo "  --lang c|c++        Force language instead of detecting from file extension"
+            echo "  --c                 Force C mode"
+            echo "  --c++, --cpp        Force C++ mode"
             echo "  --verbose, -v       Enable verbose output"
             echo ""
             echo "Arguments:"
@@ -31,6 +35,23 @@ while [[ $# -gt 0 ]]; do
             ;;
         --verbose|-v)
             verbose=true
+            shift
+            ;;
+        --lang|--language)
+            if [[ "$2" != "c" && "$2" != "c++" && "$2" != "cpp" && "$2" != "cxx" ]]; then
+                echo "Error: --lang must be c or c++" >&2
+                exit 1
+            fi
+            language="$2"
+            [[ "$language" = "cpp" || "$language" = "cxx" ]] && language="c++"
+            shift 2
+            ;;
+        --c)
+            language="c"
+            shift
+            ;;
+        --c++|--cpp)
+            language="c++"
             shift
             ;;
         -*)
@@ -85,8 +106,14 @@ fi
 
 # Get list of files to search
 if [[ ${#files[@]} -eq 0 ]]; then
-    # Find C++ files in the repository that contain the function
-    cpp_files=$(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hxx')
+    # Find C/C++ files in the repository that contain the function
+    if [[ "$language" = "c" ]]; then
+        cpp_files=$(git grep -l "$function_name" -- '*.c' '*.h')
+    elif [[ "$language" = "c++" ]]; then
+        cpp_files=$(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hh' '*.hxx' '*.ixx')
+    else
+        cpp_files=$(git grep -l "$function_name" -- '*.c' '*.h' '*.cpp' '*.cxx' '*.cc' '*.c++' '*.hpp' '*.hh' '*.hxx' '*.ixx')
+    fi
 else
     # Use provided files, checking they exist
     cpp_files=()
@@ -125,7 +152,31 @@ for file in $cpp_files; do
             echo "Checking $file for function definition..." >&2
         fi
 
-        ast_list=$(clang-check -ast-list "$file" -- "${extra_args[@]}" 2>/dev/null)
+        file_language="$language"
+        if [[ -z "$file_language" ]]; then
+            case "$file" in
+                *.c|*.h) file_language="c" ;;
+                *) file_language="c++" ;;
+            esac
+        fi
+
+        std_arg="-std=c23"
+        [[ "$file_language" = "c++" ]] && std_arg="-std=c++26"
+
+        filtered_args=()
+        for arg in "${extra_args[@]}"; do
+            if [[ "$arg" == -std=* ]]; then
+                if [[ "$file_language" = "c" && "$arg" == *++* ]]; then
+                    continue
+                fi
+                if [[ "$file_language" = "c++" && "$arg" != *++* ]]; then
+                    continue
+                fi
+            fi
+            filtered_args+=("$arg")
+        done
+
+        ast_list=$(clang-check -ast-list "$file" -- "$std_arg" "${filtered_args[@]}" 2>/dev/null)
         if [ -z "$ast_list" ]; then
             [[ "$verbose" = true ]] && echo "Warning: Failed to get AST list for $file" >&2
             exit 1
@@ -145,7 +196,7 @@ for file in $cpp_files; do
         for qualified_name in $qualified_names; do
             [[ "$verbose" = true ]] && echo "Attempting to extract '$qualified_name' from $file..." >&2
             
-            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "${extra_args[@]}" 2>/dev/null \
+            extracted_code=$(clang-check -ast-dump-filter="$qualified_name" -ast-print "$file" -- "$std_arg" "${filtered_args[@]}" 2>/dev/null \
                 | grep -v "Printing " | clang-format)
 
             if [[ ${PIPESTATUS[0]} -eq 0 && -n "$extracted_code" ]]; then
