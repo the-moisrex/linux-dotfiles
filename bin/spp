@@ -2,6 +2,7 @@
 """
 Parallel Python replacement for `spp` using clang subprocess with:
 - .clang/.clangd flags support
+- C/C++ language detection and overrides
 - Header TU handling
 - Parallel processing
 - Duplicate removal
@@ -13,6 +14,11 @@ from pathlib import Path
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import shlex
+
+C_EXTENSIONS = {".c", ".h"}
+CXX_EXTENSIONS = {".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".ixx"}
+C_FILE_PATTERNS = ["*.c", "*.h"]
+CXX_FILE_PATTERNS = ["*.cpp", "*.cxx", "*.ixx", "*.cc", "*.c++", "*.h", "*.hpp", "*.hh", "*.hxx"]
 
 # ----------------------------
 # Read valid clang flags from .clang/.clangd
@@ -48,10 +54,45 @@ def read_clang_flags(verbose=False):
     return flags
 
 # ----------------------------
+# Language helpers
+# ----------------------------
+def normalize_language(language):
+    if language in ("cpp", "cxx", "c++"):
+        return "c++"
+    return language
+
+def detect_language(path):
+    suffix = Path(path).suffix.lower()
+    if suffix in CXX_EXTENSIONS:
+        return "c++"
+    if suffix in C_EXTENSIONS:
+        return "c"
+    return "c++"
+
+def language_std(language):
+    return "-std=c++26" if language == "c++" else "-std=c23"
+
+def is_header(path):
+    return Path(path).suffix.lower() in {".h", ".hpp", ".hh", ".hxx", ".ixx"}
+
+def filter_std_flags(flags, language):
+    filtered = []
+    for flag in flags:
+        if flag.startswith("-std="):
+            is_cxx_standard = "++" in flag
+            if language == "c" and is_cxx_standard:
+                continue
+            if language == "c++" and not is_cxx_standard:
+                continue
+        filtered.append(flag)
+    return filtered
+
+# ----------------------------
 # Find files using git grep
 # ----------------------------
-def git_grep_files(function_name, verbose=False):
-    cmd = ["git", "grep", "-l", function_name, "--", "*.cpp", "*.cxx", "*.ixx", "*.cc", "*.h", "*.hpp"]
+def git_grep_files(function_name, language=None, verbose=False):
+    patterns = C_FILE_PATTERNS if language == "c" else CXX_FILE_PATTERNS if language == "c++" else C_FILE_PATTERNS + CXX_FILE_PATTERNS
+    cmd = ["git", "grep", "-l", function_name, "--", *patterns]
     if verbose:
         print(f"[verbose] Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -63,21 +104,25 @@ def git_grep_files(function_name, verbose=False):
 # ----------------------------
 # Extract function from single file
 # ----------------------------
-def extract_file(function_name, file, include_dirs, extra_flags, verbose=False):
+def extract_file(function_name, file, include_dirs, extra_flags, language=None, verbose=False):
     path = Path(file)
     if not path.exists():
         if verbose:
             print(f"[verbose] Skipping non-existent file: {file}")
         return ""
 
+    file_language = language or detect_language(path)
+    filtered_extra_flags = filter_std_flags(extra_flags, file_language)
+
     # Handle headers with temporary TU
-    if path.suffix in ['.h', '.hpp', '.hh', '.hxx', '.ixx']:
-        tu_file = tempfile.NamedTemporaryFile(suffix=".cpp", delete=False)
+    if is_header(path):
+        tu_suffix = ".cpp" if file_language == "c++" else ".c"
+        tu_file = tempfile.NamedTemporaryFile(suffix=tu_suffix, delete=False)
         tu_file.write(f'#include "{path}"\n'.encode())
         tu_file.close()
         target_file = tu_file.name
         if verbose:
-            print(f"[verbose] Created temporary TU: {tu_file.name}")
+            print(f"[verbose] Created temporary {file_language} TU: {tu_file.name}")
     else:
         tu_file = None
         target_file = path
@@ -92,8 +137,8 @@ def extract_file(function_name, file, include_dirs, extra_flags, verbose=False):
         "-fno-caret-diagnostics",
         "-fno-delayed-template-parsing",
         str(target_file),
-        "-std=c++26"
-    ] + extra_flags
+        language_std(file_language),
+    ] + filtered_extra_flags
 
     for d in include_dirs:
         cmd.extend(["-I", str(d)])
@@ -122,10 +167,10 @@ def extract_file(function_name, file, include_dirs, extra_flags, verbose=False):
 # ----------------------------
 # Parallel extraction and deduplication
 # ----------------------------
-def extract_function(function_name, files, include_dirs, extra_flags, verbose=False, max_workers=4):
+def extract_function(function_name, files, include_dirs, extra_flags, language=None, verbose=False, max_workers=4):
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {executor.submit(extract_file, function_name, f, include_dirs, extra_flags, verbose): f for f in files}
+        future_to_file = {executor.submit(extract_file, function_name, f, include_dirs, extra_flags, language, verbose): f for f in files}
         for future in as_completed(future_to_file):
             content = future.result()
             if content:
@@ -149,25 +194,28 @@ def extract_function(function_name, files, include_dirs, extra_flags, verbose=Fa
 # CLI
 # ----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Extract full C++ function source using clang (parallel, deduplicated)")
+    parser = argparse.ArgumentParser(description="Extract full C/C++ function source using clang (parallel, deduplicated)")
     parser.add_argument("function", help="Function name to extract")
-    parser.add_argument("files", nargs="*", help="C++ files to search (optional)")
+    parser.add_argument("files", nargs="*", help="C/C++ files to search (optional)")
     parser.add_argument("-I", "--include", action="append", default=[], help="Include directories for clang")
+    parser.add_argument("--lang", "--language", choices=["c", "c++", "cpp", "cxx"], help="Force language instead of detecting from file extension")
+    parser.add_argument("--c", action="store_const", const="c", dest="lang", help="Force C mode")
+    parser.add_argument("--c++", "--cpp", action="store_const", const="c++", dest="lang", help="Force C++ mode")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--jobs", "-j", type=int, default=4, help="Number of parallel workers")
     args = parser.parse_args()
+    language = normalize_language(args.lang)
 
     files = args.files
     if not files:
-        files = git_grep_files(args.function, verbose=args.verbose)
+        files = git_grep_files(args.function, language=language, verbose=args.verbose)
         if not files:
             if args.verbose:
                 print(f"[verbose] No files found containing function '{args.function}'")
             return
 
     extra_flags = read_clang_flags(verbose=args.verbose)
-    extract_function(args.function, files, args.include, extra_flags, verbose=args.verbose, max_workers=args.jobs)
+    extract_function(args.function, files, args.include, extra_flags, language=language, verbose=args.verbose, max_workers=args.jobs)
 
 if __name__ == "__main__":
     main()
-
