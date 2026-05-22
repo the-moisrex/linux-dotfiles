@@ -105,3 +105,24 @@ complete -c detatch -f -n "not __fish_seen_subcommand_from (__fish_complete_subc
 
 # After the first argument (the command), fall back to normal commandline completion
 complete -c detatch -f -n "__fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"
+
+
+# --------------------------------------------
+
+# Completions for cdf
+
+# Suggest previously accepted directories first, if available
+if test -f ~/.config/cdf_history
+    # Rank by frequency, then output the paths
+    set -l history_queries (cat ~/.config/cdf_history | sort | uniq -c | sort -rn | awk '{ $1=""; sub(/^ /, ""); print }')
+
+    for d in $history_queries
+        complete -c cdf -a "$d" -d "Common"
+    end
+end
+
+# Complete directories as the fallback
+complete -c cdf -f -a '(__fish_complete_directories)'
+
+# Help flag
+complete -c cdf -s h -l help -d "Display help and usage information"

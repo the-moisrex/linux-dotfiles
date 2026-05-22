@@ -67,6 +67,67 @@ function cdf -d "Fuzzy jump to a directory"
         echo "  cdf /etc             # Interactive search in /etc"
         echo "  cdf proj             # Go to first result matching 'proj' in current directory"
         echo "  cdf /var/log nginx   # Go to first result matching 'nginx' in /var/log"
+        echo "  cdf -                # Go to the last location"
+        echo "  cdf -2               # Go to the one before the last location"
+        echo "  cdf --               # Re-run last query from current location"
+        echo "  cdf --2              # Re-run 2nd-to-last query from current location"
+        return 0
+    end
+
+    set -l history_file ~/.config/cdf_history
+
+    # Handle history navigation
+    if string match -qr '^--?[0-9]*$' -- "$argv[1]"
+        if not test -f "$history_file"
+            echo "No history found" >&2
+            return 1
+        end
+
+        set -l from_current (string match -q -- '--*' "$argv[1]")
+        set -l index_str (string replace -r '^--?' '' "$argv[1]")
+        set -l index (test -n "$index_str"; and echo $index_str; or echo 1)
+
+        # Read history line (format: query\0original_dir\0target_dir\0)
+        set -l history_line (tail -n "$index" "$history_file" | head -n 1)
+        
+        if test -z "$history_line"
+            echo "No history entry at index $index" >&2
+            return 1
+        end
+
+        # Split by null bytes
+        set -l parts (string split0 -- $history_line)
+        set -l query "$parts[1]"
+        set -l original_dir "$parts[2]"
+        set -l target_dir "$parts[3]"
+
+        if test "$from_current" = 0
+            # Single dash: go to original location first, then re-run query
+            if not test -d "$original_dir"
+                echo "Original directory no longer exists: $original_dir" >&2
+                return 1
+            end
+            
+            cd "$original_dir"
+            
+            if test -z "$query"
+                # Was an interactive search, run interactively again
+                cdf
+            else
+                # Re-run the filter query
+                cdf $query
+            end
+        else
+            # Double dash: re-run query from current location
+            if test -z "$query"
+                # Was an interactive search, run interactively again
+                cdf
+            else
+                # Re-run the filter query from here
+                cdf $query
+            end
+        end
+        
         return 0
     end
 
@@ -83,6 +144,9 @@ function cdf -d "Fuzzy jump to a directory"
         else
             set filter_query "$argv"
         end
+    else
+        cd $HOME
+        return 0
     end
 
     # 2. Define the array of directories you want to exclude everywhere
@@ -138,6 +202,10 @@ function cdf -d "Fuzzy jump to a directory"
 
     # 5. Change directory if a result was found
     if test -n "$dir"
+        # Add to history (null-byte separated for safe whitespace handling)
+        mkdir -p (dirname $history_file) 2>/dev/null
+        printf '%s\0%s\0%s\0\n' "$filter_query" "$PWD" "$dir" >> $history_file
+
         cd "$dir"
     end
 end
