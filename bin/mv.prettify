@@ -76,6 +76,9 @@ EXAMPLES:
     # Show rename history
     $SCRIPT_NAME --list-history
 
+    # Using "find":
+    find . -name "*.mp3" -print0 | xargs -0 $SCRIPT_NAME --mode artist-first --
+
 EOF
 }
 
@@ -399,6 +402,11 @@ main() {
             --list-history)
                 list_history
                 exit 0
+            ;;
+            --) # Add this block to handle end of options
+                shift
+                files+=("$@")
+                break
             ;;
             -*)
                 echo -e "${RED}Error: Unknown option '$1'${NC}"
