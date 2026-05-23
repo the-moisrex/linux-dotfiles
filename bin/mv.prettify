@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 SCRIPT_NAME="$(basename "$0")"
 
 # XDG Cache directory for storing rename history
@@ -20,6 +20,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Default mode
+MODE="clean"
+
 show_help() {
     cat << EOF
 $SCRIPT_NAME v$VERSION - Prettify file and directory names
@@ -32,20 +35,30 @@ OPTIONS:
     -r, --reverse <path>    Reverse a previous rename operation
     -n, --dry-run           Show what would be renamed without doing it
     -v, --verbose           Show detailed information
+    -m, --mode <mode>       Prettify mode (default: clean)
     --list-history          Show all rename operations from history
 
-DESCRIPTION:
-    This script prettifies filenames by:
-    - Removing advertisement suffixes (YasDL.com, p30download, etc.)
-    - Replacing dots with spaces
-    - Trimming excessive whitespace
-    - Preserving file extensions
+MODES:
+    clean       (default) Remove ad suffixes, replace dots with spaces,
+                trim whitespace. E.g.:
+                  The.Complete.Course-Udemy_YasDL.com
+                  → The Complete Course
 
+    artist-first  Reorder music filenames so the artist comes first.
+                Handles "Title - Artist" and "Title by Artist" patterns.
+                The last " - " segment is treated as the artist. E.g.:
+                  Be Alright by Ariana Grande.mp3
+                  → Ariana Grande - Be Alright.mp3
+
+                  Cry Me A River - Lofi Version - Covers Unplugged.mp3
+                  → Covers Unplugged - Cry Me A River - Lofi Version.mp3
+
+DESCRIPTION:
     All rename operations are logged to:
     $HISTORY_FILE
 
 EXAMPLES:
-    # Prettify a single file
+    # Prettify a single file (clean mode)
     $SCRIPT_NAME ./The.Complete.Course-Udemy_YasDL.com
 
     # Prettify multiple files
@@ -53,6 +66,9 @@ EXAMPLES:
 
     # Dry run to see what would change
     $SCRIPT_NAME --dry-run ./Some.File.Name_YasDL.com
+
+    # Artist-first mode on music files
+    $SCRIPT_NAME --mode artist-first *.mp3
 
     # Reverse a rename
     $SCRIPT_NAME --reverse "The Complete Course"
@@ -121,7 +137,9 @@ reverse_rename() {
     fi
 }
 
-prettify_name() {
+# MODE: clean
+# Original prettify logic: strip ad suffixes, replace dots with spaces, trim whitespace.
+prettify_clean() {
     local input="$1"
     local name
     local ext=""
@@ -148,7 +166,6 @@ prettify_name() {
     local original_name="$name"
     
     # Rule 1: Remove common download site suffixes
-    # Add more patterns here as needed
     name="${name%%-Udemy_YasDL.com}"
     name="${name%%-Udemy_YasDL}"
     name="${name%%_YasDL.com}"
@@ -168,9 +185,8 @@ prettify_name() {
     name="${name%% – Udemy}"
     name="${name%% - Udemy}"
     
-    # Rule 2: Replace dots with spaces (but not leading dots for hidden files)
+    # Rule 2: Replace dots with spaces (preserve leading dot for hidden files)
     if [[ "$name" =~ ^\. ]]; then
-        # Hidden file - preserve leading dot
         local leading_dot="."
         name="${name#.}"
         name="${name//./ }"
@@ -197,12 +213,152 @@ prettify_name() {
         name="$name.$ext"
     fi
     
-    # Return the new full path
     if [[ "$dir" == "." ]]; then
         echo "$name"
     else
         echo "$dir/$name"
     fi
+}
+
+# MODE: artist-first
+# Reorders music filenames so the artist name comes first.
+#
+# Supported input patterns:
+#   "Title - Artist"           → "Artist - Title"
+#   "Title - Part - Artist"    → "Artist - Title - Part"  (last segment = artist)
+#   "Title by Artist"          → "Artist - Title"
+#
+# The artist is identified as:
+#   - Everything after " by " (case-insensitive) if that pattern exists, OR
+#   - The last " - " delimited segment otherwise.
+#
+# If the name already starts with what looks like an artist (i.e. the first
+# segment contains no lowercase letters suggesting it's already "ARTIST - Title"
+# style), the function returns 1 (no change needed). We detect "already correct"
+# by checking whether the last segment is a known title word pattern — but since
+# that's ambiguous, we simply always reorder and let the user use --dry-run to
+# verify.
+prettify_artist_first() {
+    local input="$1"
+    local name
+    local ext=""
+    local dir
+    local base
+    
+    dir="$(dirname "$input")"
+    base="$(basename "$input")"
+    
+    # Only operate on files with extensions (music files)
+    if [[ -f "$input" ]] && [[ "$base" =~ \.[^.]+$ ]]; then
+        ext="${base##*.}"
+        name="${base%.*}"
+    else
+        # No extension or directory — skip
+        return 1
+    fi
+    
+    local original_name="$name"
+    local title=""
+    local artist=""
+    
+    # Pattern 1: "Title by Artist" (case-insensitive " by ")
+    # Match " by " not inside parentheses — use a simple approach:
+    # find the last occurrence of " by " (case-insensitive)
+    local lower_name
+    lower_name="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
+    
+    # Find position of last " by " in lowercase version
+    local by_pattern=" by "
+    local last_by_pos=-1
+    local search_str="$lower_name"
+    local pos=0
+    local tmp
+    
+    # Walk through all occurrences of " by " to find the last one
+    while true; do
+        tmp="${search_str#*"$by_pattern"}"
+        if [[ "$tmp" == "$search_str" ]]; then
+            # No more occurrences
+            break
+        fi
+        last_by_pos=$(( ${#name} - ${#tmp} - ${#by_pattern} ))
+        search_str="$tmp"
+        pos=$(( pos + 1 ))
+    done
+    
+    if [[ $last_by_pos -ge 0 ]]; then
+        # Split at the last " by "
+        title="${name:0:$last_by_pos}"
+        artist="${name:$(( last_by_pos + ${#by_pattern} ))}"
+    else
+        # Pattern 2: "Title - Artist" — artist is the LAST " - " segment
+        # We need to find the last occurrence of " - "
+        local dash_pattern=" - "
+        local last_dash_pos=-1
+        search_str="$name"
+        local remaining="$name"
+        
+        while true; do
+            tmp="${remaining#*"$dash_pattern"}"
+            if [[ "$tmp" == "$remaining" ]]; then
+                break
+            fi
+            last_dash_pos=$(( ${#name} - ${#tmp} - ${#dash_pattern} ))
+            remaining="$tmp"
+        done
+        
+        if [[ $last_dash_pos -lt 0 ]]; then
+            # No " - " separator found — nothing to reorder
+            return 1
+        fi
+        
+        title="${name:0:$last_dash_pos}"
+        artist="${name:$(( last_dash_pos + ${#dash_pattern} ))}"
+    fi
+    
+    # Trim whitespace from both parts
+    title="${title#"${title%%[![:space:]]*}"}"
+    title="${title%"${title##*[![:space:]]}"}"
+    artist="${artist#"${artist%%[![:space:]]*}"}"
+    artist="${artist%"${artist##*[![:space:]]}"}"
+    
+    # Sanity check: both parts must be non-empty
+    if [[ -z "$title" ]] || [[ -z "$artist" ]]; then
+        return 1
+    fi
+    
+    # Build new name: "Artist - Title"
+    name="$artist - $title"
+    
+    if [[ "$name" == "$original_name" ]]; then
+        return 1
+    fi
+    
+    name="$name.$ext"
+    
+    if [[ "$dir" == "." ]]; then
+        echo "$name"
+    else
+        echo "$dir/$name"
+    fi
+}
+
+prettify_name() {
+    local input="$1"
+    local mode="$2"
+    
+    case "$mode" in
+        clean)
+            prettify_clean "$input"
+        ;;
+        artist-first)
+            prettify_artist_first "$input"
+        ;;
+        *)
+            echo -e "${RED}Error: Unknown mode '$mode'. Valid modes: clean, artist-first${NC}" >&2
+            return 1
+        ;;
+    esac
 }
 
 main() {
@@ -218,33 +374,41 @@ main() {
             -h|--help)
                 show_help
                 exit 0
-                ;;
+            ;;
             -n|--dry-run)
                 dry_run=true
                 shift
-                ;;
+            ;;
             -v|--verbose)
                 verbose=true
                 shift
-                ;;
+            ;;
+            -m|--mode)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}Error: --mode requires an argument.${NC}"
+                    exit 1
+                fi
+                MODE="$2"
+                shift 2
+            ;;
             -r|--reverse)
                 reverse_mode=true
                 reverse_target="$2"
                 shift 2
-                ;;
+            ;;
             --list-history)
                 list_history
                 exit 0
-                ;;
+            ;;
             -*)
                 echo -e "${RED}Error: Unknown option '$1'${NC}"
                 echo "Use --help for usage information."
                 exit 1
-                ;;
+            ;;
             *)
                 files+=("$1")
                 shift
-                ;;
+            ;;
         esac
     done
     
@@ -261,6 +425,15 @@ main() {
         exit 1
     fi
     
+    # Validate mode
+    case "$MODE" in
+        clean|artist-first) ;;
+        *)
+            echo -e "${RED}Error: Unknown mode '$MODE'. Valid modes: clean, artist-first${NC}"
+            exit 1
+        ;;
+    esac
+    
     # Process each file/directory
     local renamed_count=0
     local skipped_count=0
@@ -272,7 +445,7 @@ main() {
             continue
         fi
         
-        new_name="$(prettify_name "$item")" || {
+        new_name="$(prettify_name "$item" "$MODE")" || {
             if [[ "$verbose" == true ]]; then
                 echo -e "${YELLOW}Skipped: '$item' (no changes needed)${NC}"
             fi
