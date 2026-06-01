@@ -167,7 +167,7 @@ alias prox8090="http_proxy=http://127.0.0.1:8090 https_proxy=http://127.0.0.1:80
 alias prox8000="http_proxy=http://127.0.0.1:8000 https_proxy=http://127.0.0.1:8000 no_proxy='$no_proxy'"
 alias prox8080="http_proxy=http://127.0.0.1:8080 https_proxy=http://127.0.0.1:8080 no_proxy='$no_proxy'"
 alias prox8118="http_proxy=http://localhost:8118 https_proxy=http://localhost:8118 no_proxy='$no_proxy'"
-alias tmp="cd $(mktemp -d)"
+alias tmp='cd $(mktemp -d)'
 alias open="emacsclient -nc -s initd -a nvim"
 alias edit="emacsclient -nw -s initd -a nvim"
 alias svim="vim --clean" # Simple vim
