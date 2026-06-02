@@ -28,7 +28,7 @@ if status is-interactive
 
     # set -gx TERM=alacritty
     # set -gx TERM=kitty
-    set -gx EDITOR nvim
+    set -gx EDITOR helix
     set -gx PATH ".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$HOME/.lmstudio/bin:$PATH:$HOME/.local/bin:$JAVA_HOME/bin:$HOME/.cargo/bin:$HOME/Android/Sdk/platform-tools:$HOME/Android/Sdk/emulator"
     set -gx CPM_SOURCE_CACHE "$HOME/.cache/CPM"
     set -gx HISTSIZE 100000000

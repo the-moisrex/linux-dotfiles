@@ -1,0 +1,165 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+tmp=""
+
+show_help() {
+  cat <<'EOF'
+editpipe - edit stdin in an interactive editor, then write result to stdout
+
+USAGE:
+  some_command | editpipe [EDITOR] [EDITOR_ARGS...]
+  editpipe --help
+
+DESCRIPTION:
+  editpipe reads all input from stdin into a temporary file, opens that file in
+  an interactive editor, then writes the edited contents to stdout after the
+  editor exits.
+
+  This makes it useful in pipelines such as:
+
+    cat file.txt | editpipe | grep foo
+    generate_text | editpipe nvim | sed 's/foo/bar/'
+    printf '%s\n' a b c | editpipe vim '+set ft=text' | sort
+
+EDITOR SELECTION:
+  If the first argument matches a known editor name, it is used as the editor
+  and removed from the argument list. The remaining arguments are passed to the
+  editor unchanged.
+
+  Known editor names:
+    vi
+    vim
+    nvim
+    hx
+    helix
+    nano
+    emacs
+    emacsclient
+    kak
+    micro
+
+  If the first argument does not match a known editor, editpipe uses:
+    1. $EDITPIPE_EDITOR, if set
+    2. $EDITOR, if set
+    3. helix, if available
+    3. nvim, if available
+    4. vim, if available
+    5. vi
+
+  In that case, all arguments are passed to the selected editor.
+
+EXAMPLES:
+  cat file.txt | editpipe | grep foo
+  cat file.txt | editpipe nvim
+  cat file.txt | editpipe vim '+set ft=markdown'
+  cat file.txt | editpipe hx
+  cat file.txt | EDITPIPE_EDITOR=helix editpipe
+  cat file.txt | EDITOR=vim editpipe '+set number'
+
+EXIT STATUS:
+  Returns non-zero if:
+    - stdin cannot be read
+    - no suitable editor is found
+    - the editor exits with a non-zero status
+    - output cannot be written
+
+NOTES:
+  - The editor is attached to your terminal via /dev/tty.
+  - This script requires a terminal for interactive editing.
+  - A temporary file is used internally.
+
+EOF
+}
+
+is_known_editor() {
+  case "${1:-}" in
+    vi|vim|nvim|hx|helix|nano|emacs|emacsclient|kak|micro)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+resolve_editor() {
+  if [[ -n "${EDITPIPE_EDITOR:-}" ]]; then
+    printf '%s\n' "$EDITPIPE_EDITOR"
+    return 0
+  fi
+
+  if [[ -n "${EDITOR:-}" ]]; then
+    printf '%s\n' "$EDITOR"
+    return 0
+  fi
+
+  local candidate
+  for candidate in helix nvim vim vi; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+main() {
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    show_help
+    exit 0
+  fi
+
+  local editor
+  local -a editor_args=()
+
+  if [[ $# -gt 0 ]] && is_known_editor "$1"; then
+    editor="$1"
+    shift
+
+    # normalize aliases if desired
+    case "$editor" in
+      helix) editor="hx" ;;
+    esac
+  else
+    editor="$(resolve_editor)" || {
+      printf 'editpipe: could not determine an editor\n' >&2
+      exit 1
+    }
+  fi
+
+  editor_args=("$@")
+
+  if ! [[ -t 1 ]] && ! [[ -e /dev/tty ]]; then
+    printf 'editpipe: no terminal available for interactive editor\n' >&2
+    exit 1
+  fi
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/editpipe.XXXXXX")" || {
+    printf 'editpipe: failed to create temporary file\n' >&2
+    exit 1
+  }
+
+  cleanup() {
+    rm -f "$tmp"
+  }
+  trap cleanup EXIT INT TERM HUP
+
+  cat >"$tmp" || {
+    printf 'editpipe: failed to read stdin\n' >&2
+    exit 1
+  }
+
+  if ! command -v "$editor" >/dev/null 2>&1; then
+    printf 'editpipe: editor not found: %s\n' "$editor" >&2
+    exit 1
+  fi
+
+  "$editor" "${editor_args[@]}" "$tmp" </dev/tty >/dev/tty
+
+  cat "$tmp"
+}
+
+main "$@"
+
