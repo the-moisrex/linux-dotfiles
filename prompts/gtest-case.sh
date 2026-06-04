@@ -75,14 +75,12 @@ fi
 echo "Additional Google Test case context:"
 echo
 
-for test_name in "$@"; do
-    echo "Test: $test_name"
-    echo
-    echo '```cpp'
-    trim_context "$("$curdir/gtest-case" "${exact_args[@]}" "$test_name")"
-    echo
-    echo '```'
-    echo
-done
+echo "Tests: $*"
+echo
+echo '```cpp'
+trim_context "$("$curdir/gtest-case" "${exact_args[@]}" "$@")"
+echo
+echo '```'
+echo
 
 echo "Use the test case context above when analyzing the issue."
