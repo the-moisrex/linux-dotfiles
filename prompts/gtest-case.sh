@@ -5,15 +5,18 @@ curdir="$(realpath "$(dirname "$0")/../bin")"
 stdin_piped=false
 stdin_content=""
 head_lines=""
+exact_args=()
 
 show_help() {
   cat <<'EOF'
-Usage: prompt gtest-case [--head N] <test-name> [test-name...]
+Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]
 
 Builds a debugging prompt and embeds the original source for Google Test cases.
+By default, test names are prefix matches.
 
 Options:
   --head N   Keep only the first N lines of each test case
+  --exact    Match each given test name exactly
 EOF
 }
 
@@ -42,6 +45,10 @@ while [[ $# -gt 0 ]]; do
             head_lines="$2"
             shift 2
         ;;
+        --exact)
+            exact_args+=(--exact)
+            shift
+        ;;
         *)
             POSITIONAL_ARGS+=("$1")
             shift
@@ -57,7 +64,7 @@ if ! [ -t 0 ]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-    echo "Usage: prompt gtest-case [--head N] <test-name> [test-name...]" >&2
+    echo "Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]" >&2
     exit 2
 fi
 
@@ -72,7 +79,7 @@ for test_name in "$@"; do
     echo "Test: $test_name"
     echo
     echo '```cpp'
-    trim_context "$("$curdir/gtest-case" "$test_name")"
+    trim_context "$("$curdir/gtest-case" "${exact_args[@]}" "$test_name")"
     echo
     echo '```'
     echo

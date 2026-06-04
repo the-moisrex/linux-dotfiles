@@ -4,13 +4,16 @@ set -euo pipefail
 cur_file="$(basename "$0")"
 verbose=false
 files=()
-test_name=""
+exact=false
+queries=()
 
 show_help() {
   cat <<EOF_HELP
-Usage: $cur_file [OPTIONS] [FILE...] TEST_NAME
+Usage: $cur_file [OPTIONS] [FILE...] TEST_NAME [TEST_NAME...]
 
-Find and print the original source for a Google Test test case.
+Find and print original source for Google Test test cases.
+By default, TEST_NAME is a prefix match, so "RouterTest" prints the whole suite
+and "RouterTest.Basic" prints tests whose full name starts with that prefix.
 
 TEST_NAME can be one of:
   Suite.Test
@@ -21,10 +24,13 @@ TEST_NAME can be one of:
 
 Options:
   --help, -h     Display this help message and exit
+  --exact        Match the given test name exactly
   --verbose, -v  Print searched files to stderr
 
 Examples:
   $cur_file RouterTest.BasicGet
+  $cur_file RouterTest RouterTest.Basic
+  $cur_file --exact RouterTest.BasicGet
   $cur_file tests/router_test.cpp RouterTest BasicGet
 EOF_HELP
 }
@@ -39,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       verbose=true
       shift
       ;;
+    --exact)
+      exact=true
+      shift
+      ;;
     -*)
       echo "Error: Unknown option $1" >&2
       exit 2
@@ -49,10 +59,10 @@ while [[ $# -gt 0 ]]; do
         shift
       else
         if [[ $# -eq 2 && "$1" != *.* && "$1" != */* && "$1" != TEST*\(* ]]; then
-          test_name="$1.$2"
+          queries+=("$1.$2")
           shift 2
         else
-          test_name="$1"
+          queries+=("$1")
           shift
         fi
       fi
@@ -60,7 +70,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$test_name" ]]; then
+if [[ ${#queries[@]} -eq 0 ]]; then
   echo "Error: Missing test name" >&2
   echo "Use '$cur_file --help' for usage information" >&2
   exit 2
@@ -73,9 +83,10 @@ if [[ ${#files[@]} -eq 0 ]]; then
   fi
 fi
 
-PYTHON_TEST_NAME="$test_name" \
 PYTHON_VERBOSE="$verbose" \
-python3 - "${files[@]}" <<'PY'
+PYTHON_EXACT="$exact" \
+PYTHON_QUERY_COUNT="${#queries[@]}" \
+python3 - "${queries[@]}" -- "${files[@]}" <<'PY'
 import os
 import re
 import subprocess
@@ -102,9 +113,11 @@ FILE_PATTERNS = (
     "*.ixx",
 )
 
-test_name = os.environ["PYTHON_TEST_NAME"].strip()
 verbose = os.environ.get("PYTHON_VERBOSE") == "true"
-files = sys.argv[1:]
+exact = os.environ.get("PYTHON_EXACT") == "true"
+query_count = int(os.environ["PYTHON_QUERY_COUNT"])
+queries = [arg.strip() for arg in sys.argv[1:1 + query_count]]
+files = sys.argv[2 + query_count:]
 
 
 def parse_test_name(value):
@@ -127,23 +140,46 @@ def parse_test_name(value):
         suite, name = normalized.rsplit(".", 1)
         return suite.strip(), name.strip()
 
-    raise SystemExit("Error: TEST_NAME must look like Suite.Test, Suite/Test, or TEST(Suite, Test)")
+    return normalized, ""
 
 
-def run_git_grep(suite, name):
-    commands = [
-        [
-            "git",
-            "grep",
-            "-l",
-            "-E",
-            rf"\b[A-Z_]*TEST[A-Z_]*[[:space:]]*\([[:space:]]*{re.escape(suite)}[[:space:]]*,[[:space:]]*{re.escape(name)}[[:space:]]*\)",
-            "--",
-            *FILE_PATTERNS,
-        ],
-        ["git", "grep", "-l", suite, "--", *FILE_PATTERNS],
-        ["git", "grep", "-l", name, "--", *FILE_PATTERNS],
-    ]
+def display_query(suite, name):
+    return suite if not name else f"{suite}.{name}"
+
+
+def test_matches(suite, name, query_suite, query_name):
+    full_name = f"{suite}.{name}"
+    query = display_query(query_suite, query_name)
+    if exact:
+        if query_name:
+            return suite == query_suite and name == query_name
+        return suite == query_suite or full_name == query
+    return full_name.startswith(query)
+
+
+def run_git_grep(parsed_queries):
+    commands = []
+    for suite, name in parsed_queries:
+        if name:
+            commands.append(
+                [
+                    "git",
+                    "grep",
+                    "-l",
+                    "-E",
+                    rf"\b[A-Z_]*TEST[A-Z_]*[[:space:]]*\([[:space:]]*{re.escape(suite)}[[:space:]]*,[[:space:]]*{re.escape(name)}",
+                    "--",
+                    *FILE_PATTERNS,
+                ]
+            )
+        commands.append(["git", "grep", "-l", suite, "--", *FILE_PATTERNS])
+        if name:
+            commands.append(["git", "grep", "-l", name, "--", *FILE_PATTERNS])
+
+    if not commands:
+        return []
+
+    commands.append(["git", "ls-files", "--", *FILE_PATTERNS])
     seen = set()
     found = []
     for command in commands:
@@ -154,8 +190,6 @@ def run_git_grep(suite, name):
             if line and line not in seen:
                 seen.add(line)
                 found.append(line)
-        if found:
-            break
     return found
 
 
@@ -280,7 +314,7 @@ def split_top_level_args(arg_text):
     return args
 
 
-def find_test_blocks(path, wanted_suite, wanted_name):
+def find_test_blocks(path, parsed_queries):
     original = Path(path).read_text(errors="replace")
     searchable = strip_comments_and_strings(original)
     macro_pattern = re.compile(r"\b(" + "|".join(TEST_MACROS) + r")\b")
@@ -297,7 +331,15 @@ def find_test_blocks(path, wanted_suite, wanted_name):
         if len(args) < 2:
             continue
         suite, name = args[0].strip(), args[1].strip()
-        if suite != wanted_suite or name != wanted_name:
+        matched_query = next(
+            (
+                display_query(query_suite, query_name)
+                for query_suite, query_name in parsed_queries
+                if test_matches(suite, name, query_suite, query_name)
+            ),
+            "",
+        )
+        if not matched_query:
             continue
 
         body_start = skip_ws(searchable, close_paren + 1)
@@ -316,14 +358,14 @@ def find_test_blocks(path, wanted_suite, wanted_name):
             end += 1
         if end < len(original) and original[end] == ";":
             end += 1
-        blocks.append(original[start:end].strip())
+        blocks.append((f"{suite}.{name}", matched_query, original[start:end].strip()))
 
     return blocks
 
 
-suite, name = parse_test_name(test_name)
+parsed_queries = [parse_test_name(query) for query in queries if query.strip()]
 if not files:
-    files = run_git_grep(suite, name)
+    files = run_git_grep(parsed_queries)
 
 if verbose:
     print("Searching in files:", file=sys.stderr)
@@ -337,18 +379,23 @@ for file in files:
     if not path.is_file():
         print(f"Warning: File not found or not a regular file: {file}", file=sys.stderr)
         continue
-    for block in find_test_blocks(path, suite, name):
+    for test_full_name, matched_query, block in find_test_blocks(path, parsed_queries):
         if block not in seen:
             seen.add(block)
-            found.append((file, block))
+            found.append((file, test_full_name, matched_query, block))
 
 if not found:
-    print(f"Error: Google Test case '{suite}.{name}' not found", file=sys.stderr)
+    rendered_queries = ", ".join(display_query(suite, name) for suite, name in parsed_queries)
+    mode = "exact" if exact else "prefix"
+    print(f"Error: No Google Test cases found for {mode} query: {rendered_queries}", file=sys.stderr)
     sys.exit(1)
 
-for index, (file, block) in enumerate(found):
+for index, (file, test_full_name, matched_query, block) in enumerate(found):
     if index:
         print("\n")
     print(f"// File: {file}")
+    print(f"// Test: {test_full_name}")
+    if matched_query != test_full_name:
+        print(f"// Matched: {matched_query}")
     print(block)
 PY
