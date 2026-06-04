@@ -179,7 +179,6 @@ def run_git_grep(parsed_queries):
     if not commands:
         return []
 
-    commands.append(["git", "ls-files", "--", *FILE_PATTERNS])
     seen = set()
     found = []
     for command in commands:
