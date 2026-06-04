@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cur_file="$(basename "$0")"
+verbose=false
+files=()
+test_name=""
+
+show_help() {
+  cat <<EOF_HELP
+Usage: $cur_file [OPTIONS] [FILE...] TEST_NAME
+
+Find and print the original source for a Google Test test case.
+
+TEST_NAME can be one of:
+  Suite.Test
+  Suite/Test
+  Suite Test
+  TEST(Suite, Test)
+  TEST_F(Suite, Test)
+
+Options:
+  --help, -h     Display this help message and exit
+  --verbose, -v  Print searched files to stderr
+
+Examples:
+  $cur_file RouterTest.BasicGet
+  $cur_file tests/router_test.cpp RouterTest BasicGet
+EOF_HELP
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    --verbose|-v)
+      verbose=true
+      shift
+      ;;
+    -*)
+      echo "Error: Unknown option $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ $# -gt 1 && -f "$1" ]]; then
+        files+=("$1")
+        shift
+      else
+        if [[ $# -eq 2 && "$1" != *.* && "$1" != */* && "$1" != TEST*\(* ]]; then
+          test_name="$1.$2"
+          shift 2
+        else
+          test_name="$1"
+          shift
+        fi
+      fi
+      ;;
+  esac
+done
+
+if [[ -z "$test_name" ]]; then
+  echo "Error: Missing test name" >&2
+  echo "Use '$cur_file --help' for usage information" >&2
+  exit 2
+fi
+
+if [[ ${#files[@]} -eq 0 ]]; then
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Error: Not in a git repository; provide files explicitly" >&2
+    exit 1
+  fi
+fi
+
+PYTHON_TEST_NAME="$test_name" \
+PYTHON_VERBOSE="$verbose" \
+python3 - "${files[@]}" <<'PY'
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+TEST_MACROS = (
+    "TEST",
+    "TEST_F",
+    "TEST_P",
+    "TYPED_TEST",
+    "TYPED_TEST_P",
+)
+FILE_PATTERNS = (
+    "*.c",
+    "*.cc",
+    "*.cpp",
+    "*.cxx",
+    "*.c++",
+    "*.h",
+    "*.hh",
+    "*.hpp",
+    "*.hxx",
+    "*.ixx",
+)
+
+test_name = os.environ["PYTHON_TEST_NAME"].strip()
+verbose = os.environ.get("PYTHON_VERBOSE") == "true"
+files = sys.argv[1:]
+
+
+def parse_test_name(value):
+    macro_match = re.match(
+        r"^\s*(?:" + "|".join(TEST_MACROS) + r")\s*\(\s*([^,]+?)\s*,\s*([^,)]+?)\s*\)\s*$",
+        value,
+    )
+    if macro_match:
+        return macro_match.group(1).strip(), macro_match.group(2).strip()
+
+    normalized = value.strip()
+    if "/" in normalized:
+        slash_parts = [part for part in normalized.split("/") if part]
+        dotted_part = next((part for part in reversed(slash_parts) if "." in part), "")
+        if dotted_part:
+            normalized = dotted_part
+        elif len(slash_parts) == 2:
+            return slash_parts[0].strip(), slash_parts[1].strip()
+    if "." in normalized:
+        suite, name = normalized.rsplit(".", 1)
+        return suite.strip(), name.strip()
+
+    raise SystemExit("Error: TEST_NAME must look like Suite.Test, Suite/Test, or TEST(Suite, Test)")
+
+
+def run_git_grep(suite, name):
+    commands = [
+        [
+            "git",
+            "grep",
+            "-l",
+            "-E",
+            rf"\b[A-Z_]*TEST[A-Z_]*[[:space:]]*\([[:space:]]*{re.escape(suite)}[[:space:]]*,[[:space:]]*{re.escape(name)}[[:space:]]*\)",
+            "--",
+            *FILE_PATTERNS,
+        ],
+        ["git", "grep", "-l", suite, "--", *FILE_PATTERNS],
+        ["git", "grep", "-l", name, "--", *FILE_PATTERNS],
+    ]
+    seen = set()
+    found = []
+    for command in commands:
+        proc = subprocess.run(command, capture_output=True, text=True)
+        if proc.returncode not in (0, 1):
+            continue
+        for line in proc.stdout.splitlines():
+            if line and line not in seen:
+                seen.add(line)
+                found.append(line)
+        if found:
+            break
+    return found
+
+
+def strip_comments_and_strings(text):
+    result = []
+    index = 0
+    length = len(text)
+    state = "code"
+    raw_delim = ""
+    while index < length:
+        char = text[index]
+        nxt = text[index + 1] if index + 1 < length else ""
+        if state == "code":
+            if char == "/" and nxt == "/":
+                result.extend("  ")
+                index += 2
+                state = "line_comment"
+            elif char == "/" and nxt == "*":
+                result.extend("  ")
+                index += 2
+                state = "block_comment"
+            elif char == "R" and nxt == '"':
+                match = re.match(r'R"([^ ()\\\t\v\f\n\r]{0,16})\(', text[index:])
+                if match:
+                    raw_delim = ")" + match.group(1) + '"'
+                    result.extend(" " * len(match.group(0)))
+                    index += len(match.group(0))
+                    state = "raw_string"
+                else:
+                    result.append(char)
+                    index += 1
+            elif char == '"':
+                result.append(" ")
+                index += 1
+                state = "string"
+            elif char == "'":
+                result.append(" ")
+                index += 1
+                state = "char"
+            else:
+                result.append(char)
+                index += 1
+        elif state == "line_comment":
+            result.append("\n" if char == "\n" else " ")
+            index += 1
+            if char == "\n":
+                state = "code"
+        elif state == "block_comment":
+            if char == "*" and nxt == "/":
+                result.extend("  ")
+                index += 2
+                state = "code"
+            else:
+                result.append("\n" if char == "\n" else " ")
+                index += 1
+        elif state == "string":
+            if char == "\\":
+                result.append(" ")
+                if index + 1 < length:
+                    result.append("\n" if nxt == "\n" else " ")
+                index += 2
+            else:
+                result.append("\n" if char == "\n" else " ")
+                index += 1
+                if char == '"':
+                    state = "code"
+        elif state == "char":
+            if char == "\\":
+                result.append(" ")
+                if index + 1 < length:
+                    result.append("\n" if nxt == "\n" else " ")
+                index += 2
+            else:
+                result.append("\n" if char == "\n" else " ")
+                index += 1
+                if char == "'":
+                    state = "code"
+        elif state == "raw_string":
+            if text.startswith(raw_delim, index):
+                result.extend(" " * len(raw_delim))
+                index += len(raw_delim)
+                state = "code"
+            else:
+                result.append("\n" if char == "\n" else " ")
+                index += 1
+    return "".join(result)
+
+
+def skip_ws(text, index):
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return index
+
+
+def find_matching(text, open_index, open_char, close_char):
+    depth = 0
+    index = open_index
+    while index < len(text):
+        if text[index] == open_char:
+            depth += 1
+        elif text[index] == close_char:
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return -1
+
+
+def split_top_level_args(arg_text):
+    args = []
+    start = 0
+    depth = 0
+    for index, char in enumerate(arg_text):
+        if char in "(<[{":
+            depth += 1
+        elif char in ")>]}":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            args.append(arg_text[start:index].strip())
+            start = index + 1
+    args.append(arg_text[start:].strip())
+    return args
+
+
+def find_test_blocks(path, wanted_suite, wanted_name):
+    original = Path(path).read_text(errors="replace")
+    searchable = strip_comments_and_strings(original)
+    macro_pattern = re.compile(r"\b(" + "|".join(TEST_MACROS) + r")\b")
+    blocks = []
+
+    for match in macro_pattern.finditer(searchable):
+        index = skip_ws(searchable, match.end())
+        if index >= len(searchable) or searchable[index] != "(":
+            continue
+        close_paren = find_matching(searchable, index, "(", ")")
+        if close_paren == -1:
+            continue
+        args = split_top_level_args(searchable[index + 1:close_paren])
+        if len(args) < 2:
+            continue
+        suite, name = args[0].strip(), args[1].strip()
+        if suite != wanted_suite or name != wanted_name:
+            continue
+
+        body_start = skip_ws(searchable, close_paren + 1)
+        if body_start >= len(searchable) or searchable[body_start] != "{":
+            continue
+        body_end = find_matching(searchable, body_start, "{", "}")
+        if body_end == -1:
+            continue
+
+        start = match.start()
+        while start > 0 and original[start - 1] in " \t":
+            start -= 1
+
+        end = body_end + 1
+        while end < len(original) and original[end] in " \t\r\n":
+            end += 1
+        if end < len(original) and original[end] == ";":
+            end += 1
+        blocks.append(original[start:end].strip())
+
+    return blocks
+
+
+suite, name = parse_test_name(test_name)
+if not files:
+    files = run_git_grep(suite, name)
+
+if verbose:
+    print("Searching in files:", file=sys.stderr)
+    for file in files:
+        print(f"  {file}", file=sys.stderr)
+
+seen = set()
+found = []
+for file in files:
+    path = Path(file)
+    if not path.is_file():
+        print(f"Warning: File not found or not a regular file: {file}", file=sys.stderr)
+        continue
+    for block in find_test_blocks(path, suite, name):
+        if block not in seen:
+            seen.add(block)
+            found.append((file, block))
+
+if not found:
+    print(f"Error: Google Test case '{suite}.{name}' not found", file=sys.stderr)
+    sys.exit(1)
+
+for index, (file, block) in enumerate(found):
+    if index:
+        print("\n")
+    print(f"// File: {file}")
+    print(block)
+PY
