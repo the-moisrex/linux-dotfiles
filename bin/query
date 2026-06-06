@@ -22,6 +22,7 @@ fi
 # --- Engine URL mappings (extended) ---
 declare -A engine_urls=(
     ["google"]="https://www.google.com/search?q="
+    ["google-ai"]="https://www.google.com/search?udm=50&q="
     ["bing"]="https://www.bing.com/search?q="
     ["duckduckgo"]="https://duckduckgo.com/?q="
     ["startpage"]="https://www.startpage.com/sp/search?query="
@@ -93,7 +94,7 @@ declare -A engine_urls=(
 
 # --- Categories & shortcuts (same as original, extended) ---
 declare -A categories=(
-    ["ai"]="perplexity chatgpt"
+    ["ai"]="google-ai perplexity chatgpt"
     ["news"]="google bing yahoo yandex aljazeera rt cnn foxnews google-news bing-news"
     ["tech"]="google techcrunch arstechnica"
     ["hacker-news"]="hackernews reddit techcrunch arstechnica"
@@ -112,7 +113,7 @@ declare -A categories=(
 )
 
 declare -A shortcuts=(
-    ["g"]="google" ["google"]="google"
+    ["g"]="google" ["gg"]="google-ai" ["google"]="google"
     ["b"]="bing" ["bing"]="bing"
     ["d"]="duckduckgo" ["ddg"]="duckduckgo"
     ["s"]="startpage" ["start"]="startpage"
