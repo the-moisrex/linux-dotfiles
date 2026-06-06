@@ -94,7 +94,10 @@ function save_dnsmasq_file {
     local content="";
     local dns_ip;
     dns_ip=$(nmcli dev show | grep 'IP4.DNS' | grep -vE "127.0.0.1|192.168." | head -n 1 | awk '{print $2}')
-    if [ -z "$dns_ip" ]; then
+    if [ -z "$dns_ip" ] || ! dig "@$dns_ip" bmi.ir  >/dev/null 2>&1; then
+        dns_ip=$(nmcli dev show | grep 'IP4.GATEWAY' | head -n 1 | awk '{print $2}');
+    fi
+    if [ -z "$dns_ip" ] || ! dig "@$dns_ip" bmi.ir  >/dev/null 2>&1; then
         dns_ip="8.8.8.8";
     fi
     if [ -f "$ignored_domains_file" ]; then
