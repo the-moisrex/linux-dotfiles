@@ -141,7 +141,7 @@ function nft_create_country {
     if [ -z "$iso_code" ]; then
         iso_code="$countryiso";
     fi
-    input="$countries_repo/ipv4/$countryiso.cidr"
+    input="$countries_repo/country/$countryiso/ipv4-aggregated.txt"
     ipset=$(tr '\n' ',' < "$input");
     ipset="${ipset::-1}"
     nft_save "$name" "$ipset";
@@ -358,7 +358,7 @@ function update_countries {
         git -C "$countries_repo" pull origin master --rebase=true --prune --force --depth=1 --progress --no-ff --no-edit --no-commit
     else
         echo "Downloading the countries' IPs repository.";
-        git clone --depth=1 -b master https://github.com/herrbischoff/country-ip-blocks.git "$countries_repo"
+        git clone --depth=1 -b master https://github.com/ipverse/country-ip-blocks.git "$countries_repo"
     fi;
 }
 
@@ -370,6 +370,7 @@ function update_countries {
 # 
 # 
 #     input="$countries_repo/ipv4/$countryiso.cidr"
+#     input="$countries_repo/country/$iso_code/ipv4-aggregated.txt"
 # 
 #     ipcount=0
 #     while IFS= read -r ip; do
@@ -387,11 +388,12 @@ function ignore_country {
         iso_code="$countryiso";
     fi
 
-    input="$countries_repo/ipv4/$iso_code.cidr"
+    input="$countries_repo/country/$iso_code/ipv4-aggregated.txt"
 
     ipcount=0
     ip_batch=""
     while IFS= read -r ip; do
+        [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3} ]] || continue
         ip_batch+="$ip, "
         ipcount=$(( "$ipcount" + 1 ))
         if [ "$ipcount" -ge 500 ]; then
@@ -423,10 +425,11 @@ function unignore_country {
         iso_code="$countryiso";
     fi
 
-    input="$countries_repo/ipv4/$iso_code.cidr"
+    input="$countries_repo/country/$iso_code/ipv4-aggregated.txt"
 
     ipcount=0
     while IFS= read -r ip; do
+        [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3} ]] || continue
         echo  "  Removing ip address $ip from the 'geoips4' ip set."
         sudo nft delete element inet mangle $ignored_nftables_geoips4_set_name \{ "$ip" \}
         ipcount=$(( "$ipcount" + 1 ));
@@ -441,11 +444,12 @@ function list_country {
         iso_code="$countryiso";
     fi
 
-    input="$countries_repo/ipv4/$iso_code.cidr"
+    input="$countries_repo/country/$iso_code/ipv4-aggregated.txt"
 
     ipcount=0
     echo "Listing IPs of country $iso_code:";
     while IFS= read -r ip; do
+        [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3} ]] || continue
         echo "$ip";
         ipcount=$(( "$ipcount" + 1 ));
     done < "$input";
