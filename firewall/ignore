@@ -85,13 +85,7 @@ function print_help {
     echo "       ignore never [same commands as others]  # control never-ignored domains/ips/countries/..."
 }
 
-function save_dnsmasq_file {
-    if [ ! -d "$dnsmasq_conf_dir" ]; then
-        echo "You don't have DNSMasq Server.";
-        return;
-    fi
-    sudo mkdir -p "$nft_include_dir";
-    local content="";
+function get_dns_ip {
     local dns_ip;
     dns_ip=$(nmcli dev show | grep 'IP4.DNS' | grep -vE "127.0.0.1|192.168." | head -n 1 | awk '{print $2}')
     if [ -z "$dns_ip" ] || ! dig "@$dns_ip" bmi.ir  >/dev/null 2>&1; then
@@ -100,6 +94,18 @@ function save_dnsmasq_file {
     if [ -z "$dns_ip" ] || ! dig "@$dns_ip" bmi.ir  >/dev/null 2>&1; then
         dns_ip="8.8.8.8";
     fi
+    echo "$dns_ip"
+}
+
+function save_dnsmasq_file {
+    if [ ! -d "$dnsmasq_conf_dir" ]; then
+        echo "You don't have DNSMasq Server.";
+        return;
+    fi
+    sudo mkdir -p "$nft_include_dir";
+    local content="";
+    local dns_ip
+    dns_ip="$(get_dns_ip)"
     if [ -f "$ignored_domains_file" ]; then
         while read -r domain; do
             if valid_ip "$domain"; then 
@@ -194,11 +200,13 @@ function list_ipset {
 
 function list_ips {
     if [ -f "$ignored_domains_file" ]; then
+        local dns_ip
+        dns_ip="$(get_dns_ip)"
         while read -r domain; do
             echo "$domain";
             while IFS= read -r ip; do
                 echo  "  $ip"
-            done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
+            done < <(dig +short +timeout=5 "@$dns_ip" "$domain" | grep '^[.0-9]*$');
             echo
         done < "$ignored_domains_file";
     fi;
@@ -221,11 +229,13 @@ function ignore {
         ipcount=$(( "$ipcount" + 1 ));
     else
         # It's a domain
+        local dns_ip
+        dns_ip="$(get_dns_ip)"
         while IFS= read -r ip; do
             # echo  "  Adding ip address $ip to the 'ignored' ip set."
             ips="$ips$ip, "
             ipcount=$(( "$ipcount" + 1 ));
-        done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
+        done < <(dig +short +timeout=5 "@$dns_ip" "$domain" | grep '^[.0-9]*$');
     fi
     if [ ! -z "$ips" ]; then
         sudo nft add element inet mangle $ignored_nftables_set_name \{ "${ips%, }" \}
@@ -250,11 +260,13 @@ function unignore {
         ipcount=$(( "$ipcount" + 1 ));
     else
         # It's a domain
+        local dns_ip
+        dns_ip="$(get_dns_ip)"
         while IFS= read -r ip; do
             # echo  "  Adding ip address $ip to the 'ignored' ip set."
             ips="$ips$ip, "
             ipcount=$(( "$ipcount" + 1 ));
-        done < <(dig +short +timeout=5 "$domain" | grep '^[.0-9]*$');
+        done < <(dig +short +timeout=5 "@$dns_ip" "$domain" | grep '^[.0-9]*$');
     fi
     if [ ! -z "$ips" ]; then
         sudo nft delete element inet mangle $ignored_nftables_set_name \{ "${ips%, }" \}
@@ -317,10 +329,12 @@ function update_ignores {
         # Process domains
         echo "Resolving domains..."
         resolved_ips=()
+        local dns_ip
+        dns_ip="$(get_dns_ip)"
         while IFS= read -r ip; do
             resolved_ips+=("$ip")
             # echo "  Adding ip address $ip to the 'ignored' ip set."
-        done < <(dig +short +timeout=5 "${domains[@]}" | grep '^[.0-9]*$')
+        done < <(dig +short +timeout=5 "@$dns_ip" "${domains[@]}" | grep '^[.0-9]*$')
 
         # Add all resolved IPs and accumulated IPs to nftables in batches
         all_ips=("${ips[@]}" "${resolved_ips[@]}")
