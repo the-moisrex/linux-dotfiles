@@ -157,6 +157,12 @@ process_file() {
     # Trim leading and trailing spaces from input
     input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
+    # If it is a file:// URL, strip the prefix and decode URL entities (like %20 -> space)
+    if [[ "$input" == file://* ]]; then
+        input="${input#file://}"
+        input=$(printf '%b' "${input//%/\\x}")
+    fi
+
     # Check if input is a URL (starts with http)
     if [[ "$input" =~ ^https?:// ]]; then
         # Input is a URL - try to extract YouTube ID and clean it
