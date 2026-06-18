@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+import sys
+import os
+import argparse
+import subprocess
+import time
+import re
+from datetime import datetime, timedelta
+
+def get_repo_files():
+    """Get tracked files from the current git repo, or fallback to current directory."""
+    try:
+        result = subprocess.run(['git', 'ls-files'], 
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return [f for f in result.stdout.split('\n') if f]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    
+    # Fallback if not in a git repo
+    files = []
+    for root, dirs, filenames in os.walk('.'):
+        if '.git' in dirs: dirs.remove('.git')
+        for f in filenames:
+            files.append(os.path.join(root, f))
+    return files
+
+def parse_date_expr(expr):
+    now = datetime.now()
+    expr = str(expr).lower().strip()
+    if expr == 'today': return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    elif expr == 'yesterday': return (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    elif expr == 'this week':
+        days_since_monday = now.weekday()
+        return (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    elif expr == 'this month': return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    
+    m = re.match(r'^(\d+)\s*([mhdw]|mo|y)$', expr)
+    if m:
+        val = int(m.group(1))
+        unit = m.group(2)
+        if unit == 'm': dt = timedelta(minutes=val)
+        elif unit == 'h': dt = timedelta(hours=val)
+        elif unit == 'd': dt = timedelta(days=val)
+        elif unit == 'w': dt = timedelta(weeks=val)
+        elif unit == 'mo': dt = timedelta(days=val * 30)
+        elif unit == 'y': dt = timedelta(days=val * 365)
+        return (now - dt).timestamp()
+    raise ValueError(f"Unknown date expression: {expr}")
+
+def parse_duration(expr):
+    expr = str(expr).lower().strip()
+    m = re.match(r'^(\d+)\s*([mhdw]|mo|y)$', expr)
+    if m:
+        val = int(m.group(1))
+        unit = m.group(2)
+        if unit == 'm': return val * 60
+        elif unit == 'h': return val * 3600
+        elif unit == 'd': return val * 86400
+        elif unit == 'w': return val * 604800
+        elif unit == 'mo': return val * 2592000
+        elif unit == 'y': return val * 31536000
+    raise ValueError(f"Unknown duration: {expr}")
+
+def relative_time(ts):
+    diff = time.time() - ts
+    if diff < 60: return "just now"
+    elif diff < 3600: return f"{int(diff / 60)}m ago"
+    elif diff < 86400: return f"{int(diff / 3600)}h ago"
+    elif diff < 604800: return f"{int(diff / 86400)}d ago"
+    elif diff < 2592000: return f"{int(diff / 604800)}w ago"
+    elif diff < 31536000: return f"{int(diff / 2592000)}mo ago"
+    else: return f"{int(diff / 31536000)}y ago"
+
+def get_dynamic_gap(file_data):
+    """Dynamically determines the gap (1h to 3h) to define a session based on edit velocity."""
+    gaps = []
+    for i in range(1, min(len(file_data), 30)):
+        gaps.append(file_data[i-1][1] - file_data[i][1])
+    if not gaps: return 7200 # default 2h
+    
+    gaps.sort()
+    median_gap = gaps[len(gaps)//2]
+    dynamic_gap = int(median_gap * 15) 
+    return max(3600, min(10800, dynamic_gap))
+
+def main():
+    parser = argparse.ArgumentParser(description="Print recently modified files.")
+    parser.add_argument('filter', nargs='?', help="Date filter (e.g., today, 1d, 2h, this week). Disables default session mode.")
+    parser.add_argument('-s', '--since', help="Alternative to positional filter.")
+    parser.add_argument('--session', nargs='?', const='dynamic', help="Filter by last session. Optional duration (e.g. 2h). Default: dynamic.")
+    
+    time_group = parser.add_mutually_exclusive_group()
+    time_group.add_argument('--mtime', action='store_true', default=True, help="Use modified time (default)")
+    time_group.add_argument('--atime', action='store_true', help="Use access time")
+    
+    parser.add_argument('-v', '--verbose', action='store_true', help="Verbose output with colors and relative times")
+    parser.add_argument('files', nargs='*', help="Specific files to check")
+    args = parser.parse_args()
+
+    time_attr = 'st_atime' if args.atime else 'st_mtime'
+    is_verbose = args.verbose or sys.stdout.isatty()
+
+    C_RESET = '\033[0m'
+    C_FILE = '\033[36m'
+    C_TIME = '\033[33m'
+
+    # 1. Collect Input Files
+    input_files = []
+    if not sys.stdin.isatty():
+        input_files = [line.strip() for line in sys.stdin if line.strip()]
+    elif args.files:
+        input_files = args.files
+    else:
+        input_files = get_repo_files()
+
+    # 2. Expand Directories
+    expanded_files = []
+    for f in input_files:
+        if os.path.isdir(f):
+            for root, dirs, filenames in os.walk(f):
+                if '.git' in dirs: dirs.remove('.git')
+                for name in filenames:
+                    expanded_files.append(os.path.join(root, name))
+        else:
+            expanded_files.append(f)
+    input_files = list(set(expanded_files)) # Remove duplicates
+
+    if not input_files:
+        if is_verbose: print("No files found.", file=sys.stderr)
+        return
+
+    # 3. Stat and Sort
+    file_data = []
+    for f in input_files:
+        try:
+            stat = os.stat(f)
+            if os.path.isdir(f): continue
+            file_data.append((f, getattr(stat, time_attr)))
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+
+    if not file_data:
+        if is_verbose: print("No accessible files found.", file=sys.stderr)
+        return
+
+    file_data.sort(key=lambda x: x[1], reverse=True)
+
+    # 4. Determine Filter Logic
+    is_filter_specified = args.filter or args.since
+    is_session_specified = args.session is not None
+    threshold = None
+
+    if not is_filter_specified and not is_session_specified:
+        # Default mode: Find last session dynamically
+        session_mode = True
+        session_gap = get_dynamic_gap(file_data)
+    elif is_session_specified:
+        session_mode = True
+        if args.session == 'dynamic':
+            session_gap = get_dynamic_gap(file_data)
+        else:
+            try: session_gap = parse_duration(args.session)
+            except ValueError:
+                print(f"Invalid session duration: {args.session}", file=sys.stderr)
+                sys.exit(1)
+    else:
+        session_mode = False
+        try:
+            threshold = parse_date_expr(args.since or args.filter)
+        except ValueError as e:
+            print(f"Error parsing date: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # 5. Apply Filtering
+    if session_mode:
+        session_files = [file_data[0]]
+        prev_time = file_data[0][1]
+        for f, t in file_data[1:]:
+            if prev_time - t <= session_gap:
+                session_files.append((f, t))
+                prev_time = t
+            else:
+                break
+        file_data = session_files
+    elif threshold is not None:
+        file_data = [fd for fd in file_data if fd[1] >= threshold]
+
+    if not file_data:
+        if is_verbose: print("No matching files found.", file=sys.stderr)
+        return
+
+    # 6. Output
+    for f, t in file_data:
+        if is_verbose:
+            rel = relative_time(t)
+            print(f"{C_FILE}{f}{C_RESET}  {C_TIME}{rel}{C_RESET}")
+        else:
+            print(f)
+
+if __name__ == '__main__':
+    main()
