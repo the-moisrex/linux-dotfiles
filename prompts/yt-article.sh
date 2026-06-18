@@ -58,7 +58,7 @@ process_stdin() {
 
   # URL regex: check if trimmed content is a single-line URL
   # First check that there are no newlines in trimmed content, then check URL format
-  if [[ "$trimmed" != *$'\n'* ]] && printf '%s' "$trimmed" | grep -Eq '^https?://[^[:space:]]+$'; then
+  if [[ "$trimmed" != *$'\n'* ]] && printf '%s' "$trimmed" | grep -Eq '^(https?|file)://[^[:space:]]+$'; then
     # It's a URL: call transformer and print its output only if successful
     local result
     local url
