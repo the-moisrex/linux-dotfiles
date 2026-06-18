@@ -213,6 +213,9 @@ alias please="sudo"
 alias tog="sig toggle"
 
 
+abbr hx. helix.recent
+alias helix.recent='recent-files | fzf | xargs helix -w $(git rev-parse --show-toplevel)'
+
 function unsudo -d "un-sudo some commands"
     for arg in $argv
         if command -v $arg >/dev/null
