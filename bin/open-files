@@ -1,0 +1,124 @@
+#!/bin/bash
+
+VERBOSE=0
+ACTIVE=0
+SHOW_ALL=0
+TARGET_PROCESS=""
+
+show_help() {
+    echo "Usage: $(basename "$0") [OPTIONS] [PROCESS_NAME]"
+    echo ""
+    echo "Finds files currently opened by any specified software/process."
+    echo "Automatically filters out system/noise files based on software category."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help        Show this help message and exit"
+    echo "  -v, --verbose     Print scanning information and status messages"
+    echo "  -a, --active      Attempt to find ONLY the active tab (Requires 'wmctrl')"
+    echo "  -A, --all-files   Do not filter noise; show ALL open files including system files"
+    echo ""
+    echo "Arguments:"
+    echo "  [PROCESS_NAME]    Process name to search for (e.g., nvim, chrome, vlc). If omitted, scans all user processes."
+    exit 0
+}
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -h|--help) show_help ;;
+        -v|--verbose) VERBOSE=1 ;;
+        -a|--active) ACTIVE=1 ;;
+        -A|--all-files) SHOW_ALL=1 ;;
+        -*) echo "Unknown option: $1" >&2; exit 1 ;;
+        *) TARGET_PROCESS="$1" ;;
+    esac
+    shift
+done
+
+log() {
+    if [[ $VERBOSE -eq 1 ]]; then echo "$@" >&2; fi
+}
+
+# 1. Gather PIDs
+PIDS=()
+if [[ -n "$TARGET_PROCESS" ]]; then
+    mapfile -t PIDS < <(pgrep -i "$TARGET_PROCESS")
+    log "Targeting '$TARGET_PROCESS' (PIDs: ${PIDS[*]})"
+else
+    # Fallback to all processes owned by the current user
+    mapfile -t PIDS < <(pgrep -u "$USER")
+    log "No specific process given. Targeting all user processes."
+fi
+
+if [[ ${#PIDS[@]} -eq 0 ]]; then
+    log "No matching processes are currently running."
+    exit 0
+fi
+
+# 2. Handle --active (Best effort via Window Titles)
+if [[ $ACTIVE -eq 1 ]]; then
+    if command -v wmctrl &> /dev/null; then
+        wmctrl -l | awk '{$1=$2=$3=""; print substr($0,4)}'
+    else
+        log "Warning: 'wmctrl' not installed. Cannot detect active GUI tabs."
+    fi
+    exit 0
+fi
+
+# 3. Determine Noise Filters based on Category
+# Base noise: system directories, libraries, deleted files
+IGNORE_PATTERN='^/usr/|^/lib|^/var/|^/etc/|^/sys/|^/proc/|^/dev/|\.so$|\.so\.[0-9]+$| \(deleted\)$'
+
+if [[ -n "$TARGET_PROCESS" ]]; then
+    # Convert to lowercase for case matching
+    PROC_LOWER=$(echo "$TARGET_PROCESS" | tr '[:upper:]' '[:lower:]')
+    
+    case "$PROC_LOWER" in
+        *chrome*|*firefox*|*brave*|*opera*|*edge*|*safari*)
+            log "Category detected: Web Browser"
+            IGNORE_PATTERN="$IGNORE_PATTERN|\.cache/|\.config/|\.mozilla/|\.sqlite(-wal|-shm)?$|\.log$|/GPUCache/|/Code Cache/|/DawnCache/|/Service Worker/"
+            ;;
+        *vlc*|*mpv*|*mplayer*|*spotify*)
+            log "Category detected: Media Player"
+            IGNORE_PATTERN="$IGNORE_PATTERN|\.cache/|\.config/|/fonts/|\.pfb$|\.ttf$"
+            ;;
+        *code*|*nvim*|*vim*|*vi*|*hx*|*emacs*|*subl*|*idea*|*pycharm*)
+            log "Category detected: Text Editor / IDE"
+            IGNORE_PATTERN="$IGNORE_PATTERN|\.cache/|/node_modules/|\.jar$|/.git/objects/"
+            ;;
+        *discord*|*slack*|*teams*|*telegram*|*whatsapp*)
+            log "Category detected: Messenger / Chat"
+            IGNORE_PATTERN="$IGNORE_PATTERN|\.cache/|\.config/|\.log$|/Cache|/GPUCache/|/IndexedDB/"
+            ;;
+        *)
+            log "Category: Generic Software"
+            IGNORE_PATTERN="$IGNORE_PATTERN|\.cache/|\.config/|\.local/share/"
+            ;;
+    esac
+else
+    # Generic ignore if all user processes are scanned
+    IGNORE_PATTERN="$IGNORE_PATTERN|\.cache/|\.config/|\.local/share/"
+fi
+
+# 4. Find open files
+log "Scanning PIDs: ${PIDS[*]}"
+PID_LIST=$(IFS=,; echo "${PIDS[*]}")
+
+# Run lsof and extract regular file paths
+LSOF_OUTPUT=$(lsof -w -p "$PID_LIST" 2>/dev/null | awk '
+    $5 == "REG" {
+        path = $9;
+        for(i=10; i<=NF; ++i) path = path " " $i;
+        print path;
+    }
+')
+
+# 5. Apply filters and output
+if [[ $SHOW_ALL -eq 1 ]]; then
+    log "Skipping noise filters (--all-files enabled)."
+    echo "$LSOF_OUTPUT" | sort -u
+else
+    log "Applying noise filters..."
+    echo "$LSOF_OUTPUT" | grep -vE "$IGNORE_PATTERN" | sort -u
+fi
+
+log "Done."

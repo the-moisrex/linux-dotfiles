@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+# Default options
+IN_REPO=0
+TRACKED=0
+VERBOSE=0
+POSITIONAL=()
+
+# Help function
+print_help() {
+    echo "Usage: $0 [OPTIONS] [FILE...]"
+    echo "Sorts input files (from arguments or stdin) based on the current git project."
+    echo ""
+    echo "Options:"
+    echo "  --in-repo    Only print files that are inside the git repository's directory."
+    echo "  --tracked    Only print files that are tracked by git ('git ls-files')."
+    echo "  --verbose    Print verbose debugging information to stderr."
+    echo "  --help       Show this help message and exit."
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --in-repo) IN_REPO=1; shift ;;
+        --tracked) TRACKED=1; shift ;;
+        --verbose) VERBOSE=1; shift ;;
+        --help) print_help; exit 0 ;;
+        *) POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+# Logging function for verbose mode
+log() {
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "[VERBOSE] $1" >&2
+    fi
+}
+
+# Read from stdin if available (not a terminal)
+if [[ ! -t 0 ]]; then
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && POSITIONAL+=("$line")
+    done
+fi
+
+# Determine Git root
+GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ -z "$GIT_ROOT" ]]; then
+    log "Not currently in a git repository."
+    if [[ $IN_REPO -eq 1 || $TRACKED -eq 1 ]]; then
+        log "Git filters (--in-repo / --tracked) applied, but no git repo found. Exiting."
+        exit 0
+    fi
+else
+    log "Git root found at: $GIT_ROOT"
+fi
+
+# Process files
+for f in "${POSITIONAL[@]}"; do
+    
+    # Filter: strictly inside the git repository directory
+    if [[ $IN_REPO -eq 1 && -n "$GIT_ROOT" ]]; then
+        # Resolve absolute path (works for missing files too on GNU systems with -m)
+        ABS_PATH=$(readlink -f "$f" 2>/dev/null || realpath -m "$f" 2>/dev/null)
+        if [[ "$ABS_PATH" != "$GIT_ROOT"/* && "$ABS_PATH" != "$GIT_ROOT" ]]; then
+            log "Skipping (not in repo dir): $f"
+            continue
+        fi
+    fi
+
+    # Filter: strictly tracked by git
+    if [[ $TRACKED -eq 1 ]]; then
+        # --error-unmatch returns exit code 0 if tracked, 1 if not
+        if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+            log "Skipping (not tracked by git): $f"
+            continue
+        fi
+    fi
+
+    # Output matching file
+    echo "$f"
+    
+done | sort
