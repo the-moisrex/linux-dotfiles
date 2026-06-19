@@ -8,9 +8,9 @@ usage() {
 withfile - materialize stdin as a temporary file and use it with file-only commands
 
 USAGE
-  producer | withfile [OPTIONS] -- command [args...]
-  producer | withfile [OPTIONS] command [args...]
-  producer | withfile [OPTIONS] | xargs command
+  producer | withfile [OPTIONS] [+MODE] -- command [args...]
+  producer | withfile [OPTIONS] [+MODE] command [args...]
+  producer | withfile [OPTIONS] [+MODE] | xargs command
   withfile --help
   withfile --version
 
@@ -30,6 +30,15 @@ DESCRIPTION
      - optionally keeps the file with --keep
 
 OPTIONS
+  +MODE
+      Apply chmod MODE to the temp file after stdin is written.
+      Shorthand for --chmod. Examples: +x, +rx, +x,u+w.
+      Only recognized when it appears before the command and starts with '+'.
+
+  --chmod MODE
+      Apply chmod MODE to the temp file after stdin is written.
+      Accepts anything chmod accepts, e.g. '755', 'u+x', '+x', 'a-w'.
+
   -r, --replace TOKEN
       Replace TOKEN in command arguments with the temp file path.
       If omitted, the file path is appended as the last argument.
@@ -73,10 +82,20 @@ BEHAVIOR
   - The command's exit code is returned (unless detached).
   - Temporary files are cleaned up automatically unless --keep is used.
   - If --replace TOKEN is given, TOKEN must appear at least once.
+  - chmod is applied after stdin is fully written and before the command runs.
 
 EXAMPLES
   Append temp file as last arg:
     paste a b | withfile mytool
+
+  Make the temp file executable and keep it:
+    printf '#!/bin/sh\necho hi\n' | withfile +x --keep
+
+  Make the temp file executable and run it:
+    printf '#!/bin/sh\necho hi\n' | withfile +x -- sh
+
+  Set an explicit numeric mode:
+    tar c foo | withfile --chmod 600 mytool
 
   Run a tool in detached mode:
     echo "data" | withfile -d mytool
@@ -96,7 +115,7 @@ EOF
 }
 
 version() {
-  echo "withfile 1.1.0"
+  echo "withfile 1.2.0"
 }
 
 err() {
@@ -109,7 +128,7 @@ info() {
   fi
 }
 
-quiet=0
+quiet=1
 keep=0
 print_path=0
 replace_token=""
@@ -118,6 +137,7 @@ prefix="withfile"
 tmpdir=""
 arg0=0
 detach=0
+chmod_mode=""
 
 declare -a cmd=()
 
@@ -135,6 +155,10 @@ while [[ $# -gt 0 ]]; do
       quiet=1
       shift
       ;;
+    -verbose|--verbose)
+      quiet=0
+      shift
+      ;;
     -k|--keep)
       keep=1
       shift
@@ -150,6 +174,7 @@ while [[ $# -gt 0 ]]; do
     -d|--detach)
       detach=1
       keep=1
+      quiet=1
       shift
       ;;
     -r|--replace)
@@ -172,10 +197,20 @@ while [[ $# -gt 0 ]]; do
       tmpdir="$2"
       shift 2
       ;;
+    --chmod)
+      [[ $# -ge 2 ]] || { err "missing value for $1"; exit 2; }
+      chmod_mode="$2"
+      shift 2
+      ;;
     --)
       shift
       cmd=("$@")
       break
+      ;;
+    +*)
+      # Shorthand for chmod, e.g. +x, +rx, +x,u+w
+      chmod_mode="$1"
+      shift
       ;;
     -*)
       err "unknown option: $1"
@@ -220,6 +255,17 @@ if [[ ${#cmd[@]} -eq 0 ]]; then
 fi
 
 cat >"$tmpfile"
+
+if [[ -n "$chmod_mode" ]]; then
+  if ! chmod -- "$chmod_mode" "$tmpfile" 2>/dev/null; then
+    # Retry without '--' for modes chmod itself rejects after '--' on some
+    # platforms (older busybox). This is best-effort.
+    if ! chmod "$chmod_mode" "$tmpfile"; then
+      err "chmod failed for mode: $chmod_mode"
+      exit 1
+    fi
+  fi
+fi
 
 if [[ "$print_path" -eq 1 ]]; then
   printf '%s\n' "$tmpfile"
