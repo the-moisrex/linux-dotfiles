@@ -1,0 +1,119 @@
+#!/bin/bash
+
+# Configuration and setup
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+
+# Define directories to search for scripts
+SEARCH_DIRS=()
+[[ -d "$SCRIPT_DIR/../gdb" ]] && SEARCH_DIRS+=("$SCRIPT_DIR/../gdb")
+[[ -n "$GIT_ROOT" && -d "$GIT_ROOT/gdb" ]] && SEARCH_DIRS+=("$GIT_ROOT/gdb")
+SEARCH_DIRS+=(".")
+[[ -n "$GIT_ROOT" ]] && SEARCH_DIRS+=("$GIT_ROOT")
+
+GDB_ARGS=()
+EXEC_PATH=""
+WATCH=0
+
+print_help() {
+    echo "Usage: gdb.run [watch|--watch] <executable-name> [script-names...] [gdb-args...]"
+    echo ""
+    echo "Wraps gdb to easily load scripts and find executables via fuzzy matching."
+    echo ""
+    echo "Options:"
+    echo "  --help              Show this help message"
+    echo "  watch, --watch      Watch the executable for changes and restart gdb (requires entr)"
+    echo ""
+    echo "Directories searched for scripts:"
+    for d in "${SEARCH_DIRS[@]}"; do echo "  - $d"; done
+}
+
+# Helper to find a script using fzf1
+find_script() {
+    local query="$1"
+    # Find files ending in .py or .gdb, or exact matches in search dirs
+    find "${SEARCH_DIRS[@]}" -maxdepth 2 -type f \( -name "*.py" -o -name "*.gdb" \) 2>/dev/null | fzf1 "$query"
+}
+
+# Helper to find an executable using fzf1
+find_executable() {
+    local query="$1"
+    # Search for executable files in current directory or git root
+    local search_base="."
+    [[ -n "$GIT_ROOT" ]] && search_base="$GIT_ROOT"
+    find "$search_base" -type f -executable 2>/dev/null | fzf1 "$query"
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            print_help
+            exit 0
+            ;;
+        watch|--watch|-watch)
+            WATCH=1
+            shift
+            ;;
+        -*)
+            # Standard gdb flags (-batch, -ex, etc.)
+            GDB_ARGS+=("$1")
+            # If it's a flag that takes an argument, grab the next token too
+            if [[ "$1" == "-ex" || "$1" == "-x" || "$1" == "-p" ]]; then
+                if [[ -n "$2" && "$2" != -* ]]; then
+                    GDB_ARGS+=("$2")
+                    shift
+                fi
+            fi
+            shift
+            ;;
+        *)
+            # Try to resolve as an existing file first (absolute/relative path)
+            if [[ -f "$1" ]]; then
+                if [[ -x "$1" && -z "$EXEC_PATH" ]]; then
+                    EXEC_PATH="$1"
+                else
+                    GDB_ARGS+=("-x" "$1")
+                fi
+            else
+                # Try to fuzzy match a script first
+                SCRIPT_MATCH=$(find_script "$1")
+                
+                if [[ -n "$SCRIPT_MATCH" && -f "$SCRIPT_MATCH" ]]; then
+                    GDB_ARGS+=("-x" "$SCRIPT_MATCH")
+                elif [[ -z "$EXEC_PATH" ]]; then
+                    # If not a script and we have no executable, fuzzy find executable
+                    EXEC_MATCH=$(find_executable "$1")
+                    if [[ -n "$EXEC_MATCH" && -f "$EXEC_MATCH" ]]; then
+                        EXEC_PATH="$EXEC_MATCH"
+                    else
+                        # Fallback: just pass it to gdb
+                        GDB_ARGS+=("$1")
+                    fi
+                else
+                    # Fallback
+                    GDB_ARGS+=("$1")
+                fi
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$EXEC_PATH" ]]; then
+    echo "Error: Could not determine the executable to debug." >&2
+    exit 1
+fi
+
+if [[ $WATCH -eq 1 ]]; then
+    if ! command -v entr >/dev/null; then
+        echo "Error: 'entr' is not installed but watch mode was requested." >&2
+        exit 1
+    fi
+    echo "Watching $EXEC_PATH for changes..."
+    echo "$EXEC_PATH" | entr -- gdb "${GDB_ARGS[@]}" "$EXEC_PATH"
+else
+    # Run normally
+    gdb "${GDB_ARGS[@]}" "$EXEC_PATH"
+fi
+
