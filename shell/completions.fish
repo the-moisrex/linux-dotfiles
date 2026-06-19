@@ -1,10 +1,9 @@
-
 # codeshell
 complete -c codeshell -s n -l name -d "Name of the subject"
 complete -c codeshell -s t -l template -d "The tempalte to use"
 complete -c codeshell -s g -s G -d "The Build System to use in cmake"
-complete -x -c codeshell -d "Project" -a "(find \$HOME/codeshells/ -maxdepth 1 -type d -printf \"%P\n\")"
-complete -x -c codeshell -d "Template" -a "(find \$HOME/cmd/code-templates/ -maxdepth 1 -type d -printf \"%P\n\")"
+complete -x -c codeshell -d Project -a "(find \$HOME/codeshells/ -maxdepth 1 -type d -printf \"%P\n\")"
+complete -x -c codeshell -d Template -a "(find \$HOME/cmd/code-templates/ -maxdepth 1 -type d -printf \"%P\n\")"
 
 # run
 complete -x -c run -a "(run print-targets)"
@@ -12,7 +11,7 @@ complete -c run -a lldb -d "Debug in lldb"
 complete -c run -a gdb -d "Debug in gdb"
 complete -c run -a watch -d "Watch for changes"
 complete -c run -a 'less -r -l l' -d "Pipe the results to 'less'"
-complete -c run -a 'print-targets' -d "Print Targets"
+complete -c run -a print-targets -d "Print Targets"
 complete -c run -a help -d "Print Help"
 
 # runif
@@ -36,11 +35,9 @@ function get_git_dirs
     get_dirs_of "$gitroot"
 end
 
-complete -x -c cdi -d "Subdirs" -a '(get_git_dirs)'
+complete -x -c cdi -d Subdirs -a '(get_git_dirs)'
 complete -x -c cdproj -d "Project Dirs" -a '(get_dirs_of $projects_root)'
-complete -x -c proj   -d "Project Dirs" -a '(get_dirs_of $projects_root)'
-
-
+complete -x -c proj -d "Project Dirs" -a '(get_dirs_of $projects_root)'
 
 # telegram.links
 function __fish_complete_telegram_ids
@@ -80,23 +77,21 @@ function __fish_prompt_supports_head
     contains -- "$tokens[2]" spp files symbols stupid security tests refactor api review fix comments explain perf commit
 end
 
-complete -c prompt -n '__fish_prompt_needs_name' -s h -l help -d "Show help message"
-complete -c prompt -n '__fish_prompt_needs_name' -xa "list" -d "List available prompts"
-complete -c prompt -n '__fish_prompt_needs_name' -xa "list-prompts" -d "List prompt names only"
+complete -c prompt -n __fish_prompt_needs_name -s h -l help -d "Show help message"
+complete -c prompt -n __fish_prompt_needs_name -xa list -d "List available prompts"
+complete -c prompt -n __fish_prompt_needs_name -xa list-prompts -d "List prompt names only"
 # Only complete prompt names for the first positional argument so later args can fall back to file completion.
-complete -c prompt -n '__fish_prompt_needs_name' -xa '(prompt list-prompts 2>/dev/null)' -d "Prompt name"
-complete -c prompt -n '__fish_prompt_has_name' -s h -l help -d "Show help for the selected prompt"
-complete -c prompt -n '__fish_prompt_supports_head' -l head -x -d "Keep only the first N lines of embedded context"
-complete -c prompt -n '__fish_prompt_is_run' -l head -x -d "Trim run output with head"
-complete -c prompt -n '__fish_prompt_is_run' -a '(run print-targets)' -d "Run target"
-complete -c prompt -n '__fish_prompt_is_run' -a lldb -d "Debug in lldb"
-complete -c prompt -n '__fish_prompt_is_run' -a gdb -d "Debug in gdb"
-complete -c prompt -n '__fish_prompt_is_run' -a watch -d "Watch for changes"
-complete -c prompt -n '__fish_prompt_is_run' -a 'less -r -l l' -d "Pipe the results to less"
-complete -c prompt -n '__fish_prompt_is_run' -a print-targets -d "Print Targets"
-complete -c prompt -n '__fish_prompt_is_run' -a help -d "Print Help"
-
-
+complete -c prompt -n __fish_prompt_needs_name -xa '(prompt list-prompts 2>/dev/null)' -d "Prompt name"
+complete -c prompt -n __fish_prompt_has_name -s h -l help -d "Show help for the selected prompt"
+complete -c prompt -n __fish_prompt_supports_head -l head -x -d "Keep only the first N lines of embedded context"
+complete -c prompt -n __fish_prompt_is_run -l head -x -d "Trim run output with head"
+complete -c prompt -n __fish_prompt_is_run -a '(run print-targets)' -d "Run target"
+complete -c prompt -n __fish_prompt_is_run -a lldb -d "Debug in lldb"
+complete -c prompt -n __fish_prompt_is_run -a gdb -d "Debug in gdb"
+complete -c prompt -n __fish_prompt_is_run -a watch -d "Watch for changes"
+complete -c prompt -n __fish_prompt_is_run -a 'less -r -l l' -d "Pipe the results to less"
+complete -c prompt -n __fish_prompt_is_run -a print-targets -d "Print Targets"
+complete -c prompt -n __fish_prompt_is_run -a help -d "Print Help"
 
 # fish completion for detatch
 
@@ -105,7 +100,6 @@ complete -c detatch -f -n "not __fish_seen_subcommand_from (__fish_complete_subc
 
 # After the first argument (the command), fall back to normal commandline completion
 complete -c detatch -f -n "__fish_seen_subcommand_from (__fish_complete_subcommand)" -a "(__fish_complete_subcommand)"
-
 
 # --------------------------------------------
 
@@ -117,7 +111,7 @@ if test -f ~/.config/cdf_history
     set -l history_queries (cat ~/.config/cdf_history | sort | uniq -c | sort -rn | awk '{ $1=""; sub(/^ /, ""); print }')
 
     for d in $history_queries
-        complete -c cdf -a "$d" -d "Common"
+        complete -c cdf -a "$d" -d Common
     end
 end
 
@@ -126,3 +120,18 @@ complete -c cdf -f -a '(__fish_complete_directories)'
 
 # Help flag
 complete -c cdf -s h -l help -d "Display help and usage information"
+
+# -----------------------------------------------
+
+# Inherit standard gdb completions
+complete -c gdb.run -w gdb
+
+# Custom gdb.run options
+complete -c gdb.run -f -s h -l help -d "Show help message"
+complete -c gdb.run -f -l watch -d "Watch the executable for changes (requires entr)"
+
+# Provide 'watch' as a positional argument/subcommand
+complete -c gdb.run -f -a watch -n "not __fish_seen_subcommand_from watch" -d "Watch the executable for changes (requires entr)"
+
+# Suggest local scripts (.py, .gdb) dynamically, showing only the file name
+complete -c gdb.run -f -a "(find . -maxdepth 2 -type f \( -name '*.py' -o -name '*.gdb' \) 2>/dev/null | string replace -r '.*/' '')" -d "GDB/Python script"
