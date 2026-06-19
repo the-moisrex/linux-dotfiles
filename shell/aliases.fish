@@ -1,10 +1,9 @@
-
 set -g gitroot ""
 set -g projects_root "$HOME/Projects"
 
 function calc_git_root
     set cur_git_root ".git"
-    while not test (realpath "$cur_git_root" 2>/dev/null) = "/.git" -o (realpath "$cur_git_root" 2>/dev/null) = "/" -o -d "$cur_git_root"
+    while not test (realpath "$cur_git_root" 2>/dev/null) = "/.git" -o (realpath "$cur_git_root" 2>/dev/null) = / -o -d "$cur_git_root"
         set cur_git_root "../$cur_git_root"
     end
 
@@ -14,31 +13,52 @@ function calc_git_root
 end
 
 # Navigation
-function cd    ; builtin cd $argv && ls; end
-function cdi   ; calc_git_root; cd "$gitroot/$argv"; end # move from the git root
-function ..    ; cd ..; end
-function ...   ; cd ../..; end
-function ....  ; cd ../../..; end
-function ..... ; cd ../../../..; end
-function proj  ; cd "$projects_root/$argv"; end
-function cdproj; cd "$projects_root/$argv"; end
+function cd
+    builtin cd $argv && ls
+end
+function cdi
+    calc_git_root
+    cd "$gitroot/$argv"
+end # move from the git root
+function ..
+    cd ..
+end
+function ...
+    cd ../..
+end
+function ....
+    cd ../../..
+end
+function .....
+    cd ../../../..
+end
+function proj
+    cd "$projects_root/$argv"
+end
+function cdproj
+    cd "$projects_root/$argv"
+end
 
-function mpv.m3u8;
+function mpv.m3u8
+
     if command -v yt-dlp >/dev/null
         if ! echo "$argv" | grep -E "^http" >/dev/null
             set url "https://$argv"
         else
             set url "$argv"
         end
-        yt-dlp --get-url "$url" | sort -u | xargs -l mpv;
+        yt-dlp --get-url "$url" | sort -u | xargs -l mpv
+
     else
-        curl -sqL "$argv" | urls | grep m3u8 | sort -u | xargs -l mpv;
+        curl -sqL "$argv" | urls | grep m3u8 | sort -u | xargs -l mpv
+
     end
 end
 
-
 # Utilities
-function grep     ; command grep --color=auto $argv ; end
+function grep
+    command grep --color=auto $argv
+end
 
 # typos and abbreviations
 abbr g git
@@ -63,7 +83,7 @@ if command -v exa >/dev/null
     alias l="$ls_cmd -F"
     alias lh="$ls_cmd -lh"
 else if command -v lsd >/dev/null
-    set ls_exec "lsd"
+    set ls_exec lsd
     set ls_cmd "$ls_exec --group-directories-first"
 
     # some more ls aliases
@@ -72,7 +92,7 @@ else if command -v lsd >/dev/null
     alias l="$ls_cmd -F"
     alias lh="$ls_cmd -lh"
 else
-    set ls_exec "ls"
+    set ls_exec ls
     set ls_cmd "$ls_exec --hyperlink=auto"
 
     # some more ls aliases
@@ -85,7 +105,7 @@ end
 # enable color support of ls and also add handy aliases
 if [ -x /usr/bin/dircolors ]
     # test -r ~/.dircolors && eval (dircolors -c ~/.dircolors) || eval (dircolors -c)
-    if [ "$ls_exec" = "ls" ]
+    if [ "$ls_exec" = ls ]
         alias ls="$ls_exec --color=auto --hyperlink=auto"
     end
     alias dir="dir --color=auto"
@@ -101,7 +121,6 @@ alias ls="$ls_cmd"
 
 #alias light='xbacklight -set'
 
-
 # Apt
 #alias update='sudo apt -y update'
 #alias upgrade='sudo apt-get -y update && sudo apt-get -y --allow-unauthenticated upgrade && sudo apt-get autoclean && sudo apt-get autoremove && exit 0'
@@ -113,7 +132,6 @@ alias ls="$ls_cmd"
 #alias search-installed='sudo dpkg --get-selections '
 #alias upgrade-pips='sudo pip freeze --local | grep -v '^\-e' | cut -d = -f 1  | xargs -n1 sudo pip install -U
 #alias cleanPC='sudo apt-get -y autoclean && sudo apt-get -y clean && sudo apt-get -y autoremove'
-
 
 alias lsdir="$ls_exec -ld */"
 #alias display='eog -w'
@@ -147,7 +165,6 @@ alias youtube="yt"
 alias yt8000="yt --proxy=http://localhost:8000"
 alias yt8090="yt --proxy=http://localhost:8090"
 
-
 # Useful Alias
 # Add an "alert" alias for long running commands.  Use like so:
 # alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
@@ -175,17 +192,15 @@ alias snvim="nvim --noplugin --clean" # Simple nvim
 # alias proxychains="http_proxy=\"\" https_proxy=\"\" all_proxy=\"\" proxychains"
 alias c="xclip -selection clipboard"
 
-
 # git aliases
-alias ggrep="git grep --heading --break -n";
+alias ggrep="git grep --heading --break -n"
+
 alias task-tui="taskwarrior-tui"
 alias tasktui="taskwarrior-tui"
-
 
 alias ctl="sudo systemctl"
 # alias status="sudo systemctl status"
 alias restart="sudo systemctl restart"
-
 
 alias ip="ip -c"
 
@@ -194,7 +209,6 @@ if command -v firefox-developer-edition >/dev/null
         alias firefox="firefox-developer-edition"
     end
 end
-
 
 # DBUS
 
@@ -206,15 +220,13 @@ alias cb.paste="clipboard.paste"
 alias cb.cp="clipboard.copy"
 alias cb.hist="clipboard.history"
 
-
 alias ping="ping -DO" #  timeout
 alias please="sudo"
 
 alias tog="sig toggle"
 
-
 abbr hx. helix.recent
-alias helix.recent='recent-files | fzf | xargs helix -w $(git rev-parse --show-toplevel)'
+alias helix.recent='recent-files yesterday | fzf | xargs helix -w $(git rev-parse --show-toplevel)'
 
 function unsudo -d "un-sudo some commands"
     for arg in $argv
@@ -225,4 +237,3 @@ function unsudo -d "un-sudo some commands"
 end
 
 unsudo pacman ausearch reboot poweroff auditctl aureport dnstop nftop nft cpupower apt ufw strace
-

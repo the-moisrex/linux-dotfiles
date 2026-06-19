@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+progname="${0##*/}"
+
+usage() {
+  cat <<'EOF'
+withfile - materialize stdin as a temporary file and use it with file-only commands
+
+USAGE
+  producer | withfile [OPTIONS] -- command [args...]
+  producer | withfile [OPTIONS] command [args...]
+  producer | withfile [OPTIONS] | xargs command
+  withfile --help
+  withfile --version
+
+DESCRIPTION
+  Reads all stdin into a temporary file.
+
+  Then one of the following happens:
+
+  1) If a command is provided:
+     - by default, the temp file path is appended as the final argument
+     - or, with --replace TOKEN, every TOKEN in the command args is replaced
+       by the temp file path
+     - can be run in detached mode using -d
+
+  2) If no command is provided:
+     - prints the temp file path to stdout
+     - optionally keeps the file with --keep
+
+OPTIONS
+  -r, --replace TOKEN
+      Replace TOKEN in command arguments with the temp file path.
+      If omitted, the file path is appended as the last argument.
+
+  -s, --suffix SUFFIX
+      Create temp file with suffix, e.g. '.json', '.txt', '.png'.
+
+  -p, --prefix PREFIX
+      Temp file prefix for mktemp. Default: withfile
+
+  -t, --tmpdir DIR
+      Create the temp file in DIR.
+
+  -d, --detach
+      Run the command in detached mode (using setsid) in the background.
+      The temp file will still be cleaned up after the detached process 
+      completes, unless --keep is specified.
+
+  -k, --keep
+      Do not delete the temp file on exit.
+      Useful when no command is given, or for debugging.
+
+  -q, --quiet
+      Suppress informational stderr output.
+
+  --print
+      Print the temp file path to stdout before running the command.
+      Useful for logging or chaining.
+
+  --arg0
+      If a command is given and no --replace is used, pass the file path as
+      the first argument after the command instead of the last.
+
+  --help
+      Show this help and exit.
+
+  --version
+      Show version and exit.
+
+BEHAVIOR
+  - The command's exit code is returned (unless detached).
+  - Temporary files are cleaned up automatically unless --keep is used.
+  - If --replace TOKEN is given, TOKEN must appear at least once.
+
+EXAMPLES
+  Append temp file as last arg:
+    paste a b | withfile mytool
+
+  Run a tool in detached mode:
+    echo "data" | withfile -d mytool
+
+  Put file path in the middle:
+    jq -n '{x:1}' | withfile --replace '{}' mytool --input {} --mode fast
+
+  Pass file as first argument:
+    generate | withfile --arg0 mytool --flag
+
+  Keep the temp file and print its path:
+    echo hi | withfile --keep
+
+  Use with xargs-like workflows (file path sent to stdout):
+    paste a b | withfile | xargs mytool
+EOF
+}
+
+version() {
+  echo "withfile 1.1.0"
+}
+
+err() {
+  printf '%s: %s\n' "$progname" "$*" >&2
+}
+
+info() {
+  if [[ "${quiet:-0}" -eq 0 ]]; then
+    printf '%s: %s\n' "$progname" "$*" >&2
+  fi
+}
+
+quiet=0
+keep=0
+print_path=0
+replace_token=""
+suffix=""
+prefix="withfile"
+tmpdir=""
+arg0=0
+detach=0
+
+declare -a cmd=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)
+      usage
+      exit 0
+      ;;
+    --version)
+      version
+      exit 0
+      ;;
+    -q|--quiet)
+      quiet=1
+      shift
+      ;;
+    -k|--keep)
+      keep=1
+      shift
+      ;;
+    --print)
+      print_path=1
+      shift
+      ;;
+    --arg0)
+      arg0=1
+      shift
+      ;;
+    -d|--detach)
+      detach=1
+      keep=1
+      shift
+      ;;
+    -r|--replace)
+      [[ $# -ge 2 ]] || { err "missing value for $1"; exit 2; }
+      replace_token="$2"
+      shift 2
+      ;;
+    -s|--suffix)
+      [[ $# -ge 2 ]] || { err "missing value for $1"; exit 2; }
+      suffix="$2"
+      shift 2
+      ;;
+    -p|--prefix)
+      [[ $# -ge 2 ]] || { err "missing value for $1"; exit 2; }
+      prefix="$2"
+      shift 2
+      ;;
+    -t|--tmpdir)
+      [[ $# -ge 2 ]] || { err "missing value for $1"; exit 2; }
+      tmpdir="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      cmd=("$@")
+      break
+      ;;
+    -*)
+      err "unknown option: $1"
+      err "try --help"
+      exit 2
+      ;;
+    *)
+      # Treat first non-option argument and everything after as the command
+      cmd=("$@")
+      break
+      ;;
+  esac
+done
+
+make_temp() {
+  local template dirpart
+  template="${prefix}.XXXXXXXX"
+  [[ -n "$suffix" ]] && template="${template}${suffix}"
+
+  if [[ -n "$tmpdir" ]]; then
+    mkdir -p -- "$tmpdir"
+    mktemp "${tmpdir%/}/${template}"
+  else
+    mktemp "${TMPDIR:-/tmp}/${template}"
+  fi
+}
+
+tmpfile="$(make_temp)"
+
+cleanup() {
+  local rc=$?
+  if [[ "$keep" -eq 0 ]]; then
+    rm -f -- "$tmpfile"
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT INT TERM HUP
+
+# If no command is supplied, default to keeping the file
+if [[ ${#cmd[@]} -eq 0 ]]; then
+  keep=1
+fi
+
+cat >"$tmpfile"
+
+if [[ "$print_path" -eq 1 ]]; then
+  printf '%s\n' "$tmpfile"
+fi
+
+if [[ ${#cmd[@]} -eq 0 ]]; then
+  if [[ "$print_path" -eq 0 ]]; then
+    printf '%s\n' "$tmpfile"
+  fi
+  info "kept temp file: $tmpfile"
+  exit 0
+fi
+
+declare -a final_cmd=()
+
+if [[ -n "$replace_token" ]]; then
+  found=0
+  for arg in "${cmd[@]}"; do
+    if [[ "$arg" == *"$replace_token"* ]]; then
+      found=1
+      final_cmd+=("${arg//$replace_token/$tmpfile}")
+    else
+      final_cmd+=("$arg")
+    fi
+  done
+  if [[ "$found" -eq 0 ]]; then
+    err "--replace token not found in command arguments: $replace_token"
+    exit 2
+  fi
+else
+  if [[ "$arg0" -eq 1 ]]; then
+    final_cmd=("${cmd[0]}" "$tmpfile" "${cmd[@]:1}")
+  else
+    final_cmd=("${cmd[@]}" "$tmpfile")
+  fi
+fi
+
+if [[ "$detach" -eq 1 ]]; then
+  # Build a background runner that executes the command and cleans up after itself
+  if [[ "$keep" -eq 0 ]]; then
+    setsid bash -c '"$@"; rm -f -- "$0"' "$tmpfile" "${final_cmd[@]}" < /dev/null > /dev/null 2>&1 &
+  else
+    setsid "${final_cmd[@]}" < /dev/null > /dev/null 2>&1 &
+  fi
+  
+  # Prevent the main process's exit trap from deleting the file prematurely
+  keep=1
+  exit 0
+fi
+
+exec "${final_cmd[@]}"
