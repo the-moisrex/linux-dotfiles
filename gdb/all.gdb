@@ -17,4 +17,5 @@ add-auto-load-safe-path ~/cmd/gdb/
 set auto-load scripts-directory ~/cmd/gdb/
 
 source ~/cmd/gdb/chains.gdb
+source ~/cmd/gdb/gtest.gdb
 source ~/cmd/gdb/stl-views-1.0.3.gdb
