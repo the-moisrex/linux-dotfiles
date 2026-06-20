@@ -6,17 +6,21 @@ Usage: ${0##*/} [OPTIONS] [TEST_NAMES...]
 
 Finds the file and line number of gtest cases.
 Reads test names from arguments or stdin (gtest output).
+By default, only searches files tracked by git.
 
 Options:
-  --failed        Only process failed tests (when reading from stdin)
-  --success       Only process succeeded tests (when reading from stdin)
-  --names         Print the test name along with its location
-  -exact, --exact Do exact matching instead of fuzzy matching (fzf)
-  --help          Display this help and exit
+  --failed             Only process failed tests (when reading from stdin)
+  --success            Only process succeeded tests (when reading from stdin)
+  --names              Print the test name along with its location
+  -exact, --exact      Do exact matching instead of fuzzy matching (fzf)
+  --all                Search all files (bypass git tracked files limit)
+  --files-from-stdin   Read list of files to search from stdin instead of test names
+  --help               Display this help and exit
 
 Examples:
   ${0##*/} URITests.UnknownSchemesAndTheirHosts2
   cat test_output.log | ${0##*/} --failed --names
+  find . -name "*_test.cc" | ${0##*/} --files-from-stdin URITests.UnknownSchemesAndTheirHosts2
 EOF
 }
 
@@ -24,6 +28,8 @@ FAILED_ONLY=0
 SUCCESS_ONLY=0
 PRINT_NAMES=0
 EXACT_MATCH=0
+SEARCH_ALL=0
+FILES_FROM_STDIN=0
 INPUT_TESTS=()
 
 # Parse arguments
@@ -34,25 +40,36 @@ while [[ $# -gt 0 ]]; do
         --success) SUCCESS_ONLY=1; shift ;;
         --names) PRINT_NAMES=1; shift ;;
         -exact|--exact) EXACT_MATCH=1; shift ;;
+        --all) SEARCH_ALL=1; shift ;;
+        --files-from-stdin) FILES_FROM_STDIN=1; shift ;;
         -*) echo "Unknown option: $1" >&2; exit 1 ;;
         *) INPUT_TESTS+=("$1"); shift ;;
     esac
 done
 
+TMP_DB=$(mktemp)
+TMP_FILES=$(mktemp)
+trap 'rm -f "$TMP_DB" "$TMP_FILES"' EXIT
+
 # Read from stdin if available
 if [[ ! -t 0 ]]; then
-    # Strip ANSI color codes to cleanly parse gtest output
-    clean_stdin=$(sed 's/\x1B\[[0-9;]*[a-zA-Z]//g')
-    
-    while IFS= read -r line; do
-        # Extract failed tests
-        if [[ "$line" =~ \[[[:space:]]*FAILED[[:space:]]*\][[:space:]]+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+) ]]; then
-            [[ $SUCCESS_ONLY -eq 0 ]] && INPUT_TESTS+=("${BASH_REMATCH[1]}")
-        # Extract successful tests
-        elif [[ "$line" =~ \[[[:space:]]*OK[[:space:]]*\][[:space:]]+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+) ]]; then
-            [[ $FAILED_ONLY -eq 0 ]] && INPUT_TESTS+=("${BASH_REMATCH[1]}")
-        fi
-    done <<< "$clean_stdin"
+    if [[ $FILES_FROM_STDIN -eq 1 ]]; then
+        # Save file list from stdin
+        cat > "$TMP_FILES"
+    else
+        # Strip ANSI color codes to cleanly parse gtest output
+        clean_stdin=$(sed 's/\x1B\[[0-9;]*[a-zA-Z]//g')
+        
+        while IFS= read -r line; do
+            # Extract failed tests
+            if [[ "$line" =~ \[[[:space:]]*FAILED[[:space:]]*\][[:space:]]+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+) ]]; then
+                [[ $SUCCESS_ONLY -eq 0 ]] && INPUT_TESTS+=("${BASH_REMATCH[1]}")
+            # Extract successful tests
+            elif [[ "$line" =~ \[[[:space:]]*OK[[:space:]]*\][[:space:]]+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+) ]]; then
+                [[ $FAILED_ONLY -eq 0 ]] && INPUT_TESTS+=("${BASH_REMATCH[1]}")
+            fi
+        done <<< "$clean_stdin"
+    fi
 fi
 
 # Exit if no tests to search
@@ -63,13 +80,21 @@ fi
 # Remove duplicates
 mapfile -t INPUT_TESTS < <(printf "%s\n" "${INPUT_TESTS[@]}" | sort -u)
 
-TMP_DB=$(mktemp)
-trap 'rm -f "$TMP_DB"' EXIT
+GREP_PATTERN="^[[:space:]]*(TYPED_)?TEST(_[A-Z]+)?\([a-zA-Z0-9_]+,[[:space:]]*[a-zA-Z0-9_]+\)"
+EXTRACT_SED='s/^(.*:[0-9]+):[[:space:]]*(TYPED_)?TEST(_[A-Z]+)?\(([a-zA-Z0-9_]+),[[:space:]]*([a-zA-Z0-9_]+)\).*/\4.\5 \1/'
 
-# Find all gtest macros. Added '-I' to grep to ignore binary files.
-grep -rnwEI --include=\*.{cpp,cc,cxx,h,hpp} "^[[:space:]]*(TYPED_)?TEST(_[A-Z]+)?\([a-zA-Z0-9_]+,[[:space:]]*[a-zA-Z0-9_]+\)" . | \
-sed -E 's/^(.*:[0-9]+):[[:space:]]*(TYPED_)?TEST(_[A-Z]+)?\(([a-zA-Z0-9_]+),[[:space:]]*([a-zA-Z0-9_]+)\).*/\4.\5 \1/' > "$TMP_DB"
-
+# Find all gtest macros
+if [[ $FILES_FROM_STDIN -eq 1 ]]; then
+    if [[ -s "$TMP_FILES" ]]; then
+        # /dev/null ensures grep always prepends the filename even if xargs passes 1 file at a time
+        xargs -a "$TMP_FILES" dgrep -nEI "$GREP_PATTERN" /dev/null 2>/dev/null | sed -E "$EXTRACT_SED" > "$TMP_DB"
+    fi
+elif [[ $SEARCH_ALL -eq 1 ]] || ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    grep -rnwEI --include=\*.{cpp,cc,cxx,h,hpp} "$GREP_PATTERN" . | sed -E "$EXTRACT_SED" > "$TMP_DB"
+else
+    # Only search in git tracked files by default
+    git grep -nEI "$GREP_PATTERN" -- '*.cpp' '*.cc' '*.cxx' '*.h' '*.hpp' | sed -E "$EXTRACT_SED" > "$TMP_DB"
+fi
 
 # Process tests
 for test_query in "${INPUT_TESTS[@]}"; do
