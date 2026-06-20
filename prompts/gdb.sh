@@ -48,6 +48,11 @@ Avoid `rbreak ...` followed by `commands` for templated functions. If `rbreak` f
 We probably run it using `gdb -batch` as well.
 EOF
 
+echo
+echo
+echo 'Running the command: `gdb -q --nh -batch -ex "help" -ex "help data" -ex "help breakpoints" -ex "help tracepoint" | grep -Ev "^(Type|Command name|Making program|set )"``'
+gdb -q --nh -batch -ex "help" -ex "help data" -ex "help breakpoints" -ex "help tracepoint" | grep -Ev "^(Type|Command name|Making program|set )"
+
 
 # Iterate through all collected file arguments
 for file in "$@"; do
