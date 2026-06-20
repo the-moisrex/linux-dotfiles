@@ -111,9 +111,9 @@ if [[ $WATCH -eq 1 ]]; then
         exit 1
     fi
     echo "Watching $EXEC_PATH for changes..."
-    echo "$EXEC_PATH" | entr -- gdb "${GDB_ARGS[@]}" "$EXEC_PATH"
+    echo "$EXEC_PATH" | entr -- gdb -q "${GDB_ARGS[@]}" "$EXEC_PATH"
 else
     # Run normally
-    gdb "${GDB_ARGS[@]}" "$EXEC_PATH"
+    gdb -q "${GDB_ARGS[@]}" "$EXEC_PATH"
 fi
 

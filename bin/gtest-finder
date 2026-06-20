@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+show_help() {
+    cat << EOF
+Usage: ${0##*/} [OPTIONS] [TEST_NAMES...]
+
+Finds the file and line number of gtest cases.
+Reads test names from arguments or stdin (gtest output).
+
+Options:
+  --failed        Only process failed tests (when reading from stdin)
+  --success       Only process succeeded tests (when reading from stdin)
+  --names         Print the test name along with its location
+  -exact, --exact Do exact matching instead of fuzzy matching (fzf)
+  --help          Display this help and exit
+
+Examples:
+  ${0##*/} URITests.UnknownSchemesAndTheirHosts2
+  cat test_output.log | ${0##*/} --failed --names
+EOF
+}
+
+FAILED_ONLY=0
+SUCCESS_ONLY=0
+PRINT_NAMES=0
+EXACT_MATCH=0
+INPUT_TESTS=()
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help) show_help; exit 0 ;;
+        --failed) FAILED_ONLY=1; shift ;;
+        --success) SUCCESS_ONLY=1; shift ;;
+        --names) PRINT_NAMES=1; shift ;;
+        -exact|--exact) EXACT_MATCH=1; shift ;;
+        -*) echo "Unknown option: $1" >&2; exit 1 ;;
+        *) INPUT_TESTS+=("$1"); shift ;;
+    esac
+done
+
+# Read from stdin if available
+if [[ ! -t 0 ]]; then
+    # Strip ANSI color codes to cleanly parse gtest output
+    clean_stdin=$(sed 's/\x1B\[[0-9;]*[a-zA-Z]//g')
+    
+    while IFS= read -r line; do
+        # Extract failed tests
+        if [[ "$line" =~ \[[[:space:]]*FAILED[[:space:]]*\][[:space:]]+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+) ]]; then
+            [[ $SUCCESS_ONLY -eq 0 ]] && INPUT_TESTS+=("${BASH_REMATCH[1]}")
+        # Extract successful tests
+        elif [[ "$line" =~ \[[[:space:]]*OK[[:space:]]*\][[:space:]]+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+) ]]; then
+            [[ $FAILED_ONLY -eq 0 ]] && INPUT_TESTS+=("${BASH_REMATCH[1]}")
+        fi
+    done <<< "$clean_stdin"
+fi
+
+# Exit if no tests to search
+if [[ ${#INPUT_TESTS[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+# Remove duplicates
+mapfile -t INPUT_TESTS < <(printf "%s\n" "${INPUT_TESTS[@]}" | sort -u)
+
+TMP_DB=$(mktemp)
+trap 'rm -f "$TMP_DB"' EXIT
+
+# Find all gtest macros. Added '-I' to grep to ignore binary files.
+grep -rnwEI --include=\*.{cpp,cc,cxx,h,hpp} "^[[:space:]]*(TYPED_)?TEST(_[A-Z]+)?\([a-zA-Z0-9_]+,[[:space:]]*[a-zA-Z0-9_]+\)" . | \
+sed -E 's/^(.*:[0-9]+):[[:space:]]*(TYPED_)?TEST(_[A-Z]+)?\(([a-zA-Z0-9_]+),[[:space:]]*([a-zA-Z0-9_]+)\).*/\4.\5 \1/' > "$TMP_DB"
+
+
+# Process tests
+for test_query in "${INPUT_TESTS[@]}"; do
+    if [[ $EXACT_MATCH -eq 1 ]]; then
+        # Ensure exact match on the test name part
+        MATCHES=$(grep -E "^${test_query}[[:space:]]" "$TMP_DB")
+    else
+        MATCHES=$(fzf -f "$test_query" < "$TMP_DB")
+    fi
+
+    if [[ -n "$MATCHES" ]]; then
+        while IFS= read -r match; do
+            test_name="${match%% *}"
+            test_loc="${match#* }"
+            test_loc="${test_loc#./}" # clean leading ./
+            
+            if [[ $PRINT_NAMES -eq 1 ]]; then
+                echo "$test_name $test_loc"
+            else
+                echo "$test_loc"
+            fi
+        done <<< "$MATCHES"
+    fi
+done
+
