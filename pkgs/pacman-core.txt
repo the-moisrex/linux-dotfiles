@@ -25,6 +25,7 @@ ripgrep-all
 fd           # find . -name '*foo*'
 jq           # JSON processor
 fzf          # Fuzzy file picker
+zoxide       # z command (alternative to cd)
 patchutils   # contains recountdiff which allows for fixing patches
 
 # Shells
