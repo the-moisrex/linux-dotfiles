@@ -87,7 +87,7 @@
         "editor.defaultFormatter": "vscode.typescript-language-features"
     },
     "cmake.showNotAllDocumentsSavedQuestion": false,
-    "extensions.autoUpdate": false,
+    "extensions.autoUpdate": "off",
     "roo-cline.debug": false,
     "roo-cline.allowedCommands": [
         "git log",
