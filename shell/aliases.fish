@@ -177,6 +177,8 @@ alias Cd="cd"
 set no_proxy "localhost, 127.0.0.1/8, 192.168.0.0/16, 10.0.0.0/8, *.localhost"
 
 alias prox1089="https_proxy=socks5://127.0.0.1:1089 http_proxy=socks5://127.0.0.1:1089 no_proxy='$no_proxy'"
+alias prox1087="https_proxy=socks5://127.0.0.1:1087 http_proxy=socks5://127.0.0.1:1087 no_proxy='$no_proxy'"
+alias prox1088="https_proxy=socks5://127.0.0.1:1088 http_proxy=socks5://127.0.0.1:1088 no_proxy='$no_proxy'"
 alias prox9550="https_proxy=socks5://127.0.0.1:9550 http_proxy=socks5://127.0.0.1:9550 no_proxy='$no_proxy'"
 alias prox9050="https_proxy=socks5://127.0.0.1:9050 http_proxy=socks5://127.0.0.1:9050 no_proxy='$no_proxy'"
 alias prox9150="https_proxy=socks5://127.0.0.1:9150 http_proxy=socks5://127.0.0.1:9150 no_proxy='$no_proxy'"
