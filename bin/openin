@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of known browsers in priority order (command names)
-browsers=(vivaldi vivaldi-stable brave firefox-developer-edition firefox google-chrome chromium brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp firefox.tmp)
+browsers=(firefox-developer-edition vivaldi vivaldi-stable brave firefox google-chrome chromium brave-browser microsoft-edge microsoft-edge-stable brave.tmp chromium.tmp firefox.tmp)
 
 # List of browsers that should always open URLs one by one
 one_by_one_browsers=(xdg-open)
