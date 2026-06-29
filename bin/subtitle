@@ -523,7 +523,8 @@ save_to_default_dir() {
     # Write the subtitle content to the file (compress if needed)
     if [[ "$COMPRESSION_ENABLED" == "true" ]]; then
         # Write to temporary file first, then compress
-        local temp_file=$(mktemp)
+        local temp_file
+        temp_file=$(mktemp)
         echo "$subs_content" > "$temp_file"
         compress_file "$temp_file" "${output_file}.gz"
         rm -f "$temp_file"
@@ -599,6 +600,8 @@ while [[ $# -gt 0 ]]; do
         --cache) USE_CACHE=true; CACHE_DISABLED=false; shift ;;
         --no-cache) CACHE_DISABLED=true; USE_CACHE=false; shift ;;
         -h|--help) usage ;;
+        -)
+        ;;
         -*)
             echo "Unknown option: $1" >&2
             usage
@@ -651,7 +654,8 @@ extract_embedded_subs() {
             local cached_content
             if [[ "$cached_file" == *.gz ]]; then
                 # Decompress the cached file if it has .gz extension
-                local temp_decompressed=$(mktemp)
+                local temp_decompressed
+                temp_decompressed=$(mktemp)
                 decompress_file "$cached_file" "$temp_decompressed"
                 cached_content=$(cat "$temp_decompressed")
                 rm -f "$temp_decompressed"
@@ -668,7 +672,8 @@ extract_embedded_subs() {
                 # Save to specified file (with compression if needed)
                 if [[ "$COMPRESSION_ENABLED" == "true" && "$ORIGINAL_FORMAT" != "gz" ]]; then
                     # Compress the output file
-                    local temp_file=$(mktemp)
+                    local temp_file
+                    temp_file=$(mktemp)
                     echo "$cached_content" > "$temp_file"
                     compress_file "$temp_file" "$OUTPUT"
                     rm -f "$temp_file"
