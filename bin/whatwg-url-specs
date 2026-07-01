@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import sys
+import subprocess
+import tempfile
+import urllib.request
+from pathlib import Path
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    print("ERROR: BeautifulSoup is required. Install it with: pip install beautifulsoup4", file=sys.stderr)
+    sys.exit(1)
+
+CONFIG_DIR = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")) / "whatwg-url-spec"
+SPEC_FILE = CONFIG_DIR / "spec.html"
+SPEC_URL = "https://url.spec.whatwg.org/"
+
+def log(msg, verbose):
+    if verbose:
+        print(f"=> {msg}", file=sys.stderr)
+
+def ensure_cache(verbose):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not SPEC_FILE.exists():
+        log(f"Downloading spec from {SPEC_URL}...", verbose)
+        urllib.request.urlretrieve(SPEC_URL, SPEC_FILE)
+        log("Download complete.", verbose)
+
+def clean_cache():
+    import shutil
+    if CONFIG_DIR.exists():
+        shutil.rmtree(CONFIG_DIR)
+        print("Cache cleaned.")
+    else:
+        print("Cache already clean.")
+
+def extract_items(soup):
+    items = []
+    
+    # Headings
+    for h in soup.find_all(['h2', 'h3', 'h4', 'h5', 'h6']):
+        if h.has_attr('id'):
+            title = h.get_text(strip=True)
+            items.append({'type': 'heading', 'id': h['id'], 'title': title, 'element': h})
+            
+    # Definitions (dfn)
+    for dfn in soup.find_all('dfn'):
+        if dfn.has_attr('id'):
+            items.append({'type': 'id', 'id': dfn['id'], 'title': dfn['id'], 'element': dfn})
+            
+    # Algorithms
+    for alg in soup.find_all(class_='algorithm'):
+        if alg.has_attr('data-algorithm'):
+            items.append({'type': 'algorithm', 'id': alg['data-algorithm'], 'title': alg['data-algorithm'], 'element': alg})
+            
+    return items
+
+def get_html_for_item(item, soup):
+    if item['type'] == 'heading':
+        # Grab the heading itself
+        elements = [str(item['element'])]
+        
+        # Grab all siblings until the next heading of equal or higher importance
+        current_level = int(item['element'].name[1]) # e.g., '3' from 'h3'
+        
+        for sibling in item['element'].find_next_siblings():
+            # If it's a heading, check its level
+            if sibling.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                sibling_level = int(sibling.name[1])
+                if sibling_level <= current_level:
+                    break # Stop if we hit a heading that ends this section
+            
+            elements.append(str(sibling))
+            
+        return "\n".join(elements)
+        
+    elif item['type'] == 'algorithm':
+        return str(item['element'])
+        
+    elif item['type'] == 'id':
+        dt = item['element'].find_parent('dt')
+        if dt:
+            dd = dt.find_next_sibling('dd')
+            return f"<dl>\n{str(dt)}\n{str(dd) if dd else ''}\n</dl>"
+        
+        parent = item['element'].find_parent(['p', 'li', 'div'])
+        if parent:
+            return str(parent)
+        return str(item['element'])
+        
+    return ""
+
+def main():
+    parser = argparse.ArgumentParser(description="Fetch and query the WHATWG URL specification.")
+    parser.add_argument("queries", nargs="*", help="Text to search for (supports URLs). Use 'list' to list all sections.")
+    parser.add_argument("--algorithm", action="store_true", help="Restrict search to algorithm sections only.")
+    parser.add_argument("--all", action="store_true", help="Print the entire specification's main content.")
+    parser.add_argument("--html", action="store_true", help="Output raw HTML instead of Markdown.")
+    parser.add_argument("--clean-cache", action="store_true", help="Delete cache and exit.")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
+
+    args = parser.parse_args()
+
+    if args.clean_cache:
+        clean_cache()
+        sys.exit(0)
+
+    # Check for literal "list" command
+    do_list = False
+    queries = args.queries
+    if queries and queries[0] == "list":
+        do_list = True
+        queries = queries[1:]
+
+    ensure_cache(args.verbose)
+
+    log("Parsing HTML...", args.verbose)
+    with open(SPEC_FILE, 'r', encoding='utf-8') as f:
+        soup = BeautifulSoup(f, 'html.parser')
+
+    if args.all:
+        html_output = str(soup.find('main') or soup.find('body'))
+        output_result(html_output, args.html)
+        sys.exit(0)
+
+    items = extract_items(soup)
+    
+    if args.algorithm:
+        items = [i for i in items if i['type'] == 'algorithm']
+
+    if do_list:
+        for item in items:
+            print(f"{item['id']} ({item['type']})")
+        sys.exit(0)
+
+    selected_items = []
+
+    if not queries:
+        # Default query
+        selected_items = [i for i in items if i['id'] == 'url-parsing']
+    else:
+        for query in queries:
+            if query.startswith(SPEC_URL + "#"):
+                target_id = query.split("#", 1)[1]
+                selected_items.extend([i for i in items if i['id'] == target_id])
+            else:
+                q_lower = query.lower()
+                # Prioritize EXACT matches first to prevent `path-state` matching `cannot-be-a-base-url-path-state`
+                exact_matches = [i for i in items if q_lower == i['id'].lower() or q_lower == i['title'].lower()]
+                
+                if exact_matches:
+                    selected_items.extend(exact_matches)
+                else:
+                    # Fallback to fuzzy matching
+                    matching = [i for i in items if q_lower in i['title'].lower() or q_lower in i['id'].lower()]
+                    selected_items.extend(matching)
+
+    if not selected_items:
+        print("ERROR: No sections found for the given query.", file=sys.stderr)
+        sys.exit(1)
+
+    # Remove duplicates preserving order
+    seen = set()
+    unique_items = []
+    for item in selected_items:
+        if item['id'] not in seen:
+            seen.add(item['id'])
+            unique_items.append(item)
+
+    log(f"Matched {len(unique_items)} items.", args.verbose)
+
+    html_parts = []
+    for item in unique_items:
+        html_parts.append(get_html_for_item(item, soup))
+
+    html_output = "\n".join(html_parts)
+    output_result(html_output, args.html)
+
+
+def output_result(html_output, use_html):
+    if use_html:
+        print(html_output)
+    else:
+        # Define the Lua filter that strips links and keeps their inner text
+        lua_filter_content = "function Link(el) return el.content end"
+        
+        # Create a temporary file for the Lua filter
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.lua', delete=False) as temp_lua_file:
+            temp_lua_file.write(lua_filter_content)
+            temp_lua_path = temp_lua_file.name
+
+        try:
+            # Pass the path of the temporary Lua filter file to Pandoc
+            process = subprocess.Popen(
+                ['pandoc', '-f', 'html', '-t', 'markdown_strict', '--strip-comments', '--listings', f'--lua-filter={temp_lua_path}', '--wrap=none', '--markdown-headings=atx', '--quiet'], 
+                stdin=subprocess.PIPE, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True
+            )
+            out, err = process.communicate(input=html_output)
+            
+            if process.returncode == 0:
+                print(out.strip())
+            else:
+                # If pandoc fails, print stderr to assist debugging
+                if err:
+                    print(f"Pandoc Error: {err.strip()}", file=sys.stderr)
+                print(html_output)
+        except FileNotFoundError:
+            print("ERROR: pandoc is not installed. Outputting HTML instead.", file=sys.stderr)
+            print(html_output)
+        finally:
+            # Ensure the temporary file is deleted after execution
+            if os.path.exists(temp_lua_path):
+                os.remove(temp_lua_path)
+
+if __name__ == "__main__":
+    main()
