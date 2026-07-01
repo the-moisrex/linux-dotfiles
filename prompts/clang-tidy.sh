@@ -66,7 +66,7 @@ fi
 
 # Run clang-tidy
 command_str="clang-tidy ${CT_ARGS[@]} $@"
-run_output=$(clang-tidy "${CT_ARGS[@]}" "$@"  2>&1)
+run_output=$(clang-tidy "${CT_ARGS[@]}" "$@"  2>&1 || true)
 
 if [[ -n "$head_lines" ]]; then
     run_output="$(printf "%s" "$run_output" | head -n "$head_lines")"
