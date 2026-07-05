@@ -4,6 +4,7 @@ SCRIPT_DIR=$(dirname "$0")
 
 GLOBAL_HTML=(
     -r link
+    -r noscript
     -r .carousel-stage
     -r .news_code
     -r .short_link_box
@@ -330,6 +331,9 @@ case $WEBSITE in
         ;;
     digiato.ir|digiato.com)
         FILTERS=("htmlq -wp '.articlePost, .dailyNewsPageHead h1, .dailyNewsPageHead p' -r .notfluidbox -r .app__download--link -r .app__download--leftside -r .app__download")
+        ;;
+    rt.com)
+        FILTERS=("htmlq -wp '.article' $HTML -r .article__listing -r .article__ya-recommendations -r .article__social-wrapper -r .article__tags-trends -r .article__invitation -r .article__share -r .mediaplayer -r .copyright-symbol -r .article__breadcrumbs -r .article__tag -r .read-more -r .article__comments -r .article__cover")
         ;;
     *)
         FILTERS=(
