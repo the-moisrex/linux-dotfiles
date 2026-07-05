@@ -108,6 +108,31 @@ GLOBAL_HTML=(
     -r .livePage
     -r .newsrelated_media
     -r .no-print
+
+    -r aside
+    -r iframe
+    -r picture
+    -r source
+    -r 'figure figcaption'
+    -r .newsletter
+    -r .subscribe
+    -r .paywall
+    -r .sticky
+    -r .advertisement
+    -r .ad
+    -r .promo
+    -r .recommended
+    -r .recommendations
+    -r .outbrain
+    -r .taboola
+    -r .cookie
+    -r .breadcrumbs
+    -r .breadcrumb
+    -r .author
+    -r .byline
+    -r .caption
+    -r .gallery
+    -r .lightbox
 )
 
 HTML="${GLOBAL_HTML[*]}"
@@ -334,6 +359,16 @@ case $WEBSITE in
         ;;
     rt.com)
         FILTERS=("htmlq -wp '.article' $HTML -r .article__listing -r .article__ya-recommendations -r .article__social-wrapper -r .article__tags-trends -r .article__invitation -r .article__share -r .mediaplayer -r .copyright-symbol -r .article__breadcrumbs -r .article__tag -r .read-more -r .article__comments -r .article__cover")
+        ;;
+    bbc.com|bbc)
+        FILTERS=(
+            "htmlq -wp 'main, article, [data-component=\"text-block\"]' $HTML -r header -r footer -r nav -r aside -r .bbc-1n4f7g4 -r script -r style -r .bbc-mj7j1g"
+        )
+        ;;
+    reuters.com|reuters)
+        FILTERS=(
+            "htmlq -wp article $HTML -r header -r footer -r nav -r .related-content -r .social -r .byline"
+        )
         ;;
     *)
         FILTERS=(
