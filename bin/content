@@ -151,11 +151,18 @@ show_help() {
     echo "  --asfile        Pass the aggregated output via file to the command after --"
     echo "  --all-at-once   Pass output of ALL urls at once to the command (Default is per URL)"
     echo "  --pool, -p      Set max parallel tasks (default: 5)"
+    echo "  --format [FMT]  Set pandoc output format (default: ${PANDOC_FORMAT})"
     echo
     echo "Example usage:"
     echo "  $ c.p | content --asfile -- gnome-text-editor -n"
     echo "  $ content --asfile -- gnome-text-editor"
     echo "  $ content -- zenity --text-info"
+    echo "  $ content --asfile --format odt -- xdg-open"
+    ech
+    echo
+    echo "Pandoc Output Formats:"
+    pandoc --list-output-formats | tr '\n' ','
+    echo
 }
 
 # Parse command-line arguments
@@ -174,6 +181,7 @@ flags=()
 URLs=()
 IS_CHILD=false
 PRINT_URL=false
+PANDOC_FORMAT="markdown_github"
 
 
 sync_parallel_output() {
@@ -184,11 +192,11 @@ sync_parallel_output() {
 
     for site in "${sites[@]}"; do
         [ -z "$site" ] && continue
-        out=$(mktemp)
+        out=$(mktemp -q --suffix=".md")
         outputs+=("$out")
         
         # Run child process in background
-        "$0" "${flags[@]}" --child "$site" >"$out" 2>/dev/null &
+        "$0" "${flags[@]}" --pandoc-format "$PANDOC_FORMAT" --child "$site" >"$out" 2>/dev/null &
         pids+=($!)
         
         # Limit parallelism
@@ -271,6 +279,15 @@ while [[ $# -gt 0 ]]; do
             WEBSITE="$1"
             shift
         ;;
+        --format|-format|--pandoc-format)
+            shift
+            PANDOC_FORMAT="$1"
+            if ! pandoc --list-output-format | grep --quiet "$PANDOC_FORMAT" >/dev/null; then
+                echo "Pandoc Format unknown: $1" >&2;
+                exit 1;
+            fi
+            shift
+            ;;
         --)
             shift
             COMMAND=("$@")
@@ -359,8 +376,8 @@ fi
 # Configure website-specific settings
 CURL_COMMANDS=("curl $CURL_OPTIONS \"$URL\"")
 TRANSFORMS=(
-    "pandoc -f html -t plain --wrap=none"
-    "sed 's/\\[\\]//g'"
+    "pandoc -f html -t ${PANDOC_FORMAT} --strip-comments --listings --quiet --markdown-headings=atx --wrap=none"
+    # "sed 's/\\[\\]//g'"
 )
 case $WEBSITE in
     irna.ir)
