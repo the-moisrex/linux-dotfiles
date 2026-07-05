@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [[ "$1" == "--help" ]]; then
-    echo "Usage: $0 [search_term | --list | list]"
+    echo "Usage: $0 [search_term | --list | list | episode_url | episode_id]"
     echo ""
     echo "Options:"
     echo "  --help    Show this help message"
@@ -9,10 +9,49 @@ if [[ "$1" == "--help" ]]; then
     echo "  list      List all channel descriptors"
     echo ""
     echo "Examples:"
-    echo "  $0 --list          # List all channel descriptors"
-    echo "  $0 tv1             # Play channel with descriptor 'tv1'"
-    echo "  $0 شبکه 1          # Search for channel with 'شبکه 1' in name/description"
-    echo "  $0 sport           # Search for channels containing 'sport'"
+    echo "  $0 --list                                          # List all channel descriptors"
+    echo "  $0 tv1                                             # Play channel with descriptor 'tv1'"
+    echo "  $0 شبکه 1                                          # Search for channel with 'شبکه 1' in name/description"
+    echo "  $0 sport                                           # Search for channels containing 'sport'"
+    echo "  $0 https://telewebion.ir/episode/0xXXXXXXXX        # Play a specific episode by URL"
+    echo "  $0 0xXXXXXXXX                                      # Play a specific episode by ID"
+    exit 0
+fi
+
+# Check if input is a telewebion episode URL or an episode ID (starts with 0x)
+if [[ "$1" == *"telewebion.ir/episode/"* || "$1" == 0x* ]]; then
+    if [[ "$1" == *"telewebion.ir/episode/"* ]]; then
+        episode_id="${1##*/}"
+    else
+        episode_id="$1"
+    fi
+    
+    echo "Fetching metadata for episode $episode_id..."
+    api_response=$(curl -sqL "https://gateway.telewebion.ir/kandoo/episode/getEpisodeDetail/?EpisodeId=${episode_id}")
+    
+    # Extract the channel descriptor from the API response
+    descriptor=$(echo "$api_response" | jq -r '.body.queryEpisode[0].channel.descriptor')
+    
+    if [[ -z "$descriptor" || "$descriptor" == "null" ]]; then
+        echo "Error: Could not determine channel descriptor for episode $episode_id."
+        exit 1
+    fi
+    
+    playlist_url="https://cdna.telewebion.ir/${descriptor}/episode/${episode_id}/playlist.m3u8"
+    
+    echo "Channel: $descriptor"
+    echo "Playlist: $playlist_url"
+    
+    mpv \
+    --profile=fast \
+    --force-window=immediate \
+    --ytdl=no \
+    --hwdec=auto \
+    --icc-profile-auto \
+    --force-seekable=yes \
+    --cache=yes \
+    "$playlist_url"
+    
     exit 0
 fi
 
