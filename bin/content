@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_DIR=$(dirname "$0")
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 GLOBAL_HTML=(
     -r link
@@ -113,7 +113,7 @@ GLOBAL_HTML=(
     -r iframe
     -r picture
     -r source
-    -r 'figure figcaption'
+    # -r 'figure figcaption'
     -r .newsletter
     -r .subscribe
     -r .paywall
@@ -139,7 +139,7 @@ HTML="${GLOBAL_HTML[*]}"
 
 # Function to display help information
 show_help() {
-    echo "Usage: $0 [options] <websites...>"
+    echo "Usage: $0 [options] <websites...> [-- command [args...]]"
     echo
     echo "Options:"
     echo "  --help          Display this help message"
@@ -148,6 +148,14 @@ show_help() {
     echo "  --no-transform  Disable transforming to plain text"
     echo "  --no-curl       Don't expect a URL, expect the HTML"
     echo "  --print-url     Print the URL at the end"
+    echo "  --asfile        Pass the aggregated output via file to the command after --"
+    echo "  --all-at-once   Pass output of ALL urls at once to the command (Default is per URL)"
+    echo "  --pool, -p      Set max parallel tasks (default: 5)"
+    echo
+    echo "Example usage:"
+    echo "  $ c.p | content --asfile -- gnome-text-editor -n"
+    echo "  $ content --asfile -- gnome-text-editor"
+    echo "  $ content -- zenity --text-info"
 }
 
 # Parse command-line arguments
@@ -155,9 +163,12 @@ VERBOSE=false
 NO_FILTER=false
 NO_TRANSFORM=false
 NO_CURL=false
+ASFILE=false
+ALL_AT_ONCE=false
+POOL_SIZE=5
 WEBSITE=""
 URL=""
-COMMAND=""
+declare -a COMMAND=()
 args="$@"
 flags=()
 URLs=()
@@ -169,18 +180,39 @@ sync_parallel_output() {
     local sites=("$@")
     local outputs=()
     local pids=()
+    local active=0
 
     for site in "${sites[@]}"; do
+        [ -z "$site" ] && continue
         out=$(mktemp)
         outputs+=("$out")
-        $0 ${flags[@]} --child "$site" >"$out" &
+        
+        # Run child process in background
+        "$0" "${flags[@]}" --child "$site" >"$out" 2>/dev/null &
         pids+=($!)
+        
+        # Limit parallelism
+        ((active++))
+        if (( active >= POOL_SIZE )); then
+            wait -n
+            ((active--))
+        fi
     done
 
-    # Wait for each job in order, then print
+    # Wait for each job in order, then print or run command
     for i in "${!pids[@]}"; do
-        wait "${pids[$i]}"
-        cat "${outputs[$i]}"
+        wait "${pids[$i]}" 2>/dev/null || true
+        
+        # If command exists and we process PER URL
+        if [ ${#COMMAND[@]} -gt 0 ] && ! $ALL_AT_ONCE; then
+            if $ASFILE; then
+                cat "${outputs[$i]}" | "$SCRIPT_DIR/asfile" -- "${COMMAND[@]}" &
+            else
+                cat "${outputs[$i]}" | "${COMMAND[@]}" &
+            fi
+        else
+            cat "${outputs[$i]}"
+        fi
         rm -f "${outputs[$i]}"
     done
 }
@@ -221,11 +253,28 @@ while [[ $# -gt 0 ]]; do
             flags+=("--no-trans")
             shift
         ;;
+        --asfile|-asfile|asfile|--as-file|-as-file|as-file)
+            ASFILE=true
+            shift
+        ;;
+        --all-at-once|-a)
+            ALL_AT_ONCE=true
+            shift
+        ;;
+        --pool|-p)
+            POOL_SIZE="$2"
+            shift 2
+        ;;
         --website|-website|website|site|--site|-site)
             shift
             flags+=("--website" "$1")
             WEBSITE="$1"
             shift
+        ;;
+        --)
+            shift
+            COMMAND=("$@")
+            break
         ;;
         *)
             if [ -z "$URL" ]; then
@@ -238,16 +287,58 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if ! $IS_CHILD && [ ${#URLs[@]} -gt 0 ]; then
-    sync_parallel_output "${URLs[@]}"
-    exit 0
-fi
+# If parent process, handle inputs and parallelization
+if ! $IS_CHILD; then
+    # Add initial URL to the URLs list if set
+    if [ -n "$URL" ]; then
+        URLs=("$URL" "${URLs[@]}")
+    fi
 
+    # Read from stdin or clipboard if no URLs provided
+    if [ ${#URLs[@]} -eq 0 ]; then
+        if [ ! -t 0 ]; then
+            # Read from pipeline/stdin
+            mapfile -t URLs < /dev/stdin
+        else
+            # Stdin is empty/terminal, fallback to c.p
+            if [ -f "$SCRIPT_DIR/c.p" ]; then
+                mapfile -t URLs < <("$SCRIPT_DIR/c.p")
+            elif hash c.p 2>/dev/null; then
+                mapfile -t URLs < <(c.p)
+            fi
+        fi
+    fi
+    
+    # Process the URLs
+    process_all() {
+        if [ ${#URLs[@]} -gt 0 ]; then
+            sync_parallel_output "${URLs[@]}"
+        fi
+    }
 
-if [ -z "$URL" ]; then
-    cat - | xargs -l $0 ${flags[*]}
+    # Handle output routing
+    if [ ${#COMMAND[@]} -gt 0 ]; then
+        if $ALL_AT_ONCE; then
+            # Pass aggregated output to a single command execution
+            if $ASFILE; then
+                process_all | "$SCRIPT_DIR/asfile" -- "${COMMAND[@]}"
+            else
+                process_all | "${COMMAND[@]}"
+            fi
+        else
+            # Outputs passed per-URL directly in sync_parallel_output
+            process_all
+        fi
+    else
+        process_all
+    fi
     exit $?
 fi
+
+
+# ----------------------------------------
+# Child process logic starts here
+# ----------------------------------------
 
 if ! $NO_CURL; then
     # Default curl options with a user-agent to mimic a browser
@@ -269,13 +360,13 @@ fi
 CURL_COMMANDS=("curl $CURL_OPTIONS \"$URL\"")
 TRANSFORMS=(
     "pandoc -f html -t plain --wrap=none"
-    "sed 's/\[\]//g'"
+    "sed 's/\\[\\]//g'"
 )
 case $WEBSITE in
     irna.ir)
-        sec_cookies=$(curl -sqL $URL | grep "return {'value_v1" | awk '{print "var res = (function() {" $0 "})(); console.log(`__arcsjs=${res.value_v1}; __arcsjsc=${res.value}`)"}' | node -)
+        sec_cookies=$(curl -sqL "$URL" | grep "return {'value_v1" | awk '{print "var res = (function() {" $0 "})(); console.log(`__arcsjs=${res.value_v1}; __arcsjsc=${res.value}`)"}' | node -)
         CURL_COMMANDS=(
-            "curl $CURL_OPTIONS -H 'Cookie: $sec_cookies' $URL"
+            "curl $CURL_OPTIONS -H 'Cookie: $sec_cookies' \"$URL\""
         )
         FILTERS=(
             "htmlq -wp article $HTML -r nav -r .tags -r .item-code -r .item-foot-nav -r .item-nav -r .item-footer -r .item-boxes -r .area-item -r figure.item-img"
@@ -348,7 +439,7 @@ case $WEBSITE in
         ;;
     rouydad24.ir|roydad24.ir)
         FILTERS=(
-            "htmlq -r 'section.box31-cover' -r 'div.article.relDesktop' -r 'div.article.relBg' -r 'div.tags_container' -r 'div[id^="pos-article-"]' -r 'div.yn-bnr' 'article.news-article'"
+            "htmlq -r 'section.box31-cover' -r 'div.article.relDesktop' -r 'div.article.relBg' -r 'div.tags_container' -r 'div[id^=\"pos-article-\"]' -r 'div.yn-bnr' 'article.news-article'"
         )
         ;;
     virgool.io)
@@ -399,7 +490,6 @@ if ! $NO_FILTER; then
     for filter in "${FILTERS[@]}"; do
         PIPELINE+=" | $filter"
     done
-    # PIPELINE+=" | grep -vE \"${EXCLUDE_REGEX}\""
 fi
 
 if ! $NO_TRANSFORM; then
