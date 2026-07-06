@@ -1,20 +1,37 @@
 #!/bin/bash
 
+# Parse options
+PRINT_URL_ONLY=0
+query=""
+
+for arg in "$@"; do
+    if [[ "$arg" == "--print-url" ]]; then
+        PRINT_URL_ONLY=1
+        elif [[ "$arg" != "" ]]; then
+        query="$arg"
+    fi
+done
+
+# Reassign $1 to the query so the rest of the script works as before
+set -- "$query"
+
 if [[ "$1" == "--help" ]]; then
-    echo "Usage: $0 [search_term | --list | list | episode_url | episode_id]"
+    echo "Usage: $0 [search_term | --list | list | episode_url | episode_id] [--print-url]"
     echo ""
     echo "Options:"
-    echo "  --help    Show this help message"
-    echo "  --list    List all channel descriptors"
-    echo "  list      List all channel descriptors"
+    echo "  --help        Show this help message"
+    echo "  --list        List all channel descriptors"
+    echo "  list          List all channel descriptors"
+    echo "  --print-url   Only print the playlist URL instead of playing it"
     echo ""
     echo "Examples:"
     echo "  $0 --list                                          # List all channel descriptors"
     echo "  $0 tv1                                             # Play channel with descriptor 'tv1'"
+    echo "  $0 tv1 --print-url                                 # Print the m3u8 URL for 'tv1'"
     echo "  $0 شبکه 1                                          # Search for channel with 'شبکه 1' in name/description"
     echo "  $0 sport                                           # Search for channels containing 'sport'"
     echo "  $0 https://telewebion.ir/episode/0xXXXXXXXX        # Play a specific episode by URL"
-    echo "  $0 0xXXXXXXXX                                      # Play a specific episode by ID"
+    echo "  $0 0xXXXXXXXX --print-url                          # Print the m3u8 URL for episode ID"
     exit 0
 fi
 
@@ -26,18 +43,25 @@ if [[ "$1" == *"telewebion.ir/episode/"* || "$1" == 0x* ]]; then
         episode_id="$1"
     fi
     
-    echo "Fetching metadata for episode $episode_id..."
+    if [[ $PRINT_URL_ONLY -eq 0 ]]; then
+        echo "Fetching metadata for episode $episode_id..."
+    fi
     api_response=$(curl -sqL "https://gateway.telewebion.ir/kandoo/episode/getEpisodeDetail/?EpisodeId=${episode_id}")
     
     # Extract the channel descriptor from the API response
     descriptor=$(echo "$api_response" | jq -r '.body.queryEpisode[0].channel.descriptor')
     
     if [[ -z "$descriptor" || "$descriptor" == "null" ]]; then
-        echo "Error: Could not determine channel descriptor for episode $episode_id."
+        echo "Error: Could not determine channel descriptor for episode $episode_id." >&2
         exit 1
     fi
     
     playlist_url="https://cdna.telewebion.ir/${descriptor}/episode/${episode_id}/playlist.m3u8"
+    
+    if [[ $PRINT_URL_ONLY -eq 1 ]]; then
+        echo "$playlist_url"
+        exit 0
+    fi
     
     echo "Channel: $descriptor"
     echo "Playlist: $playlist_url"
@@ -66,6 +90,30 @@ fi
 # Set search term (if provided)
 search_term="$1"
 
+# If search term provided, find matching channel details
+if [ -n "$search_term" ]; then
+    match_data=$(echo "$metadata" | jq -r --arg search "$search_term" '
+        .body.queryChannel | to_entries |
+        map(select( [.value.descriptor, .value.name, .value.name_english, .value.description] | join(" ") | contains($search) )) |
+    .[0] // empty')
+    
+    if [ -z "$match_data" ]; then
+        echo "No channels found matching '$search_term'" >&2
+        exit 1
+    fi
+    
+    descriptor=$(echo "$match_data" | jq -r '.value.descriptor')
+    index=$(echo "$match_data" | jq -r '.key')
+    
+    if [[ $PRINT_URL_ONLY -eq 1 ]]; then
+        echo "https://ncdn.telewebion.ir/${descriptor}/live/playlist.m3u8"
+        exit 0
+    fi
+    elif [[ $PRINT_URL_ONLY -eq 1 ]]; then
+    echo "Error: --print-url requires a search term or episode ID/URL." >&2
+    exit 1
+fi
+
 # Create temporary playlist file
 playlist=$(mktemp --suffix .playlist.m3u8)
 
@@ -75,20 +123,6 @@ echo "#EXTM3U" > "$playlist"
 # echo "#EXT-X-PLAYLIST-TYPE:EVENT" >> "$playlist"
 # echo "$metadata" | jq -r '.body.queryChannel[] | "#EXT-X-STREAM-INF:NAME=\"\(.name)\",BANDWIDTH=2560000\nhttps://ncdn.telewebion.ir/\(.descriptor)/live/playlist.m3u8"' >> "$playlist"
 echo "$metadata" | jq -r '.body.queryChannel[] | "#EXTINF:0,\(.descriptor) \(.name)\nhttps://ncdn.telewebion.ir/\(.descriptor)/live/playlist.m3u8"' >> "$playlist"
-
-# If search term provided, find matching channel index
-if [ -n "$search_term" ]; then
-    index=$(echo "$metadata" | jq -r --arg search "$search_term" '
-        .body.queryChannel | to_entries |
-        map(select( [.value.descriptor, .value.name, .value.name_english, .value.description] | join(" ") | contains($search) )) |
-    .[0].key')
-    
-    if [ -z "$index" ]; then
-        echo "No channels found matching '$search_term'"
-        rm -f "$playlist"
-        exit 1
-    fi
-fi
 
 # Play the playlist
 args=(
@@ -104,13 +138,8 @@ args=(
     --hls-bitrate=min             # Or specify a rate
     --demuxer-max-bytes=32MiB     # Lower from default
     --demuxer-readahead-secs=2    # Keep the forward buffer very small
-    # --demuxer-max-bytes=128MiB
-    # --demuxer-max-back-bytes=512MiB
-    # --demuxer-lavf-format=hls # Force the standard HLS demuxer
-    # --demuxer-lavf-analyzeduration=0.1
-    # --demuxer-lavf-probesize=131072
-    --untimed=yes          # Helps with live stream latency
-    --hls-bitrate=2000000  # Caps auto-selection around the 720p/1080p standard tracks
+    --untimed=yes                 # Helps with live stream latency
+    --hls-bitrate=2000000         # Caps auto-selection around the 720p/1080p standard tracks
     "$playlist"
 )
 if [ -n "$search_term" ]; then
