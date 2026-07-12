@@ -28,11 +28,6 @@ echo "Adhere to standard documentation conventions for the specific language if 
 echo "Return the updated code with the newly added docstrings or write a patch file."
 echo
 
-if [ $# -eq 0 ]; then
-    # Fallback to fzf if no files were piped or provided as arguments
-    set -- $(select_files)
-fi
-
 for file in "$@"; do
     if ! resolved_file="$(resolve_input_file "$file")"; then
         printf 'prompt docstring: file not found: %s\n' "$file" >&2
