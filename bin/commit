@@ -1,0 +1,792 @@
+#!/usr/bin/env python3
+"""
+commit — suggest / format git commit messages from issue context, templates,
+and staged diffs. Pipeline-friendly (e.g. commit "msg" | git commit -F -).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable, Optional
+
+# ---------------------------------------------------------------------------
+# Limits / heuristics
+# ---------------------------------------------------------------------------
+MAX_DIFF_LINES = 250
+MAX_DIFF_LINES_FILTERED = 350
+MAX_ISSUE_BODY_LINES = 60
+MAX_COMMENT_LINES = 80
+MAX_LOG_LINES = 12
+RECENT_ISSUE_SECONDS = 300  # 5 minutes
+LOG_ISSUE_LOOKBACK = 80
+HIGH_CHURN_COMMITS = 12
+LARGE_FILE_CHANGE_LINES = 180
+
+# Always-suspect paths when a diff is huge (still mentioned when omitted)
+DEFAULT_NOISE_PATTERNS = (
+    re.compile(r"(^|/)package-lock\.json$"),
+    re.compile(r"(^|/)yarn\.lock$"),
+    re.compile(r"(^|/)pnpm-lock\.yaml$"),
+    re.compile(r"(^|/)Cargo\.lock$"),
+    re.compile(r"(^|/)composer\.lock$"),
+    re.compile(r"(^|/)go\.sum$"),
+    re.compile(r"(^|/)poetry\.lock$"),
+    re.compile(r"(^|/)\.min\.(js|css)$"),
+    re.compile(r"(^|/)dist/"),
+    re.compile(r"(^|/)build/"),
+    re.compile(r"(^|/)node_modules/"),
+    re.compile(r"(^|/)vendor/"),
+    re.compile(r"(^|/)__pycache__/"),
+    re.compile(r"\.(map|svg|png|jpg|jpeg|gif|webp|ico|pdf|bin|wasm)$", re.I),
+)
+
+# ---------------------------------------------------------------------------
+# Templates: name -> (description, example title without issue suffix)
+# ---------------------------------------------------------------------------
+TEMPLATES: dict[str, tuple[str, str]] = {
+    "fix": (
+        "Bug fix",
+        "fix: handle null pointer in parser",
+    ),
+    "feat": (
+        "New feature",
+        "feat: add export-to-csv for reports",
+    ),
+    "docs": (
+        "Documentation only",
+        "docs: clarify install steps in README",
+    ),
+    "test": (
+        "Add or adjust tests (generic)",
+        "test: cover edge case in auth middleware",
+    ),
+    "chore": (
+        "Maintenance / tooling / deps",
+        "chore: bump eslint and fix config",
+    ),
+    "refactor": (
+        "Restructure without behavior change",
+        "refactor: extract validation helpers",
+    ),
+    "style": (
+        "Formatting / lint / non-semantic",
+        "style: apply black and isort",
+    ),
+    "perf": (
+        "Performance improvement",
+        "perf: cache repeated DB lookups",
+    ),
+    "ci": (
+        "CI/CD pipeline changes",
+        "ci: cache pip deps in GitHub Actions",
+    ),
+    "build": (
+        "Build system / packaging",
+        "build: enable tree-shaking for bundle",
+    ),
+    "add": (
+        "Add something (file/feature/snippet)",
+        "add: rate-limit middleware",
+    ),
+    "update": (
+        "Update existing behavior/docs/config",
+        "update: refresh default timeout values",
+    ),
+    "remove": (
+        "Remove code, files, or dead paths",
+        "remove: drop unused legacy adapter",
+    ),
+    "improve": (
+        "Quality / UX / readability improvement",
+        "improve: clearer error messages on login",
+    ),
+    # More specific action templates
+    "add-function": (
+        "Add a function / method / helper",
+        "add-function: normalize_user_input helper",
+    ),
+    "fix-function": (
+        "Fix a function / method",
+        "fix-function: correct off-by-one in paginate()",
+    ),
+    "add-test": (
+        "Add a test",
+        "add-test: unit tests for TokenService",
+    ),
+    "fix-test": (
+        "Fix a flaky or incorrect test",
+        "fix-test: stabilize timezone assertion",
+    ),
+    "add-class": (
+        "Add a class / type / module",
+        "add-class: InvoiceBuilder for billing",
+    ),
+    "fix-class": (
+        "Fix a class / type behavior",
+        "fix-class: InvoiceBuilder total rounding",
+    ),
+    "add-api": (
+        "Add an API endpoint / route",
+        "add-api: POST /v1/webhooks",
+    ),
+    "fix-api": (
+        "Fix an API endpoint / contract",
+        "fix-api: return 404 for missing webhook",
+    ),
+}
+
+# Aliases people might type
+TEMPLATE_ALIASES = {
+    "feature": "feat",
+    "bug": "fix",
+    "bugfix": "fix",
+    "tests": "test",
+    "testing": "test",
+    "document": "docs",
+    "documentation": "docs",
+    "cleanup": "chore",
+    "deps": "chore",
+    "addfunc": "add-function",
+    "add-func": "add-function",
+    "addfunction": "add-function",
+    "fixfunc": "fix-function",
+    "fix-func": "fix-function",
+    "fixfunction": "fix-function",
+    "addtest": "add-test",
+    "fixtest": "fix-test",
+    "addclass": "add-class",
+    "fixclass": "fix-class",
+    "addapi": "add-api",
+    "fixapi": "fix-api",
+}
+
+
+# ---------------------------------------------------------------------------
+# Shell helpers
+# ---------------------------------------------------------------------------
+def run(
+    cmd: list[str] | str,
+    *,
+    ignore_errors: bool = False,
+    cwd: Optional[str] = None,
+) -> str:
+    if isinstance(cmd, str):
+        shell = True
+        args: list[str] | str = cmd
+    else:
+        shell = False
+        args = cmd
+    try:
+        proc = subprocess.run(
+            args,
+            shell=shell,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+        )
+        return proc.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        if ignore_errors:
+            return ""
+        err = (e.stderr or e.stdout or str(e)).strip()
+        print(f"Error running: {cmd}\n{err}", file=sys.stderr)
+        sys.exit(1)
+
+
+def repo_root() -> Path:
+    root = run(["git", "rev-parse", "--show-toplevel"], ignore_errors=True)
+    if not root:
+        print("Error: not inside a git repository.", file=sys.stderr)
+        sys.exit(1)
+    return Path(root)
+
+
+def is_github_remote(root: Path) -> bool:
+    remotes = run(["git", "remote", "-v"], ignore_errors=True, cwd=str(root))
+    if not remotes:
+        return False
+    # Prefer origin, but accept any github remote
+    for line in remotes.splitlines():
+        if "github.com" in line or "github.com:" in line:
+            return True
+    return False
+
+
+def gh_available(root: Path) -> bool:
+    if not is_github_remote(root):
+        return False
+    if not run("command -v gh", ignore_errors=True):
+        return False
+    # auth + repo context
+    if not run(["gh", "auth", "status"], ignore_errors=True, cwd=str(root)):
+        # gh auth status writes to stderr; re-check exit via a light call
+        pass
+    # Prefer a call that fails cleanly if not configured for this repo
+    probe = run(
+        ["gh", "repo", "view", "--json", "name"],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    return bool(probe)
+
+
+# ---------------------------------------------------------------------------
+# Trimming
+# ---------------------------------------------------------------------------
+def collapse_repetitive(text: str) -> str:
+    """Collapse blank runs and long identical consecutive lines."""
+    if not text:
+        return ""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out: list[str] = []
+    blank_run = 0
+    prev = None
+    same_run = 0
+    for line in lines:
+        if not line.strip():
+            blank_run += 1
+            if blank_run <= 1:
+                out.append("")
+            prev = None
+            same_run = 0
+            continue
+        blank_run = 0
+        if line == prev:
+            same_run += 1
+            if same_run == 2:
+                out.append("… [repeated lines omitted]")
+            if same_run >= 2:
+                continue
+        else:
+            same_run = 0
+        out.append(line)
+        prev = line
+    return "\n".join(out)
+
+
+def hard_trim(text: str, max_lines: int, label: str = "TRIMMED") -> str:
+    text = collapse_repetitive(text)
+    lines = text.split("\n") if text else []
+    if len(lines) <= max_lines:
+        return text
+    head = max_lines // 2
+    tail = max_lines - head - 1
+    omitted = len(lines) - head - tail
+    return (
+        "\n".join(lines[:head])
+        + f"\n… [{label}: omitted {omitted} lines]\n"
+        + "\n".join(lines[-tail:] if tail else [])
+    )
+
+
+def trim_text(text: str, max_lines: int) -> str:
+    return hard_trim(text or "", max_lines)
+
+
+# ---------------------------------------------------------------------------
+# Issue resolution
+# ---------------------------------------------------------------------------
+def get_issue_from_log(root: Path) -> str:
+    log = run(
+        ["git", "log", f"-n{LOG_ISSUE_LOOKBACK}", "--pretty=format:%s%n%b"],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    # Prefer the most recent subject-line reference
+    subjects = run(
+        ["git", "log", f"-n{LOG_ISSUE_LOOKBACK}", "--pretty=format:%s"],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    for line in subjects.splitlines():
+        m = re.search(r"#(\d+)\b", line)
+        if m:
+            return m.group(1)
+    m = re.search(r"#(\d+)\b", log)
+    return m.group(1) if m else ""
+
+
+def parse_gh_time(s: str) -> datetime:
+    # e.g. 2024-01-15T12:34:56Z
+    s = s.replace("Z", "+00:00")
+    return datetime.fromisoformat(s).astimezone(timezone.utc)
+
+
+def get_issue_from_gh(root: Path) -> str:
+    if not gh_available(root):
+        return ""
+    raw = run(
+        ["gh", "issue", "list", "--limit", "5", "--json", "number,createdAt,state"],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    if not raw:
+        return ""
+    try:
+        issues = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+    if not issues:
+        return ""
+
+    now = datetime.now(timezone.utc)
+    # Prefer open issues; list is newest-first from gh
+    for issue in issues:
+        try:
+            created = parse_gh_time(issue["createdAt"])
+        except Exception:
+            continue
+        if (now - created).total_seconds() < RECENT_ISSUE_SECONDS:
+            return str(issue["number"])
+
+    # Not recent → prefer last issue id from commit history, else newest listed
+    log_id = get_issue_from_log(root)
+    if log_id:
+        return log_id
+    return str(issues[0]["number"])
+
+
+def resolve_issue_id(
+    root: Path,
+    *,
+    method: str,
+    explicit: Optional[str],
+) -> str:
+    if explicit:
+        return re.sub(r"^#", "", str(explicit).strip())
+
+    if method in ("none", "offline"):
+        return get_issue_from_log(root) if method == "offline" else ""
+
+    if method == "log":
+        return get_issue_from_log(root)
+    if method == "gh":
+        return get_issue_from_gh(root)
+
+    # auto
+    if gh_available(root):
+        gid = get_issue_from_gh(root)
+        if gid:
+            return gid
+    return get_issue_from_log(root)
+
+
+@dataclass
+class IssueDetails:
+    number: str
+    title: str
+    body: str
+    comments: str
+
+
+def fetch_issue(root: Path, issue_id: str) -> IssueDetails:
+    empty = IssueDetails(issue_id, "", "", "")
+    if not issue_id or not gh_available(root):
+        return empty
+
+    raw = run(
+        [
+            "gh",
+            "issue",
+            "view",
+            issue_id,
+            "--json",
+            "number,title,body,comments",
+        ],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    if not raw:
+        return empty
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return empty
+
+    title = (data.get("title") or "").strip()
+    body = trim_text(data.get("body") or "", MAX_ISSUE_BODY_LINES)
+
+    comments_parts: list[str] = []
+    for c in data.get("comments") or []:
+        author = (c.get("author") or {}).get("login") or "user"
+        created = c.get("createdAt") or ""
+        body_c = collapse_repetitive(c.get("body") or "")
+        comments_parts.append(f"--- @{author} ({created}) ---\n{body_c}")
+
+    comments = trim_text("\n\n".join(comments_parts), MAX_COMMENT_LINES)
+    return IssueDetails(str(data.get("number") or issue_id), title, body, comments)
+
+
+# ---------------------------------------------------------------------------
+# Diff filtering
+# ---------------------------------------------------------------------------
+def is_noise_path(path: str) -> bool:
+    return any(p.search(path) for p in DEFAULT_NOISE_PATTERNS)
+
+
+def file_commit_count(root: Path, path: str) -> int:
+    out = run(
+        ["git", "rev-list", "--count", "HEAD", "--", path],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    return int(out) if out.isdigit() else 0
+
+
+def filter_diffs(root: Path) -> str:
+    full = run(["git", "diff", "--cached"], ignore_errors=True, cwd=str(root))
+    if not full:
+        # fall back to unstaged if nothing staged (handy for --prompt)
+        full = run(["git", "diff"], ignore_errors=True, cwd=str(root))
+        scope = "working tree (unstaged)"
+    else:
+        scope = "staged"
+
+    lines = full.split("\n") if full else []
+    if len(lines) <= MAX_DIFF_LINES:
+        header = f"[diff: {scope}, {len(lines)} lines]\n"
+        return header + full
+
+    notes: list[str] = [
+        f"Diff is large ({len(lines)} lines, {scope}). Applying filters…"
+    ]
+
+    # numstat: added, deleted, path
+    numstat = run(
+        ["git", "diff", "--cached", "--numstat"],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    if not numstat.strip():
+        numstat = run(["git", "diff", "--numstat"], ignore_errors=True, cwd=str(root))
+
+    exclude: list[str] = []
+    candidates: list[tuple[int, int, str]] = []  # churn, size, path
+
+    for row in numstat.splitlines():
+        parts = row.split("\t")
+        if len(parts) != 3:
+            continue
+        a, d, path = parts
+        if a == "-" or d == "-":  # binary
+            size = LARGE_FILE_CHANGE_LINES + 1
+            churn = file_commit_count(root, path)
+            candidates.append((churn, size, path))
+            continue
+        try:
+            size = int(a) + int(d)
+        except ValueError:
+            continue
+        churn = file_commit_count(root, path)
+        candidates.append((churn, size, path))
+
+    # Rank: noise paths, then high churn + large, then just large
+    for churn, size, path in sorted(candidates, key=lambda x: (-x[0], -x[1])):
+        reason = None
+        if is_noise_path(path):
+            reason = "noise/generated/lockfile pattern"
+        elif size >= LARGE_FILE_CHANGE_LINES and churn >= HIGH_CHURN_COMMITS:
+            reason = f"high churn ({churn} commits) + large delta ({size} lines)"
+        elif size >= LARGE_FILE_CHANGE_LINES * 3:
+            reason = f"very large delta ({size} lines)"
+        if reason:
+            exclude.append(path)
+            notes.append(f"[Omitted] {path} — {reason}")
+
+    # Cap excludes so we don't empty the diff
+    if len(exclude) >= max(1, len(candidates) - 1) and candidates:
+        # keep the smallest non-noise file
+        keep = None
+        for churn, size, path in sorted(candidates, key=lambda x: (x[1], x[0])):
+            if not is_noise_path(path):
+                keep = path
+                break
+        if keep and keep in exclude:
+            exclude.remove(keep)
+            notes.append(f"[Kept despite size] {keep}")
+
+    cmd = ["git", "diff", "--cached", "--"]
+    if scope.startswith("working"):
+        cmd = ["git", "diff", "--"]
+    for p in exclude:
+        cmd.append(f":(exclude){p}")
+    if not exclude:
+        cmd.append(".")
+
+    filtered = run(cmd, ignore_errors=True, cwd=str(root))
+    body = trim_text(filtered, MAX_DIFF_LINES_FILTERED)
+    return "\n".join(notes) + "\n\n" + body
+
+
+# ---------------------------------------------------------------------------
+# Commit title construction
+# ---------------------------------------------------------------------------
+def normalize_template(name: str) -> Optional[str]:
+    key = name.strip().lower()
+    key = TEMPLATE_ALIASES.get(key, key)
+    return key if key in TEMPLATES else None
+
+
+def title_starts_with_template(title: str, template: str) -> bool:
+    # Accept "fix:", "fix(", "Fix ", "fix-function:", etc.
+    t = template.lower()
+    s = title.strip().lower()
+    return bool(
+        re.match(rf"^{re.escape(t)}(\b|:|\()", s)
+        or re.match(rf"^{re.escape(t.replace('-', ' '))}(\b|:|\()", s)
+    )
+
+
+def build_commit_title(
+    *,
+    template: Optional[str],
+    message: Optional[str],
+    issue: Optional[IssueDetails],
+) -> str:
+    issue_id = (issue.number if issue else "") or ""
+    issue_title = (issue.title if issue else "") or ""
+
+    base = ""
+
+    if template:
+        # Prefer explicit message, else issue title
+        core = (message or issue_title or "").strip()
+        if core:
+            if title_starts_with_template(core, template):
+                base = core
+            else:
+                # Conventional-ish: "fix: title" ; multiword templates keep hyphen form
+                base = f"{template}: {core}"
+        else:
+            # Minimal sensible fallback without trailing junk
+            base = f"{template}: update"
+    elif message:
+        base = message.strip()
+    elif issue_title:
+        base = issue_title.strip()
+    else:
+        print(
+            "Error: provide a message, a template, or a resolvable issue with a title.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Append issue id cleanly — never leave "; #" residue
+    if issue_id:
+        # Avoid double-append if already present
+        if not re.search(rf"#\s*{re.escape(issue_id)}\b", base):
+            base = f"{base}; #{issue_id}"
+
+    # Final safety: strip dangling separators
+    base = re.sub(r"\s*;\s*#\s*$", "", base)
+    base = re.sub(r"\s*;\s*$", "", base)
+    return base.strip()
+
+
+# ---------------------------------------------------------------------------
+# Prompt mode
+# ---------------------------------------------------------------------------
+def emit_prompt(root: Path, issue: Optional[IssueDetails]) -> None:
+    print("Generate a concise git commit message from the context below.")
+    print("Prefer Conventional Commits (type: summary).")
+    print("If an issue is present, reference it as `#N` in the subject.")
+    print("Subject ≤ ~72 chars when possible; add a short body only if needed.")
+    print("Return ONLY the commit message text.")
+    print("-" * 50)
+
+    if issue and issue.number:
+        print(f"RELATED ISSUE: #{issue.number}")
+        if issue.title:
+            print(f"ISSUE TITLE: {issue.title}")
+        if issue.body:
+            print("ISSUE BODY:")
+            print(issue.body)
+        if issue.comments:
+            print("ISSUE REPLIES / COMMENTS:")
+            print(issue.comments)
+        print("-" * 50)
+    else:
+        print("RELATED ISSUE: (none resolved)")
+        print("-" * 50)
+
+    print("RECENT GIT LOG:")
+    log = run(
+        ["git", "log", "-n", "8", "--oneline", "--decorate"],
+        ignore_errors=True,
+        cwd=str(root),
+    )
+    print(trim_text(log, MAX_LOG_LINES))
+    print("-" * 50)
+
+    print("CHANGES (DIFF):")
+    print(filter_diffs(root))
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="commit",
+        description="Suggest or format git commit messages from templates, "
+        "GitHub issues, and git context.",
+        add_help=False,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  commit "Updated the function" | git commit -F -
+  commit fix 123
+  commit fix-function 45
+  commit --issue 99 feat
+  commit --method offline "polish error paths"
+  commit --prompt | pbcopy
+  commit --list-templates
+  git commit -m "$(commit add-test)"
+""",
+    )
+    p.add_argument("--help", "-h", action="store_true", help="Show help.")
+    p.add_argument(
+        "--prompt",
+        action="store_true",
+        help="Emit a detailed AI prompt (diffs, issue, comments, log).",
+    )
+    p.add_argument(
+        "--method",
+        choices=["auto", "log", "gh", "offline", "none"],
+        default="auto",
+        help="How to resolve issue id: auto|log|gh|offline (log only)|none.",
+    )
+    p.add_argument(
+        "--issue",
+        metavar="ID",
+        help="Explicit issue number (with or without #).",
+    )
+    p.add_argument(
+        "--offline",
+        action="store_true",
+        help="Shortcut for --method offline (no GitHub API).",
+    )
+    p.add_argument(
+        "--no-issue",
+        action="store_true",
+        help="Do not attach or fetch any issue (method=none).",
+    )
+    p.add_argument(
+        "--list-templates",
+        action="store_true",
+        help="List templates with descriptions and examples.",
+    )
+    p.add_argument(
+        "args",
+        nargs="*",
+        help="[TEMPLATE | MESSAGE] [ISSUE_ID] — free form.",
+    )
+    return p
+
+
+def print_templates() -> None:
+    print("Supported templates:\n")
+    width = max(len(k) for k in TEMPLATES)
+    for name, (desc, example) in TEMPLATES.items():
+        print(f"  {name:<{width}}  {desc}")
+        print(f"  {'':<{width}}  e.g. {example}; #42")
+        print()
+    print("Aliases:", ", ".join(f"{a}→{b}" for a, b in sorted(TEMPLATE_ALIASES.items())))
+
+
+def parse_positionals(
+    args: list[str],
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return (template, message, issue_id_from_pos)."""
+    template = None
+    message_parts: list[str] = []
+    issue = None
+
+    for a in args:
+        # issue id token
+        if re.fullmatch(r"#?\d+", a) and issue is None:
+            issue = a.lstrip("#")
+            continue
+        # template only if first non-issue token and known
+        if template is None and not message_parts:
+            norm = normalize_template(a)
+            if norm:
+                template = norm
+                continue
+        message_parts.append(a)
+
+    message = " ".join(message_parts).strip() or None
+    return template, message, issue
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    parser = build_parser()
+    ns = parser.parse_args(argv)
+
+    if ns.help:
+        parser.print_help()
+        print()
+        print_templates()
+        sys.exit(0)
+
+    if ns.list_templates:
+        print_templates()
+        sys.exit(0)
+
+    root = repo_root()
+
+    method = ns.method
+    if ns.offline:
+        method = "offline"
+    if ns.no_issue:
+        method = "none"
+
+    template, message, pos_issue = parse_positionals(ns.args)
+    explicit_issue = ns.issue or pos_issue
+
+    issue_id = resolve_issue_id(root, method=method, explicit=explicit_issue)
+
+    # Fetch issue details only when useful and allowed
+    issue: Optional[IssueDetails] = None
+    if issue_id and method not in ("none",) and not (
+        method == "offline" and not ns.prompt
+    ):
+        # offline: skip API entirely
+        if method == "offline":
+            issue = IssueDetails(issue_id, "", "", "")
+        elif gh_available(root):
+            issue = fetch_issue(root, issue_id)
+        else:
+            issue = IssueDetails(issue_id, "", "", "")
+    elif issue_id:
+        issue = IssueDetails(issue_id, "", "", "")
+
+    # For offline with only log-derived id, still allow "; #N" without title fetch
+    if method == "offline" and issue_id and (issue is None):
+        issue = IssueDetails(issue_id, "", "", "")
+
+    if ns.prompt:
+        # In prompt mode, try to load full issue unless none/offline
+        if issue_id and method not in ("none", "offline") and gh_available(root):
+            issue = fetch_issue(root, issue_id)
+        elif method == "none":
+            issue = None
+        emit_prompt(root, issue)
+        return
+
+    title = build_commit_title(template=template, message=message, issue=issue)
+    # Single line to stdout for pipelines; nothing else on stdout
+    print(title)
+
+
+if __name__ == "__main__":
+    main()
