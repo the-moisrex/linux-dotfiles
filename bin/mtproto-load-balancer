@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+#
+# mtproto-lb.sh - Standalone MTProto Proxy Load Balancer
+set -Eeuo pipefail
+
+# ==================== DEFAULTS ====================
+DEFAULT_PROXY_FILE="$HOME/proxies.txt"
+DEFAULT_PORT="8443"
+DEFAULT_BIND="0.0.0.0"
+DEFAULT_ENGINE="haproxy"
+DEFAULT_INTERVAL="30"
+DEFAULT_CONNECT_TIMEOUT="4"
+
+PROXY_FILE="$DEFAULT_PROXY_FILE"
+LISTEN_PORT="$DEFAULT_PORT"
+BIND_ADDRESS="$DEFAULT_BIND"
+ENGINE="$DEFAULT_ENGINE"
+INTERVAL="$DEFAULT_INTERVAL"
+CONNECT_TIMEOUT="$DEFAULT_CONNECT_TIMEOUT"
+
+DRY_RUN=0
+KEEP_RUNTIME=0
+RUNTIME_DIR=""
+PID_FILE=""
+ACTIVE_FILE=""
+PREV_ACTIVE_FILE=""
+NORMALIZED_FILE=""
+HAPROXY_CONFIG=""
+NGINX_CONFIG=""
+HAPROXY_PID=""
+NGINX_PID=""
+HAPROXY_BIN=""
+NGINX_BIN=""
+
+usage() {
+    cat <<'EOF'
+Usage: mtproto-lb.sh [options]
+
+Standalone TCP load balancer for Telegram MTProto proxies.
+
+Options:
+  -f, --file FILE       Proxy list file (default: ~/proxies.txt)
+  -p, --port PORT       Listen port (default: 8443)
+  -b, --bind ADDR       Bind IP address (default: 0.0.0.0)
+  -e, --engine ENG      Engine to use: haproxy|nginx (default: haproxy)
+  -i, --interval SEC    Check interval in seconds (default: 30)
+  -t, --timeout SEC     Connection timeout in seconds (default: 4)
+  -n, --dry-run         Validate proxies and show config, then exit
+  --keep-runtime        Keep temporary runtime directory on exit
+  -h, --help            Show this help message
+EOF
+}
+
+die() { echo -e "\033[31m[ERROR]\033[0m $*" >&2; exit 1; }
+info() { echo -e "\033[32m[INFO]\033[0m $*"; }
+warn() { echo -e "\033[33m[WARN]\033[0m $*" >&2; }
+
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+is_valid_port() {
+    [[ "$1" =~ ^[0-9]+$ ]] && ((1 <= $1 && $1 <= 65535))
+}
+
+cleanup() {
+    info "Cleaning up..."
+    if [[ -n "${HAPROXY_PID:-}" ]] && kill -0 "$HAPROXY_PID" 2>/dev/null; then
+        kill "$HAPROXY_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${NGINX_PID:-}" ]] && kill -0 "$NGINX_PID" 2>/dev/null; then
+        "$NGINX_BIN" -s quit -c "$NGINX_CONFIG" -p "$RUNTIME_DIR" 2>/dev/null || true
+    fi
+    if [[ ${KEEP_RUNTIME:-0} -eq 0 && -n "$RUNTIME_DIR" && -d "$RUNTIME_DIR" ]]; then
+        rm -rf "$RUNTIME_DIR"
+    fi
+    exit "${1:-0}"
+}
+trap 'cleanup $?' EXIT INT TERM
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--file) PROXY_FILE="$2"; shift 2 ;;
+            -p|--port) LISTEN_PORT="$2"; shift 2 ;;
+            -b|--bind) BIND_ADDRESS="$2"; shift 2 ;;
+            -e|--engine) ENGINE="$2"; shift 2 ;;
+            -i|--interval) INTERVAL="$2"; shift 2 ;;
+            -t|--timeout) CONNECT_TIMEOUT="$2"; shift 2 ;;
+            -n|--dry-run) DRY_RUN=1; shift ;;
+            --keep-runtime) KEEP_RUNTIME=1; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *) die "Unknown option $1. Use --help" ;;
+        esac
+    done
+}
+
+validate_options() {
+    case "$ENGINE" in haproxy|nginx) ;; *) die "Engine must be haproxy or nginx" ;; esac
+    is_valid_port "$LISTEN_PORT" || die "Invalid port: $LISTEN_PORT"
+    [[ "$INTERVAL" =~ ^[0-9]+$ && $INTERVAL -ge 5 ]] || die "Invalid interval: $INTERVAL (min 5s)"
+}
+
+check_dependencies() {
+    for cmd in awk sed grep sort getent timeout curl; do
+        command_exists "$cmd" || die "Missing dependency: $cmd"
+    done
+    if [[ "$ENGINE" == "haproxy" ]]; then
+        command_exists haproxy || die "haproxy is not installed"
+        HAPROXY_BIN=$(command -v haproxy)
+    else
+        command_exists nginx || die "nginx is not installed"
+        NGINX_BIN=$(command -v nginx)
+        "$NGINX_BIN" -V 2>&1 | grep -q -- '--with-stream' || die "nginx is missing the --with-stream module"
+    fi
+}
+
+make_runtime_dir() {
+    RUNTIME_DIR=$(mktemp -d "/tmp/mtproto-lb.XXXXXX")
+    PID_FILE="$RUNTIME_DIR/pid"
+    ACTIVE_FILE="$RUNTIME_DIR/active.tsv"
+    PREV_ACTIVE_FILE="$RUNTIME_DIR/prev_active.tsv"
+    NORMALIZED_FILE="$RUNTIME_DIR/normalized.txt"
+    HAPROXY_CONFIG="$RUNTIME_DIR/haproxy.cfg"
+    NGINX_CONFIG="$RUNTIME_DIR/nginx.conf"
+    
+    if [[ "$ENGINE" == "nginx" ]]; then
+        mkdir -p "$RUNTIME_DIR/logs" "$RUNTIME_DIR"/{client_body_temp,proxy_temp,fastcgi_temp,uwsgi_temp,scgi_temp}
+    fi
+}
+
+prepare_proxy_file() {
+    if [[ ! -e "$PROXY_FILE" ]]; then
+        mkdir -p "$(dirname "$PROXY_FILE")" 2>/dev/null || true
+        > "$PROXY_FILE"
+        info "Created empty proxy file at $PROXY_FILE"
+    fi
+}
+
+normalize_proxy_links() {
+    local input="$1" output="$2"
+    local tmp="$RUNTIME_DIR/urls.tmp"
+
+    # Extract tg:// or https://t.me/proxy links from the file
+    grep -oE '(https?://t\.me/proxy\?|tg://proxy\?)[^[:space:]<>"'\''`]+' "$input" 2>/dev/null | sed 's/[.,;:!?)]*$//' > "$tmp"
+
+    > "$output"
+    while IFS= read -r url || [[ -n $url ]]; do
+        [[ -n "$url" ]] || continue
+        local q="${url#*\?}"
+        local server=$(echo "$q" | tr '&' '\n' | awk -F= '$1=="server"{print $2;exit}')
+        local port=$(echo "$q" | tr '&' '\n' | awk -F= '$1=="port"{print $2;exit}')
+        local secret=$(echo "$q" | tr '&' '\n' | awk -F= '$1=="secret"{print $2;exit}')
+        
+        server="${server%.}" # Remove trailing dot if exists
+        
+        # Basic validation
+        [[ -n "$server" && -n "$port" && -n "$secret" ]] || continue
+        is_valid_port "$port" || continue
+        [[ "$secret" =~ ^[0-9a-fA-F]{32,}$ && $(( ${#secret} % 2 )) -eq 0 ]] || continue
+        
+        printf 'https://t.me/proxy?server=%s&port=%s&secret=%s\n' "$server" "$port" "$secret" >> "$output"
+    done < "$tmp"
+    
+    # Deduplicate
+    sort -u -o "$output" "$output"
+}
+
+clean_source_file() {
+    # Replace user's file with only the clean, valid proxy links
+    cp "$NORMALIZED_FILE" "$PROXY_FILE.$$.tmp" && mv "$PROXY_FILE.$$.tmp" "$PROXY_FILE" || true
+}
+
+backend_reachable() {
+    local host="$1" port="$2"
+    getent ahosts "$host" >/dev/null 2>&1 || return 1
+    timeout "$CONNECT_TIMEOUT" bash -c "exec 3<>/dev/tcp/$host/$port" >/dev/null 2>&1
+}
+
+build_active_backend_list() {
+    local norm="$1" out="$2"
+    local total=0 active=0
+    > "$out"
+    while IFS= read -r link || [[ -n $link ]]; do
+        [[ -n "$link" ]] || continue
+        ((total++))
+        local q="${link#*\?}"
+        local host=$(echo "$q" | tr '&' '\n' | awk -F= '$1=="server"{print $2;exit}')
+        local port=$(echo "$q" | tr '&' '\n' | awk -F= '$1=="port"{print $2;exit}')
+        
+        if backend_reachable "$host" "$port"; then
+            printf '%s\t%s\n' "$host" "$port" >> "$out"
+            ((active++))
+        else
+            warn "Unreachable / Down: $host:$port"
+        fi
+    done < "$norm"
+    info "Found $total valid links | $active are currently reachable."
+    [[ $active -gt 0 ]]
+}
+
+generate_haproxy_config() {
+    local be="$1" cfg="$2"
+    cat > "$cfg" <<EOF
+global
+    daemon
+    pidfile $PID_FILE
+    maxconn 8192
+    log /dev/null local0
+
+defaults
+    mode tcp
+    timeout connect ${CONNECT_TIMEOUT}s
+    timeout client 3600s
+    timeout server 3600s
+
+frontend mtproto_in
+    bind ${BIND_ADDRESS}:${LISTEN_PORT}
+    default_backend mtproto_out
+
+backend mtproto_out
+    balance leastconn
+EOF
+    local i=0
+    while IFS=$'\t' read -r h p; do
+        ((i++))
+        # HAProxy will also do active health checking to drop bad servers dynamically
+        echo "    server s$i $h:$p check inter 10s fall 3 rise 2" >> "$cfg"
+    done < "$be"
+}
+
+generate_nginx_config() {
+    local be="$1" cfg="$2"
+    cat > "$cfg" <<EOF
+pid $PID_FILE;
+error_log $RUNTIME_DIR/logs/error.log info;
+worker_processes auto;
+
+events {
+    worker_connections 4096;
+}
+
+stream {
+    upstream mtproto_out {
+        least_conn;
+EOF
+    while IFS=$'\t' read -r h p; do
+        # Nginx handles passive health checks by default
+        echo "        server $h:$p max_fails=3 fail_timeout=15s;" >> "$cfg"
+    done < "$be"
+    cat >> "$cfg" <<EOF
+    }
+
+    server {
+        listen ${BIND_ADDRESS}:${LISTEN_PORT};
+        proxy_connect_timeout ${CONNECT_TIMEOUT}s;
+        proxy_timeout 3600s;
+        proxy_pass mtproto_out;
+    }
+}
+EOF
+}
+
+start_or_reload_engine() {
+    if [[ "$ENGINE" == "haproxy" ]]; then
+        generate_haproxy_config "$ACTIVE_FILE" "$HAPROXY_CONFIG"
+        
+        if [[ $DRY_RUN -eq 1 ]]; then
+            info "=== HAProxy Config ==="
+            cat "$HAPROXY_CONFIG"
+            return 0
+        fi
+
+        if [[ -n "${HAPROXY_PID:-}" ]] && kill -0 "$HAPROXY_PID" 2>/dev/null; then
+            # Seamless reload via HAProxy -sf
+            "$HAPROXY_BIN" -f "$HAPROXY_CONFIG" -p "$PID_FILE" -sf "$HAPROXY_PID"
+            sleep 1
+            HAPROXY_PID=$(cat "$PID_FILE" 2>/dev/null)
+            info "HAProxy reloaded."
+        else
+            "$HAPROXY_BIN" -f "$HAPROXY_CONFIG" -p "$PID_FILE"
+            sleep 1
+            HAPROXY_PID=$(cat "$PID_FILE" 2>/dev/null)
+            info "HAProxy started."
+        fi
+
+    elif [[ "$ENGINE" == "nginx" ]]; then
+        generate_nginx_config "$ACTIVE_FILE" "$NGINX_CONFIG"
+        
+        if [[ $DRY_RUN -eq 1 ]]; then
+            info "=== Nginx Config ==="
+            cat "$NGINX_CONFIG"
+            return 0
+        fi
+
+        if [[ -n "${NGINX_PID:-}" ]] && kill -0 "$NGINX_PID" 2>/dev/null; then
+            "$NGINX_BIN" -s reload -c "$NGINX_CONFIG" -p "$RUNTIME_DIR"
+            info "Nginx reloaded."
+        else
+            "$NGINX_BIN" -c "$NGINX_CONFIG" -p "$RUNTIME_DIR"
+            sleep 1
+            NGINX_PID=$(cat "$PID_FILE" 2>/dev/null)
+            info "Nginx started."
+        fi
+    fi
+}
+
+process_proxies() {
+    normalize_proxy_links "$PROXY_FILE" "$NORMALIZED_FILE"
+    clean_source_file
+
+    if ! build_active_backend_list "$NORMALIZED_FILE" "$ACTIVE_FILE"; then
+        warn "No reachable backends found. Retrying in $INTERVAL seconds..."
+        return 1
+    fi
+
+    # Check if backend list has changed
+    if [[ -f "$PREV_ACTIVE_FILE" ]] && cmp -s "$ACTIVE_FILE" "$PREV_ACTIVE_FILE"; then
+        return 0 # No changes
+    fi
+    
+    cp "$ACTIVE_FILE" "$PREV_ACTIVE_FILE"
+    
+    info "Backend list changed, updating load balancer configuration..."
+    start_or_reload_engine
+}
+
+main() {
+    parse_args "$@"
+    validate_options
+    check_dependencies
+    make_runtime_dir
+    prepare_proxy_file
+
+    info "Starting MTProto Load Balancer Setup..."
+    info "Proxy file : $PROXY_FILE"
+    info "Engine     : $ENGINE"
+    info "Listen     : ${BIND_ADDRESS}:${LISTEN_PORT}"
+    info "Interval   : ${INTERVAL}s"
+
+    process_proxies || true
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "Dry run complete."
+        exit 0
+    fi
+
+    info "🚀 Service active. Monitoring for changes (Ctrl+C to stop)"
+    while true; do
+        sleep "$INTERVAL"
+        process_proxies || true
+    done
+}
+
+main "$@"

@@ -6,6 +6,7 @@ ARGS=("$@")
 head_lines=""
 GIT_ROOT=""
 NO_FILES=false
+STDIN_CONSUMED=false
 
 find_git_root() {
     if [ ! -z "$GIT_ROOT" ]; then
@@ -50,9 +51,10 @@ print_stdin() {
     fi
     
     if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
+        STDIN_CONSUMED=true
         printf '%s\n\n' "$stdin_content"
         # Check the length of the global ARGS array instead of $#
-        elif [[ ${#ARGS[@]} -eq 0 ]]; then
+    elif [[ ${#ARGS[@]} -eq 0 ]]; then
         if command -v fzf >/dev/null; then
             mapfile -t ARGS < <(git ls-files | fzf -m)
         else
@@ -240,3 +242,23 @@ common_behavior() {
     parse_arguments
     print_stdin
 }
+
+embed_file() {
+    local path="$1"
+    local label="${2:-$(basename "$path")}"
+    
+    if [[ ! -f "$path" ]]; then
+        echo "Warning: context file not found: $path" >&2
+        return 1
+    fi
+    
+    local name
+    name="$(basename "$path")"
+    
+    echo
+    echo "File: $label"
+    echo "\`\`\`$(infer_lang "$name")"
+    trim_context "$(cat -- "$path")"
+    echo '```'
+}
+

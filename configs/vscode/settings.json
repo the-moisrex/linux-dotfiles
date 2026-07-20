@@ -68,7 +68,7 @@
     "workbench.sideBar.location": "right",
     "workbench.settings.editor": "json",
     "workbench.startupEditor": "none",
-    "workbench.colorTheme": "Light+",
+    "workbench.colorTheme": "@skeswa's Noctis Bordo",
     "explorer.confirmDelete": false,
     // language specific settings:
     "C_Cpp.intelliSenseEngine": "disabled", // conflict with clangd
@@ -86,6 +86,9 @@
         "editor.maxTokenizationLineLength": 2500,
         "editor.defaultFormatter": "vscode.typescript-language-features"
     },
+    "clangd.arguments": [
+        "--experimental-modules-support"
+    ],
     "cmake.showNotAllDocumentsSavedQuestion": false,
     "extensions.autoUpdate": "off",
     "roo-cline.debug": false,
