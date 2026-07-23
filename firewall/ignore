@@ -314,56 +314,68 @@ function unignore {
 # }
 
 function update_ignores {
-    if [ -f "$ignored_domains_file" ]; then
-        # Separate domains and IPs into different arrays
-        domains=()
-        ips=()
-        while read -r line; do
-            if valid_ip "$line"; then
-                ips+=("$line")
-            else
-                domains+=("$line")
-            fi
-        done < "$ignored_domains_file"
+    local dns_ip input_file output_file workers
+    local domain_count ip_count resolved_count
 
-        # Process domains
-        echo "Resolving domains..."
-        resolved_ips=()
-        local dns_ip
-        dns_ip="$(get_dns_ip)"
-        while IFS= read -r ip; do
-            resolved_ips+=("$ip")
-            # echo "  Adding ip address $ip to the 'ignored' ip set."
-        done < <(dig +short +timeout=5 "@$dns_ip" "${domains[@]}" | grep '^[.0-9]*$')
-
-        # Add all resolved IPs and accumulated IPs to nftables in batches
-        all_ips=("${ips[@]}" "${resolved_ips[@]}")
-        ip_cache_count=0
-        ips_string=""
-        for ip in "${all_ips[@]}"; do
-            ips_string+="${ip}, "
-            ip_cache_count=$(( "$ip_cache_count" + 1 ))
-            ipcount=$(( "$ipcount" + 1 ))
-            # echo "Adding $ip to the ignored list."
-            if [ $ip_cache_count -ge 500 ]; then
-                echo "Emptying $ip_cache_count IP cache, and adding them to nftables."
-                echo "Adding IPs: ${ips_string%, }"
-                echo
-                sudo nft add element inet mangle $ignored_nftables_set_name "{ ${ips_string%, } }"
-                ips_string=""
-                ip_cache_count=0
-            fi
-        done
-
-        # Add any remaining IPs
-        if [ -n "$ips_string" ]; then
-            echo "Adding all accumulated IPs."
-            echo "Adding IPs: ${ips_string%, }"
-            echo
-            sudo nft add element inet mangle $ignored_nftables_set_name "{ ${ips_string%, } }"
-        fi
+    if [ ! -f "$ignored_domains_file" ]; then
+        return
     fi
+
+    dns_ip="$(get_dns_ip)"
+    workers="${IGNORE_DNS_WORKERS:-16}"
+
+    input_file="$(mktemp)"
+    output_file="$(mktemp)"
+
+    trap 'rm -f "$input_file" "$output_file"' RETURN
+
+    # Remove blank lines and comments, then separate literal IPv4/CIDRs from domains.
+    awk '
+        /^[[:space:]]*($|#)/ { next }
+        { sub(/[[:space:]]+#.*$/, ""); print }
+    ' "$ignored_domains_file" | sort -u > "$input_file"
+
+    ip_count="$(
+        while IFS= read -r entry; do
+            valid_ip "$entry" && printf '%s\n' "$entry"
+        done < "$input_file" | wc -l
+    )"
+
+    domain_count="$(
+        while IFS= read -r entry; do
+            valid_ip "$entry" || printf '%s\n' "$entry"
+        done < "$input_file" | wc -l
+    )"
+
+    echo "Resolving $domain_count domains using $workers workers..."
+
+    {
+        # Preserve explicitly configured IPs/CIDRs.
+        while IFS= read -r entry; do
+            valid_ip "$entry" && printf '%s\n' "$entry"
+        done < "$input_file"
+
+        # Query domains concurrently. One domain per query avoids oversized dig requests.
+        while IFS= read -r entry; do
+            valid_ip "$entry" || printf '%s\n' "$entry"
+        done < "$input_file" |
+            xargs -r -n 1 -P "$workers" \
+                dig +short +time=2 +tries=1 "@$dns_ip" 2>/dev/null |
+            awk '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/'
+    } | sort -u > "$output_file"
+
+    resolved_count="$(wc -l < "$output_file")"
+    echo "Applying $resolved_count unique IPs/CIDRs ($ip_count explicit entries)."
+    sed 's/$/,/' "$output_file" | sed '$ s/,$//' | xargs echo;
+
+    sudo nft -f - <<EOF
+flush set inet mangle $ignored_nftables_set_name
+add element inet mangle $ignored_nftables_set_name {
+$(sed 's/$/,/' "$output_file" | sed '$ s/,$//')
 }
+EOF
+}
+
 
 
 function update_countries {
