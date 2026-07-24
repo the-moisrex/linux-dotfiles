@@ -31,10 +31,21 @@ current_user=$(whoami)
 home_dir="$HOME"
 hostname_short=$(hostname)
 hostname_full=$(hostname -f 2>/dev/null || hostname)
+# System temp directory (respect TMPDIR if set, otherwise /tmp)
+tmp_dir="${TMPDIR:-/tmp}"
+# Normalize: remove trailing slash for consistent matching
+tmp_dir="${tmp_dir%/}"
 
 # Function to replace system-specific information
 replace_system_info() {
     local text="$1"
+    
+    # Replace system temp directory with /tmp (if different)
+    if [[ "$tmp_dir" != "/tmp" ]]; then
+        text=$(printf '%s\n' "$text" | sed "s|$tmp_dir|/tmp|g")
+        # Also catch common trailing-slash variants
+        text=$(printf '%s\n' "$text" | sed "s|${tmp_dir}/|/tmp/|g")
+    fi
     
     # Replace Projects dir
     text=$(printf '%s\n' "$text" | sed "s|$home_dir/Projects/|/|g")
