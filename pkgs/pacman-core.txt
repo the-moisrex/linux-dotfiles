@@ -27,6 +27,7 @@ jq           # JSON processor
 fzf          # Fuzzy file picker
 zoxide       # z command (alternative to cd)
 patchutils   # contains recountdiff which allows for fixing patches
+expect       # unbuffer command
 
 # Shells
 zsh

@@ -113,9 +113,9 @@ function save_dnsmasq_file {
                 echo "Ignore adding IP ${domain} to dnsmasq file.";
             else
                 content="$content\nnftset=/$domain/inet#mangle#$ignored_nftables_set_name";
-                if [ "$ignored_nftables_set_name" == "ignored" ]; then
-                    content="$content\nserver=/$domain/$dns_ip";
-                fi
+                # if [ "$ignored_nftables_set_name" == "ignored" ]; then
+                #     content="$content\nserver=/$domain/$dns_ip";
+                # fi
             fi
         done < "$ignored_domains_file";
     fi;
