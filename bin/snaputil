@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""
+snaputil - Filesystem Snapshot and Undo Utility
+"""
+
+import os
+import sys
+import csv
+import time
+import argparse
+import hashlib
+import subprocess
+from datetime import datetime
+
+# ==========================================
+# Terminal Colors
+# ==========================================
+class Colors:
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    RED = '\033[91m'
+    RESET = '\033[0m'
+
+def print_color(msg, color, **kwargs):
+    print(f"{color}{msg}{Colors.RESET}", **kwargs)
+
+def print_error(msg): print_color(f"ERROR: {msg}", Colors.RED, file=sys.stderr)
+def print_success(msg): print_color(f"SUCCESS: {msg}", Colors.GREEN)
+def print_warning(msg): print_color(f"WARNING: {msg}", Colors.YELLOW)
+def print_menu(msg): print_color(msg, Colors.BLUE)
+
+# ==========================================
+# Helper Functions
+# ==========================================
+def get_timestamp_str():
+    return datetime.now().strftime("%Y%m%d%H%M%S")
+
+def calculate_sha256(filepath):
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except Exception:
+        return None
+
+def run_git_cmd(args, cwd=None, check=True):
+    try:
+        result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=check)
+        return result.returncode == 0, result.stdout.strip()
+    except FileNotFoundError:
+        print_error("Git binary not found. Please install Git.")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        return False, e.stderr.strip()
+
+# ==========================================
+# Snapshot Creation
+# ==========================================
+def create_ledger(targets):
+    timestamp = get_timestamp_str()
+    snapshot_file = f".snapshot_{timestamp}"
+    
+    records = []
+    for target in targets:
+        if os.path.isfile(target):
+            files = [target]
+        elif os.path.isdir(target):
+            files = []
+            for root, _, filenames in os.walk(target):
+                for name in filenames:
+                    files.append(os.path.join(root, name))
+        else:
+            print_warning(f"Target not found: {target}")
+            continue
+
+        for f in files:
+            try:
+                abs_path = os.path.abspath(f)
+                stat = os.stat(abs_path)
+                inode = stat.st_ino
+                sha256 = calculate_sha256(abs_path)
+                ts = int(time.time())
+                
+                if sha256:
+                    records.append([inode, sha256, abs_path, ts])
+            except Exception as e:
+                print_error(f"Failed to process {f}: {e}")
+
+    if not records:
+        print_error("No valid files found to snapshot.")
+        sys.exit(1)
+
+    try:
+        with open(snapshot_file, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Inode', 'SHA256', 'Path', 'Timestamp'])
+            writer.writerows(records)
+        print_success(f"Snapshot ledger created: {snapshot_file}")
+    except Exception as e:
+        print_error(f"Failed to write ledger: {e}")
+        sys.exit(1)
+
+def create_git(target):
+    if len(target) > 1:
+        print_error("Git mode only supports a single directory target.")
+        sys.exit(1)
+        
+    target_dir = os.path.abspath(target[0])
+    if not os.path.isdir(target_dir):
+        print_error("Git mode requires a directory target.")
+        sys.exit(1)
+
+    success, _ = run_git_cmd(["git", "rev-parse", "--is-inside-work-tree"], cwd=target_dir, check=False)
+    if success:
+        print_error(f"Directory {target_dir} is already inside a Git repository.")
+        sys.exit(1)
+
+    success, err = run_git_cmd(["git", "init"], cwd=target_dir)
+    if not success:
+        print_error(f"Failed to init git repo: {err}")
+        sys.exit(1)
+
+    run_git_cmd(["git", "add", "."], cwd=target_dir)
+    
+    timestamp = get_timestamp_str()
+    success, err = run_git_cmd(["git", "commit", "-m", f"Snapshot {timestamp}"], cwd=target_dir)
+    
+    if success:
+        print_success(f"Git snapshot created in {target_dir} (Commit: Snapshot {timestamp})")
+    else:
+        print_error(f"Failed to commit: {err}")
+
+# ==========================================
+# Snapshot Selection & Undo
+# ==========================================
+def select_snapshot(mode):
+    if mode == 'git':
+        success, out = run_git_cmd(["git", "log", "--grep=^Snapshot", "--format=%H|%s", "--date-order"])
+        if not success or not out:
+            print_error("No Git snapshots found.")
+            sys.exit(1)
+        
+        commits = [line.split('|', 1) for line in out.splitlines()]
+        print_menu("\nAvailable Git Snapshots:")
+        for i, (chash, msg) in enumerate(commits):
+            print_menu(f"[{i}] {chash[:7]} - {msg}")
+            
+        try:
+            choice = int(input("Select a snapshot number: "))
+            return commits[choice][0]
+        except (ValueError, IndexError):
+            print_error("Invalid selection.")
+            sys.exit(1)
+    else:
+        ledgers = [f for f in os.listdir('.') if f.startswith('.snapshot_') and os.path.isfile(f)]
+        if not ledgers:
+            print_error("No ledger snapshots found in current directory.")
+            sys.exit(1)
+            
+        ledgers.sort(reverse=True)
+        print_menu("\nAvailable Ledger Snapshots:")
+        for i, ledger in enumerate(ledgers):
+            print_menu(f"[{i}] {ledger}")
+            
+        try:
+            choice = int(input("Select a snapshot number: "))
+            return ledgers[choice]
+        except (ValueError, IndexError):
+            print_error("Invalid selection.")
+            sys.exit(1)
+
+def undo_git(commit_hash, dry_run):
+    if dry_run:
+        print_warning(f"[DRY-RUN] Would run: git reset --hard {commit_hash} && git clean -fd")
+        return
+
+    success, err = run_git_cmd(["git", "reset", "--hard", commit_hash])
+    if not success:
+        print_error(f"Git reset failed: {err}")
+        sys.exit(1)
+        
+    success, err = run_git_cmd(["git", "clean", "-fd"])
+    if not success:
+        print_error(f"Git clean failed: {err}")
+        sys.exit(1)
+        
+    print_success(f"Restored to Git snapshot {commit_hash[:7]}")
+
+def undo_ledger(mode, ledger_file, dry_run):
+    if not os.path.exists(ledger_file):
+        print_error(f"Ledger file {ledger_file} not found.")
+        sys.exit(1)
+        
+    records = []
+    try:
+        with open(ledger_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                records.append(row)
+    except Exception as e:
+        print_error(f"Failed to read ledger: {e}")
+        sys.exit(1)
+
+    print_menu(f"Scanning current directory for matching files (Mode: {mode})...")
+    
+    current_files = {}
+    for root, _, filenames in os.walk('.'):
+        for name in filenames:
+            if name.startswith('.snapshot_'): continue
+            abs_path = os.path.abspath(os.path.join(root, name))
+            if mode == 'inode':
+                current_files[str(os.stat(abs_path).st_ino)] = abs_path
+            else: # hash
+                h = calculate_sha256(abs_path)
+                if h: current_files[h] = abs_path
+
+    for record in records:
+        key = record['Inode'] if mode == 'inode' else record['SHA256']
+        orig_path = record['Path']
+        
+        found_path = current_files.get(key)
+        
+        if not found_path:
+            print_warning(f"Missing file: {orig_path} (could not find matching {mode})")
+            continue
+            
+        if found_path == orig_path:
+            continue # File is already at the correct location
+            
+        target_path = orig_path
+        if os.path.exists(target_path):
+            target_path += ".conflict"
+            
+        if dry_run:
+            print_warning(f"[DRY-RUN] Would move {found_path} -> {target_path}")
+        else:
+            try:
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                os.rename(found_path, target_path)
+                print_success(f"Restored: {target_path}")
+            except Exception as e:
+                print_error(f"Failed to restore {found_path}: {e}")
+
+# ==========================================
+# CLI Entry Point
+# ==========================================
+def main():
+    parser = argparse.ArgumentParser(
+        description="snaputil - Robust Filesystem Snapshot and Undo Utility",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="""
+Examples:
+  snaputil create /var/www/html
+  snaputil create config.json data.csv
+  snaputil create ./project --git
+  
+  snaputil undo --mode inode
+  snaputil undo --mode hash .snapshot_20231024153000 --dry-run
+  snaputil undo --mode git
+"""
+    )
+    
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    
+    # Create command
+    parser_create = subparsers.add_parser("create", help="Create a new snapshot")
+    parser_create.add_argument("targets", nargs="+", help="Target directory or files")
+    parser_create.add_argument("--git", action="store_true", help="Use Git mode for snapshot creation")
+    
+    # Undo command
+    parser_undo = subparsers.add_parser("undo", help="Revert filesystem to a snapshot")
+    parser_undo.add_argument("--mode", choices=["inode", "hash", "git"], required=True, help="Restoration mode")
+    parser_undo.add_argument("identifier", nargs="?", default=None, help="Snapshot file or Git commit hash (optional)")
+    parser_undo.add_argument("--dry-run", action="store_true", help="Print actions without executing (ledger modes)")
+
+    args = parser.parse_args()
+
+    if args.command == "create":
+        if args.git:
+            create_git(args.targets)
+        else:
+            create_ledger(args.targets)
+            
+    elif args.command == "undo":
+        identifier = args.identifier
+        if not identifier:
+            identifier = select_snapshot(args.mode)
+            
+        if args.mode == "git":
+            undo_git(identifier, args.dry_run)
+        else:
+            undo_ledger(args.mode, identifier, args.dry_run)
+
+if __name__ == "__main__":
+    main()
