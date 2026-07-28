@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import sys
+import subprocess
+import re
+import shlex
+import glob
+from pathlib import Path
+
+# --- GLOBAL SETTINGS & CACHE ---
+VERBOSE = False
+PROMPT_COMMANDS_CACHE = set()
+
+def debug(msg):
+    """Print debug messages to stderr if verbose mode is enabled."""
+    if VERBOSE:
+        sys.stderr.write(f"[DEBUG] {msg}\n")
+
+def run_shell(cmd_args):
+    """Run a shell command, returning its stdout as a string or None if failed."""
+    try:
+        debug(f"Executing: {cmd_args}")
+        result = subprocess.run(
+            cmd_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        debug(f"Command failed: {cmd_args}\nError: {e.stderr.strip()}")
+        return None
+    except FileNotFoundError:
+        debug(f"Command not found: {cmd_args[0]}")
+        return None
+    except Exception as e:
+        debug(f"Unexpected error running {cmd_args}: {e}")
+        return None
+
+def init_cache():
+    """Populate the PROMPT_COMMANDS_CACHE by running 'prompt list-prompts'."""
+    output = run_shell(["prompt", "list-prompts"])
+    if output:
+        for line in output.splitlines():
+            cmd = line.strip()
+            if cmd:
+                PROMPT_COMMANDS_CACHE.add(cmd)
+    debug(f"Cached prompt commands: {PROMPT_COMMANDS_CACHE}")
+
+# --- MODE 1: AUTOCOMPLETE ---
+def autocomplete(snippet):
+    """Evaluate the last whitespace-separated token for autocomplete matching."""
+    if not snippet.strip():
+        return
+
+    tokens = snippet.split()
+    target = tokens[-1]
+    matches = []
+
+    debug(f"Autocomplete target token: '{target}'")
+
+    # 1. Variables
+    if target.startswith("{{") or target.startswith("${"):
+        prefix = target[2:]
+        for env_var in os.environ:
+            if env_var.startswith(prefix):
+                if target.startswith("{{"):
+                    matches.append(f"{{{{{env_var}}}}}")
+                else:
+                    matches.append(f"${{{env_var}}}")
+    
+    # 2. Slash Commands
+    elif target.startswith("/"):
+        cmd_prefix = target[1:]
+        for cmd in PROMPT_COMMANDS_CACHE:
+            if cmd.startswith(cmd_prefix):
+                matches.append(f"/{cmd}")
+                
+    # 3. Files
+    elif target.startswith(("@", "./", "/", "~")):
+        # Determine actual path prefix
+        search_path = target[1:] if target.startswith("@") else target
+        search_path = os.path.expanduser(search_path)
+        
+        try:
+            # Use glob to find matches
+            if os.path.isdir(search_path) and not search_path.endswith('/'):
+                glob_pattern = search_path + "/*"
+            else:
+                glob_pattern = search_path + "*"
+                
+            for path in glob.glob(glob_pattern):
+                # Format back the path depending on how it was invoked
+                if target.startswith("@"):
+                    res = f"@{path}"
+                else:
+                    res = path
+                    
+                # FILTER OUT perfect matches from cached commands
+                clean_name = os.path.basename(path)
+                if clean_name not in PROMPT_COMMANDS_CACHE:
+                    matches.append(res)
+        except Exception as e:
+            debug(f"Autocomplete file expansion error: {e}")
+
+    # Output matches
+    if matches:
+        # Strictly one per line to stdout
+        sys.stdout.write("\n".join(matches) + "\n")
+
+# --- MODE 2: MODIFICATION ---
+def process_modification(input_text):
+    """Single-pass processing loop to resolve variables, commands, and files."""
+    appended_data = []
+    
+    # Tokenizer regex: matches variables, slash commands, or file-like tokens, plus surrounding whitespace/text
+    # Group 1: Variables ({{var}} or ${var})
+    # Group 2: Slash commands (/cmd [args])
+    # Group 3: Files (@file, ./file, /file, ~/file)
+    pattern = re.compile(r'(\{\{[^\}]+\}\}|\$\{[^\}]+\})|(/[\w-]+(?:[ \t]+(?:[^\s"\']|"[^"]*"|\'[^\']*\')+)*)|((?:@|\./|/|~)[^\s]+)')
+
+    def replacer(match):
+        var_match = match.group(1)
+        cmd_match = match.group(2)
+        file_match = match.group(3)
+
+        # 1. Variables
+        if var_match:
+            is_curly = var_match.startswith("{{")
+            var_name = var_match[2:-2] if is_curly else var_match[2:-1]
+            
+            # Check env var
+            val = os.environ.get(var_name)
+            if val is not None:
+                return val
+            
+            # Check shell command
+            out = run_shell(["prompt", var_name])
+            if out is not None:
+                if "\n" not in out:
+                    return out
+                else:
+                    appended_data.append(f"\n--- VARIABLE: {var_name} ---\n{out}\n")
+                    return "[Variable data appended below]"
+            return var_match # Unresolved
+
+        # 2. Slash Commands
+        if cmd_match:
+            try:
+                parts = shlex.split(cmd_match)
+                cmd_name = parts[0][1:] # Strip '/'
+                args = parts[1:]
+                out = run_shell(["prompt", cmd_name] + args)
+                if out is not None:
+                    return out
+            except ValueError as e:
+                debug(f"Shlex parsing error for {cmd_match}: {e}")
+            return cmd_match # Unresolved
+
+        # 3. Files
+        if file_match:
+            # Check if it perfectly matches a cached command
+            clean_file = file_match[1:] if file_match.startswith("@") else file_match
+            if clean_file in PROMPT_COMMANDS_CACHE:
+                return file_match # Treat as unchanged text if it's a command name collision
+            
+            out = run_shell(["prompt", "files", clean_file])
+            if out is not None:
+                appended_data.append(f"\n--- FILE: {clean_file} ---\n{out}\n")
+            return file_match # Leave inline token untouched
+
+        return match.group(0)
+
+    # Process text
+    modified_text = pattern.sub(replacer, input_text)
+    
+    # Append trailing data
+    if appended_data:
+        modified_text += "\n" + "".join(appended_data)
+        
+    return modified_text
+
+# --- MAIN ---
+def main():
+    global VERBOSE
+    
+    parser = argparse.ArgumentParser(description="Headless Prompt Modification Engine & Autocomplete Utility.")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging to stderr.")
+    parser.add_argument("-c", "--complete", type=str, help="Trigger Autocomplete Mode with the given snippet.")
+    parser.add_argument("input_text", nargs="?", default=None, help="Input text for Modification Mode.")
+    
+    args = parser.parse_args()
+    VERBOSE = args.verbose
+    
+    # Initialize cache silently on startup
+    init_cache()
+
+    if args.complete is not None:
+        # MODE 1: Autocomplete
+        autocomplete(args.complete)
+    else:
+        # MODE 2: Modification
+        input_text = args.input_text
+        if input_text is None:
+            # Read from stdin if no positional argument is provided
+            if not sys.stdin.isatty():
+                input_text = sys.stdin.read()
+            else:
+                parser.error("Modification mode requires input_text as an argument or piped via stdin.")
+                
+        result = process_modification(input_text)
+        
+        # Strictly output to stdout
+        sys.stdout.write(result)
+        # Ensure trailing newline if not present
+        if not result.endswith('\n'):
+            sys.stdout.write('\n')
+
+if __name__ == "__main__":
+    main()
