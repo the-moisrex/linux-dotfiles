@@ -9,7 +9,7 @@ Usage: prompt auto [FILE...]
 Automatically chooses and executes the most appropriate prompt script based on the input.
 For example, if it detects YouTube URLs, it delegates to the 'yt' prompt.
 If it detects C++ files, it delegates to 'cpp-reviewer'.
-Defaults to 'review' if no specific pattern is matched.
+Defaults to 'summarize' for English and Farsi text, or 'english' (translate) for other languages like Arabic.
 
 Options:
   --help, -h   Show this help message
@@ -25,7 +25,7 @@ for arg in "$@"; do
     fi
 done
 
-target_script="review.sh"
+target_script="summarize.sh"
 input_buffer=""
 has_stdin=false
 
@@ -41,6 +41,41 @@ if $has_stdin; then
         target_script="yt.sh"
         elif echo "$input_buffer" | grep -qE 'class |struct |#include <'; then
         target_script="cpp-reviewer.sh"
+    else
+        # Determine if the text should be translated to English.
+        # Languages we should NOT translate (use summarize): English, Farsi
+        # All other languages (including Arabic, Chinese, Russian, accented European languages, etc.)
+        # are translated via english.sh.
+        #
+        # Special characters, emojis, punctuation, symbols, numbers, whitespace, and
+        # bidirectional/format marks are ignored and do not trigger translation.
+        # Only letter characters (\p{L}) are examined.
+        #
+        # - Pure ASCII letters (a-zA-Z) => English => summarize
+        # - Arabic-script letters without Arabic-only forms => Farsi => summarize
+        # - Anything else (other scripts, or Arabic-specific letters) => translate
+        # -CSD ensures Perl treats stdin/stdout and the script as UTF-8.
+        if printf '%s\n' "$input_buffer" | perl -CSD -e '
+            while (<>) {
+                while (/(\p{L})/g) {
+                    my $char = $1;
+                    # Letter outside basic English ASCII and outside Arabic script
+                    if ($char !~ /^[a-zA-Z]$/ && $char !~ /\p{Script=Arabic}/) {
+                        exit 0;
+                    }
+                    # Arabic-specific letters not standard in Farsi:
+                    # ة (U+0629), ي (U+064A), ك (U+0643)
+                    if ($char =~ /[\x{0629}\x{064A}\x{0643}]/) {
+                        exit 0;
+                    }
+                }
+            }
+            exit 1;
+        '; then
+            target_script="english.sh"
+        else
+            target_script="summarize.sh"
+        fi
     fi
 fi
 
