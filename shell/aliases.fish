@@ -230,6 +230,9 @@ alias tog="sig toggle"
 abbr hx. helix.recent
 alias helix.recent='recent-files yesterday | fzf | xargs helix -w $(git rev-parse --show-toplevel)'
 
+alias lms.chat "lms chat --reasoning off -p"
+alias lms.prompt "xargs -0 lms chat --reasoning off -p"
+
 function unsudo -d "un-sudo some commands"
     for arg in $argv
         if command -v $arg >/dev/null
