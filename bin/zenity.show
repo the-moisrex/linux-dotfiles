@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Run it like this to style further:
+#  echo testing | GTK_DEBUG=interactive zenity.show
+#
+# But first you have to enable this (I think):
+#  gsettings set org.gtk.Settings.Debug enable-inspector-keybinding true
+
+# 1. Create an isolated temporary directory for our custom theme
+theme_dir=$(mktemp -d)
+mkdir -p "$theme_dir/gtk-3.0" "$theme_dir/gtk-4.0"
+
+# 2. Copy the user's existing GTK settings to retain the system theme
+real_config="${XDG_CONFIG_HOME:-$HOME/.config}"
+if [ -f "$real_config/gtk-3.0/settings.ini" ]; then
+    cp "$real_config/gtk-3.0/settings.ini" "$theme_dir/gtk-3.0/"
+fi
+if [ -f "$real_config/gtk-4.0/settings.ini" ]; then
+    cp "$real_config/gtk-4.0/settings.ini" "$theme_dir/gtk-4.0/"
+fi
+
+# 3. Write custom GTK CSS rules
+cat << 'EOF' > "$theme_dir/gtk-3.0/gtk.css"
+/* Target the textview directly */
+textview {
+    font-size: 14pt;
+    padding: 10px;
+    margin: 10px;
+    line-height: 1.5;
+}
+
+.response-area {
+    display: none;
+    opacity: 0;
+    margin: 0px;
+    padding: 0px;
+    min-height: 0px;
+    height: 0px;
+    border: none;
+}
+EOF
+
+# Copy the same CSS for GTK4 compatibility
+cp "$theme_dir/gtk-3.0/gtk.css" "$theme_dir/gtk-4.0/gtk.css"
+
+# 4. Force Zenity to use this specific theme directory
+env XDG_CONFIG_HOME="$theme_dir" zenity \
+--text-info \
+--title="" \
+--width=700 \
+--height=500 \
+--modal \
+--auto-scroll 2>/dev/null
+
+# 5. Clean up the temporary folder after Zenity closes
+rm -rf "$theme_dir"
+
+# 6. Kill the entire process group to terminate upstream commands in the pipeline
+kill -s 2 0 >/dev/null
+kill -s 15 0 >/dev/null
+sleep 1
+kill -s 9 0 >/dev/null
