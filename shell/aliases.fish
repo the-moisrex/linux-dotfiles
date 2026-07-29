@@ -222,7 +222,7 @@ alias cb.paste="clipboard.paste"
 alias cb.cp="clipboard.copy"
 alias cb.hist="clipboard.history"
 
-alias ping="ping -DO" #  timeout
+alias ping="ping -O" #  timeout
 alias please="sudo"
 
 alias tog="sig toggle"

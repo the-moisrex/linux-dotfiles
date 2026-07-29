@@ -1,0 +1,82 @@
+#!/bin/bash
+
+# Check for help flag or empty arguments
+if [[ "$1" == "--help" || "$1" == "-h" || $# -eq 0 ]]; then
+    echo "Usage: $0 [ping_options...] [IP/Domain...] "
+    echo ""
+    echo "Pings multiple addresses concurrently and colorizes the latency."
+    echo "You can pass standard ping flags (e.g., -A, -c 4, -i 0.5) natively."
+    echo ""
+    echo "Latency Colors:"
+    echo -e "  \033[32mGreen\033[0m  : < 50 ms"
+    echo -e "  \033[33mYellow\033[0m : 50 ms - 100 ms"
+    echo -e "  \033[38;5;208mOrange\033[0m : 100 ms - 200 ms"
+    echo -e "  \033[31mRed\033[0m    : > 200 ms or Timeout"
+    echo ""
+    echo "Examples:"
+    echo "  $0 1.1.1.1 8.8.8.8 google.com"
+    echo "  $0 -A -c 5 1.1.1.1 google.com"
+    echo "  $0 -i 0.2 8.8.8.8"
+    exit 0
+fi
+
+PING_OPTS=()
+TARGETS=()
+
+# Separate ping options from targets
+for arg in "$@"; do
+    if [[ "$arg" == -* ]]; then
+        # It's a flag (e.g., -A, -c)
+        PING_OPTS+=("$arg")
+        elif [[ "$arg" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        # It's a number or float (e.g., 4 or 0.2), assume it's a value for the preceding flag
+        PING_OPTS+=("$arg")
+    else
+        # It's an IP address or domain
+        TARGETS+=("$arg")
+    fi
+done
+
+# If no targets were provided, exit
+if [ ${#TARGETS[@]} -eq 0 ]; then
+    echo -e "\033[31mError: No IP addresses or domains provided.\033[0m"
+    exit 1
+fi
+
+# Generate the ping commands for each target and pipe to xargs for concurrent execution
+for target in "${TARGETS[@]}"; do
+    echo "ping ${PING_OPTS[@]} $target"
+done | xargs -I {} -P0 bash -c "{}" | awk '
+{
+    # Handle dropped packets or missing time fields
+    if ($0 ~ /timeout/ || $7 == "" || $0 ~ /no answer/) {
+        print "\033[31m" $0 "\033[0m"
+    }
+    # Match standard ping response lines containing "time="
+    else if ($7 ~ /^time=/) {
+        # Extract the numeric value from "time=X.X"
+        split($7, a, "=")
+        t = a[2]
+
+        # Determine color based on time (t)
+        if (t < 50) {
+            color = "\033[32m"        # Green
+        } else if (t < 100) {
+            color = "\033[33m"        # Yellow
+        } else if (t < 200) {
+            color = "\033[38;5;208m"  # Orange
+        } else {
+            color = "\033[31m"        # Red
+        }
+
+        # Print the IP/Domain ($4) and the colored time ($7)
+        print $4 "\t" color t "\033[0m"
+    }
+    # Print other output lines (like headers) as they are
+    else {
+        print $0
+    }
+
+    # Flush output to ensure real-time viewing in the terminal
+    fflush()
+}'
