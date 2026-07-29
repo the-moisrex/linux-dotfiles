@@ -271,8 +271,9 @@ fi
 
 # If no args -> show usage (but user didn't request we print anything but errors; usage here is explicit)
 if [[ $# -lt 1 ]]; then
-  usage >&2
-  exit 2
+  # usage >&2
+  # exit 2
+  set -- "auto"  # default to auto if no prompt name is given
 fi
 
 PROMPT_NAME="$1"
