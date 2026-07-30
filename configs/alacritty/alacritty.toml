@@ -54,7 +54,7 @@ dimensions.columns = 115
 dimensions.lines = 50
 padding.x = 16
 padding.y = 14
-decorations = "none"
+decorations = "None"
 opacity = 0.95
 dynamic_padding = true
 blur = true
@@ -74,13 +74,18 @@ bindings = [
 # mouse = { enabled = true }
 
 [selection]
-save_to_clipboard = true
+save_to_clipboard = false
 
 [cursor]
 style = { shape = "Underline", blinking = "On" }
 blink_interval = 400
 unfocused_hollow = true
 thickness = 0.1
+vi_mode_style = { shape = "Beam", blinking = "On" }
 
 [mouse]
 hide_when_typing = false
+
+[bell]
+duration=100
+color="#ff5500"

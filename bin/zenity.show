@@ -1,26 +1,54 @@
 #!/bin/bash
 
 # Run it like this to style further:
-#  echo testing | GTK_DEBUG=interactive zenity.show
+#   echo testing | GTK_DEBUG=interactive zenity.show
 #
-# But first you have to enable this (I think):
-#  gsettings set org.gtk.Settings.Debug enable-inspector-keybinding true
+# Enable the GTK inspector keybinding first if needed:
+#   gsettings set org.gtk.Settings.Debug enable-inspector-keybinding true
 
-# 1. Create an isolated temporary directory for our custom theme
-theme_dir=$(mktemp -d)
+show_help() {
+    cat <<'EOF'
+Usage:
+  zenity.show [OPTION]...
+
+Read Markdown from standard input, convert it to plain text, and display it
+in a Zenity text-info dialog.
+
+Options:
+  -h, --help    Show this help message and exit.
+
+Examples:
+  echo '# Hello' | zenity.show
+  printf '## Heading\n\nSome **bold** text.\n' | zenity.show
+EOF
+}
+
+case "${1:-}" in
+    -h|--help)
+        show_help
+        exit 0
+    ;;
+esac
+
+# Create an isolated temporary directory for our custom theme.
+theme_dir=$(mktemp -d) || exit 1
+trap 'rm -rf "$theme_dir"' EXIT
+
 mkdir -p "$theme_dir/gtk-3.0" "$theme_dir/gtk-4.0"
 
-# 2. Copy the user's existing GTK settings to retain the system theme
+# Copy the user's existing GTK settings to retain the system theme.
 real_config="${XDG_CONFIG_HOME:-$HOME/.config}"
+
 if [ -f "$real_config/gtk-3.0/settings.ini" ]; then
     cp "$real_config/gtk-3.0/settings.ini" "$theme_dir/gtk-3.0/"
 fi
+
 if [ -f "$real_config/gtk-4.0/settings.ini" ]; then
     cp "$real_config/gtk-4.0/settings.ini" "$theme_dir/gtk-4.0/"
 fi
 
-# 3. Write custom GTK CSS rules
-cat << 'EOF' > "$theme_dir/gtk-3.0/gtk.css"
+# Write custom GTK CSS rules.
+cat <<'EOF' > "$theme_dir/gtk-3.0/gtk.css"
 /* Target the textview directly */
 textview {
     font-size: 14pt;
@@ -40,23 +68,21 @@ textview {
 }
 EOF
 
-# Copy the same CSS for GTK4 compatibility
+# Copy the same CSS for GTK4 compatibility.
 cp "$theme_dir/gtk-3.0/gtk.css" "$theme_dir/gtk-4.0/gtk.css"
 
-# 4. Force Zenity to use this specific theme directory
+# Convert Markdown from stdin to HTML, then render it as plain text for Zenity.
 env XDG_CONFIG_HOME="$theme_dir" zenity \
 --text-info \
 --title="" \
 --width=700 \
 --height=500 \
 --modal \
---auto-scroll 2>/dev/null
+--auto-scroll \
+2>/dev/null
 
-# 5. Clean up the temporary folder after Zenity closes
-rm -rf "$theme_dir"
-
-# 6. Kill the entire process group to terminate upstream commands in the pipeline
-kill -s 2 0 >/dev/null
-kill -s 15 0 >/dev/null
+# Terminate upstream commands in a pipeline when Zenity closes.
+kill -s 2 0 >/dev/null 2>&1
+kill -s 15 0 >/dev/null 2>&1
 sleep 1
-kill -s 9 0 >/dev/null
+kill -s 9 0 >/dev/null 2>&1
