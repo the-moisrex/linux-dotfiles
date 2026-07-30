@@ -40,7 +40,7 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
 fi
 
 for target in "${TARGETS[@]}"; do
-    echo "ping -O ${PING_OPTS[@]} $target"
+    echo "ping ${PING_OPTS[@]} $target"
 done | xargs -I {} -P0 bash -c "{}" | awk '
 {
     # Remove the first "PING x.x.x.x..." header line
@@ -71,7 +71,7 @@ done | xargs -I {} -P0 bash -c "{}" | awk '
                 ip = $4
                 sub(/:$/, "", ip) # Remove trailing colon for cleaner output
 
-                print ip "\t" color $i "\033[0m"
+                print ip "\t" color t "\033[0m"
                 break
             }
         }
