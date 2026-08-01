@@ -29,6 +29,27 @@ target_script="summarize.sh"
 input_buffer=""
 has_stdin=false
 
+
+# Re-usable function to check if a given string looks like C++ compiler/linker output
+is_compiler_output() {
+    local content="$1"
+    # Matches GCC/Clang standard error formats (with or without column numbers),
+    # include paths, common linker errors, and build system failures (Ninja/Make).
+    if echo "$content" | grep -qiE \
+    -e ':[0-9]+:([0-9]+:)? (error|warning|fatal error|note):' \
+    -e 'In file included from' \
+    -e 'undefined reference to' \
+    -e 'no matching function for call to' \
+    -e 'ld: symbol\(s\) not found' \
+    -e 'FAILED:' \
+    -e 'ninja: build stopped' \
+    -e 'make\[[0-9]+\]: \*\*\*'; then
+        return 0
+    fi
+    return 1
+}
+
+
 # Buffer stdin if it is provided via pipe
 if ! [ -t 0 ]; then
     has_stdin=true
@@ -37,7 +58,9 @@ fi
 
 # Heuristic 1: Check stdin buffer for clues
 if $has_stdin; then
-    if echo "$input_buffer" | grep -qE 'youtube\.com|youtu\.be'; then
+    if is_compiler_output "$input_buffer"; then
+        target_script="cpp.sh"
+        elif echo "$input_buffer" | grep -qE 'youtube\.com|youtu\.be'; then
         target_script="yt.sh"
         elif echo "$input_buffer" | grep -qE 'class |struct |#include <'; then
         target_script="cpp-reviewer.sh"

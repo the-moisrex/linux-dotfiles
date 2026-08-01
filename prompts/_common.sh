@@ -5,8 +5,9 @@ curfile="$0"
 ARGS=("$@")
 head_lines=""
 GIT_ROOT=""
-NO_FILES=false
-STDIN_CONSUMED=false
+NO_FILES=${NO_FILES:="false"}
+STDIN_CONSUMED=${STDIN_CONSUMED:="false"}
+stdin_content="${stdin_content:=""}"
 
 find_git_root() {
     if [ ! -z "$GIT_ROOT" ]; then
@@ -39,17 +40,17 @@ trim_context() {
 #   print_stdin
 print_stdin() {
     local stdin_piped=false
-    local stdin_content=""
-
-    if $NO_FILES; then
-        return
-    fi
+    stdin_content=""
 
     if ! [ -t 0 ]; then
         stdin_piped=true
         stdin_content="$(cat)"
     fi
     
+    if $NO_FILES; then
+        return
+    fi
+
     if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
         STDIN_CONSUMED=true
         printf '%s\n\n' "$stdin_content"
