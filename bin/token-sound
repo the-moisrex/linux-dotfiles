@@ -1,0 +1,74 @@
+#!/bin/bash
+
+SOUND_FILE=""
+PRESET="beep"
+SOX_ARGS=()
+
+show_help() {
+    cat << EOF
+Usage: token-sound [OPTIONS] [-- SOX_OPTIONS]
+
+Reads text from standard input, echoing it to standard output, and plays a sound for each word/token.
+Requires 'sox' to be installed (specifically the 'play' command).
+
+Options:
+  --help           Show this help message and exit
+  --sound FILE     Use a specific sound file.
+  --preset NAME    Use a built-in synthesized sound. (Default: beep)
+                   Available presets: beep, blip, chirp, click, typewriter
+
+Any arguments after '--' will be passed directly to 'play' (sox).
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help) show_help; exit 0 ;;
+        --sound) SOUND_FILE="$2"; shift 2 ;;
+        --preset) PRESET="$2"; shift 2 ;;
+        --) shift; SOX_ARGS=("$@"); break ;;
+        *) echo "Unknown option: $1" >&2; show_help >&2; exit 1 ;;
+    esac
+done
+
+play_sound() {
+    if [[ -n "$SOUND_FILE" ]]; then
+        play -q "$SOUND_FILE" "${SOX_ARGS[@]}" >/dev/null 2>&1 &
+    else
+        # Synthesized presets
+        case "$PRESET" in
+            blip)
+            play -q -n synth 0.02 triangle 1000 vol 0.1 "${SOX_ARGS[@]}" >/dev/null 2>&1 & ;;
+            chirp)
+            play -q -n synth 0.04 sine 2000-3000 vol 0.1 "${SOX_ARGS[@]}" >/dev/null 2>&1 & ;;
+            click)
+            play -q -n synth 0.01 square 500 vol 0.05 "${SOX_ARGS[@]}" >/dev/null 2>&1 & ;;
+            typewriter)
+            play -q -n synth 0.02 noise band -n 3000 500 vol 0.2 "${SOX_ARGS[@]}" >/dev/null 2>&1 & ;;
+            beep|*)
+            play -q -n synth 0.03 sine 1800 vol 0.1 "${SOX_ARGS[@]}" >/dev/null 2>&1 & ;;
+        esac
+    fi
+}
+
+# Read character by character.
+# Note: 'read -n1' captures a newline as an empty string.
+while IFS= read -r -n1 char || [[ -n "$char" ]]; do
+    if [[ -z "$char" ]]; then
+        # Handle newline
+        echo
+        play_sound
+    else
+        # Print normal character
+        echo -n "$char"
+        
+        # Play sound on space
+        if [[ "$char" == " " ]]; then
+            play_sound
+        fi
+    fi
+done
+
+# Catch the very last word if there is no trailing newline
+play_sound
