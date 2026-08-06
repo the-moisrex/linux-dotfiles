@@ -286,19 +286,30 @@ table inet mangle {
     }
 
     chain skipper {
-        # Here we define the packets that should be skip the VPN
-        ip daddr $local_network return
+        # Here we define the packets that should skip the VPN
+
+        # ICMP
+        ip protocol icmp goto marker
+        ip6 nexthdr icmpv6 goto marker
+
+        ip daddr $local_network goto marker
         ip daddr @neverignored counter name skip.never return
         ip daddr @nevergeoips4 counter name skip.never return
         ip daddr @skipips counter name skip.manuals goto marker
         ip daddr @ignored counter name skip.ignored goto marker
         ip daddr @geoips4 counter name skip.geoips4 goto marker
+
+        # Skip OpenVPN
+        # @if-user(openvpn) skuid openvpn goto marker
+        # udp dport 1194 goto marker 
+
         @if-user(dnsmasq) skuid dnsmasq counter name skip.dns goto marker
         @if-user(dnscrypt-proxy) skuid dnscrypt-proxy counter name skip.dns goto marker
         @if-user(avahi) skuid avahi goto marker
         @if-user(dovecot) skuid dovecot goto marker
         @if-user(tor) skuid tor goto marker
         @if-group(v2ray) skgid v2ray goto marker
+        @if-group(novpn) skgid novpn goto marker
         meta pkttype multicast counter name skip.multicast goto marker
         meta pkttype broadcast counter name skip.broadcast goto marker
     }
@@ -354,7 +365,7 @@ table inet nat {
         meta pkttype multicast accept;
         meta mark $lo_v2ray_fwmark accept;
         # ip saddr == $local_network ip daddr == 127.0.0.1 counter name nat.masquerade masquerade comment "nat anything comming from local network (DNS)"
-        ip daddr != $local_network meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
+        meta mark $skip_vpn_mark counter name nat.skip masquerade comment "nat marked packets"
         ip daddr != $local_network counter name nat.masquerade masquerade comment "nat everything"
     }
 }
