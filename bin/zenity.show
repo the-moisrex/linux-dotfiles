@@ -6,6 +6,8 @@
 # Enable the GTK inspector keybinding first if needed:
 #   gsettings set org.gtk.Settings.Debug enable-inspector-keybinding true
 
+should_quit=true
+
 show_help() {
     cat <<'EOF'
 Usage:
@@ -27,6 +29,9 @@ case "${1:-}" in
     -h|--help)
         show_help
         exit 0
+    ;;
+    --no-quit)
+        should_quit=false
     ;;
 esac
 
@@ -82,7 +87,9 @@ env XDG_CONFIG_HOME="$theme_dir" zenity \
 2>/dev/null
 
 # Terminate upstream commands in a pipeline when Zenity closes.
-kill -s 2 0 >/dev/null 2>&1
-kill -s 15 0 >/dev/null 2>&1
-sleep 1
-kill -s 9 0 >/dev/null 2>&1
+if $should_quit; then
+    kill -s 2 0 >/dev/null 2>&1
+    kill -s 15 0 >/dev/null 2>&1
+    sleep 1
+    kill -s 9 0 >/dev/null 2>&1
+fi
