@@ -1,0 +1,124 @@
+#!/bin/bash
+
+# Configuration
+GROUP="novpn"
+FWMARK="0xe1f1"
+TABLE="100"
+NSNAME="novpn_ns"
+
+show_help() {
+    echo "Usage: novpn [OPTION] [COMMAND...]"
+    echo "Bypass VPN routing for specific commands."
+    echo ""
+    echo "Options:"
+    echo "  -m, --mark       Use firewall marking (nftables) to bypass VPN (Default)"
+    echo "  -n, --netns      Use network namespace (macvlan) to bypass VPN"
+    echo "  -i, --init-mark  Initialize routing table $TABLE for the mark method"
+    echo "  -c, --clean      Clean up network namespaces and lingering processes"
+    echo "  -h, --help       Show this help message"
+}
+
+init_mark() {
+    # Find the default physical interface and gateway, ignoring VPN tunnels
+    # Matches 'default' but skips interfaces containing 'tun', 'tap', 'wg', or 'surfshark'
+    local phys_gw
+    local phys_iface
+    
+    read -r phys_gw phys_iface < <(ip -4 route show default | awk '$5 !~ /tun|tap|wg|surfshark|nordvpn|vpn|openvpn/ {print $3, $5; exit}')
+
+    if [[ -z "$phys_gw" || -z "$phys_iface" ]]; then
+        echo "Error: Could not determine physical default gateway." >&2
+        exit 1
+    fi
+
+    # Ensure table 100 has the correct physical route
+    # First, flush it just in case it has the wrong VPN route
+    sudo ip route flush table 100
+    sudo ip route add default via "$phys_gw" dev "$phys_iface" table 100
+
+    # Ensure the ip rule exists for the mark
+    if ! ip rule show | grep -q "fwmark $FWMARK lookup 100"; then
+        sudo ip rule add fwmark "$FWMARK" lookup 100
+    fi
+}
+
+run_mark() {
+    init_mark
+
+    # Execute using sudo with the specific group, preserving environment (-E)
+    exec sudo -E -g "$GROUP" -- "$@"
+}
+
+run_netns() {
+    # Find physical interface and gateway
+    local default_route gw iface ip_addr mask
+    default_route=$(ip -4 route show default | grep -vE 'dev tun|dev wg|dev tap' | head -n 1)
+    gw=$(echo "$default_route" | grep -oP 'via \K\S+')
+    iface=$(echo "$default_route" | grep -oP 'dev \K\S+')
+    
+    # Get physical IP address and subnet
+    ip_addr=$(ip -4 addr show "$iface" | grep -oP 'inet \K\S+')
+
+    # Setup Namespace if it doesn't exist
+    if ! ip netns list | grep -q -w "$NSNAME"; then
+        sudo ip netns add "$NSNAME"
+        
+        # Allow non-root users in the netns to use ping (ICMP sockets)
+        sudo ip netns exec "$NSNAME" sysctl -qw net.ipv4.ping_group_range="0 2147483647"
+        
+        sudo ip link add link "$iface" name macv0 netns "$NSNAME" type macvlan mode bridge
+        sudo ip netns exec "$NSNAME" ip addr add "$ip_addr" dev macv0
+        sudo ip netns exec "$NSNAME" ip link set dev macv0 up
+        sudo ip netns exec "$NSNAME" ip link set dev lo up
+        sudo ip netns exec "$NSNAME" ip route add default via "$gw" dev macv0
+    fi
+
+    # Execute command inside namespace as the original user
+    exec sudo ip netns exec "$NSNAME" sudo -E -u "$USER" -- "$@"
+}
+
+clean_all() {
+    if ip netns list | grep -q -w "$NSNAME"; then
+        # Kill processes running in the namespace
+        local pids
+        pids=$(sudo ip netns pids "$NSNAME")
+        if [[ -n "$pids" ]]; then
+            echo "$pids" | xargs -r sudo kill -9
+        fi
+        sudo ip netns delete "$NSNAME"
+        echo "Cleaned up namespace: $NSNAME"
+    else
+        echo "No namespace to clean."
+    fi
+}
+
+# Parse arguments
+if [[ $# -eq 0 ]]; then
+    show_help
+    exit 0
+fi
+
+case "$1" in
+    -m|--mark)
+        shift
+        run_mark "$@"
+        ;;
+    -n|--netns)
+        shift
+        run_netns "$@"
+        ;;
+    -i|--init-mark)
+        init_mark
+        echo "Initialized routing table $TABLE for mark $FWMARK."
+        ;;
+    -c|--clean)
+        clean_all
+        ;;
+    -h|--help)
+        show_help
+        ;;
+    *)
+        # Default to mark method if a command is passed directly
+        run_mark "$@"
+        ;;
+esac
