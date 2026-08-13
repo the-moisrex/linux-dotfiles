@@ -189,6 +189,7 @@ def main():
     parser = argparse.ArgumentParser(description="Headless Prompt Modification Engine & Autocomplete Utility.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging to stderr.")
     parser.add_argument("-c", "--complete", type=str, help="Trigger Autocomplete Mode with the given snippet.")
+    parser.add_argument("-i", "--input", type=str, help="Input file for Modification Mode.")
     parser.add_argument("input_text", nargs="?", default=None, help="Input text for Modification Mode.")
     
     args = parser.parse_args()
@@ -203,12 +204,19 @@ def main():
     else:
         # MODE 2: Modification
         input_text = args.input_text
-        if input_text is None:
+        
+        if args.input:
+            try:
+                with open(args.input, "r") as f:
+                    input_text = f.read()
+            except IOError as e:
+                parser.error(f"Failed to read input file: {e}")
+        elif input_text is None:
             # Read from stdin if no positional argument is provided
             if not sys.stdin.isatty():
                 input_text = sys.stdin.read()
             else:
-                parser.error("Modification mode requires input_text as an argument or piped via stdin.")
+                parser.error("Modification mode requires input_text as an argument, -i/--input, or piped via stdin.")
                 
         result = process_modification(input_text)
         
