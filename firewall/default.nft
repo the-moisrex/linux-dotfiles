@@ -303,6 +303,9 @@ table inet mangle {
         # @if-user(openvpn) skuid openvpn goto marker
         # udp dport 1194 goto marker 
 
+        # Skip DNS Queries
+        # ip protocol { udp, tcp } th dport 53 ip daddr != $local_network goto marker
+
         @if-user(dnsmasq) skuid dnsmasq counter name skip.dns goto marker
         @if-user(dnscrypt-proxy) skuid dnscrypt-proxy counter name skip.dns goto marker
         @if-user(avahi) skuid avahi goto marker
@@ -345,6 +348,7 @@ table inet nat {
 
         ip protocol { udp, tcp } th dport 53 skuid dnsmasq accept;
         ip protocol { udp, tcp } th dport 53 skuid dnscrypt-proxy accept;
+        
         # Hijack the DNS Queries
         # ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to meta iifname map {$devices_ips_map} comment "Hijack DNS"
         ip protocol { udp, tcp } th dport 53 ip daddr != $local_network counter name nat.dns.hijack dnat ip to 127.0.0.1:53 comment "Hijack DNS"
@@ -356,6 +360,12 @@ table inet nat {
 
     chain output {
         type nat hook output priority filter
+        
+        ip protocol { udp, tcp } th dport 53 skuid dnsmasq accept;
+        ip protocol { udp, tcp } th dport 53 skuid dnscrypt-proxy accept;
+
+        # Safely checks for any interface starting with surfshark
+        ip daddr != $local_network meta oifname "surfshark*" ip protocol { udp, tcp } th dport 53 dnat ip to 127.0.0.1
     }
 
     chain postrouting {
