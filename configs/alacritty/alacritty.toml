@@ -25,6 +25,7 @@
 
 # Themes from: https://github.com/alacritty/alacritty-theme
 general.import = [
+    "~/.config/alacritty/alacritty-theme/themes/github_light.toml"
     # "~/.config/alacritty/alacritty-theme/themes/carbonfox.toml"
     # "~/.config/alacritty/alacritty-theme/themes/rose_pine.toml"
     # "~/.config/alacritty/alacritty-theme/themes/gruvbox_dark.toml"
