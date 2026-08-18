@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 
+import sys
 import gi
 gi.require_version('Gdk', '3.0')
 from gi.repository import Gdk
+
+if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
+    print("Usage: display-info")
+    print()
+    print("  Print the width, height, and diagonal of the connected monitors in a table.")
+    print()
+    print("Options:")
+    print("  -h, --help          Show this help message")
+    sys.exit(0)
 
 dsp = Gdk.Display.get_default()
 n_mons = dsp.get_n_monitors()

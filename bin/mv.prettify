@@ -378,6 +378,10 @@ main() {
                 show_help
                 exit 0
             ;;
+            --version)
+                echo "$SCRIPT_NAME v$VERSION"
+                exit 0
+            ;;
             -n|--dry-run)
                 dry_run=true
                 shift

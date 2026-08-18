@@ -1,5 +1,19 @@
 #!/usr/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 <task-command>..."
+    echo
+    echo "  Run the 'task' command with the local .taskrc and .task data"
+    echo "  discovered by walking up from the current directory."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo
+    echo "All other arguments are forwarded to 'task'. For task's own help,"
+    echo "run: $0 help"
+    exit 0
+fi
+
 TASKDATA=".task";
 TASKRC=".taskrc";
 

@@ -1,5 +1,16 @@
 #!/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 <video-file>..."
+    echo
+    echo "  Print the duration of each video file and the total duration"
+    echo "  of all of them combined."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 # Create a temporary named pipe
 pipe=$(mktemp -u)
 mkfifo "$pipe"

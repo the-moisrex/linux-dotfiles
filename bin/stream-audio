@@ -13,6 +13,16 @@ case "$1" in
   stop)
     pactl unload-module `pactl list | grep tcp -B1 | grep M | sed 's/[^0-9]//g'`
     ;;
+  --help|-h|help)
+    echo "Usage: $0 <start|stop>"
+    echo
+    echo "  Stream the system audio over TCP using PulseAudio."
+    echo
+    echo "Commands:"
+    echo "  start               Start streaming the audio on port 8000"
+    echo "  stop                Stop streaming"
+    echo "  -h, --help          Show this help message"
+    ;;
   *)
     echo "Usage: $0 start|stop" >&2
     ;;

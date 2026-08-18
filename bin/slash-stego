@@ -19,8 +19,12 @@ Examples:
   $(basename "$0") "Hello World" mysite.com
   $(basename "$0") "https:/\\//\\////\\\\//\\/...\//example.com"
 EOF
-    exit 1
+    exit "${1:-1}"
 }
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    usage 0
+fi
 
 (( $# < 1 || $# > 2 )) && usage
 

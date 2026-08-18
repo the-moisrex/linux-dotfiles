@@ -20,6 +20,15 @@ case $1 in
     -f|--follow)
         follow_battery;
         ;;
+    -h|--help)
+        echo "Usage: $0 [-f|--follow]"
+        echo
+        echo "  Print the battery level of connected Bluetooth headphones."
+        echo
+        echo "Options:"
+        echo "  -f, --follow        Keep showing the battery level every 3 seconds"
+        echo "  -h, --help          Show this help message"
+        ;;
     *)
         battery;
         ;;

@@ -5,10 +5,21 @@ PID=$(pgrep gnome-session | head -n 1)
 export DBUS_SESSION_BUS_ADDRESS=$(grep -z DBUS_SESSION_BUS_ADDRESS /proc/$PID/environ | cut -f2- -d= | tr -d '\0')
 
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 <background.jpg>"
+    echo
+    echo "  Write the current task list on <background.jpg> and set it as"
+    echo "  the GNOME desktop wallpaper."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 background="$1";
 if [ ! -f "$background" ]; then
     echo "Usage: $0 background.jpg";
-    exit;
+    exit 1;
 fi;
 
 

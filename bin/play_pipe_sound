@@ -3,6 +3,21 @@
 err_sound="$HOME/.config/fish/assets/error.oga"
 ok_sound="$HOME/.config/fish/assets/ok.oga"
 
+# Help
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 <exit-code>..."
+    echo "   or: $0 --is-possible"
+    echo
+    echo "  Play a sound corresponding to each given command exit code"
+    echo "  (0 = success, 1-9 = common errors, 10-99 = mid-range,"
+    echo "  100+ = critical)."
+    echo
+    echo "Options:"
+    echo "  --is-possible       Exit 0 if sound playback is available"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 # Sound check functionality
 if [[ "$1" == "--is-possible" ]]; then
     # test -f "$err_sound" && test -f "$ok_sound" && command -v paplay &>/dev/null

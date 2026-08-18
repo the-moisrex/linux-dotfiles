@@ -22,6 +22,17 @@ case $action in
     from)
         syncfrom
         ;;
+    --help|-h|help)
+        print_help
+        echo
+        echo "  Sync the pacman package cache (/var/cache/pacman/pkg) between"
+        echo "  two systems over scp."
+        echo
+        echo "Commands:"
+        echo "  to <host>           Send the local cache to <host>"
+        echo "  from <host>         Fetch the cache from <host>"
+        echo "  -h, --help          Show this help message"
+        ;;
     *)
         echo "$action can only be 'to' or 'from'."
         print_help

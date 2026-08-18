@@ -1,5 +1,17 @@
 #!/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0"
+    echo
+    echo "  Print a welcome-back message (via cowsay/lolcat) when more than"
+    echo "  one day has passed since the last visit. Put it in your shell"
+    echo "  startup file to run it on every login."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 text="Oh, there you are! I was getting worried."
 
 if ! command -v cowsay >/dev/null; then

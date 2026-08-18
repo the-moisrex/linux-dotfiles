@@ -4,7 +4,16 @@
 #      TalkToDanF@gmail.com     #
 #################################
  
- 
+if [[ "$1" == "--help" || "$1" == "-h" || $# -eq 0 ]]; then
+    echo "Usage: $0 <text>"
+    echo
+    echo "  Speak <text> aloud using Google Translate's text-to-speech."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 INPUT=$*
 STRINGNUM=0
  

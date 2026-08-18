@@ -2,6 +2,18 @@
 
 # This script will let you restart your Mikrotik's IPSec Active Peer connections when the they seem to be stuck
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 [domain]"
+    echo
+    echo "  Continuously check connectivity to <domain> (default: facebook.com)"
+    echo "  and restart the Mikrotik router's IPSec connections via SSH when"
+    echo "  the connection seems to be stuck."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 # domain to test against (a censored website):
 if [ -z "$1" ]; then
     domain=facebook.com
