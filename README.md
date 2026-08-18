@@ -1,22 +1,22 @@
 # linux-dotfiles
-My dot files, configurations, binaries, services, and other usefull utilities gathered in one place.
+My dot files, configurations, binaries, services, and other useful utilities gathered in one place.
 
 ## Executables and shell scripts
 Written in the `bin` directory and each have their own requirements you need to install.
 
-- __coreshell__: simple IDE to test stuff in different languages
+- __codeshell__: simple IDE to test stuff in different languages
 - __gtask__: taskwarrior for git projects
-- __cpu__: get cpu performance informations and change cpu profile.
+- __cpu__: get CPU performance information and change the CPU profile.
 - __history-usage__: show which commands you've used the most
-- __net.tor.proxy__: tor laod balancer proxy
+- __net.tor.proxy__: tor load balancer proxy
 - __weather__: get the weather of your city
 - __clear-coredump__: clears your logs and core dumps
-- __buble.patched__: change the sounds of the keyboard sounds played by `bucklespring` and start buckle
-- __transfer__: share a file with terminal (Needs updating to a new website since it's going down soon)
+- __buckle.pitched__: pitch-shift the keyboard sounds played by `bucklespring` and start buckle
+- __transfer__: share a file from the terminal (uses transfer.sh, which is currently down; needs a new service)
 - __welcomeback__: says welcome back
 - __speech__: Text-To-Speech with Google Translate
 - __compilers.sh__: a set of functions to download and install compilers (not finished yet)
-- and __60+__ more little utilities just in the [./bin](./bin/README.md) directory.
+- and __150+__ more little utilities just in the [./bin](./bin/README.md) directory.
 
 ## Firewall
 

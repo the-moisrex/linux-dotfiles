@@ -8,6 +8,7 @@ Modular scripts for configuring this Linux dotfiles repository.
 - `install-packages.sh`: Install/remove packages from distro-specific lists in `pkgs/`.
 - `disable-screen-lock.sh`: Disable/restore lock and display sleep settings.
 - `disable-auto-updates.sh`: Disable/re-enable automatic update mechanisms.
+- `setup-ntp.sh`: Configure NTP servers for systemd timesyncd.
 - `setup-shell-configs.sh`: Install/remove Fish and Nushell configs.
 - `setup-editor-configs.sh`: Install/remove editor configs (Neovim and SpaceVim).
 - `setup-alacritty-config.sh`: Install/remove Alacritty config.
