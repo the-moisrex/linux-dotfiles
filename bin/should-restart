@@ -7,6 +7,19 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0"
+    echo
+    echo "  Check whether the system needs a reboot or applications need"
+    echo "  a restart after a library or kernel update."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo
+    echo "Exit status is 0 when a restart/reboot is required, 1 otherwise."
+    exit 0
+fi
+
 if ! command -v lsof >/dev/null; then
     echo -e "${RED}Error: lsof command not found.${NC}"
     echo "Install it using your package manager (e.g., # pacman -S lsof)"

@@ -3,6 +3,18 @@
 # Detect available qdbus command
 QDBUS_CMD=$(command -v qdbus6 || command -v qdbus)
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 [--system] [service...]"
+    echo
+    echo "  Dump the D-Bus services, object paths, methods, and properties."
+    echo "  With no arguments, all services on the bus are listed."
+    echo
+    echo "Options:"
+    echo "  --system            Use the system bus instead of the session bus"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 if [ -z "$QDBUS_CMD" ]; then
     echo "Error: qdbus/qdbus6 not found!" >&2
     exit 1

@@ -1,5 +1,20 @@
 #!/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 <file>"
+    echo "   or: cat <file> | $0 <remote-name>"
+    echo
+    echo "  Upload a file to transfer.sh and print the download URL."
+    echo
+    echo "Examples:"
+    echo "  $0 /tmp/test.md"
+    echo "  cat /tmp/test.md | $0 test.md"
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 if [ $# -eq 0 ]; then 
   echo -e "No arguments specified. Usage:\necho transfer /tmp/test.md\ncat /tmp/test.md | transfer test.md"; 
   exit 1

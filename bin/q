@@ -3,6 +3,18 @@
 # Get the directory where this script is located
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0 [options] <query>"
+    echo
+    echo "  Search the web and open the results in your browser."
+    echo
+    echo "Options:"
+    echo "  --post              Convert the search GET URL into a POST form"
+    echo "  --no-new-window     Don't open the results in a new window"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 # Check for --post option to convert GET to POST request
 POST_OPTION=0
 if [[ "$1" = "--post" ]]; then

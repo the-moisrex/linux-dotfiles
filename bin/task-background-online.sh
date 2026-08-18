@@ -1,5 +1,17 @@
 #!/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: $0"
+    echo
+    echo "  Download the Bing picture of the day and set it as the GNOME"
+    echo "  desktop wallpaper, with the current task list written on it."
+    echo "  Suitable for cron jobs; checks at most once per hour."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    exit 0
+fi
+
 # export DBUS_SESSION_BUS_ADDRESS environment variable useful when the script is set as a cron job
 PID=$(pgrep gnome-session | head -n 1)
 export DBUS_SESSION_BUS_ADDRESS=$(grep -z DBUS_SESSION_BUS_ADDRESS /proc/$PID/environ | cut -f2- -d= | tr -d '\0')

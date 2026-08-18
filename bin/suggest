@@ -17,6 +17,19 @@ WAIT_ALL=0
 QUERY_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help) echo "Usage: $0 [options] [query]"
+            echo
+            echo "  Get search suggestions from Google, Zarebin, DuckDuckGo, and Bing."
+            echo "  With no query, runs in an interactive prompt."
+            echo
+            echo "Options:"
+            echo "  -a, --all           Wait for all enabled APIs to respond"
+            echo "  -g, --google        Only use Google"
+            echo "  -z, --zarebin       Only use Zarebin"
+            echo "  -d, --duckduckgo    Only use DuckDuckGo"
+            echo "  -b, --bing          Only use Bing"
+            echo "  -h, --help          Show this help message"
+            exit 0 ;;
         -a|--all) WAIT_ALL=1; shift ;;
         -g|--google) USE_GOOGLE=1; shift ;;
         -z|--zarebin) USE_ZAREBIN=1; shift ;;

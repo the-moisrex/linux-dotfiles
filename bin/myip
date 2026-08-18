@@ -13,6 +13,21 @@ function get_ip {
 }
 
 case $1 in
+    --help|-h|help)
+        echo "Usage: $0 [all|ip|asn|country|city|timezone]"
+        echo
+        echo "  Print information about your public IP address."
+        echo
+        echo "Commands:"
+        echo "  (no args)           Print the public IP address"
+        echo "  all                 Print all available information"
+        echo "  ip                  Print only the IP address"
+        echo "  asn                 Print the ASN"
+        echo "  country             Print the country"
+        echo "  city                Print the city"
+        echo "  timezone            Print the timezone"
+        echo "  -h, --help          Show this help message"
+        ;;
     all)
         get 
         ;;
