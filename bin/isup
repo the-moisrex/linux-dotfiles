@@ -55,8 +55,8 @@ function ishttpup {
 }
 
 function ishttpsup {
-    domain="$@"
-    if [ -z "$@" ]; then
+    domain="$1"
+    if [ -z "$1" ]; then
         domain="youtube.com"
     fi
     (ipof $domain | isnotempty) && (! ishttpsfiltered $domain) || (! ishttpsfiltered $domain) || false && true

@@ -108,11 +108,11 @@ fi
 if [[ ${#files[@]} -eq 0 ]]; then
     # Find C/C++ files in the repository that contain the function
     if [[ "$language" = "c" ]]; then
-        cpp_files=$(git grep -l "$function_name" -- '*.c' '*.h')
+        mapfile -t cpp_files < <(git grep -l "$function_name" -- '*.c' '*.h')
     elif [[ "$language" = "c++" ]]; then
-        cpp_files=$(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hh' '*.hxx' '*.ixx')
+        mapfile -t cpp_files < <(git grep -l "$function_name" -- '*.cpp' '*.cxx' '*.cc' '*.c++' '*.h' '*.hpp' '*.hh' '*.hxx' '*.ixx')
     else
-        cpp_files=$(git grep -l "$function_name" -- '*.c' '*.h' '*.cpp' '*.cxx' '*.cc' '*.c++' '*.hpp' '*.hh' '*.hxx' '*.ixx')
+        mapfile -t cpp_files < <(git grep -l "$function_name" -- '*.c' '*.h' '*.cpp' '*.cxx' '*.cc' '*.c++' '*.hpp' '*.hh' '*.hxx' '*.ixx')
     fi
 else
     # Use provided files, checking they exist
@@ -126,14 +126,14 @@ else
     done
 fi
 
-if [[ -z "$cpp_files" ]]; then
+if [[ ${#cpp_files[@]} -eq 0 ]]; then
     echo "Error: No C++ files found containing function '$function_name'" >&2
     exit 1
 fi
 
 if [[ "$verbose" = true ]]; then
     echo "Searching in files:" >&2
-    for file in $cpp_files; do
+    for file in "${cpp_files[@]}"; do
         echo "  $file" >&2
     done
 fi
@@ -146,7 +146,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for file in $cpp_files; do
+for file in "${cpp_files[@]}"; do
     (
         if [[ "$verbose" = true ]]; then
             echo "Checking $file for function definition..." >&2

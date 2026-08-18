@@ -150,10 +150,10 @@ function run_unified_haproxy {
   local pid_file="$dir/pid-haproxy-nsn:$_nsn"
   local chroot_dir;
   local haproxy_user="haproxy"
-  local opetions="user ${haproxy_user}
-  chroot ${chroot_dir}"
   if [ "$termux" == "false" ]; then
     chroot_dir="/usr/share/haproxy"
+    options="user ${haproxy_user}
+  chroot ${chroot_dir}"
   else
 	  chroot_dir=$(realpath "../../usr/share/haproxy")
     haproxy_user="$_user"
