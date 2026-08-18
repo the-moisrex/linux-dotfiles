@@ -72,9 +72,9 @@ done
 for (( i = 0 ; i < ${#all[@]} ; i++ )); do
     port=${all[$i]};
     for (( exi = 0 ; exi < ${#except[@]}; exi++ )); do
-        ex=${except[$ex]};
+        ex=${except[$exi]};
         if [ "$port" == "$ex" ]; then
-            unset ${all[$i]};
+            unset "all[$i]"
         fi
     done
 done
@@ -111,7 +111,7 @@ else
 fi
 
 scripts=$(pidof -x net.tor.proxy)
-if [ ! -z "$scipts"]; then
+if [ ! -z "$scripts" ]; then
     echo Killing net.tor.proxy scripts
     kill $scripts
 fi

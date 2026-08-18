@@ -3,7 +3,7 @@
 governor="$1"
 
 case "$governor" in
-    perf|per|performance|--perf|--performance|-performance|-performance)
+    perf|per|performance|--perf|--performance|-performance)
         governor="performance";
         ;;
     powersave|pwoersave|save|power)

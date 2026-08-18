@@ -180,7 +180,7 @@ def build_llvm_plugin(plugin_name, verbose=False):
         # Try to find clang installation location and get proper include paths
         try:
             # Find clang++ and use it to get system include paths
-            result = sp.run(["clang++", "-v", "-E", "-x", "c++", "/dev/null", "-o", "/dev/null"], 
+            result = subprocess.run(["clang++", "-v", "-E", "-x", "c++", "/dev/null", "-o", "/dev/null"], 
                            capture_output=True, text=True)
             if result.returncode == 0 and "#include <...> search starts here:" in result.stderr:
                 lines = result.stderr.split('\n')
@@ -214,7 +214,7 @@ def build_llvm_plugin(plugin_name, verbose=False):
             clang_include_flags = []
             try:
                 # Try to get flags from pkg-config
-                pkg_result = sp.run(["pkg-config", "--cflags", "libclang"], capture_output=True, text=True)
+                pkg_result = subprocess.run(["pkg-config", "--cflags", "libclang"], capture_output=True, text=True)
                 if pkg_result.returncode == 0:
                     pkg_flags = pkg_result.stdout.strip().split()
                     clang_include_flags.extend(pkg_flags)

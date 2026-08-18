@@ -309,7 +309,7 @@ arg_pos=0
 for arg in "${args[@]}"; do
     case $arg in
         clang|gcc|build|cmake-build*|build*)
-            if [ -z "$build_dir"]; then
+            if [ -z "$build_dir" ]; then
               build_dir=$(find . -name "*${args[$arg_pos]}*" -type d | head -n 1)
               unset "args[$arg_pos]"
               if [ ! -d "$build_dir" ]; then

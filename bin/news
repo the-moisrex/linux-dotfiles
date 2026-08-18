@@ -116,7 +116,7 @@ sync_parallel_output() {
     # Print outputs in order (site list order)
     for file in "${fifos[@]}"; do
         cat "$file"
-        rm -f "$fifo"
+        rm -f "$file"
     done
 }
 

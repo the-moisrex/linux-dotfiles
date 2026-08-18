@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ -z "${dedup_args[@]}" ]; then
+if [ ${#dedup_args[@]} -eq 0 ]; then
     dedup_args+=("news.live")
 fi
 
