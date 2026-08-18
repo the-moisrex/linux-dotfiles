@@ -41,6 +41,4 @@ Once the pod is running, access the database management tools at:
 - **PHPMyAdmin**: http://phpmyadmin.localhost or http://localhost:8084
 - **Adminer**: http://adminer.localhost or http://localhost:8083
 - **SQLite Admin**: http://sqlite.localhost or http://localhost:8081
-- **MongoDB Admin**: http://mongo.localhost or http://localhost:8086
-- **Redis Admin**: http://redis.localhost or http://localhost:8085
 - **Neo4j Browser**: http://neo4j.localhost or http://localhost:7474
