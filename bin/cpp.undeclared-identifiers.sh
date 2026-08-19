@@ -38,7 +38,7 @@ fi
 FLAGS=("$@")
 
 # Run clang-tidy with only the "undeclared identifier" diagnostic enabled
-clang-tidy -checks=-clang-diagnostic-undeclared-identifier "$FILE" -- "${FLAGS[@]}" 2>&1 \
+clang-tidy -checks='-*,clang-diagnostic-error' "$FILE" -- "${FLAGS[@]}" 2>&1 \
   | grep "\[clang-diagnostic-error\]" \
   | grep "use of undeclared identifier" \
   | sed -E "s/.*?'([^']+)'.*/\1/" \

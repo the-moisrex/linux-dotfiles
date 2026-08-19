@@ -173,7 +173,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     -d|--detach)
       detach=1
-      keep=1
       quiet=1
       shift
       ;;

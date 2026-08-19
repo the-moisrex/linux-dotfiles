@@ -51,6 +51,7 @@ function hms_to_sec(hms,   h,m,s,ms) {
         printf " "      # Normal continuation
     }
     last_end = end
+    first_text_line = 1
     next
 }
 
@@ -63,6 +64,10 @@ function hms_to_sec(hms,   h,m,s,ms) {
 # Otherwise, it’s subtitle text
 {
     gsub(/<\/?[^>]+>/, "")   # strip HTML tags (e.g. <i>)
+    if (!first_text_line) {
+        printf " "
+    }
+    first_text_line = 0
     printf "%s", $0
 }
 END {

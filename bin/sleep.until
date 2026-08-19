@@ -103,9 +103,15 @@ if [ -n "$timezone_str" ]; then
             ;;
     esac
     
-    if [[ "$timezone_str" =~ ^[+-][0-9]{1,4}$ ]]; then
-        # Handle numeric timezones like +0500 or -0800
-        target_time=$(datef -d "$time_str $timezone_str" +%s 2>/dev/null)
+    if [[ "$timezone_str" =~ ^([+-])([0-9]{1,2}):?([0-9]{2})?$ ]]; then
+        # Handle numeric timezones like +0330, +03:30, or +03.
+        # POSIX TZ uses the opposite sign of the UTC offset.
+        if [[ "${BASH_REMATCH[1]}" == "+" ]]; then
+            numeric_tz="XXX-${BASH_REMATCH[2]}:${BASH_REMATCH[3]:-00}"
+        else
+            numeric_tz="XXX+${BASH_REMATCH[2]}:${BASH_REMATCH[3]:-00}"
+        fi
+        target_time=$(TZ="$numeric_tz" datef -d "$time_str" +%s 2>/dev/null)
     else
         # Handle named timezones like UTC, EST, PST, or region formats
         TZ="$timezone_str" target_time=$(datef -d "$time_str" +%s 2>/dev/null)
@@ -157,9 +163,14 @@ if [ $target_time -le $current_time ]; then
                 ;;
         esac
         
-        if [[ "$tz_for_next_day" =~ ^[+-][0-9]{1,4}$ ]]; then
-            # Handle numeric timezones like +0500 or -0800
-            target_time=$(datef -d "$time_str $tz_for_next_day +1 day" +%s 2>/dev/null)
+        if [[ "$tz_for_next_day" =~ ^([+-])([0-9]{1,2}):?([0-9]{2})?$ ]]; then
+            # Handle numeric timezones like +0330, +03:30, or +03.
+            if [[ "${BASH_REMATCH[1]}" == "+" ]]; then
+                numeric_tz="XXX-${BASH_REMATCH[2]}:${BASH_REMATCH[3]:-00}"
+            else
+                numeric_tz="XXX+${BASH_REMATCH[2]}:${BASH_REMATCH[3]:-00}"
+            fi
+            target_time=$(TZ="$numeric_tz" datef -d "$time_str +1 day" +%s 2>/dev/null)
         else
             # Handle named timezones like UTC, EST, PST, or region formats
             TZ="$tz_for_next_day" target_time=$(datef -d "$time_str +1 day" +%s 2>/dev/null)

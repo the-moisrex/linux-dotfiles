@@ -45,7 +45,7 @@ show_help() {
 find_firefox_default_profile() {
     local profiles_ini="$HOME/.mozilla/firefox/profiles.ini"
     if [[ -f "$profiles_ini" ]]; then
-        local default_path=$(awk '/\[Profile[0-9]+\]/ {block=0} /Default=1/ {block=1} block && /Path=/ {print $2; exit}' "$profiles_ini")
+        local default_path=$(awk '/\[Profile[0-9]+\]/ {block=0} /Default=1/ {block=1} block && /^Path=/ {sub(/^Path=/, "", $0); print; exit}' "$profiles_ini")
         [[ -n "$default_path" ]] && echo "$default_path" || echo ""
     else
         echo ""
@@ -274,8 +274,9 @@ if [[ "$mode" == "browser" ]]; then
         exit 1
     fi
 
-    # Parse playlists from HTML
-    playlists=$(echo "$html" | grep -oE '/playlist\?list=[^"]+')
+    # Parse playlists from HTML (pair each playlist URL with its title)
+    playlists=$(echo "$html" | grep -oE 'href="/playlist\?list=[^"]+"[^>]*title="[^"]*"|title="[^"]*"[^>]*href="/playlist\?list=[^"]+"' | \
+      sed -E 's/.*title="([^"]*)".*href="(\/playlist\?list=[^"]+)".*/\2\t\1/; s/.*href="(\/playlist\?list=[^"]+)".*title="([^"]*)".*/\1\t\2/')
     [[ -z "$playlists" ]] && {
         echo "Error: No playlists found on the page."
         if [[ $verbose -eq 1 ]]; then
@@ -289,13 +290,19 @@ if [[ "$mode" == "browser" ]]; then
     mkdir -p "$output_dir"
 
     # Process each playlist
-    while IFS=$'\t' read -r name url; do
+    while IFS=$'\t' read -r url name; do
         file_name=$(echo "$name" | sed 's/[^a-zA-Z0-9]/_/g')
         file_path="$output_dir/$file_name.txt"
         [[ $verbose -eq 1 ]] && echo "Creating file for playlist '$name': $file_path"
         full_url="https://www.youtube.com$url"
         yt_dlp_cmd="yt-dlp --quiet --no-warnings --flat-playlist --print \"%(webpage_url)s  |  %(title)s\""
-        [[ -n "$cookies_file" ]] && yt_dlp_cmd="$yt_dlp_cmd --cookies $cookies_file" || yt_dlp_cmd="$yt_dlp_cmd --cookies-from-browser $browser:$profile"
+        if [[ -n "$cookies_file" ]]; then
+            yt_dlp_cmd="$yt_dlp_cmd --cookies $cookies_file"
+        elif [[ -n "$profile" ]]; then
+            yt_dlp_cmd="$yt_dlp_cmd --cookies-from-browser $browser:$profile"
+        else
+            yt_dlp_cmd="$yt_dlp_cmd --cookies-from-browser $browser"
+        fi
         eval "$yt_dlp_cmd \"$full_url\" > \"$file_path\""
     done <<< "$playlists"
 fi

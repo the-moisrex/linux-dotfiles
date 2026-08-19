@@ -56,8 +56,11 @@ elif pgrep "qtcreator" > /dev/null; then
     qtcreator -client "${FILEPATH}:${LINE}"
 
 else
-    echo "No supported running IDE detected. Falling back to default editor ($EDITOR)..."
-    if [[ "$EDITOR" == *"nvim"* || "$EDITOR" == *"vim"* ]]; then
+    echo "No supported running IDE detected. Falling back to default editor (${EDITOR:-none})..."
+    if [[ -z "$EDITOR" ]]; then
+        echo "Error: No supported IDE is running and \$EDITOR is not set." >&2
+        exit 1
+    elif [[ "$EDITOR" == *"nvim"* || "$EDITOR" == *"vim"* ]]; then
         $EDITOR "+call cursor($LINE, $COL)" "$FILEPATH"
     elif [[ "$EDITOR" == *"hx"* ]]; then
         $EDITOR "${FILEPATH}:${LINE}:${COL}"

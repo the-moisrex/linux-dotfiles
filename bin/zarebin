@@ -25,6 +25,14 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Check required dependencies
+for cmd in curl jq python3; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: '$cmd' is required but not installed." >&2
+        exit 1
+    fi
+done
+
 show_help() {
     cat << EOF
 Usage: $0 [options] <search_query>
@@ -113,7 +121,7 @@ if [ -z "$QUERY" ]; then
 fi
 
 # URL encode the query using Python for proper UTF-8 encoding
-ENCODED_QUERY=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$QUERY', encoding='utf-8'))")
+ENCODED_QUERY=$(QUERY="$QUERY" python3 -c "import os, urllib.parse; print(urllib.parse.quote(os.environ['QUERY'], encoding='utf-8'))")
 
 # Build the API URL
 API_URL="https://zarebin.ir/gse/api/search?q=${ENCODED_QUERY}&pl=0&page=${PAGE}&ldi=0&user_device=${DEVICE}&limit=${LIMIT}&enable_smart_answers=${ENABLE_SMART_ANSWERS}"

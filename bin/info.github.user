@@ -91,7 +91,7 @@ def findPublicKeysFromUsername(username):
                 for email in emails:
                     email_out.append(email)
     if ssh_response:
-        output.append(f'[+] {'SSH_keys':>{pad}}: https:/github.com/{username}.keys')
+        output.append(f'[+] {'SSH_keys':>{pad}}: https://github.com/{username}.keys')
         jsonOutput['SSH_keys'] = f'https://github.com/{username}.keys'
 
 

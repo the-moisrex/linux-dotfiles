@@ -1,10 +1,20 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 #TOKEN=""
 #PROJECT=""
 # How many to delete from the oldest.
 PER_PAGE=100
+
+if [ -z "${TOKEN:-}" ] || [ -z "${PROJECT:-}" ]; then
+    echo "Error: Set the TOKEN and PROJECT environment variables (see the script header)." >&2
+    exit 1
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: 'jq' is required but not installed." >&2
+    exit 1
+fi
 
 for PIPELINE in $(curl --header "PRIVATE-TOKEN: $TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT/pipelines?per_page=$PER_PAGE&sort=asc" | jq '.[].id') ; do
     echo "Deleting pipeline $PIPELINE"

@@ -56,6 +56,10 @@ if [ ${#dedup_args[@]} -eq 0 ]; then
     dedup_args+=("news.live")
 fi
 
+if [ ${#news_args[@]} -eq 0 ]; then
+    news_args+=("iran")
+fi
+
 prev_content=""
 while true; do
     if ! news_output="$(news "${news_args[@]}" | dedup "${dedup_args[@]}")"; then

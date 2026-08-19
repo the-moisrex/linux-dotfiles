@@ -11,4 +11,4 @@ SCREEN_res=$(xrandr -q --current | grep '*' | awk '{print$1}')
 #ffmpeg -f alsa -thread_queue_size 1024 -i hw:0 -c:a aac -f x11grab -r 25 -s $SCREEN_res -i $DISPLAY -c:v libx264 -crf 18 -preset superfast -qp 0 "$1"
 
 
-ffmpeg -f alsa -thread_queue_size 1024 -i hw:0,0 -c:a aac -f x11grab -r 25 -s $SCREEN_res -i $DISPLAY -c:v libx264 -crf 18 -preset superfast -qp 0 "$1"
+ffmpeg -f alsa -thread_queue_size 1024 -i hw:0,0 -c:a aac -f x11grab -r 25 -s $SCREEN_res -i $DISPLAY -c:v libx264 -crf 18 -preset superfast "$1"

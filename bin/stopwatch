@@ -78,7 +78,7 @@ fi
 
 while true; do
     STOPWATCH=$(TZ=UTC datef $DATE_INPUT $DATE_FORMAT | ( ([[ "$NANOS_SUPPORTED" ]] && sed 's/.\{7\}$//') || cat ) )
-    printf "\r\e%s" "$STOPWATCH"
+    printf "\r\e[2K%s" "$STOPWATCH"
     sleep 0.03
 done
 

@@ -87,7 +87,7 @@ EXTRACT_SED='s/^(.*:[0-9]+):[[:space:]]*(TYPED_)?TEST(_[A-Z]+)?\(([a-zA-Z0-9_]+)
 if [[ $FILES_FROM_STDIN -eq 1 ]]; then
     if [[ -s "$TMP_FILES" ]]; then
         # /dev/null ensures grep always prepends the filename even if xargs passes 1 file at a time
-        xargs -a "$TMP_FILES" dgrep -nEI "$GREP_PATTERN" /dev/null 2>/dev/null | sed -E "$EXTRACT_SED" > "$TMP_DB"
+        xargs -a "$TMP_FILES" grep -nEI "$GREP_PATTERN" /dev/null 2>/dev/null | sed -E "$EXTRACT_SED" > "$TMP_DB"
     fi
 elif [[ $SEARCH_ALL -eq 1 ]] || ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     grep -rnwEI --include=\*.{cpp,cc,cxx,h,hpp} "$GREP_PATTERN" . | sed -E "$EXTRACT_SED" > "$TMP_DB"

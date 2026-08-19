@@ -7,7 +7,7 @@ fi
 
 TIMEWARRIORDB=".timewarrior";
 
-until [ "$(realpath "$TIMEWARRIORDB")" = "/" ] || [ -d "$TIMEWARRIORDB" ]; do
+until [ "$(realpath -m "$TIMEWARRIORDB")" = "/" ] || [ -d "$TIMEWARRIORDB" ]; do
   TIMEWARRIORDB="../${TIMEWARRIORDB}";
 done;
 

@@ -34,13 +34,15 @@ function macvlan_exists {
   link_exists "$macvlan@$device"
 }
 
+# Only parse CLI args when executed directly
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 for i in "$@"; do
   case $i in
     -ln=*|--linkname=*)
       linkname="${i#*=}"
       ;;
 
-    -nsn=*|--nsname|--namespacename)
+    -nsn=*|--nsname=*|--namespacename=*)
       nsn="${i#*=}"
       ;;
 
@@ -54,7 +56,10 @@ for i in "$@"; do
 
   esac
 done
+fi
 
+# Auto-detect the network device when none was given. This also runs when
+# sourced (e.g. by net.ns / net.tor), since they rely on the resolved defaults.
 if [ -z "$device" ]; then
   if link_exists "eno1"; then
     device="eno1";
@@ -69,8 +74,10 @@ if [ -z "$device" ]; then
   elif link_exists "wlp0s20f3"; then
     device="wlp0s20f3"
   else
-    >&2 echo "Error: please specify the device to be used.";
-    exit;
+    if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+      >&2 echo "Error: please specify the device to be used.";
+      exit 1;
+    fi
   fi
 fi
 
@@ -79,15 +86,15 @@ fi
 if [ -z "$mvlan_name" ]; then
   mvlan_name="mvlan0"
   i=0
-  while macvlan_exists $mvlan_name $device; do
+  while macvlan_exists "$mvlan_name" "$device"; do
     ((i++))
     mvlan_name="mvlan$i"
   done
 fi
 
-if macvlan_exists $mvlan_name $device; then
+if macvlan_exists "$mvlan_name" "$device"; then
   >&2 echo "Error: the macvlan name ($mvlan_name) already exists."
-  exit 1
+  [[ "${BASH_SOURCE[0]}" == "$0" ]] && exit 1
 fi
 
 
@@ -95,7 +102,7 @@ fi
 if [ -z "$linkname" ]; then
   linkname="ln0"
   i=0
-  while link_exists $linkname; do
+  while link_exists "$linkname"; do
     ((i++))
     linkname="ln$i"
   done
@@ -103,14 +110,14 @@ fi
 
 if link_exists "$linkname"; then
   >&2 echo "Error: the link name ($linkname) already exists."
-  exit 1
+  [[ "${BASH_SOURCE[0]}" == "$0" ]] && exit 1
 fi
 
 
 if [ -z "$nsn" ]; then
   nsn="ns0"
   i=0
-  while netns_exists $nsn; do
+  while netns_exists "$nsn"; do
     ((i++))
     nsn="ns$i"
   done
@@ -118,11 +125,12 @@ fi
 
 if netns_exists "$nsn"; then
   >&2 echo "Error: the namespace ($nsn) already exists."
-  exit 1
+  [[ "${BASH_SOURCE[0]}" == "$0" ]] && exit 1
 fi
 
 
 
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 echo "Default values:"
 echo "  Device:    $device"
 echo "  netns:     $nsn"
@@ -130,6 +138,7 @@ echo "  link:      $linkname"
 echo "  macvlan:   $mvlan_name"
 echo
 echo
+fi
 
 
 function add_skip_vpn_ns {

@@ -5,7 +5,7 @@ if ! command -v chromium >/dev/null; then
     exit 1;
 fi
 
-tor_cmds=""
+tor_cmds=()
 case $1 in
 	--tor|tor)
         if [ -z "$2" ]; then
@@ -15,13 +15,13 @@ case $1 in
             shift;
         fi;
         # --host-resolver-rules='MAP * ~NOTFOUND , EXCLUDE 127.0.0.1'
-		tor_cmds="--proxy-server=\"socks5://127.0.0.1:$port\""
+		tor_cmds=(--proxy-server="socks5://127.0.0.1:$port")
 		shift
 		;;
 esac
 
 dir=$(mktemp -d)
 echo "Chromium Config Directory: $dir"
-eval chromium --incognito --user-data-dir="$dir" "$tor_cmds" $@
+chromium --incognito --user-data-dir="$dir" "${tor_cmds[@]}" "$@"
 rm -rf "$dir"
 echo "Chromium Config Directory $dir Deleted."

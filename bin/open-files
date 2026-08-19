@@ -14,7 +14,7 @@ show_help() {
     echo "Options:"
     echo "  -h, --help        Show this help message and exit"
     echo "  -v, --verbose     Print scanning information and status messages"
-    echo "  -a, --active      Attempt to find ONLY the active tab (Requires 'wmctrl')"
+    echo "  -a, --active      Attempt to find ONLY the active tab (Requires 'xdotool')"
     echo "  -A, --all-files   Do not filter noise; show ALL open files including system files"
     echo ""
     echo "Arguments:"
@@ -54,14 +54,21 @@ if [[ ${#PIDS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-# 2. Handle --active (Best effort via Window Titles)
+# 2. Handle --active (Best effort via the active window PID)
 if [[ $ACTIVE -eq 1 ]]; then
-    if command -v wmctrl &> /dev/null; then
-        wmctrl -l | awk '{$1=$2=$3=""; print substr($0,4)}'
+    if command -v xdotool &> /dev/null; then
+        ACTIVE_PID=$(xdotool getactivewindow getwindowpid 2>/dev/null)
+        if [[ -n "$ACTIVE_PID" ]]; then
+            PIDS=("$ACTIVE_PID")
+            log "Active window PID: $ACTIVE_PID"
+        else
+            log "Warning: could not determine the active window's PID."
+            exit 0
+        fi
     else
-        log "Warning: 'wmctrl' not installed. Cannot detect active GUI tabs."
+        log "Warning: 'xdotool' not installed. Cannot detect the active window."
+        exit 0
     fi
-    exit 0
 fi
 
 # 3. Determine Noise Filters based on Category

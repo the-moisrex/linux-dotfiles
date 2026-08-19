@@ -54,7 +54,7 @@ lastDownloadedFile="/tmp/wallpaper_download_time.txt"
 # the old wallpaper
 old=$(gsettings get org.gnome.desktop.background picture-uri | tr -d "'")
 cleanold="${old/file:\/\//}"
-lastWallpaper=$(ls "$saveDir" -Art | tail -n 1)
+lastWallpaper=$(ls -Art "$saveDir" | tail -n 1)
 lastWallpaperFilename=$(basename -- "$lastWallpaper")
 
 function set_wallpaper {
@@ -88,7 +88,7 @@ function set_wallpaper {
 mkdir -p $saveDir
 
 # setting the background image before it's loaded
-if [ -f "$lastWallpaper" ] && [ ! -f "${cleanold}" ]; then
+if [ -f "$saveDir$lastWallpaper" ] && [ ! -f "${cleanold}" ]; then
 	set_wallpaper $lastWallpaper
 fi;
 
@@ -107,16 +107,6 @@ if [ ! -f "$saveDir$lastWallpaper" ] ||
 
 	# Form the URL for the default pic resolution
 	defaultPicURL=$bing$(echo $(curl -L -H "$userAgent" -s $xmlURL) | grep -oP "<url>(.*)</url>" | cut -d ">" -f 2 | cut -d "<" -f 1)
-
-  echo $(curl -s $xmlURL)
-  echo xml url: $xmlURL
-  echo desiredPicURL: $desiredPicURL
-  echo defaultPicURL: $defaultPicURL
-
-	# $picName contains the filename of the Bing pic of the day
-
-	# Attempt to download the desired image resolution. If it doesn't
-	# exist then download the default image resolution
 
   if (wget --user-agent="$userAgent" --quiet --spider "$desiredPicURL")
 	then
@@ -138,7 +128,7 @@ if [ ! -f "$saveDir$lastWallpaper" ] ||
 	date +%s > "$lastDownloadedFile";
 
 	# Remove pictures older than 30 days
-	find $saveDir -atime 30 -delete
+	find "$saveDir" -atime +30 -delete
 
 ## upldate the last image
 else

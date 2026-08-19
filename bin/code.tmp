@@ -136,7 +136,7 @@ fi
 
 # Copy template contents
 [[ $VERBOSE -eq 1 ]] && echo "Copying template contents from $template_dir"
-cp -r "$template_dir"/* "$target_dir/"
+cp -a "$template_dir"/. "$target_dir/"
 
 # Only determine main file if we need to (when no files provided)
 if [[ ${#files[@]} -eq 0 && -z "$main_file" ]]; then

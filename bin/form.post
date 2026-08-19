@@ -124,10 +124,10 @@ for raw_pair in "${ALL_PAIRS[@]}"; do
     if [ $DATA_URI -eq 1 ]; then
         enc_name=$(urlencode "$name")
         enc_value=$(urlencode "$value")
-        INPUTS="$INPUTS        <input type=\"hidden\" name=\"$enc_name\" value=\"$enc_value\">\n"
+        INPUTS+="        <input type=\"hidden\" name=\"$enc_name\" value=\"$enc_value\">"$'\n'
     else
         # For file:// we can use the raw (decoded) values – browsers will encode on submit
-        INPUTS="$INPUTS        <input type=\"hidden\" name=\"$name\" value=\"$value\">\n"
+        INPUTS+="        <input type=\"hidden\" name=\"$name\" value=\"$value\">"$'\n'
     fi
 done
 

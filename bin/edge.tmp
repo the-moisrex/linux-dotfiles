@@ -10,7 +10,7 @@ if ! command -v $cmd >/dev/null; then
 fi
 
 
-tor_cmds=""
+tor_cmds=()
 case $1 in
 	--tor|tor)
         if [ -z "$2" ]; then
@@ -20,13 +20,13 @@ case $1 in
             shift;
         fi;
         # --host-resolver-rules='MAP * ~NOTFOUND , EXCLUDE 127.0.0.1'
-		tor_cmds="--proxy-server=\"socks5://127.0.0.1:$port\""
+		tor_cmds=(--proxy-server="socks5://127.0.0.1:$port")
 		shift
 		;;
 esac
 
 dir=$(mktemp -d)
 echo "Microsoft Edge Config Directory: $dir"
-eval $cmd --inprivate --user-data-dir="$dir" "$tor_cmds" --new-window $@
+"$cmd" --inprivate --user-data-dir="$dir" "${tor_cmds[@]}" --new-window "$@"
 rm -rf "$dir"
 echo "Microsoft Edge Config Directory $dir Deleted."

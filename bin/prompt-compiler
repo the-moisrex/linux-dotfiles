@@ -165,7 +165,18 @@ def process_modification(input_text):
             clean_file = file_match[1:] if file_match.startswith("@") else file_match
             if clean_file in PROMPT_COMMANDS_CACHE:
                 return file_match # Treat as unchanged text if it's a command name collision
-            
+
+            # If @ is followed by a literal filesystem path, read it directly
+            # instead of shelling out to `prompt files`.
+            candidate = os.path.expanduser(clean_file)
+            if os.path.isfile(candidate):
+                try:
+                    with open(candidate, "r", errors="replace") as f:
+                        appended_data.append(f"\n--- FILE: {clean_file} ---\n{f.read()}\n")
+                    return file_match
+                except OSError:
+                    pass
+
             out = run_shell(["prompt", "files", clean_file])
             if out is not None:
                 appended_data.append(f"\n--- FILE: {clean_file} ---\n{out}\n")

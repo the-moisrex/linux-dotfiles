@@ -222,9 +222,12 @@ def run_commands(rules, info):
     """Execute commands for activity state change"""
     toggle_state = info['toggle_state']
     for rule in rules:
-        # Handle toggle commands
-        for toggle_cmd in rule.get('toggle', []):
-            run_command(toggle_cmd, info)
+        # Handle toggle commands: fire only once per transition, when entering
+        # a matching activity, so a rule matching both the old and the new
+        # activity doesn't toggle twice (net no-op).
+        if toggle_state == 'in':
+            for toggle_cmd in rule.get('toggle', []):
+                run_command(toggle_cmd, info)
         
         # Handle in/out commands
         for cmd in rule.get(toggle_state, []):

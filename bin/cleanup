@@ -58,11 +58,11 @@ export share cache config state runtime desktop downloads
 
 # Determine trash command
 if command -v trash-put >/dev/null 2>&1; then
-  trash_cmd="trash-put"
+  trash_cmd=(trash-put)
 else
-  trash_cmd="rm -rf"
+  trash_cmd=(rm -rf)
 fi
-export trash="$trash_cmd"  # $trash points to the command
+export trash="${trash_cmd[*]}"  # $trash points to the command
 
 # Global totals
 TOTAL_BYTES=0
@@ -93,7 +93,7 @@ function trash() {
       TOTAL_FILES=$((TOTAL_FILES + files))
       TOTAL_DIRS=$((TOTAL_DIRS + dirs))
     else
-      "$trash_cmd" "$path"
+      "${trash_cmd[@]}" "$path"
       if [ $? -eq 0 ]; then
         echo -e "\e[32m✔ Trashed: $path ($human_size)\e[0m"
         TOTAL_BYTES=$((TOTAL_BYTES + bytes))

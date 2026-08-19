@@ -178,10 +178,6 @@ create_file() {
     local format=$2
     local filename=$3
 
-    # wait for the others to finish first
-    if [ "$(jobs -p | wc -l)" -ge "$max_jobs" ]; then
-        wait -n
-    fi
     temp_dir="$(mktemp -d --suffix="-chromium")"
 
     case "$format" in
@@ -192,7 +188,7 @@ create_file() {
             try timeout "${TIMEOUT}s" chromium --user-data-dir="$temp_dir" "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
             ;;
         mhtml)
-            try timeout "${TIMEOUT}s" chromium --user-data-dir="$temp_dir" "${chromium_default_opts[@]}" --dump-dom "$url" > "$filename" 2>/dev/null
+            save_mhtml "$url" "$filename"
             ;;
         jpg|jpeg|png)
             try timeout "${TIMEOUT}s" chromium --user-data-dir="$temp_dir" "${chromium_default_opts[@]}" --screenshot="$filename" "$url" 2>/dev/null
@@ -208,6 +204,155 @@ create_file() {
         echo "Warning: Failed to save $format for $url" >&2
     fi
     rm -rf "$temp_dir";
+}
+
+# Save the page as a real MHTML file via the DevTools Page.captureSnapshot API.
+save_mhtml() {
+    local url=$1
+    local filename=$2
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: 'python3' is required for --mhtml." >&2
+        return 1
+    fi
+    try python3 - "$url" "$filename" <<'PYEOF'
+import json, os, sys, time, struct, base64, socket, subprocess, urllib.request, tempfile, shutil
+
+def main():
+    url = sys.argv[1]
+    out = sys.argv[2]
+    userdir = tempfile.mkdtemp(prefix="save-url-mhtml-")
+    proc = subprocess.Popen([
+        "chromium", "--headless=new", "--disable-gpu", "--no-sandbox",
+        "--no-first-run", "--disable-extensions", "--disable-dev-shm-usage",
+        "--user-data-dir=" + userdir, "--remote-debugging-port=0", url,
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        port_path = os.path.join(userdir, "DevToolsActivePort")
+        port = None
+        for _ in range(100):
+            if os.path.exists(port_path):
+                with open(port_path) as f:
+                    port = int(f.readline().strip())
+                break
+            time.sleep(0.1)
+        if port is None:
+            raise RuntimeError("DevTools port not found")
+        ws_url = None
+        for _ in range(50):
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:%d/json/list" % port, timeout=2) as r:
+                    targets = json.loads(r.read())
+                for t in targets:
+                    if t.get("type") == "page":
+                        ws_url = t.get("webSocketDebuggerUrl")
+                        break
+                if ws_url:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.2)
+        if ws_url is None:
+            raise RuntimeError("no page target found")
+        mhtml = websocket_capture(ws_url)
+        with open(out, "wb") as f:
+            f.write(mhtml)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        shutil.rmtree(userdir, ignore_errors=True)
+
+def websocket_capture(ws_url):
+    rest = ws_url[len("ws://"):]
+    hostport, _, path = rest.partition("/")
+    path = "/" + path
+    host, _, port = hostport.partition(":")
+    port = int(port or 80)
+    s = socket.create_connection((host, port), timeout=15)
+    key = base64.b64encode(os.urandom(16)).decode()
+    s.sendall((
+        "GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\n"
+        "Connection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n"
+    ) % (path, hostport, key).encode())
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        resp += s.recv(4096)
+    if b" 101 " not in resp.split(b"\r\n", 1)[0]:
+        raise RuntimeError("websocket handshake failed")
+
+    def send_frame(data):
+        payload = data if isinstance(data, bytes) else data.encode()
+        mask = os.urandom(4)
+        header = bytearray([0x81])
+        ln = len(payload)
+        if ln < 126:
+            header.append(0x80 | ln)
+        elif ln < 65536:
+            header.append(0x80 | 126)
+            header += struct.pack(">H", ln)
+        else:
+            header.append(0x80 | 127)
+            header += struct.pack(">Q", ln)
+        header += mask
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        s.sendall(bytes(header) + masked)
+
+    def recv_exact(n):
+        buf = b""
+        while len(buf) < n:
+            chunk = s.recv(n - len(buf))
+            if not chunk:
+                raise RuntimeError("socket closed")
+            buf += chunk
+        return buf
+
+    def recv_frame():
+        b1, b2 = recv_exact(2)
+        opcode = b1 & 0x0F
+        ln = b2 & 0x7F
+        if ln == 126:
+            ln = struct.unpack(">H", recv_exact(2))[0]
+        elif ln == 127:
+            ln = struct.unpack(">Q", recv_exact(8))[0]
+        if b2 & 0x80:
+            mask = recv_exact(4)
+            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(recv_exact(ln)))
+        else:
+            payload = recv_exact(ln)
+        if opcode == 0x9:
+            send_frame(payload)
+            return None
+        return opcode, payload
+
+    send_frame(json.dumps({"id": 1, "method": "Page.captureSnapshot",
+                           "params": {"format": "mhtml"}}))
+    data = b""
+    while True:
+        frame = recv_frame()
+        if frame is None:
+            continue
+        opcode, payload = frame
+        if opcode == 0x1 or opcode == 0x2:
+            data += payload
+            try:
+                obj = json.loads(data.decode())
+                if obj.get("id") == 1:
+                    if "error" in obj:
+                        raise RuntimeError("capture error: %s" % obj["error"])
+                    s.close()
+                    return obj["result"]["data"].encode("utf-8")
+            except json.JSONDecodeError:
+                pass
+        elif opcode == 0x8:
+            break
+    raise RuntimeError("connection closed before capture result")
+
+if __name__ == "__main__":
+    main()
+PYEOF
 }
 
 # Handle --output for single URL (sequential processing)
@@ -256,69 +401,45 @@ else
         mkdir -p "$dir" || exit 1
     fi
 
-    # Process multiple URLs in parallel
-    if [ "$out_mode" == "unique" ]; then
-        declare -A used_filenames
-        for url in "${urls[@]}"; do
-            if [ -z "$url" ]; then
-                continue;
+    # Process multiple URLs in parallel, computing filenames in the parent
+    # shell so that --unique dedup and the --ignore check actually work.
+    declare -A used_filenames
+    running=0
+    for url in "${urls[@]}"; do
+        if [ -z "$url" ]; then
+            continue;
+        fi
+        for format in "${formats[@]}"; do
+            base_filename=$(get_title "$url")
+            filename=""
+            if [ "$out_mode" == "unique" ]; then
+                key="${format}_${base_filename}"
+                count=${used_filenames["$key"]:-0}
+                if [ "$count" -eq 0 ]; then
+                    unique_base="$base_filename"
+                else
+                    unique_base="${base_filename}_${count}"
+                fi
+                used_filenames["$key"]=$((count + 1))
+                filename="${unique_base}.${format}"
+            else
+                filename="${base_filename}.${format}"
             fi
-            for format in "${formats[@]}"; do
-                (
-                    base_filename=$(get_title "$url")
-                    key="${format}_${base_filename}"
-                    count=${used_filenames["$key"]:-0}
-                    if [ "$count" -eq 0 ]; then
-                        unique_base="$base_filename"
-                    else
-                        unique_base="${base_filename}_${count}"
-                    fi
-                    filename="${unique_base}.${format}"
-                    if [ -n "$dir" ]; then
-                        filename="$dir/$filename"
-                    fi
-                    used_filenames["$key"]=$((count + 1))
-                    create_file "$url" "$format" "$filename"
-                ) &
-            done
-        done
-    elif [ "$out_mode" == "replace" ]; then
-        for url in "${urls[@]}"; do
-            if [ -z "$url" ]; then
-                continue;
+            if [ -n "$dir" ]; then
+                filename="$dir/$filename"
             fi
-            for format in "${formats[@]}"; do
-                (
-                    base_filename=$(get_title "$url")
-                    filename="${base_filename}.${format}"
-                    if [ -n "$dir" ]; then
-                        filename="$dir/$filename"
-                    fi
-                    create_file "$url" "$format" "$filename"
-                ) &
-            done
-        done
-    elif [ "$out_mode" == "ignore" ]; then
-        for url in "${urls[@]}"; do
-            if [ -z "$url" ]; then
-                continue;
+            if [ "$out_mode" == "ignore" ] && [ -f "$filename" ]; then
+                echo "Ignored: $filename  (URL: $url)." >&2
+                continue
             fi
-            for format in "${formats[@]}"; do
-                (
-                    base_filename=$(get_title "$url")
-                    filename="${base_filename}.${format}"
-                    if [ -n "$dir" ]; then
-                        filename="$dir/$filename"
-                    fi
-                    if [ -f "$filename" ]; then
-                        echo "Ignored: $filename  (URL: $url)." >&2
-                    else
-                        create_file "$url" "$format" "$filename"
-                    fi
-                ) &
-            done
+            create_file "$url" "$format" "$filename" &
+            running=$((running + 1))
+            if [ "$running" -ge "$max_jobs" ]; then
+                wait -n
+                running=$((running - 1))
+            fi
         done
-    fi
+    done
     wait  # Wait for all background jobs to complete
 fi
 

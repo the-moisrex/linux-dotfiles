@@ -54,11 +54,13 @@ play_sound() {
 
 # Read character by character.
 # Note: 'read -n1' captures a newline as an empty string.
+last_char=""
 while IFS= read -r -n1 char || [[ -n "$char" ]]; do
     if [[ -z "$char" ]]; then
         # Handle newline
         echo
         play_sound
+        last_char=""
     else
         # Print normal character
         echo -n "$char"
@@ -66,9 +68,15 @@ while IFS= read -r -n1 char || [[ -n "$char" ]]; do
         # Play sound on space
         if [[ "$char" == " " ]]; then
             play_sound
+            last_char=""
+        else
+            last_char="$char"
         fi
     fi
 done
 
-# Catch the very last word if there is no trailing newline
-play_sound
+# Catch the very last word if there is no trailing newline (and it wasn't
+# already a newline/space that triggered a sound)
+if [[ -n "$last_char" ]]; then
+    play_sound
+fi

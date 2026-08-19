@@ -90,6 +90,8 @@ declare -A engine_urls=(
     ["stackoverflow-search"]="https://stackoverflow.com/search?q="
     ["wiktionary"]="https://www.wiktionary.org/search?word="
     ["pubmed-simple"]="https://pubmed.ncbi.nlm.nih.gov/?term="
+    ["flightaware"]="https://www.flightaware.com/live/flight/"
+    ["amazon"]="https://www.amazon.com/s?k="
 )
 
 # --- Categories & shortcuts (same as original, extended) ---

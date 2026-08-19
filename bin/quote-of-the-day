@@ -150,9 +150,9 @@ main() {
   # Fetch quotes from selected sources
   for source in "${sources[@]}"; do
     case $source in
-      zen) fetch_zen ;;
-      dad) fetch_dad ;;
-      advice) fetch_advice ;;
+      zen) fetch_zen || true ;;
+      dad) fetch_dad || true ;;
+      advice) fetch_advice || true ;;
     esac
   done
 }

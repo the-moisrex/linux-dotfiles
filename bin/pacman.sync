@@ -8,12 +8,24 @@ function print_help {
 }
 
 function syncto {
-    scp -r /var/cache/pacman/pkg $host:/var/cache/pacman/.
+    scp -r /var/cache/pacman/pkg "$host":/var/cache/pacman/.
 }
 
 function syncfrom {
-    scp -r $host:/var/cache/pacman/pkg /var/cache/pacman/.
+    scp -r "$host":/var/cache/pacman/pkg /var/cache/pacman/.
 }
+
+if [[ "$action" == "to" || "$action" == "from" ]]; then
+    if [[ -z "$host" ]]; then
+        echo "Error: '$action' requires a host." >&2
+        print_help
+        exit 1
+    fi
+    if ! command -v scp >/dev/null 2>&1; then
+        echo "Error: 'scp' is required but not installed." >&2
+        exit 1
+    fi
+fi
 
 case $action in
     to)

@@ -2,7 +2,7 @@
 
 curdir=$(dirname "$0")
 
-source $curdir/net
+source "$curdir/net"
 USER="tor"
 
 function run_tor {

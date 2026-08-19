@@ -172,7 +172,7 @@ for file in "${INPUT_PACKAGE_LIST_FILES[@]}"; do
         pkg="$(echo "$pkg" | xargs)" # trim whitespace
         [[ -z "$pkg" || "$pkg" == \#* ]] && continue
         # If the user provided a version in the text file, keep it; otherwise append $VERSION
-        if [[ "$pkg" == *@* && "$pkg" != \@*@* ]]; then
+        if [[ "$pkg" == *@* && -n "${pkg%@*}" ]]; then
             echo "$pkg" >> "$SPECS_FILE"
         else
             echo "${pkg}@${VERSION}" >> "$SPECS_FILE"

@@ -1,6 +1,8 @@
 #!/bin/bash
 
 lang=$1
-for file in *.mkv; do
-  ./extract-sub "$lang" "$file";
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+shopt -s nullglob
+for file in *.mkv *.MKV; do
+  "$script_dir/extract-sub" "$lang" "$file";
 done

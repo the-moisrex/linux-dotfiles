@@ -35,6 +35,12 @@ while [[ $# -gt 0 ]]; do
 
         --http-proxy)
             iptables=false
+            nftables=false
+            shift 1
+            ;;
+
+        --no-nftables)
+            nftables=false
             shift 1
             ;;
 
@@ -89,7 +95,7 @@ else
 fi
 
 if $nftables; then
-    nft delete table inet tor.nat;
+    nft delete table inet tor.nat 2>/dev/null || true
 elif $iptables; then
     # Delete the iptables' rules
     while true; do

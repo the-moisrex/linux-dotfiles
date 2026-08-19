@@ -17,14 +17,14 @@ fi
 TASKDATA=".task";
 TASKRC=".taskrc";
 
-until [ "$(realpath "$TASKRC")" = "/.taskrc" ] || \
-      [ "$(realpath "$TASKRC")" = "/" ] || \
+until [ "$(realpath -m "$TASKRC")" = "/.taskrc" ] || \
+      [ "$(realpath -m "$TASKRC")" = "/" ] || \
       [ -f "$TASKRC" ]; do
   TASKRC="../${TASKRC}";
 done;
 
-until [ "$(realpath "$TASKDATA")" = "/.task" ] || \
-      [ "$(realpath "$TASKDATA")" = "/" ] || \
+until [ "$(realpath -m "$TASKDATA")" = "/.task" ] || \
+      [ "$(realpath -m "$TASKDATA")" = "/" ] || \
       [ -d "$TASKDATA" ]; do
   TASKDATA="../${TASKDATA}";
 done;

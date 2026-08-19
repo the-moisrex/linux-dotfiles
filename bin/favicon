@@ -132,19 +132,21 @@ for url in "${URLS[@]}"; do
     # Create temporary file for binary data
     tmp_file=$(mktemp)
     
-    # Get headers and content separately
-    if ! headers=$(curl -s -I -L "$favicon_url"); then
+    # Fetch the favicon in one request, capturing the HTTP status and content
+    # type so 404/error pages don't get treated as valid favicons.
+    if ! meta=$(curl -s -L -o "$tmp_file" -w "%{http_code} %{content_type}" "$favicon_url"); then
         echo "Failed to retrieve favicon for: $url" >&2
         rm -f "$tmp_file"
         continue
     fi
     
     # Extract MIME type from headers
-    content_type=$(echo "$headers" | grep -i "^content-type:" | tail -1 | tr -d '\r' | awk '{print $2}' | tr '[:upper:]' '[:lower:]')
+    content_type=$(echo "$meta" | awk '{print $2}' | tr '[:upper:]' '[:lower:]')
+    status=$(echo "$meta" | awk '{print $1}')
     
-    # Download binary data to temporary file
-    if ! curl -s -L -o "$tmp_file" "$favicon_url"; then
-        echo "Failed to download favicon for: $url" >&2
+    # Reject non-success responses (curl still exits 0 on 404)
+    if [[ "$status" != "2"* ]]; then
+        echo "Failed to retrieve favicon for: $url (HTTP $status)" >&2
         rm -f "$tmp_file"
         continue
     fi

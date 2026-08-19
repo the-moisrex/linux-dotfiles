@@ -90,7 +90,7 @@ process_channel() {
     fi
     local current_url="https://t.me/s/${channel_name}${before}"
     content=$(curl -sL "$current_url" 2>/dev/null)
-    page_output=$(echo "$content" |  "$URLS_SCRIPT" | grep -v t.me | grep -v telegram | grep -v w3.org | sort -u)
+    page_output=$(echo "$content" |  "$URLS_SCRIPT" | grep -v t.me | grep -v telegram | grep -v w3.org | sort -u || true)
 
     if [[ -z "$page_output" ]]; then # No more links on this page, break the loop
       break

@@ -305,7 +305,9 @@ start_or_reload_engine() {
 
 process_proxies() {
     normalize_proxy_links "$PROXY_FILE" "$NORMALIZED_FILE"
-    clean_source_file
+    if [[ $DRY_RUN -ne 1 ]]; then
+        clean_source_file
+    fi
 
     if ! build_active_backend_list "$NORMALIZED_FILE" "$ACTIVE_FILE"; then
         warn "No reachable backends found. Retrying in $INTERVAL seconds..."

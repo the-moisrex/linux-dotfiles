@@ -71,7 +71,7 @@ case "$1" in
         # Fallback to KDE klipper for copy (with workaround)
         elif command_exists qdbus; then
             if qdbus org.kde.klipper >/dev/null 2>&1; then
-                xargs -0 qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}
+                xargs -0 -I{} qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}
                 exit 0
             fi
         else
