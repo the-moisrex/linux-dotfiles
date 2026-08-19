@@ -35,6 +35,7 @@
     // font:
     "editor.fontFamily": "JetBrains Mono",
     "editor.fontSize": 14,
+    "editor.lineHeight": 0.9,
     "terminal.integrated.fontSize": 14,
     "notebook.output.fontSize": 12,
     "chat.editor.fontSize": 12,
