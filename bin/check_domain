@@ -1,5 +1,9 @@
 #!/bin/bash
 
-echo "usage: cat alive.txt | check_domain"
+if [[ -t 0 ]]; then
+    echo "usage: cat alive.txt | check_domain" >&2
+    echo "Reads URLs/domains from stdin and checks them in parallel." >&2
+    exit 1
+fi
 
-parallel -j50 -q curl -w 'Status:%{http_code}\t  Size:%{size_download}\t %{url_effective}\n' -o /dev/null -sk
+exec parallel -j50 -q curl -w 'Status:%{http_code}\t  Size:%{size_download}\t %{url_effective}\n' -o /dev/null -sk

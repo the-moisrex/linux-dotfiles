@@ -76,7 +76,7 @@ EOF
 # Copy the same CSS for GTK4 compatibility.
 cp "$theme_dir/gtk-3.0/gtk.css" "$theme_dir/gtk-4.0/gtk.css"
 
-# Convert Markdown from stdin to HTML, then render it as plain text for Zenity.
+# Convert Markdown from stdin to plain text for Zenity.
 env XDG_CONFIG_HOME="$theme_dir" zenity \
 --text-info \
 --title="" \
@@ -84,7 +84,18 @@ env XDG_CONFIG_HOME="$theme_dir" zenity \
 --height=500 \
 --modal \
 --auto-scroll \
-2>/dev/null
+< <(
+    if command -v pandoc >/dev/null 2>&1; then
+        pandoc -f markdown -t plain --wrap=none --no-highlight
+    elif command -v glow >/dev/null 2>&1; then
+        glow -
+    elif command -v mdcat >/dev/null 2>&1; then
+        mdcat -p
+    else
+        # Basic fallback: strip the most common Markdown syntax
+        sed -E 's/\*\*([^*]*)\*\*/\1/g; s/__([^_]*)__/\1/g; s/\*([^*]*)\*/\1/g; s/`([^`]*)`/\1/g; s/^#{1,6}[ \t]+//; s/^[ \t]*[-*+] [ \t]*/- /; s/!\[[^]]*\]\([^)]*\)//g; s/\[([^]]*)\]\([^)]*\)/\1/g'
+    fi
+) 2>/dev/null
 
 # Terminate upstream commands in a pipeline when Zenity closes.
 if $should_quit; then

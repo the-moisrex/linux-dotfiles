@@ -142,11 +142,11 @@ $links"
                 cmd+=("--title" "$title")
             fi
 
-            # read -ra link_array <<< "${all_links[@]}"
+            readarray -t link_array <<< "$all_links"
             if [ ${#pipe_cmd[@]} -gt 0 ]; then
-                "${cmd[@]}" ${all_links[@]} -- ${pipe_cmd[@]}
+                "${cmd[@]}" "${link_array[@]}" -- "${pipe_cmd[@]}"
             else
-                "${cmd[@]}" ${all_links[@]}
+                "${cmd[@]}" "${link_array[@]}"
             fi
         fi
 

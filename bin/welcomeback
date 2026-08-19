@@ -26,7 +26,7 @@ file=$dir/last_visit
 mkdir -p "$dir"
 touch "$file"
 last_visit=$(cat "$file");
-if [ -z "$last_viist" ]; then
+if [ -z "$last_visit" ]; then
     last_visit="200101";
 fi
 days=$(( ($(date -u +%s) - $(date -u --date="${last_visit}" +%s) )/(60*60*24) ))

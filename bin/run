@@ -42,9 +42,9 @@ function calculate_build_dir {
       return
     fi
     if [ -f "$proj_dir/CMakeLists.txt" ]; then
-        build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt \) | xargs -l dirname | sort -u | xargs -l basename);
+        build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt \) -printf '%h\n' 2>/dev/null | sort -u | while IFS= read -r d; do basename "$d"; done);
     else
-        build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt -o -name Makefile \) | xargs -l dirname | sort -u | xargs -l basename);
+        build_dir=$(find "$proj_dir" -maxdepth 2 -type f \( -name build.ninja -o -name CMakeCache.txt -o -name Makefile \) -printf '%h\n' 2>/dev/null | sort -u | while IFS= read -r d; do basename "$d"; done);
     fi
     if $is_interactive; then
         if [ "$(echo -e "$build_dir" | wc -l)" != "1" ]; then
@@ -207,19 +207,19 @@ function run {
 
 
 function keep-running {
-  build_dir=$(find "$proj_dir" -maxdepth 2 -type f -name build.ninja | xargs -l dirname | sort -u | head -n 1 | xargs -l basename);
+  build_dir=$(find "$proj_dir" -maxdepth 2 -type f -name build.ninja -printf '%h\n' 2>/dev/null | sort -u | head -n 1 | while IFS= read -r d; do basename "$d"; done);
   if [ -f "$build_dir/build.ninja" ]; then
     # check build.ninja for the main C++ file so we can find the dependencies of it
     cpp_file=$(awk "/build .*\.o:.*_${1}_/{ print \$4 }" "$build_dir/build.ninja")
     if [ -f "$cpp_file" ]; then
-      "$curdir/clang.deps" "$cpp_file" | entr -crs "$0 --build-dir '${build_dir}' $@";
+      "$curdir/clang.deps" "$cpp_file" | entr -crs "$0 --build-dir $(printf %q "$build_dir") $*";
       return
     fi
   fi
   is_interactive=false
   build_dir=""
   calculate_build_dir
-  git -C "$proj_dir" ls-files -cm | entr -rcs "$0 --build-dir '${build_dir}' $@";
+  git -C "$proj_dir" ls-files -cm | entr -rcs "$0 --build-dir $(printf %q "$build_dir") $*";
 }
 
 function build-step {
@@ -308,6 +308,9 @@ args=("$@")
 arg_pos=0
 for arg in "${args[@]}"; do
     case $arg in
+        build-report|report)
+            # handled in the second pass; do not treat as a build dir
+            ;;
         clang|gcc|build|cmake-build*|build*)
             if [ -z "$build_dir" ]; then
               build_dir=$(find . -name "*${args[$arg_pos]}*" -type d | head -n 1)

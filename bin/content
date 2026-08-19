@@ -158,7 +158,7 @@ show_help() {
     echo "  $ content --asfile -- gnome-text-editor"
     echo "  $ content -- zenity --text-info"
     echo "  $ content --asfile --format odt -- xdg-open"
-    ech
+    echo "  $ content --asfile --format odt -- xdg-open"
     echo
     echo "Pandoc Output Formats:"
     pandoc --list-output-formats | tr '\n' ','
@@ -303,6 +303,24 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
+
+# Dependency checks
+if ! $NO_TRANSFORM && ! command -v pandoc >/dev/null 2>&1; then
+    echo "Error: pandoc is required (use --no-trans to skip conversion)." >&2
+    exit 1
+fi
+if ! $NO_FILTER && ! command -v htmlq >/dev/null 2>&1; then
+    echo "Error: htmlq is required (use --no-filter to skip filtering)." >&2
+    exit 1
+fi
+if ! $NO_CURL && ! command -v curl >/dev/null 2>&1; then
+    echo "Error: curl is required (use --no-curl to read from stdin)." >&2
+    exit 1
+fi
+if ! command -v node >/dev/null 2>&1; then
+    echo "Error: nodejs is required for website detection." >&2
+    exit 1
+fi
 
 # If parent process, handle inputs and parallelization
 if ! $IS_CHILD; then

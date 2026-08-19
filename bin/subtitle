@@ -601,6 +601,11 @@ while [[ $# -gt 0 ]]; do
         --no-cache) CACHE_DISABLED=true; USE_CACHE=false; shift ;;
         -h|--help) usage ;;
         -)
+            # '-' means read the media from stdin; materialize it to a temp file
+            tmp_in="$(mktemp)"
+            cat > "$tmp_in"
+            ARGS+=("$tmp_in")
+            shift
         ;;
         -*)
             echo "Unknown option: $1" >&2

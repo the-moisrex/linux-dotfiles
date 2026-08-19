@@ -76,14 +76,12 @@ sudo ip netns exec $NETNS ip addr add $EMULATOR_IP/24 dev $VETH_NS
 sudo ip netns exec $NETNS ip link set $VETH_NS up
 sudo ip netns exec $NETNS ip link set lo up
 sudo ip netns exec $NETNS ip route add default via $HOST_IP
-# sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
+sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
 
 # nftables NAT configuration
-# sudo nft add table ip emu_nat 2>/dev/null || true
-# sudo nft add chain ip emu_nat postrouting { type nat hook postrouting priority 100 \; }
-# sudo nft add rule ip emu_nat postrouting ip saddr $SUBNET oifname != "$VETH_HOST" masquerade
-
-exit 1
+sudo nft add table ip emu_nat 2>/dev/null || true
+sudo nft add chain ip emu_nat postrouting { type nat hook postrouting priority 100 \; }
+sudo nft add rule ip emu_nat postrouting ip saddr $SUBNET oifname != "$VETH_HOST" masquerade
 
 # Start emulator as current user with proper environment
 echo "Starting emulator '$EMULATOR_AVD' in namespace '$NETNS'..."

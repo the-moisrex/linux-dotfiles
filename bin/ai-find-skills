@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ai-find-skill — professional cross-registry agent-skill finder.
+# ai-find-skills — professional cross-registry agent-skill finder.
 #
 # Searches skills.sh + clawhub.ai + GitHub, then presents EACH board on its own
 # NATIVE metric (skills.sh: installs · clawhub: installs/stars · GitHub: stars),
@@ -12,7 +12,7 @@
 # a transparent relevance hint, not a quality verdict.
 #
 # Usage:
-#   scripts/ai-find-skill "<query>" [--limit N] [--scan K] [--no-scan] [--json]
+#   scripts/ai-find-skills "<query>" [--limit N] [--scan K] [--no-scan] [--json]
 #
 # Requires: jq, curl. Optional: gh (GitHub + skills.sh body fetch), unzip
 # (clawhub body fetch). Missing optional tools degrade gracefully. No API keys.
@@ -20,9 +20,9 @@
 set -uo pipefail
 
 usage() { cat <<'U'
-ai-find-skill — cross-registry agent-skill finder (skills.sh + clawhub.ai + GitHub)
+ai-find-skills — cross-registry agent-skill finder (skills.sh + clawhub.ai + GitHub)
 
-  ai-find-skill "<query>" [--limit N] [--scan K] [--no-scan] [--json]
+  ai-find-skills "<query>" [--limit N] [--scan K] [--no-scan] [--json]
 
   --limit N    results per source (default 10)
   --scan K     security-scan the top K installable candidates per registry (default 2, max 5)
@@ -94,7 +94,7 @@ fetch_clawhub() {
       | jq -c '(.skill // {}) as $s | {
           board:"clawhub", name:($s.slug//""), summary:($s.summary//null),
           installs:($s.stats.installsAllTime//0),
-          stars:($s.stats.stars//0), version:(.latestVersion.version//null),
+          stars:($s.stats.stars//0), version:($s.latestVersion.version//null),
           updatedAt:($s.updatedAt//null), url:("https://clawhub.ai/skill/"+($s.slug//"")),
           repo:null, slug:($s.slug//"") } | select(.name!="")' 2>/dev/null >> "$TMP/clawhub.ndjson"; } &
   done < "$TMP/claw_slugs.txt"

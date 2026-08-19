@@ -221,16 +221,22 @@ function download {
         highlight_code "$cmd";
         echo
         eval "$cmd";
+        rc=$?
         echo
         echo
     else
         echo "Downloading $link with wget..."
         cmd="wget --retry-connrefused --retry-on-host-error --retry-on-http-error=502 --continue ${inp_args[*]} \"$link\"";
         eval "$cmd";
+        rc=$?
     fi
-    echo "$link" >> "$done_file";
-    removed_link=$(grep -v "$link" "$default_list");
-    echo "$removed_link" > "$default_list";
+    if [ $rc -eq 0 ]; then
+        echo "$link" >> "$done_file";
+        removed_link=$(grep -v "$link" "$default_list");
+        echo "$removed_link" > "$default_list";
+    else
+        echo "Download failed, keeping it in the pending list: $link" >&2;
+    fi
 }
 
 # Check if input files are provided

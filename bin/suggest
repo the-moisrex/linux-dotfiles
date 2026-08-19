@@ -6,6 +6,12 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
+# Check if curl is installed
+if ! command -v curl &> /dev/null; then
+    echo "Error: 'curl' is not installed. Please install it to fetch suggestions." >&2
+    exit 1
+fi
+
 # Configuration flags
 USE_GOOGLE=0
 USE_ZAREBIN=0

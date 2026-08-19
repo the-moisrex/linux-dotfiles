@@ -2,5 +2,6 @@
 
 lang=$1
 file=$2
-index=$(ffmpeg -i "$file" 2>&1 | grep $lang | grep Subtitle | head -1 | grep -Eo '[0-9]+:[0-9]+');
-ffmpeg -i "$file" -map $index "$file.$lang.srt";
+index=$(ffmpeg -i "$file" 2>&1 | grep -F "$lang" | grep Subtitle | head -1 | grep -Eo '[0-9]+:[0-9]+');
+[ -z "$index" ] && { echo "No subtitle stream matching '$lang' found in '$file'." >&2; exit 1; }
+ffmpeg -i "$file" -map "$index" "$file.$lang.srt";

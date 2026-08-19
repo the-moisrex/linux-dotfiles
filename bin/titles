@@ -89,7 +89,7 @@ if [[ ${#URLS[@]} -gt 0 ]]; then
     get_title "$url" &
     running_jobs=$((running_jobs + 1))
     if [[ "$running_jobs" -ge "$JOBS" ]]; then
-      wait -n 1
+      wait -n
       running_jobs=$((running_jobs - 1))
     fi
   done
@@ -106,7 +106,7 @@ else
       get_title "$url" &
       running_jobs=$((running_jobs + 1))
       if [[ "$running_jobs" -ge "$JOBS" ]]; then
-        wait -n 1 2>/dev/null
+        wait -n
         running_jobs=$((running_jobs - 1))
       fi
     fi

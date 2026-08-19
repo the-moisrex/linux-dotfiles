@@ -7,10 +7,11 @@ query=""
 for arg in "$@"; do
     if [[ "$arg" == "--print-url" ]]; then
         PRINT_URL_ONLY=1
-        elif [[ "$arg" != "" ]]; then
-        query="$arg"
+    elif [[ "$arg" != "" ]]; then
+        query="$query $arg"
     fi
 done
+query="${query# }"
 
 # Reassign $1 to the query so the rest of the script works as before
 set -- "$query"

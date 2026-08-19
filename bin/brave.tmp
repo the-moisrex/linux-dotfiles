@@ -33,7 +33,7 @@ chromium_default_opts=(
 )
 
 
-tor_cmds=""
+tor_cmds=()
 case $1 in
 	--tor|tor)
         if [ -z "$2" ]; then
@@ -43,15 +43,13 @@ case $1 in
             shift;
         fi;
         # --host-resolver-rules='MAP * ~NOTFOUND , EXCLUDE 127.0.0.1'
-		tor_cmds="--proxy-server=\"socks5://127.0.0.1:$port\""
+		tor_cmds=(--proxy-server="socks5://127.0.0.1:$port")
 		shift
 		;;
 esac
 
 dir=$(mktemp -d)
-options="${chromium_default_opts[*]}"
 echo "Brave Config Directory: $dir"
-brave "$options" --user-data-dir="$dir" "$tor_cmds" "$@"
+brave "${chromium_default_opts[@]}" --user-data-dir="$dir" "${tor_cmds[@]}" "$@"
 rm -rf "$dir"
 echo "Brave Config Directory $dir Deleted."
-wait -n

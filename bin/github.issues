@@ -42,6 +42,12 @@ shift $((OPTIND -1))
 # Remaining arguments are explicit issue numbers (if any)
 EXPLICIT_ISSUES=("$@")
 
+# Validate the concurrency limit: 0 or non-numeric would break the chunking loop
+if ! [[ "$CONCURRENCY" =~ ^[0-9]+$ ]] || (( CONCURRENCY < 1 )); then
+    echo "Warning: invalid concurrency '$CONCURRENCY'; using 1 (sequential)." >&2
+    CONCURRENCY=1
+fi
+
 log_verbose() {
     if [[ $VERBOSE -eq 1 ]]; then
         echo -e "[DEBUG] $1"

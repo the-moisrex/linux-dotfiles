@@ -33,7 +33,7 @@ get_latest_kernel() {
     # Extract versions from all kernels in /boot, then sort naturally to find the highest
     for f in /boot/vmlinuz* /boot/vmlinuz-*; do
         if [[ -f "$f" ]]; then
-            file "$f" | awk '{for(i=1;i<=NF;i++) if($i=="version") print $(i+1)}'
+            file "$f" | awk '{for(i=1;i<=NF;i++) if($i=="version") {v=$(i+1); sub(/,/, "", v); print v}}'
         fi
     done | sort -V | tail -n 1
 }

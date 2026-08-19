@@ -4,6 +4,7 @@
 
 # --- Help Function ---
 help_function() {
+  local exit_code="${1:-0}"
   cat <<EOF
 Usage: $0 [OPTIONS] [PAGES]
 
@@ -24,7 +25,7 @@ Examples:
   $0 3  # Using positional argument
   $0 -p 3 # Using -p option
 EOF
-  exit 0
+  exit "$exit_code"
 }
 
 function try() {
@@ -65,7 +66,7 @@ fi
 OPTS=$(getopt --longoptions "$LONG_OPTS" --options "$SHORT_OPTS" --name "$0" -- "$@")
 
 if [[ $? -ne 0 ]]; then
-  help_function >&2
+  help_function 1 >&2
 fi
 
 eval set -- "$OPTS"
@@ -92,13 +93,13 @@ done
 
 if ! [[ "$PAGES" =~ ^[0-9]+$ ]]; then
   echo "Error: --pages must be a positive integer." >&2
-  help_function >&2
+  help_function 1 >&2
 fi
 PAGES=$(printf "%d" "$PAGES") # Ensure PAGES is treated as integer
 
 if [[ "$PAGES" -lt 1 ]]; then
   echo "Error: --pages must be at least 1." >&2
-  help_function >&2
+  help_function 1 >&2
 fi
 
 

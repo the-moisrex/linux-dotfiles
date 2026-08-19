@@ -1,5 +1,6 @@
 #!/bin/bash
 
-source ./net.tor
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$script_dir/net.tor"
 
 run_tor_proxy - 8090 5 "true"

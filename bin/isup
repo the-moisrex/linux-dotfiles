@@ -51,7 +51,7 @@ function isnotempty {
 
 function ishttpup {
     # todo: ishttpup IPAddr is not supported
-    (ipof $@ | isnotempty) && (! ishttpfiltered $@) || (! ishttpfiltered $@) || false && true
+    (ipof $@ | isnotempty) && (! ishttpfiltered $@)
 }
 
 function ishttpsup {
@@ -59,7 +59,7 @@ function ishttpsup {
     if [ -z "$1" ]; then
         domain="youtube.com"
     fi
-    (ipof $domain | isnotempty) && (! ishttpsfiltered $domain) || (! ishttpsfiltered $domain) || false && true
+    (ipof $domain | isnotempty) && (! ishttpsfiltered $domain)
 }
 
 function print_help {
@@ -80,7 +80,7 @@ function print_help {
 case $1 in
     --help|help|-h)
         print_help;
-        exit 1;
+        exit 0;
         ;;
 
     http)

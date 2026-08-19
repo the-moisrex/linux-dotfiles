@@ -7,9 +7,12 @@ function get {
 }
 
 function get_ip {
-    if ! dig +short myip.opendns.com @resolver1.opendns.com; then
-        dig -4 @1.1.1.1 +short ch txt whoami.cloudflare
+    local ip
+    ip=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null | tr -d '[:space:]')
+    if [[ -z "$ip" ]]; then
+        ip=$(dig -4 @1.1.1.1 +short ch txt whoami.cloudflare 2>/dev/null | tr -d '"[:space:]')
     fi
+    echo "$ip"
 }
 
 case $1 in

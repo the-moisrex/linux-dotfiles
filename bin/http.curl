@@ -111,8 +111,8 @@ BEGIN { reqIndex=0 }
 
   # Check for request name
   reqName=""
-  if (match(lines[1], /^@([A-Za-z0-9._-]+)/, m)) {
-    reqName=m[1]
+  if (match(lines[1], /^@([A-Za-z0-9._-]+)/)) {
+    reqName=substr(lines[1], RSTART+1, RLENGTH-1)
     for (i=1; i<n; i++) lines[i]=lines[i+1]
     n--
   }

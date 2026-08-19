@@ -201,6 +201,17 @@ declare -A cat__sports_highmotion=(
 # helper to get category associative array by name
 get_cat_assoc() {
   local key="$1"
+  local norm_key="$(echo "$key" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+  # check the default (fallback) category and its aliases first
+  local dnames="default,${CAT_default[aliases]}"
+  local n
+  IFS=',' read -r -a darr <<<"$dnames"
+  for n in "${darr[@]}"; do
+    if [[ "$norm_key" == "$n" ]]; then
+      echo "default"
+      return 0
+    fi
+  done
   # map alias -> real category key
   for k in "${!CATEGORIES[@]}"; do
     # read the alias list of this category
@@ -213,7 +224,6 @@ get_cat_assoc() {
     IFS=',' read -r -a namearr <<<"$names"
     for n in "${namearr[@]}"; do
       n="$(echo "$n" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
-      local norm_key="$(echo "$key" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
       if [[ "$norm_key" == "$n" ]]; then
         echo "$k"
         return 0
@@ -342,7 +352,11 @@ if ! canonical_cat="$(get_cat_assoc "$CATEGORY")"; then
 fi
 CATEGORY="$canonical_cat"
 # build associative ref to chosen category
-eval "declare -n CHOSEN=cat__${CATEGORY}"
+if [[ "$CATEGORY" == "default" ]]; then
+  eval "declare -n CHOSEN=CAT_default"
+else
+  eval "declare -n CHOSEN=cat__${CATEGORY}"
+fi
 
 # helper: human readable bytes
 hr_bytes() {
@@ -562,8 +576,8 @@ build_ffmpeg_cmd() {
   fi
 
   cmd+=("$outfile")
-  # Return command as string
-  echo "${cmd[@]}"
+  # Return command via global array so paths with spaces stay intact
+  FFMPEG_CMD=("${cmd[@]}")
 }
 
 # Process files
@@ -629,15 +643,17 @@ for line in "${ESTIMATES[@]}"; do
 
   if $DRY_RUN; then
     # Just show what would be done
+    build_ffmpeg_cmd "$file" "$outfile"
     echo -e "  ${COLOR_YELLOW}DRY RUN:${COLOR_RESET} ffmpeg command:"
-    echo "    $(build_ffmpeg_cmd "$file" "$outfile")"
+    echo "    ${FFMPEG_CMD[*]}"
     TOTAL_ORIG=$((TOTAL_ORIG + orig))
     ((++FILES_SKIPPED))
     continue
   fi
 
   # run ffmpeg command: but we need to run command string carefully (array)
-  IFS=' ' read -r -a cmd_array <<< "$(build_ffmpeg_cmd "$file" "$outfile")"
+  build_ffmpeg_cmd "$file" "$outfile"
+  local cmd_array=("${FFMPEG_CMD[@]}")
 
   # if verbose, show final command with visible args; else hide ffmpeg output
   if $VERBOSE; then
@@ -650,12 +666,18 @@ for line in "${ESTIMATES[@]}"; do
         cmd_array[i+1]="info"
       fi
     done
-    "${cmd_array[@]}"
-    rc=$?
+    if ! "${cmd_array[@]}"; then
+      rc=1
+    else
+      rc=0
+    fi
   else
     # run quietly (no ffmpeg output). But ensure we catch non-zero exit.
-    "${cmd_array[@]}" >/dev/null 2>&1
-    rc=$?
+    if ! "${cmd_array[@]}" >/dev/null 2>&1; then
+      rc=1
+    else
+      rc=0
+    fi
   fi
 
   if (( rc != 0 )); then

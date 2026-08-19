@@ -70,7 +70,7 @@ extract_base_url_from_html() {
     return
   fi
   # Check for "Home" links with absolute URLs if relative URLs exist
-  if grep -q 'href=["'\'']/|src=["'\'']/' <<< "$text"; then
+  if grep -qE 'href=["'\'']/|src=["'\'']/' <<< "$text"; then
     home_url=$(grep -o '<a[^>]*href="https\?://[^"]*"[^>]*>[[:space:]]*Home[[:space:]]*<\/a>' <<< "$text" | \
                sed 's/.*href="\([^"]*\)".*/\1/' | head -n1)
     if [[ -n "$home_url" ]]; then
@@ -85,7 +85,7 @@ if [[ -z "$base_url" ]]; then
 fi
 
 # Warn if relative URLs exist but no base URL is available, only with --verbose
-if [[ $verbose -eq 1 && -z "$base_url" && $(grep -q 'href=["'\'']/|src=["'\'']/' <<< "$input_text"; echo $?) -eq 0 ]]; then
+if [[ $verbose -eq 1 && -z "$base_url" && $(grep -qE 'href=["'\'']/|src=["'\'']/' <<< "$input_text"; echo $?) -eq 0 ]]; then
   echo "Warning: Relative URLs found but no base URL provided or extracted." >&2
 fi
 
@@ -114,7 +114,12 @@ normalize_path() {
       components+=("$part")
     fi
   done
-  echo "/${components[*]:1}" | tr ' ' '/'
+  local result=""
+  for part in "${components[@]:1}"; do
+    result+="/$part"
+  done
+  [[ -n "$result" ]] || result="/"
+  echo "$result"
 }
 
 # Regex for standalone URLs

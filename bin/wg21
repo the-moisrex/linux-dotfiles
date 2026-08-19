@@ -108,12 +108,14 @@ case "$command" in
     last)
         N="${1:-20}"
         TITLES=1
-        if [[ "${2:-}" == "--no-titles" ]]; then
-            TITLES=0
-            shift || true
-        fi
-        shift || true
-        fetch_index | head -n "$N" | while IFS= read -r line; do
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --no-titles) TITLES=0 ;;
+                *) N="$1" ;;
+            esac
+            shift
+        done
+        fetch_index | sed -n "1,${N}p" | while IFS= read -r line; do
             if parse_line "$line"; then
                 output_paper "$TITLES"
             fi
@@ -139,7 +141,7 @@ case "$command" in
             if parse_line "$line"; then
                 match=0
                 for word in "${query[@]}"; do
-                    if echo "$TITLE" | grep -iq "$word"; then
+                    if echo "$TITLE" | grep -iqF "$word"; then
                         match=1
                         break
                     fi
@@ -148,7 +150,8 @@ case "$command" in
                     if [[ "$TITLES" -eq 1 ]]; then
                         highlighted="$TITLE"
                         for word in "${query[@]}"; do
-                            highlighted=$(echo -e "$highlighted" | sed -E "s/($word)/\\\\033[1;31m\1\\\\033[0m/gI")
+                            escaped=$(printf '%s' "$word" | sed 's/[][()\.^$*+?{}|\\]/\\&/g')
+                            highlighted=$(echo -e "$highlighted" | sed -E "s/($escaped)/\\\\033[1;31m\1\\\\033[0m/gI")
                         done
                         output_paper 1 "$highlighted"
                     else

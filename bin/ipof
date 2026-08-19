@@ -8,9 +8,9 @@ function print_help {
 }
 
 case $1 in
-    help|-h|--help)
+    help|-h|--help|"")
         print_help;
-        exit;
+        exit 1;
         ;;
 
     *)

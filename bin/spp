@@ -40,14 +40,25 @@ def read_clang_flags(verbose=False):
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
-                    # Split by spaces
+                    # .clangd YAML entries like "Add: [-std=c++20, -Wall]" /
+                    # "Remove: [...]" — parse the bracketed/comma list directly.
+                    if ":" in line:
+                        key, _, body = line.partition(":")
+                        key = key.strip().lstrip("-").strip()
+                        if key in ("Add", "Remove", "CompileFlags", "Flags"):
+                            body = body.strip().strip("[]")
+                            for token in body.split(","):
+                                token = token.strip()
+                                if token.startswith("-") and not token.startswith("--header-insertion") and not token.startswith("--limit"):
+                                    flags.append(token)
+                            continue
                     for token in shlex.split(line):
-                        # Split comma-separated flags
-                        subtokens = [t.strip() for t in token.split(",") if t.strip()]
-                        for sub in subtokens:
-                            # Keep only valid clang CLI flags
-                            if sub.startswith("-") and not sub.startswith("--header-insertion") and not sub.startswith("--limit"):
-                                flags.append(sub)
+                        # Drop YAML keys / list markers
+                        token = token.strip(",[]")
+                        if not token or token == "-":
+                            continue
+                        if token.startswith("-") and not token.startswith("--header-insertion") and not token.startswith("--limit"):
+                            flags.append(token)
             except Exception as e:
                 if verbose:
                     print(f"[verbose] Failed reading {path}: {e}")

@@ -1,4 +1,17 @@
 #!/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" || "$1" == "help" ]]; then
+    cat <<EOF
+Usage: weather [CITY]
+
+Show the weather using wttr.in. If no CITY is given, the weather for your
+current location is shown.
+
+Options:
+  -h, --help    Show this help message
+EOF
+    exit 0
+fi
+
 curl "wttr.in/$1"
 

@@ -184,5 +184,5 @@ else
   done
 fi
 
-wait -n
+wait
 exit 0

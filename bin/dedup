@@ -58,7 +58,7 @@ touch "$cache_file"
 # Process input lines
 while IFS= read -r line; do
     # Compute SHA hash of the line
-    hash=$(echo "$line" | shasum | awk '{print $1}')
+    hash=$(echo "$line" | sha1sum | awk '{print $1}')
     
     # Check if hash exists in cache
     if ! grep -Fq "$hash" "$cache_file"; then

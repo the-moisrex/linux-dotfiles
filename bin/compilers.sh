@@ -47,13 +47,13 @@ function install() {
 		return;
 	fi;
 
-	if [ -f "$compiler-$version.tar.xz" ]; then
-		file="$compiler-$version.tar.xz";
-	elif [ -f "$compiler-$version.tar.gz" ]; then
-		file="$compiler-$version.tar.gz";
+	if [ -f "$source_dir/$compiler-$version.tar.xz" ]; then
+		file="$source_dir/$compiler-$version.tar.xz";
+	elif [ -f "$source_dir/$compiler-$version.tar.gz" ]; then
+		file="$source_dir/$compiler-$version.tar.gz";
 	else
-		download $compiler $version
-		install $compiler $version $install_dir
+		download "$source_dir" "$compiler" "$version"
+		install "$source_dir" "$compiler" "$version" "$install_dir"
 		return;
 	fi;
 

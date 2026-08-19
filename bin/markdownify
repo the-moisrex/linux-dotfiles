@@ -121,6 +121,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate the --lang value against the known set
+if [[ -n "$lang" && "$lang" != "none" ]]; then
+    case "$lang" in
+        cpp|python|bash|javascript|html|css|json|xml|java|go|rust|swift|kotlin|typescript|php|ruby|perl|markdown|text) ;;
+        *)
+            echo "Error: Unknown language '$lang'." >&2
+            echo "Use --help for the list of supported languages." >&2
+            exit 1
+            ;;
+    esac
+fi
+
 # Function to infer language from file extension
 infer_lang() {
     local file="$1"

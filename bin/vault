@@ -94,7 +94,7 @@ function decrypt_tar_dir {
     tar="$1"
     dir="$2"
     tar=$(readlink -f "$tar")
-    if [ ! -d "$tar" ]; then
+    if [ ! -f "$tar" ]; then
         echo "The tarball file '$tar' doesn't exist.";
         return;
     fi
@@ -103,7 +103,7 @@ function decrypt_tar_dir {
     fi
     dir=$(realpath "$dir");
     dir_name=$(basename "$tar");
-    dir_name="${dir_name/.tar.gz$/}"
+    dir_name="${dir_name%.tar.gz}"
     file="$dir_name.tar.gz"
     decrypt_file
     tar --overwrite -xzvf "$tmp_dir/$file" --directory "$dir";

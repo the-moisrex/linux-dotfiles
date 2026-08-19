@@ -36,6 +36,7 @@ successful_quit() {
 
 get_install_date() {
     # Using various methods to determine install date
+    INSTALL_DATE="unknown"
 
     # Using stat (command line option)
     if [[ $STAT == "1" ]] ; then
@@ -56,7 +57,7 @@ get_install_date() {
 }
 
 install_date() {
-    if [[ $INSTALL_DATE == "unknown" ]]; then
+    if [[ "$INSTALL_DATE" == "unknown" ]]; then
         echo "Unknown install date, distro probably unsupported!"
         error
     else
@@ -84,7 +85,7 @@ process_command_line_arguments() {
     local TEMP
     declare -i RC
     set +e
-        TEMP="$(getopt -n "${PROGNAME}" -o svh --long stat,version,help: -- "${@}")"
+        TEMP="$(getopt -n "${PROGNAME}" -o svh --long stat,version,help -- "${@}")"
         RC="${?}"
     set -e
     if ((RC!=0)); then

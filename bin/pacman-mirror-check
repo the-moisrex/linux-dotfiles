@@ -60,7 +60,7 @@ test_mirror() {
     local url="$1"
     local country="$2"
     local timeout="$3"
-    local core_repo_url="${url}core/os/x88_64/core.db"
+    local core_repo_url="${url}core/os/x86_64/core.db"
 
     # 1. Get last sync time
     local lastsync
@@ -160,8 +160,8 @@ main() {
     ' "$mirrorlist_file")
 
     # Filter by country if -c flag is used
-    if [[ -n "$filter_country" ]]; then
-        mirrors=$(echo "$mirrors" | grep -i "^${filter_country}")
+    if [[ -n "$country_filter" ]]; then
+        mirrors=$(echo "$mirrors" | grep -i "^${country_filter}")
     fi
 
     local mirror_count
