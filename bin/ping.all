@@ -71,14 +71,14 @@ done | xargs -I {} -P0 bash -c "{}" | awk '
                 ip = $4
                 sub(/:$/, "", ip) # Remove trailing colon for cleaner output
 
-                print ip "\t" color t "\033[0m"
+                print color t "\033[0m" "\t" ip
                 break
             }
         }
 
         # If the line was a success but had no time data (e.g. ping -s 0)
         if (has_time == 0) {
-            print $0
+            print ip "\t" $0
         }
     }
     # Print any other output lines normally (preventing empty blank lines)

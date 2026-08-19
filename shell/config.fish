@@ -29,7 +29,7 @@ if status is-interactive
     # set -gx TERM=alacritty
     # set -gx TERM=kitty
     set -gx EDITOR helix
-    set -gx PATH ".:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$HOME/.lmstudio/bin:$PATH:$HOME/.local/bin:$JAVA_HOME/bin:$HOME/.cargo/bin:$HOME/Android/Sdk/platform-tools:$HOME/Android/Sdk/emulator"
+    set -gx PATH ".:./build:./build/sdk:./build/tests:./build-clang:./cmake-build-debug:./cmake-build-debug-clang:$HOME/.bin:$cmddir/bin:$cmddir/firewall:$HOME/.lmstudio/bin:$PATH:$HOME/.local/bin:$JAVA_HOME/bin:$HOME/.cargo/bin:$HOME/Android/Sdk/platform-tools:$HOME/Android/Sdk/emulator"
     set -gx CPM_SOURCE_CACHE "$HOME/.cache/CPM"
     set -gx HISTSIZE 100000000
     set -gx SAVEHIST "$HISTSIZE"
