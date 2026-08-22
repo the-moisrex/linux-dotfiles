@@ -2,6 +2,8 @@
 
 # Default variables
 TOP_N=0
+UNIQUE_ONLY=0
+SHOW_TOTAL=0
 
 # Help function
 show_help() {
@@ -13,6 +15,8 @@ Analyzes shell history from standard input and counts command usage frequency.
 Options:
     -h, --help      Show this help message and exit
     -n, --top N     Show only the top N most frequently used commands
+    -u, --unique    Show only unique commands (no counts)
+    -t, --total     Show total command count at the end
 EOF
     exit 0
 }
@@ -24,6 +28,14 @@ while [[ "$#" -gt 0 ]]; do
         -n|--top)
             TOP_N="$2"
             shift 2
+        ;;
+        -u|--unique)
+            UNIQUE_ONLY=1
+            shift
+        ;;
+        -t|--total)
+            SHOW_TOTAL=1
+            shift
         ;;
         *)
             echo "Unknown parameter passed: $1"
@@ -63,7 +75,19 @@ sort | uniq -c | sort -nb)
 
 # Apply the "Top N" filter
 if [[ "$TOP_N" -gt 0 ]]; then
-    echo "$output" | tail -n "$TOP_N"
-else
-    echo "$output"
+    output=$(echo "$output" | tail -n "$TOP_N")
+fi
+
+# Show unique only (remove counts)
+if [[ "$UNIQUE_ONLY" -eq 1 ]]; then
+    output=$(echo "$output" | awk '{print $2}')
+fi
+
+echo "$output"
+
+# Show total count if requested
+if [[ "$SHOW_TOTAL" -eq 1 ]]; then
+    total=$(echo "$output" | wc -l)
+    echo "---"
+    echo "Total unique commands: $total"
 fi

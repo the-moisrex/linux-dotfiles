@@ -44,6 +44,7 @@ usage() {
     echo
     echo "  [--add]            Add to default download list"
     echo "  [--list-pendings]  List pendings"
+    echo "  [--remove URL]     Remove a URL from pending list"
     echo "  [--clear]          Clear download list"
     echo
     echo "  [--force-wget]     Forces the use of wget"
@@ -293,6 +294,12 @@ for file in "$@"; do
         pendings|list-pendings|pend|pends|--pendings|--list-pendings|--list-pending|-list-pendings|-pendings|-pending|pending)
             action="list-pendings";
             ;;
+        remove|--remove|-remove)
+            action="remove";
+            shift
+            remove_url="$1"
+            shift
+            ;;
         clear|clean|--clear|-clear|--clean|-clean)
             action="clear";
             break;
@@ -353,6 +360,18 @@ case "$action" in
         ;;
     list-pendings)
         sort -u "$default_list";
+        ;;
+    remove)
+        if [ -z "$remove_url" ]; then
+            echo "Error: --remove requires a URL argument"
+            exit 1
+        fi
+        if [ ! -f "$default_list" ]; then
+            echo "No pending list found."
+            exit 1
+        fi
+        grep -v "$remove_url" "$default_list" > "$default_list.tmp" && mv "$default_list.tmp" "$default_list"
+        echo "Removed: $remove_url"
         ;;
     clear)
         echo "" > "$default_list";

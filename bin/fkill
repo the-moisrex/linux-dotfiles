@@ -3,16 +3,26 @@
 set -euo pipefail
 
 signal="TERM"
+force=0
 
 usage() {
-    echo "Usage: fkill [-s SIGNAL]"
+    echo "Usage: fkill [-s SIGNAL] [-y] [-h]"
+    echo
+    echo "Kill processes interactively using fzf."
+    echo
+    echo "Options:"
+    echo "  -s SIGNAL    Signal to send (default: TERM)"
+    echo "  -y           Skip confirmation prompt"
+    echo "  -h           Show this help message"
+    echo
     echo "Example: fkill -s KILL"
     exit 1
 }
 
-while getopts "s:h" opt; do
+while getopts "s:yh" opt; do
     case "$opt" in
         s) signal="$OPTARG" ;;
+        y) force=1 ;;
         h) usage ;;
         *) usage ;;
     esac
@@ -37,5 +47,13 @@ pids=$(echo "$selection" | awk '{print $1}')
 echo "Sending SIG$signal to:"
 echo "$selection"
 echo
+
+if [ "$force" -eq 0 ]; then
+    read -rp "Are you sure? (y/N) " confirm
+    case "$confirm" in
+        [Yy]*) ;;
+        *) echo "Aborted."; exit 1 ;;
+    esac
+fi
 
 kill "-$signal" $pids

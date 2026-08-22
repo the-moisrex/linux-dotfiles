@@ -25,8 +25,25 @@ detect_desktop_environment() {
 
 desktop_env=$(detect_desktop_environment)
 
+# Help function
+show_help() {
+    echo "Usage: clipboard <command>"
+    echo
+    echo "Copy/paste across Wayland/KDE/X11 clipboard tools."
+    echo
+    echo "Commands:"
+    echo "  paste, --paste, p     Paste from clipboard to stdout"
+    echo "  copy, --copy, cp, c   Copy stdin to clipboard"
+    echo "  history, --history    Show clipboard history (Klipper only)"
+    echo "  -h, --help            Show this help message"
+}
+
 # Main script logic
 case "$1" in
+    -h|--help)
+        show_help
+        exit 0
+        ;;
     paste|--paste|p|pst|-p|--p)
         # Try Wayland clipboard utilities first (works for GNOME on Wayland)
         if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then

@@ -1,9 +1,13 @@
 #!/bin/bash
 
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo "Usage: $0 [input_string]"
     echo "       command | $0"
+    echo
     echo "Extracts paths of existing files (with optional line and column numbers) from the input."
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
     exit 0
 fi
 

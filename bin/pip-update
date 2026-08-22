@@ -1,4 +1,32 @@
 #!/bin/bash
 
-pip list --outdated --format=freeze | grep -v '^\-e' | cut -d = -f 1 | xargs -n1 pip3 install -U
+show_help() {
+    echo "Usage: pip-update [OPTIONS]"
+    echo "Update all outdated pip packages."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
+    echo "  -d, --dry-run Show what would be updated without doing it"
+    echo "  -u, --user    Install to user directory (--user flag)"
+    exit 0
+}
+
+DRY_RUN=0
+USER_FLAG=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -d|--dry-run) DRY_RUN=1; shift ;;
+        -u|--user) USER_FLAG="--user"; shift ;;
+        *) echo "Unknown option: $1"; show_help ;;
+    esac
+done
+
+if [[ $DRY_RUN -eq 1 ]]; then
+    echo "Packages that would be updated:"
+    pip list --outdated --format=freeze | grep -v '^\-e' | cut -d = -f 1
+else
+    pip list --outdated --format=freeze | grep -v '^\-e' | cut -d = -f 1 | xargs -n1 pip3 install -U $USER_FLAG
+fi
 

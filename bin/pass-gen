@@ -1,15 +1,37 @@
 #!/bin/bash
 
 function print_help {
-	echo "Usage: pass-gen username password-file"
-	echo "       pass-gen password-file         # Random username"
+	echo "Usage: pass-gen [options] username password-file"
+	echo "       pass-gen [options] password-file         # Random username"
+	echo
+	echo "Options:"
+	echo "  --length N       Password length (default: 20)"
+	echo "  --no-special     Don't use special characters"
+	echo "  -h, --help       Show this help message"
 }
 
-case $1 in
-	--help|help|-h)
-		print_help
-		exit;
-esac
+length=20
+no_special=""
+
+while [[ $# -gt 0 ]]; do
+	case $1 in
+		--help|help|-h)
+			print_help
+			exit;
+			;;
+		--length)
+			length="$2"
+			shift 2
+			;;
+		--no-special)
+			no_special="--no-symbols"
+			shift
+			;;
+		*)
+			break
+			;;
+	esac
+done
 
 if [ -z "$1" ]; then
 	echo "Please enter a password file name/path";
@@ -29,4 +51,4 @@ password_file="$password_file/$username"
 echo Username: $username
 echo Password File: $password_file
 echo Password: 
-pass generate --force $password_file
+pass generate --force $no_special -l $length $password_file

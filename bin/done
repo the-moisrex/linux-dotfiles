@@ -1,5 +1,57 @@
 #!/bin/bash
 
+print_help() {
+    echo "Usage: done [options] <file>"
+    echo
+    echo "Toggle a [done] prefix on a file to mark it as completed."
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
+    echo "  -l, --list    List all done files in current directory"
+    echo "  -c, --clear   Remove done status from all done files in current directory"
+}
+
+list_done_files() {
+    local count=0
+    for f in [done]*; do
+        if [[ -f "$f" ]]; then
+            echo "$f"
+            count=$((count + 1))
+        fi
+    done
+    if [ "$count" -eq 0 ]; then
+        echo "No done files found in current directory."
+    fi
+}
+
+clear_done_files() {
+    local count=0
+    for f in [done]*; do
+        if [[ -f "$f" ]]; then
+            newname="${f#\[done\] }"
+            mv "$f" "$newname"
+            setfattr -x user.done "$newname" 2>/dev/null
+            count=$((count + 1))
+        fi
+    done
+    echo "Cleared $count done file(s)."
+}
+
+case "$1" in
+    --help|-h)
+        print_help
+        exit 0
+        ;;
+    --list|-l)
+        list_done_files
+        exit 0
+        ;;
+    --clear|-c)
+        clear_done_files
+        exit 0
+        ;;
+esac
+
 # Check if a file is provided
 if [ -z "$1" ]; then
     echo "Usage: done <file>"

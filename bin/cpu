@@ -1,8 +1,48 @@
 #!/bin/bash
 
+print_help() {
+    echo "Usage: cpu [governor|option]"
+    echo
+    echo "Get CPU performance information and change the CPU profile."
+    echo
+    echo "Governors:"
+    echo "  performance       Max performance"
+    echo "  powersave         Max power saving"
+    echo "  balanced          Balanced performance and power"
+    echo "  ondemand          Scale based on load"
+    echo "  default           Reset to system default"
+    echo
+    echo "Options:"
+    echo "  --help, -h        Show this help message"
+    echo "  --list, -l        List available CPU governors"
+    echo
+    echo "Examples:"
+    echo "  cpu               Show current CPU info"
+    echo "  cpu performance   Set to performance mode"
+    echo "  cpu --list        List available governors"
+}
+
+list_governors() {
+    if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors ]; then
+        echo "Available governors:"
+        cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
+    else
+        echo "Cannot determine available governors."
+        echo "Common governors: performance powersave ondemand conservative interactive"
+    fi
+}
+
 governor="$1"
 
 case "$governor" in
+    --help|-h|help)
+        print_help
+        exit 0
+        ;;
+    --list|-l|list)
+        list_governors
+        exit 0
+        ;;
     perf|per|performance|--perf|--performance|-performance)
         governor="performance";
         ;;

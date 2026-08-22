@@ -2,9 +2,12 @@
 
 function print_help {
     name=$(basename "$0")
-    echo "Usage: "
-    echo "$name   domain.exit"
-    echo "       help | -h | --help"
+    echo "Usage: $name [options] domain"
+    echo
+    echo "Resolve a domain to its IPv4 address."
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
 }
 
 case $1 in

@@ -5,9 +5,14 @@ if ! command -v fzf >/dev/null; then
     exit 1
 fi
 
-if [ "$1" == "--help" ]; then
-    echo "shortcut for 'fzf -f QUERY | head -1'"
-    exit
+if [ "$1" == "--help" || "$1" == "-h" ]; then
+    echo "Usage: fzf1 QUERY"
+    echo
+    echo "Shortcut for 'fzf -f QUERY | head -1'"
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
+    exit 0
 fi
 
 for file in "$@"; do
