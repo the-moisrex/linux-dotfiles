@@ -1,18 +1,70 @@
 #!/bin/bash
 
+# Set the nice priority (lower = higher priority) for processes matching NAME.
 # https://askubuntu.com/questions/337444/how-to-increase-the-priority-for-a-task-permanently-in-linux-machine
-# Also consider "ionice" which limits io
+# Also consider "ionice" which limits I/O priority.
 
+set -euo pipefail
 
-if [ -x "$(command -v cpulimit)" ]; then
-  pids=$(pgrep $1 | xargs echo)
-  limit=$2
-  if [ "$limit" == "" ]; then
-    limit=19
-  fi
-  for id in $pids; do 
-    renice -n $limit -p $id;
-  done
-else
-  echo "Install cpulimit for this to work.";
+show_help() {
+    cat <<'EOF'
+Usage: cpu-priority [-h] [-n LEVEL] PROCESS_NAME
+
+Set the nice priority of running processes matching PROCESS_NAME.
+
+Options:
+  -h, --help       Show this help message
+  -n, --nice LEVEL Nice level: -20 (highest) to 19 (lowest). Default: 19
+
+Examples:
+  cpu-priority firefox          # Lower firefox priority to 19
+  cpu-priority -n -5 myapp      # Raise myapp priority to -5
+EOF
+}
+
+nice_level=19
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+        ;;
+        -n|--nice)
+            if [[ $# -lt 2 ]]; then
+                echo "cpu-priority: missing value for --nice" >&2
+                exit 1
+            fi
+            nice_level="$2"
+            shift 2
+            continue
+        ;;
+        -*)
+            echo "cpu-priority: unknown option: $1" >&2
+            exit 1
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+if [[ $# -eq 0 ]]; then
+    echo "cpu-priority: no process name specified" >&2
+    exit 1
 fi
+
+if ! command -v renice >/dev/null 2>&1; then
+    echo "cpu-priority: renice is required but not installed" >&2
+    exit 1
+fi
+
+pids=$(pgrep "$1" 2>/dev/null || true)
+if [[ -z "$pids" ]]; then
+    echo "cpu-priority: no processes found matching '$1'" >&2
+    exit 1
+fi
+
+for pid in $pids; do
+    renice -n "$nice_level" -p "$pid"
+done

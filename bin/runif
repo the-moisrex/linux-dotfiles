@@ -2,13 +2,19 @@
 
 cmd="$1"
 
-if command -v "$cmd" >/dev/null; then
-    if [ ! -z "$SHELL" ]; then
-        eval $SHELL -i -c \"$@\";
+if [ -z "$cmd" ]; then
+    echo "Usage: runif COMMAND [ARGS...]" >&2
+    echo "Run a command in an interactive shell only if it exists in PATH." >&2
+    exit 1
+fi
+
+if command -v "$cmd" >/dev/null 2>&1; then
+    if [ -n "$SHELL" ]; then
+        eval "$SHELL" -i -c "$*"
     else
-        eval $@
+        eval "$@"
     fi
 else
-    echo "Command '$cmd' deson't exists."
+    echo "Command '$cmd' doesn't exist." >&2
     exit 1
 fi

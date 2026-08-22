@@ -23,13 +23,16 @@ echo "Suggest the smallest meaningful API improvements, explain the tradeoffs br
 echo
 
 # Process ALL collected files
-while [[ $# -gt 0 && -f "$1" ]]; do
-    file_name="$(basename "$file")"
-    echo "File: $file_name"
-    echo
-    echo "\`\`\`$(infer_lang "$file_name")"
-    trim_context "$(cat -- "$file")"
-    echo '```'
-    echo
-    shift
+for file in "$@"; do
+    if [[ -f "$file" ]]; then
+        file_name="$(basename "$file")"
+        echo "File: $file_name"
+        echo
+        echo "\`\`\`$(infer_lang "$file_name")"
+        trim_context "$(cat -- "$file")"
+        echo '```'
+        echo
+    else
+        echo "Warning: File '$file' not found." >&2
+    fi
 done

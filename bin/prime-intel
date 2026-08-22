@@ -1,3 +1,34 @@
 #!/bin/bash
-__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=non_NVIDIA_only __NV_PRIME_RENDER_OFFLOAD_PROVIDER=modesetting __GLX_VENDOR_LIBRARY_NAME=mesa "$@"
 
+# Run a command using the Intel GPU via NVIDIA PRIME render offload.
+# Useful for hybrid GPU laptops where you want to use integrated graphics.
+
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+    cat <<'EOF'
+Usage: prime-intel COMMAND [ARGS...]
+
+Run a command using the Intel GPU via NVIDIA PRIME render offload.
+Useful for hybrid GPU laptops where you want to use the integrated GPU
+instead of the discrete NVIDIA GPU.
+
+Examples:
+  prime-intel glxgears          # Run glxgears on Intel GPU
+  prime-intel firefox           # Run Firefox on Intel GPU
+  prime-intel vulkaninfo        # Query Vulkan on Intel GPU
+EOF
+    exit 0
+fi
+
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: prime-intel COMMAND [ARGS...]"
+    exit 0
+fi
+
+exec env \
+    __NV_PRIME_RENDER_OFFLOAD=1 \
+    __VK_LAYER_NV_optimus=non_NVIDIA_only \
+    __NV_PRIME_RENDER_OFFLOAD_PROVIDER=modesetting \
+    __GLX_VENDOR_LIBRARY_NAME=mesa \
+    "$@"

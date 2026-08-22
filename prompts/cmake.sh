@@ -3,7 +3,6 @@ set -euo pipefail
 
 exclude_patterns=()
 strip_lists=false
-head_lines=""
 
 show_help() {
   cat <<'EOF'

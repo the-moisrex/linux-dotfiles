@@ -5,14 +5,14 @@ progname="${0##*/}"
 
 usage() {
   cat <<'EOF'
-withfile - materialize stdin as a temporary file and use it with file-only commands
+asfile - materialize stdin as a temporary file and use it with file-only commands
 
 USAGE
-  producer | withfile [OPTIONS] [+MODE] -- command [args...]
-  producer | withfile [OPTIONS] [+MODE] command [args...]
-  producer | withfile [OPTIONS] [+MODE] | xargs command
-  withfile --help
-  withfile --version
+  producer | asfile [OPTIONS] [+MODE] -- command [args...]
+  producer | asfile [OPTIONS] [+MODE] command [args...]
+  producer | asfile [OPTIONS] [+MODE] | xargs command
+  asfile --help
+  asfile --version
 
 DESCRIPTION
   Reads all stdin into a temporary file.
@@ -47,7 +47,7 @@ OPTIONS
       Create temp file with suffix, e.g. '.json', '.txt', '.png'.
 
   -p, --prefix PREFIX
-      Temp file prefix for mktemp. Default: withfile
+      Temp file prefix for mktemp. Default: asfile
 
   -t, --tmpdir DIR
       Create the temp file in DIR.
@@ -86,36 +86,36 @@ BEHAVIOR
 
 EXAMPLES
   Append temp file as last arg:
-    paste a b | withfile mytool
+    paste a b | asfile mytool
 
   Make the temp file executable and keep it:
-    printf '#!/bin/sh\necho hi\n' | withfile +x --keep
+    printf '#!/bin/sh\necho hi\n' | asfile +x --keep
 
   Make the temp file executable and run it:
-    printf '#!/bin/sh\necho hi\n' | withfile +x -- sh
+    printf '#!/bin/sh\necho hi\n' | asfile +x -- sh
 
   Set an explicit numeric mode:
-    tar c foo | withfile --chmod 600 mytool
+    tar c foo | asfile --chmod 600 mytool
 
   Run a tool in detached mode:
-    echo "data" | withfile -d mytool
+    echo "data" | asfile -d mytool
 
   Put file path in the middle:
-    jq -n '{x:1}' | withfile --replace '{}' mytool --input {} --mode fast
+    jq -n '{x:1}' | asfile --replace '{}' mytool --input {} --mode fast
 
   Pass file as first argument:
-    generate | withfile --arg0 mytool --flag
+    generate | asfile --arg0 mytool --flag
 
   Keep the temp file and print its path:
-    echo hi | withfile --keep
+    echo hi | asfile --keep
 
   Use with xargs-like workflows (file path sent to stdout):
-    paste a b | withfile | xargs mytool
+    paste a b | asfile | xargs mytool
 EOF
 }
 
 version() {
-  echo "withfile 1.2.0"
+  echo "asfile 1.2.0"
 }
 
 err() {
@@ -133,7 +133,7 @@ keep=0
 print_path=0
 replace_token=""
 suffix=""
-prefix="withfile"
+prefix="asfile"
 tmpdir=""
 arg0=0
 detach=0

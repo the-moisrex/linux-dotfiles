@@ -29,7 +29,9 @@ cmd_description="$*"
 
 # Temporarily disable exit on error so we can capture failed commands gracefully
 set +e
-# Use eval so pipes, redirects, and quotes work correctly
+# Execute the command; for simple commands, direct execution is safer than eval.
+# However, eval is needed to support pipes, redirects, and quotes in the command.
+# shellcheck disable=SC2294
 cmd_output="$(eval "$@" 2>&1)"
 cmd_status=$?
 set -e

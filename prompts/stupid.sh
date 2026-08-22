@@ -25,14 +25,17 @@ echo "Be blunt but useful. List each issue with a short explanation and the smal
 echo "At the end, suggest small git patches."
 echo
 
-while [[ $# -gt 0 && -f "$1" ]]; do
-    file_name="$(basename "$1")"
-    echo "File: $file_name"
-    echo
-    echo '```'
-    trim_context "$(cat -- "$1")"
-    echo
-    echo '```'
-    echo
-    shift
+for file in "$@"; do
+    if [[ -f "$file" ]]; then
+        file_name="$(basename "$file")"
+        echo "File: $file_name"
+        echo
+        echo "\`\`\`$(infer_lang "$file_name")"
+        trim_context "$(cat -- "$file")"
+        echo
+        echo '```'
+        echo
+    else
+        echo "Warning: File '$file' not found." >&2
+    fi
 done

@@ -62,6 +62,12 @@ if $has_stdin; then
         target_script="cpp.sh"
         elif echo "$input_buffer" | grep -qE 'youtube\.com|youtu\.be'; then
         target_script="yt.sh"
+        elif echo "$input_buffer" | grep -qiE '^FROM |^RUN |^COPY |^CMD |^ENTRYPOINT |^docker-compose|^services:'; then
+        target_script="docker.sh"
+        elif echo "$input_buffer" | grep -qiE '^\.github/workflows/|\.gitlab-ci\.yml|Jenkinsfile|stages:|jobs:'; then
+        target_script="ci.sh"
+        elif echo "$input_buffer" | grep -qiE 'Traceback \(most recent call last\)|File ".*", line|Fatal error|panic:|Segmentation fault|stack trace|Exception in'; then
+        target_script="debug.sh"
         elif echo "$input_buffer" | grep -qE 'class |struct |#include <'; then
         target_script="cpp-reviewer.sh"
     else
@@ -107,7 +113,8 @@ for arg in "$@"; do
     if [[ "$arg" == *"youtube.com"* || "$arg" == *"youtu.be"* ]]; then
         target_script="yt.sh"
         break
-        elif [[ -f "$arg" ]]; then
+    elif [[ -f "$arg" ]]; then
+        base="$(basename "$arg")"
         ext="${arg##*.}"
         case "$ext" in
             cpp|hpp|cxx|hxx|cc|c|h)
@@ -115,6 +122,40 @@ for arg in "$@"; do
             ;;
             sh|bash)
                 target_script="review.sh"
+            ;;
+            py|pyi|rb|go|rs|java|kt|swift|ts|js)
+                target_script="review.sh"
+            ;;
+            yml|yaml)
+                case "$base" in
+                    docker-compose*|compose*)
+                        target_script="docker.sh"
+                    ;;
+                    .gitlab-ci*|*.gitlab-ci*)
+                        target_script="ci.sh"
+                    ;;
+                    *)
+                        target_script="review.sh"
+                    ;;
+                esac
+            ;;
+            json)
+                target_script="review.sh"
+            ;;
+            md)
+                target_script="readme.sh"
+            ;;
+        esac
+        # Check filename patterns regardless of extension
+        case "$base" in
+            Dockerfile|dockerfile|*.dockerfile)
+                target_script="docker.sh"
+            ;;
+            Jenkinsfile|.gitlab-ci.yml|Makefile|CMakeLists.txt)
+                target_script="review.sh"
+            ;;
+            .github/workflows/*.yml)
+                target_script="ci.sh"
             ;;
         esac
     fi

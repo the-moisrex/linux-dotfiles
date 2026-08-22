@@ -26,6 +26,7 @@ echo
 
 if [ $# -eq 0 ]; then
     # Fallback to fzf if no files were piped or provided as arguments
+    # shellcheck disable=SC2046
     set -- $(select_files)
 fi
 

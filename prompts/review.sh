@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-stdin_piped=false
-stdin_content=""
-head_lines=""
-files=()
-
 show_help() {
   cat <<'EOF'
 Usage: prompt review [--head N] [FILE...]

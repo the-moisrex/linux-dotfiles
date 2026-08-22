@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-stdin_piped=false
-stdin_content=""
-head_lines=""
-files=() # Array to hold positional arguments (files)
-
 show_help() {
   cat <<'EOF'
 Usage: prompt fix [--head N] [FILE...]

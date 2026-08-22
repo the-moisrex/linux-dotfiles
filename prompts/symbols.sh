@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-files=()
-stdin_piped=false
-stdin_content=""
-head_lines=""
-
 show_help() {
     cat <<'EOF'
 Usage: prompt symbols [--head N] [file...]
@@ -42,7 +37,7 @@ for file_path in "$@"; do
         file=$(basename "$file_path")
         echo
         echo "File: $file"
-        echo "\`\`\`$(infer_lang "$file_name")"
+        echo "\`\`\`$(infer_lang "$file")"
         trim_context "$(cat -- "$file_path")"
         echo
         echo '```'

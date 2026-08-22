@@ -73,8 +73,6 @@ end
 function __fish_prompt_supports_head
     set -l tokens (commandline -opc)
     test (count $tokens) -ge 2
-    or return 1
-    contains -- "$tokens[2]" spp files symbols stupid security tests refactor api review fix comments explain perf commit
 end
 
 complete -c prompt -n __fish_prompt_needs_name -s h -l help -d "Show help message"

@@ -3,9 +3,6 @@ set -u
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 promptdir="$(realpath "$(dirname "$0")")"
-head_lines=""
-stdin_piped=false
-stdin_content=""
 include_gtest_cases=false
 
 show_help() {

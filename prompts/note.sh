@@ -6,7 +6,7 @@ prepend=false
 show_help() {
   cat <<'EOF'
 Usage: prompt note [--head N] [NOTE...]
-       some-command | prompt stupid [--head N] [NOTE...]
+       some-command | prompt note [--head N] [NOTE...]
 
 Add note to the prompt
 

@@ -1,11 +1,22 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-echo "Usage: prompt cpp-reviewer"
-echo
-echo "Builds a prompt for reviewing C++ code from stdin."
-exit 0
-fi
+show_help() {
+  cat <<'EOF'
+Usage: prompt cpp-reviewer [--head N] [FILE...]
+       some-command | prompt cpp-reviewer [--head N] [FILE...]
+
+Builds a prompt for reviewing C++ code from stdin or embedded files.
+
+Options:
+  --head N   Keep only the first N lines of the embedded context
+EOF
+}
+
+NO_FILES=true
+source "$(dirname "$0")/_common.sh"
+common_behavior
+set -- "${ARGS[@]}"
 
 echo "You are an expert C++ code reviewer with deep knowledge of modern C++ (C++17, C++20, C++23, C++26) and strict adherence to the C++ Core Guidelines."
 echo "Follow these principles when reviewing C++ code:"
@@ -28,4 +39,3 @@ echo "- Verify code is efficient, readable, maintainable, and follows best pract
 echo ""
 echo "Provide constructive feedback highlighting issues, suggesting improvements, and commending good practices."
 echo
-cat

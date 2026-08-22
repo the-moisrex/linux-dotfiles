@@ -64,10 +64,10 @@ for file in "$@"; do
         trim_context "$(cat -- "$file")"
         echo '
 ```'
-echo
-else
-echo "Warning: File '$file' not found." >&2
-fi
+        echo
+    else
+        echo "Warning: File '$file' not found." >&2
+    fi
 done
 
 

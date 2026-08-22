@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-stdin_piped=false
-
 show_help() {
   cat <<'EOF'
 Usage: prompt tweets [--head N] [FILE...]

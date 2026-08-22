@@ -6,27 +6,54 @@ signal="TERM"
 force=0
 
 usage() {
-    echo "Usage: fkill [-s SIGNAL] [-y] [-h]"
-    echo
-    echo "Kill processes interactively using fzf."
-    echo
-    echo "Options:"
-    echo "  -s SIGNAL    Signal to send (default: TERM)"
-    echo "  -y           Skip confirmation prompt"
-    echo "  -h           Show this help message"
-    echo
-    echo "Example: fkill -s KILL"
+    cat <<'EOF'
+Usage: fkill [-s SIGNAL] [-y] [-h] [-g GROUP]
+
+Kill processes interactively using fzf.
+
+Options:
+  -s SIGNAL    Signal to send (default: TERM)
+  -y           Skip confirmation prompt
+  -g GROUP     Kill process group (all processes in the group)
+  -h           Show this help message
+
+Signals:
+  TERM, INT, HUP, KILL, STOP, CONT, USR1, USR2
+
+Examples:
+  fkill                     # Interactive TERM kill
+  fkill -s KILL             # Interactive KILL
+  fkill -y -s HUP           # SIGHUP without confirmation
+  fkill -g $(pgrep -g myapp) # Kill process group
+EOF
     exit 1
 }
 
-while getopts "s:yh" opt; do
+kill_group=0
+
+while getopts "s:yg:h" opt; do
     case "$opt" in
         s) signal="$OPTARG" ;;
         y) force=1 ;;
+        g) kill_group=1; pids="$OPTARG" ;;
         h) usage ;;
         *) usage ;;
     esac
 done
+
+if [[ $kill_group -eq 1 ]]; then
+    # Direct group kill mode
+    echo "Sending SIG$signal to process group: $pids"
+    if [ "$force" -eq 0 ]; then
+        read -rp "Are you sure? (y/N) " confirm
+        case "$confirm" in
+            [Yy]*) ;;
+            *) echo "Aborted."; exit 1 ;;
+        esac
+    fi
+    kill "-$signal" -- -"$pids" 2>/dev/null || kill "-$signal" $pids
+    exit 0
+fi
 
 command -v fzf >/dev/null || {
     echo "Error: fzf is required."
