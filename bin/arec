@@ -8,12 +8,53 @@ fi
 function print_help {
   echo Record shell using asciinema
   echo
-  echo "   Usage:   arec [--no-tmux] [pretext] [title]"
+  echo "   Usage:   arec [--no-tmux] [--list] [--play FILE] [pretext] [title]"
   echo "   Example: arec webpp Working on database"
+  echo
+  echo "   Options:"
+  echo "     --no-tmux    Don't start a new tmux session"
+  echo "     --list       List existing recordings"
+  echo "     --play FILE  Play back a recording"
+  echo "     -h, --help   Show this help message"
   echo
   echo "   Pretext: the name of the project you're working on so we can write custom configurations for them."
   echo "   Title:   the title of this session that you're working on."
   exit
+}
+
+function list_recordings {
+  local recordings_dir="$HOME/live"
+  if [ ! -d "$recordings_dir" ]; then
+    echo "No recordings directory found at $recordings_dir"
+    return 1
+  fi
+  
+  local count=$(find "$recordings_dir" -name "*.cast" -type f | wc -l)
+  if [ "$count" -eq 0 ]; then
+    echo "No recordings found in $recordings_dir"
+    return 1
+  fi
+  
+  echo "Recordings in $recordings_dir:"
+  echo
+  ls -lhtr "$recordings_dir"/*.cast 2>/dev/null | while read -r line; do
+    echo "  $line"
+  done
+}
+
+function play_recording {
+  local file="$1"
+  if [ ! -f "$file" ]; then
+    echo "File not found: $file"
+    return 1
+  fi
+  
+  if ! command -v asciinema &> /dev/null; then
+    echo "asciinema could not be found."
+    return 1
+  fi
+  
+  asciinema play "$file"
 }
 
 pretext=$1
@@ -25,6 +66,18 @@ working_dir="$HOME"
 case $1 in
     --help|-h|help)
         print_help;
+        ;;
+    --list|-l|list)
+        list_recordings;
+        exit 0;
+        ;;
+    --play|-p)
+        if [ -z "$2" ]; then
+          echo "Error: --play requires a file argument"
+          exit 1
+        fi
+        play_recording "$2";
+        exit $?;
         ;;
     --no-tmux|-nt|--notmux|no-tmux|-no-tmux)
         no_tmux=true;

@@ -6,6 +6,25 @@ function get {
     curl -s $domain$@
 }
 
+function get_json {
+    local ip asn country city timezone
+    ip=$(get /ip)
+    asn=$(get /asn)
+    country=$(get /country)
+    city=$(get /city)
+    timezone=$(get /timezone)
+    
+    cat <<EOF
+{
+  "ip": "$ip",
+  "asn": "$asn",
+  "country": "$country",
+  "city": "$city",
+  "timezone": "$timezone"
+}
+EOF
+}
+
 function get_ip {
     local ip
     ip=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null | tr -d '[:space:]')
@@ -17,7 +36,7 @@ function get_ip {
 
 case $1 in
     --help|-h|help)
-        echo "Usage: $0 [all|ip|asn|country|city|timezone]"
+        echo "Usage: $0 [all|ip|asn|country|city|timezone|json]"
         echo
         echo "  Print information about your public IP address."
         echo
@@ -29,6 +48,7 @@ case $1 in
         echo "  country             Print the country"
         echo "  city                Print the city"
         echo "  timezone            Print the timezone"
+        echo "  json                Print all info as JSON"
         echo "  -h, --help          Show this help message"
         ;;
     all)
@@ -48,6 +68,9 @@ case $1 in
         ;;
     timezone|time-zone)
         get /timezone
+        ;;
+    json|--json)
+        get_json
         ;;
     *)
         get_ip;

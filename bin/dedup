@@ -19,6 +19,8 @@ while [[ $# -gt 0 ]]; do
             echo
             echo "Options:"
             echo "  --help      Show this help message and exit."
+            echo "  --dry-run   Show what would be deduplicated without modifying cache."
+            echo "  --clear     Clear the cache file and exit."
             echo
             echo "If no cache file is provided, the default cache file is used (default-cache in XDG_CACHE_HOME)."
             echo "If a valid relative or absolute path is provided, it will be used as the cache file."
@@ -27,6 +29,10 @@ while [[ $# -gt 0 ]]; do
         ;;
         --dry-run|-d)
             DRY_RUN=true
+            shift
+        ;;
+        --clear)
+            CACHE_CLEAR=true
             shift
         ;;
         *)
@@ -47,6 +53,17 @@ if [ -n "$cache_file" ]; then
     fi
 else
     cache_file="${XDG_CACHE_HOME}/default-cache"
+fi
+
+# Handle --clear option
+if [ "${CACHE_CLEAR:-false}" = true ]; then
+    if [ -f "$cache_file" ]; then
+        rm -f "$cache_file"
+        echo "Cache cleared: $cache_file"
+    else
+        echo "No cache file to clear: $cache_file"
+    fi
+    exit 0
 fi
 
 # Ensure cache directory exists

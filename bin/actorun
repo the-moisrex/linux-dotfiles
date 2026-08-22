@@ -21,6 +21,7 @@ activity_rules = defaultdict(list)
 current_activity = ""
 session_bus = None
 verbose = False
+dry_run = False
 
 
 # Built-in command handlers
@@ -202,11 +203,16 @@ def buildin_command(cmd, info):
 
 def run_command(cmd, info):
     """Run the command"""
+    global dry_run
     toggle_state = info['toggle_state']
     if buildin_command(cmd, info):
         return
 
     expanded_cmd = substitute_vars(cmd, info)
+    if dry_run:
+        log(f"🔍 [DRY RUN] Would run {toggle_state} command: {expanded_cmd}")
+        return
+    
     try:
         log(f"🚀 Running {toggle_state} command: {expanded_cmd}")
         subprocess.run(
@@ -428,10 +434,21 @@ def main():
         action='store_true',
         help='Enable verbose logging'
     )
+    parser.add_argument(
+        '--list-activities',
+        action='store_true',
+        help='List available activities and exit'
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Show what would be run without actually running commands'
+    )
     
     # Parse known arguments first
     args, remaining = parser.parse_known_args()
     verbose = not args.dump_json and args.verbose
+    dry_run = args.dry_run
     
     # Parse CLI rules from remaining arguments
     cli_rules = []
@@ -482,6 +499,14 @@ def main():
     except dbus.exceptions.DBusException as e:
         log(f"⚠️ Failed to load activities: {e}", error=True)
         sys.exit(1)
+
+    # List activities and exit if requested
+    if args.list_activities:
+        print(f"Found {len(activity_info)} activities:")
+        for act_id, info in activity_info.items():
+            marker = " (current)" if act_id == current_activity else ""
+            print(f"  - {info['name']} ({act_id}){marker}")
+        return
 
     # Match rules to activities
     matched_any = False

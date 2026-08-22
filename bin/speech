@@ -5,16 +5,27 @@
 #################################
  
 if [[ "$1" == "--help" || "$1" == "-h" || $# -eq 0 ]]; then
-    echo "Usage: $0 <text>"
+    echo "Usage: $0 [OPTIONS] <text>"
     echo
     echo "  Speak <text> aloud using Google Translate's text-to-speech."
     echo
     echo "Options:"
     echo "  -h, --help          Show this help message"
+    echo "  -l, --lang LANG     Language code (default: En-us)"
     exit 0
 fi
 
-INPUT=$*
+LANG_CODE="En-us"
+TEXT_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -l|--lang) LANG_CODE="$2"; shift 2 ;;
+        *) TEXT_ARGS+=("$1"); shift ;;
+    esac
+done
+
+INPUT="${TEXT_ARGS[*]}"
 STRINGNUM=0
  
 ary=($INPUT)
@@ -40,6 +51,6 @@ for key in "${!SHORT[@]}"
  
     echo "Playing line: $(($key+1)) of $(($STRINGNUM+1))"
     NEXTURL=$(echo ${SHORT[$key]} | xxd -plain | tr -d '\n' | sed 's/\(..\)/%\1/g')
-    mpg123 -q "http://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q=$NEXTURL&tl=En-us"
+    mpg123 -q "http://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q=$NEXTURL&tl=$LANG_CODE"
 done
 

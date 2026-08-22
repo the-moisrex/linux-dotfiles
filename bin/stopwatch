@@ -14,16 +14,22 @@ set -e
 cache_file="$HOME/.cache/stopwatch";
 
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: $0 [-r|--resume]"
+    echo "Usage: $0 [-r|--resume] [--reset]"
     echo
     echo "  Start a stopwatch in the terminal."
     echo
     echo "Options:"
     echo "  -r, --resume        Resume from the last saved start time"
+    echo "  --reset             Reset the stopwatch and start fresh"
     echo "  -h, --help          Show this help message"
     echo
     echo "Press Ctrl+C to stop."
     exit 0
+fi
+
+if [[ "$1" == "--reset" ]]; then
+    rm -f "$cache_file"
+    echo "Stopwatch reset."
 fi
 
 function finish {

@@ -1,5 +1,12 @@
 #!/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: command | strip-osc"
+    echo
+    echo "Remove OSC/CSI and other terminal escape sequences from stdin."
+    exit 0
+fi
+
 # OSC (Operating System Commands)
 cat | sed -r 's/\x1B(\[[0-9;]*[A-Za-z]|\][^\x07]*(\x07|\x1B\\)|[()][AB012]|[=>]|[NOM78HcDEFGIJKLMPQRSTUVWXYZ^_]|%[G8]|#[0-9])//g'
 

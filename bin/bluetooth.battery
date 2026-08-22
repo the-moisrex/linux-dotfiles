@@ -4,6 +4,15 @@ function battery {
     pactl list sinks | grep bluetooth.battery | sed -E 's/.*?"([0-9]+%)".*/\1/'
 }
 
+function list_devices {
+    echo "Connected Bluetooth devices:"
+    echo
+    bluetoothctl info | grep -E "Device|Name|Battery" | head -20
+    echo
+    echo "Battery levels from PulseAudio:"
+    pactl list sinks | grep -E "Name|bluetooth.battery" | paste - - 2>/dev/null || echo "  No battery info available"
+}
+
 function follow_battery {
     while true; do
         b=$(battery)
@@ -20,13 +29,17 @@ case $1 in
     -f|--follow)
         follow_battery;
         ;;
+    -l|--list)
+        list_devices;
+        ;;
     -h|--help)
-        echo "Usage: $0 [-f|--follow]"
+        echo "Usage: $0 [-f|--follow] [-l|--list]"
         echo
         echo "  Print the battery level of connected Bluetooth headphones."
         echo
         echo "Options:"
         echo "  -f, --follow        Keep showing the battery level every 3 seconds"
+        echo "  -l, --list          List connected Bluetooth devices"
         echo "  -h, --help          Show this help message"
         ;;
     *)

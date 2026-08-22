@@ -1,0 +1,397 @@
+#!/bin/bash
+
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage: journalctl.analyze [OPTIONS]
+
+Analyze systemd journal logs, categorize errors, and suggest fixes.
+
+Options:
+  -h, --help            Show this help message
+  -u, --unit UNIT       Only analyze logs from this unit (can be repeated)
+  -p, --priority PRIO   Minimum priority (default: err)
+  -b, --boot ID|0       Filter by boot ID (default: current)
+  -S, --since TIME      Start time (e.g. "1 hour ago", "yesterday")
+  -U, --until TIME      End time
+  -n, --lines N         Maximum entries to analyze (default: 1000)
+      --top N           Show only top N services (default: 15)
+      --fixes           Show suggested fixes for known issues
+      --no-color        Disable colored output
+EOF
+    exit 0
+}
+
+declare -a UNITS=()
+PRIORITY="err"
+BOOT=""
+SINCE=""
+UNTIL=""
+LINES=1000
+TOP_N=15
+SHOW_FIXES=0
+COLOR=1
+
+if [[ -t 1 ]] && [[ $COLOR -eq 1 ]]; then
+    RED='\033[0;31m' YEL='\033[0;33m' GRN='\033[0;32m'
+    CYN='\033[0;36m' DIM='\033[2m' BLD='\033[1m' RST='\033[0m'
+else
+    RED='' YEL='' GRN='' CYN='' DIM='' BLD='' RST=''
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -u|--unit) UNITS+=("$2"); shift 2 ;;
+        -p|--priority) PRIORITY="$2"; shift 2 ;;
+        -b|--boot) BOOT="$2"; shift 2 ;;
+        -S|--since) SINCE="$2"; shift 2 ;;
+        -U|--until) UNTIL="$2"; shift 2 ;;
+        -n|--lines) LINES="$2"; shift 2 ;;
+        --top) TOP_N="$2"; shift 2 ;;
+        --fixes) SHOW_FIXES=1; shift ;;
+        --no-color) COLOR=0; RED='' YEL='' GRN='' CYN='' DIM='' BLD='' RST=''; shift ;;
+        *) echo "Unknown option: $1" >&2; show_help ;;
+    esac
+done
+
+JCMD=(journalctl --no-pager -o json --priority="$PRIORITY")
+for u in "${UNITS[@]+"${UNITS[@]}"}"; do
+    JCMD+=(--unit="$u")
+done
+[[ -n "$BOOT" ]] && JCMD+=(--boot="$BOOT")
+[[ -n "$SINCE" ]] && JCMD+=(--since="$SINCE")
+[[ -n "$UNTIL" ]] && JCMD+=(--until="$UNTIL")
+JCMD+=(-n "$LINES")
+
+TMPFILE=$(mktemp)
+trap 'rm -f "$TMPFILE" "${TMPFILE}".*' EXIT
+
+"${JCMD[@]}" > "$TMPFILE" 2>/dev/null || true
+
+TOTAL=$(wc -l < "$TMPFILE" | tr -d '[:space:]')
+TOTAL=${TOTAL:-0}
+
+if [[ $TOTAL -eq 0 ]]; then
+    echo -e "${GRN}No entries found matching the filters.${RST}"
+    exit 0
+fi
+
+# Main grouping with categorization
+jq -sr --argjson top "$TOP_N" '
+def pri_name:
+  if . == "0" then "emerg"
+  elif . == "1" then "alert"
+  elif . == "2" then "crit"
+  elif . == "3" then "err"
+  elif . == "4" then "warning"
+  elif . == "5" then "notice"
+  elif . == "6" then "info"
+  elif . == "7" then "debug"
+  else . end;
+
+def categorize:
+  . as $msg |
+  if $msg | test("nft|iptables|firewall|DROP|REJECT|blocked|nftset") then "firewall"
+  elif $msg | test("dnsmasq|dns|resolve|DNS") then "dns"
+  elif $msg | test("bluetooth|rfcomm|bluez|hci|蓝牙") then "bluetooth"
+  elif $msg | test("audio|pulseaudio|alsa|sound|speaker|蓝牙") then "audio"
+  elif $msg | test("network|NetworkManager|wlan|wifi|ethernet|dhcp|ip address|connectivity") then "network"
+  elif $msg | test("ssh|sshd|authentication|auth|login|password|pam") then "auth"
+  elif $msg | test("display|sddm|x11|xorg|wayland|gpu|drm|nvidia|render") then "display"
+  elif $msg | test("disk|storage|ext4|xfs|btrfs|mount|umount|io error|block") then "storage"
+  elif $msg | test("memory|oom|swap|allocat") then "memory"
+  elif $msg | test("cpu|thermal|temperature|fan|throttl") then "thermal"
+  elif $msg | test("snap|flatpak|apparmor|selinux|permission|denied|polkit") then "security"
+  elif $msg | test("kernel|segfault|bug|panic|RIP|Call Trace|oops") then "kernel"
+  elif $msg | test("systemd|failed to start|stopped|entered failed|dependency") then "systemd"
+  elif $msg | test("timer|cron|schedule|daily|weekly") then "scheduler"
+  else "other" end;
+
+def severity:
+  if . >= 900 then "critical"
+  elif . >= 100 then "high"
+  elif . >= 10 then "medium"
+  else "low" end;
+
+# Build per-unit data
+group_by(.UNIT // ._SYSTEMD_UNIT // "kernel") |
+map({
+  unit: (.[0].UNIT // .[0]._SYSTEMD_UNIT // "kernel"),
+  count: length,
+  first: (map(.__REALTIME_TIMESTAMP // 0) | min),
+  last: (map(.__REALTIME_TIMESTAMP // 0) | max),
+  max_prio: (map(.PRIORITY // "7" | tonumber) | min),
+  categories: ([.[].MESSAGE // "" | categorize] | unique),
+  sample: (.[0].MESSAGE // "" | gsub("\n"; " ") | .[0:120]),
+  msgs: ([.[].MESSAGE // "" | gsub("\n"; " ") | .[0:120]] | unique | .[:3])
+}) |
+sort_by(-.count) |
+.[:$top] |
+.[] |
+[
+  .count,
+  .unit,
+  .first,
+  .last,
+  .max_prio,
+  (.categories | join(",")),
+  .sample,
+  (.msgs | join("\t"))
+] | @tsv
+' "$TMPFILE" > "${TMPFILE}.grouped"
+
+# Count by category
+jq -sr '
+def categorize:
+  . as $msg |
+  if $msg | test("nft|iptables|firewall|DROP|REJECT|blocked|nftset") then "firewall"
+  elif $msg | test("dnsmasq|dns|resolve|DNS") then "dns"
+  elif $msg | test("bluetooth|rfcomm|bluez|hci") then "bluetooth"
+  elif $msg | test("audio|pulseaudio|alsa|sound|speaker") then "audio"
+  elif $msg | test("network|NetworkManager|wlan|wifi|ethernet|dhcp|connectivity") then "network"
+  elif $msg | test("ssh|sshd|authentication|auth|login|password|pam") then "auth"
+  elif $msg | test("display|sddm|x11|xorg|wayland|gpu|drm|nvidia|render") then "display"
+  elif $msg | test("disk|storage|ext4|xfs|btrfs|mount|umount|io error|block") then "storage"
+  elif $msg | test("memory|oom|swap|allocat") then "memory"
+  elif $msg | test("cpu|thermal|temperature|fan|throttl") then "thermal"
+  elif $msg | test("snap|flatpak|apparmor|selinux|permission|denied|polkit") then "security"
+  elif $msg | test("kernel|segfault|bug|panic|RIP|Call Trace|oops") then "kernel"
+  elif $msg | test("systemd|failed to start|stopped|entered failed|dependency") then "systemd"
+  elif $msg | test("timer|cron|schedule|daily|weekly") then "scheduler"
+  else "other" end;
+
+def pri_name:
+  if . == "0" then "emerg"
+  elif . == "1" then "alert"
+  elif . == "2" then "crit"
+  elif . == "3" then "err"
+  elif . == "4" then "warning"
+  elif . == "5" then "notice"
+  elif . == "6" then "info"
+  elif . == "7" then "debug"
+  else . end;
+
+group_by(.MESSAGE // "" | categorize) |
+map({cat: (.[0].MESSAGE // "" | categorize), n: length}) |
+sort_by(-.n) |
+.[] |
+"\(.cat)\t\(.n)"
+' "$TMPFILE" > "${TMPFILE}.categories"
+
+# Priority counts
+jq -sr '
+def pri_name:
+  if . == "0" then "emerg"
+  elif . == "1" then "alert"
+  elif . == "2" then "crit"
+  elif . == "3" then "err"
+  elif . == "4" then "warning"
+  elif . == "5" then "notice"
+  elif . == "6" then "info"
+  elif . == "7" then "debug"
+  else . end;
+group_by(.PRIORITY // "?") |
+map({p: (.[0].PRIORITY // "?" | pri_name), n: length}) |
+.[] |
+"\(.p)\t\(.n)"
+' "$TMPFILE" > "${TMPFILE}.priority"
+
+FIRST_TS=$(jq -sr 'map(.__REALTIME_TIMESTAMP // 0) | min' "$TMPFILE")
+LAST_TS=$(jq -sr 'map(.__REALTIME_TIMESTAMP // 0) | max' "$TMPFILE")
+
+ts_to_human() {
+    local ts=$1
+    [[ -z "$ts" || "$ts" == "0" || "$ts" == "null" ]] && echo "?" && return
+    date -d "@$((ts / 1000000))" '+%H:%M:%S' 2>/dev/null || echo "?"
+}
+
+ts_to_relative() {
+    local ts=$1
+    [[ -z "$ts" || "$ts" == "0" || "$ts" == "null" ]] && echo "?" && return
+    local now sec diff
+    now=$(date +%s)
+    sec=$((ts / 1000000))
+    diff=$((now - sec))
+    if (( diff < 60 )); then echo "${diff}s ago"
+    elif (( diff < 3600 )); then echo "$((diff / 60))m ago"
+    elif (( diff < 86400 )); then echo "$((diff / 3600))h ago"
+    else echo "$((diff / 86400))d ago"
+    fi
+}
+
+ts_to_staleness() {
+    local ts=$1
+    [[ -z "$ts" || "$ts" == "0" || "$ts" == "null" ]] && echo "" && return
+    local now sec diff
+    now=$(date +%s)
+    sec=$((ts / 1000000))
+    diff=$((now - sec))
+    if (( diff < 300 )); then echo "ACTIVE"
+    elif (( diff < 3600 )); then echo "recent"
+    elif (( diff < 86400 )); then echo "today"
+    else echo "old"
+    fi
+}
+
+cat_label() {
+    case "$1" in
+        firewall) echo -e "${YEL}FW${RST}" ;;
+        dns) echo -e "${CYN}DNS${RST}" ;;
+        bluetooth) echo -e "${CYN}BT${RST}" ;;
+        audio) echo -e "${CYN}AUD${RST}" ;;
+        network) echo -e "${YEL}NET${RST}" ;;
+        auth) echo -e "${RED}AUTH${RST}" ;;
+        display) echo -e "${CYN}DSP${RST}" ;;
+        storage) echo -e "${RED}DISK${RST}" ;;
+        memory) echo -e "${RED}MEM${RST}" ;;
+        thermal) echo -e "${YEL}THM${RST}" ;;
+        security) echo -e "${RED}SEC${RST}" ;;
+        kernel) echo -e "${RED}KRN${RST}" ;;
+        systemd) echo -e "${YEL}SD${RST}" ;;
+        scheduler) echo -e "${CYN}JOB${RST}" ;;
+        *) echo -e "${DIM}???${RST}" ;;
+    esac
+}
+
+# === OUTPUT ===
+echo ""
+echo -e "${BLD}═══════════════════════════════════════════════════════════════════════════${RST}"
+echo -e "${BLD}  Systemd Journal Analysis${RST}"
+echo -e "${BLD}═══════════════════════════════════════════════════════════════════════════${RST}"
+echo ""
+
+printf "  %-18s %s\n" "Total entries:" "$TOTAL"
+printf "  %-18s %s → %s\n" "Time range:" "$(ts_to_human "$FIRST_TS")" "$(ts_to_human "$LAST_TS")"
+printf "  %-18s %s\n" "Services affected:" "$(wc -l < "${TMPFILE}.grouped" | tr -d '[:space:]')"
+echo ""
+
+echo -e "  ${BLD}By priority:${RST}"
+while IFS=$'\t' read -r prio count; do
+    case "$prio" in
+        emerg|alert|crit|err) color="$RED" ;;
+        warning) color="$YEL" ;;
+        *) color="$GRN" ;;
+    esac
+    printf "    %-12s ${color}%6d${RST}\n" "$prio" "$count"
+done < "${TMPFILE}.priority"
+echo ""
+
+echo -e "  ${BLD}By category:${RST}"
+while IFS=$'\t' read -r cat count; do
+    label=$(cat_label "$cat")
+    printf "    ${label}  %-12s %6d\n" "$cat" "$count"
+done < "${TMPFILE}.categories"
+echo ""
+
+echo -e "  ${BLD}Top offenders:${RST}"
+echo ""
+printf "  ${BLD}%-6s  %-6s  %-7s  %-28s  %s${RST}\n" "COUNT" "LAST" "STATUS" "SERVICE" "CATEGORIES / SAMPLE"
+echo "  ──────  ──────  ───────  ──────────────────────────────  ────────────────────────────────────────"
+
+while IFS=$'\t' read -r count unit first last max_prio cats sample msgs; do
+    [[ -z "$count" ]] && continue
+    last_rel=$(ts_to_relative "$last")
+    stale=$(ts_to_staleness "$last")
+
+    case "$stale" in
+        ACTIVE) stale_color="$RED" ;;
+        recent) stale_color="$YEL" ;;
+        today) stale_color="$CYN" ;;
+        *) stale_color="$DIM" ;;
+    esac
+
+    # Build category badges
+    badge=""
+    IFS=',' read -ra catarr <<< "$cats"
+    for c in "${catarr[@]}"; do
+        badge+="$(cat_label "$c") "
+    done
+
+    [[ ${#sample} -gt 45 ]] && sample="${sample:0:42}..."
+
+    if (( count >= 100 )); then
+        color="$RED"
+    elif (( count >= 20 )); then
+        color="$YEL"
+    else
+        color="$CYN"
+    fi
+
+    printf "  ${color}%6d${RST}  ${stale_color}%-6s${RST}  ${stale_color}%-7s${RST}  ${BLD}%-28s${RST}  %s ${DIM}%s${RST}\n" \
+        "$count" "$last_rel" "$stale" "$unit" "$badge" "$sample"
+done < "${TMPFILE}.grouped"
+
+# Fixes section
+if [[ $SHOW_FIXES -eq 1 ]]; then
+    echo ""
+    echo -e "  ${BLD}Suggested fixes:${RST}"
+    echo ""
+
+    has_fixes=0
+
+    if grep -q "dnsmasq" "${TMPFILE}.grouped" 2>/dev/null; then
+        echo -e "  ${YEL}dnsmasq${RST} DNS errors:"
+        echo "    sudo systemctl restart dnsmasq"
+        echo "    Check: /etc/dnsmasq.conf"
+        echo ""
+        has_fixes=1
+    fi
+
+    if grep -q "bluetooth" "${TMPFILE}.grouped" 2>/dev/null; then
+        echo -e "  ${YEL}bluetooth${RST} errors:"
+        echo "    sudo systemctl restart bluetooth"
+        echo "    Check if device is paired: bluetoothctl devices"
+        echo ""
+        has_fixes=1
+    fi
+
+    if grep -q "NetworkManager" "${TMPFILE}.grouped" 2>/dev/null; then
+        echo -e "  ${YEL}NetworkManager${RST} errors:"
+        echo "    sudo systemctl restart NetworkManager"
+        echo "    Check connections: nmcli connection show"
+        echo ""
+        has_fixes=1
+    fi
+
+    if grep -q "sddm\|display\|x11\|xorg" "${TMPFILE}.grouped" 2>/dev/null; then
+        echo -e "  ${YEL}display${RST} errors:"
+        echo "    Check X log: cat /var/log/Xorg.0.log | grep EE"
+        echo "    Restart display: sudo systemctl restart sddm"
+        echo ""
+        has_fixes=1
+    fi
+
+    if grep -q "sshd\|auth" "${TMPFILE}.grouped" 2>/dev/null; then
+        echo -e "  ${YEL}auth/ssh${RST} errors:"
+        echo "    Check: sudo journalctl -u sshd --since '1 hour ago'"
+        echo "    Review: /var/log/auth.log"
+        echo ""
+        has_fixes=1
+    fi
+
+    if grep -q "oom\|memory" "${TMPFILE}.grouped" 2>/dev/null; then
+        echo -e "  ${YEL}memory/OOM${RST} errors:"
+        echo "    Check top memory users: ps aux --sort=-%mem | head"
+        echo "    Consider adding swap or reducing memory usage"
+        echo ""
+        has_fixes=1
+    fi
+
+    if grep -q "kernel\|segfault\|panic" "${TMPFILE}.grouped" 2>/dev/null; then
+        echo -e "  ${RED}kernel${RST} errors (may need attention):"
+        echo "    Check: dmesg | tail -50"
+        echo "    These often indicate hardware or driver issues"
+        echo ""
+        has_fixes=1
+    fi
+
+    if [[ $has_fixes -eq 0 ]]; then
+        echo -e "  ${DIM}No specific fixes for these categories.${RST}"
+    fi
+fi
+
+echo ""
+echo -e "${BLD}═══════════════════════════════════════════════════════════════════════════${RST}"
+echo ""

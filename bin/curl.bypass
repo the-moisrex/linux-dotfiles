@@ -1,5 +1,29 @@
 #!/bin/bash
 
+show_help() {
+    echo "Usage: curl.bypass [OPTIONS] URL"
+    echo "curl with browser-like headers to bypass Cloudflare/anti-bot protection."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help      Show this help message"
+    echo "  -t, --timeout N Connection timeout in seconds (default: 30)"
+    echo "  -m, --max-time N Maximum total time in seconds (default: 60)"
+    exit 0
+}
+
+TIMEOUT=30
+MAXTIME=60
+URL=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -t|--timeout) TIMEOUT="$2"; shift 2 ;;
+        -m|--max-time) MAXTIME="$2"; shift 2 ;;
+        *) URL="$1"; shift ;;
+    esac
+done
+
 curl -sL --http2 --tlsv1.3 --ciphers "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384" \
 -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36' \
 -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8' \
@@ -8,5 +32,5 @@ curl -sL --http2 --tlsv1.3 --ciphers "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES2
 -H 'Sec-Fetch-Site: none' \
 -H 'Sec-Fetch-Mode: navigate' \
 -H 'Sec-Fetch-User: ?1' \
---connect-timeout 30 --max-time 60 "$@"
+--connect-timeout "$TIMEOUT" --max-time "$MAXTIME" "$URL"
 

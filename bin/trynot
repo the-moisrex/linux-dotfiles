@@ -1,9 +1,18 @@
 #!/bin/bash
 
 if [ "$1" == "--help" ]; then
-    echo "Usage: $0 [retry-count=Infinite] [command]"
+    echo "Usage: $0 [--delay SECONDS] [retry-count=Infinite] [command]"
     echo "  Retry the specified command until it returns failure."
+    echo
+    echo "Options:"
+    echo "  --delay SECONDS  Wait SECONDS between retries (default: 1)"
     exit 0;
+fi
+
+delay=1
+if [ "$1" == "--delay" ]; then
+    delay="${2:-1}"
+    shift 2
 fi
 
 retry_count=0
@@ -19,5 +28,5 @@ while "$@"; do
             break
         fi
     fi
-    sleep 1s
+    sleep "$delay"s
 done

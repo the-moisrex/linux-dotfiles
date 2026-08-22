@@ -1,0 +1,386 @@
+#!/bin/bash
+
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage: journalctl.annotate [JOURNALCTL_OPTIONS]
+
+Like journalctl, but annotates each entry with context:
+  - Whether it's benign noise or needs attention
+  - Why it happened (known cause)
+  - What to do about it (if anything)
+
+All arguments are passed directly to journalctl.
+
+Examples:
+  journalctl.annotate -p err -n 50
+  journalctl.annotate -u sshd --since "1 hour ago"
+  journalctl.annotate -b -p warning
+  journalctl.annotate --since today --no-pager
+EOF
+    exit 0
+}
+
+if [[ $# -eq 0 ]] || [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    show_help
+fi
+
+exec journalctl --no-pager -o json "$@" 2>/dev/null | jq -r '
+# === ANNOTATION DATABASE ===
+def annotations:
+  # --- FIREWALL ---
+  if .MESSAGE | test("nft.*dropped|iptables.*DROP|REJECT|IN=.*OUT=") then
+    {verdict: "ok", tag: "FW", note: "Normal firewall activity"}
+
+  # --- DNS ---
+  elif .MESSAGE | test("Could not resolve hostname") then
+    {verdict: "watch", tag: "DNS", note: "DNS resolution failed", action: "Check /etc/resolv.conf, ping 8.8.8.8"}
+  elif .MESSAGE | test("DNS server.*not responding|connection refused.*53") then
+    {verdict: "action", tag: "DNS", note: "DNS server unreachable", action: "sudo systemctl restart systemd-resolved"}
+  elif .MESSAGE | test("nameserver.*refused.*recursive query") then
+    {verdict: "ok", tag: "DNS", note: "DNS server refused recursive query - upstream issue"}
+  elif .MESSAGE | test("nftset.*mangle.*Error|nftset.*Error") then
+    {verdict: "ok", tag: "DNS", note: "nftset DNS rule error - usually transient"}
+
+  # --- BLUETOOTH ---
+  elif .MESSAGE | test("bluetoothd.*Failed to set privacy|bluetooth.*Failed to set.*privacy") then
+    {verdict: "ok", tag: "BT", note: "Privacy mode not supported - harmless"}
+  elif .MESSAGE | test("RFCOMM.*failed|bluetooth.*connection failed") then
+    {verdict: "watch", tag: "BT", note: "Bluetooth connection issue", action: "bluetoothctl devices"}
+  elif .MESSAGE | test("bluez.*not found|bluetooth.*not available|Activation request.*org.bluez") then
+    {verdict: "ok", tag: "BT", note: "Bluetooth service unavailable or no hardware"}
+
+  # --- AUDIO ---
+  elif .MESSAGE | test("pulseaudio.*terminated|pulseaudio.*killed") then
+    {verdict: "ok", tag: "AUD", note: "PulseAudio restarted by session manager"}
+  elif .MESSAGE | test("pa_context_connect.*failed|couldn.*open audio device") then
+    {verdict: "watch", tag: "AUD", note: "Audio device busy/unavailable", action: "pactl list sinks"}
+  elif .MESSAGE | test("alsa.*underrun|audio.*buffer overrun") then
+    {verdict: "ok", tag: "AUD", note: "Audio buffer glitch under load"}
+  elif .MESSAGE | test("spa\\.alsa.*playback open failed.*Device or resource busy|spa\\.alsa.*capture open failed.*Device or resource busy") then
+    {verdict: "ok", tag: "AUD", note: "ALSA device busy - another app has exclusive access"}
+  elif .MESSAGE | test("pw\\.node.*start node error.*Device or resource busy|pw\\.node.*suspended.*error.*Device or resource busy") then
+    {verdict: "ok", tag: "AUD", note: "PipeWire node busy - audio device in use by another app"}
+  elif .MESSAGE | test("ms\\.core.*error.*Device or resource busy") then
+    {verdict: "ok", tag: "AUD", note: "Media device busy - shared resource contention"}
+  elif .MESSAGE | test("poll fd error|card removed|Unable to get default source") then
+    {verdict: "ok", tag: "AUD", note: "Audio device disconnected or unavailable"}
+  elif .MESSAGE | test("Can.*t find input for stream|No object for name.*alsa") then
+    {verdict: "ok", tag: "AUD", note: "Audio stream reference invalid - device changed"}
+  elif .MESSAGE | test("gvc_mixer_ui_device_get_description.*assertion|gvc_channel_map_has_position.*assertion") then
+    {verdict: "ok", tag: "AUD", note: "GNOME volume control assertion - cosmetic"}
+
+  # --- SSH ---
+  elif .MESSAGE | test("Failed password for.*from") then
+    {verdict: "watch", tag: "SSH", note: "Failed login attempt", action: "Check: fail2ban-client status"}
+  elif .MESSAGE | test("Failed password for invalid user") then
+    {verdict: "action", tag: "SSH", note: "Brute-force probe", action: "Block IP with fail2ban"}
+  elif .MESSAGE | test("Accepted publickey for|Accepted password for") then
+    {verdict: "ok", tag: "SSH", note: "Successful login"}
+  elif .MESSAGE | test("Disconnected from.*preauth|Disconnected from.*invalid user") then
+    {verdict: "ok", tag: "SSH", note: "Client disconnected before auth"}
+  elif .MESSAGE | test("sshd.*Could not open host key") then
+    {verdict: "action", tag: "SSH", note: "SSH host key missing", action: "sudo ssh-keygen -A"}
+
+  # --- DISPLAY / GPU ---
+  elif .MESSAGE | test("sddm.*gkr-pam.*unable to locate daemon control") then
+    {verdict: "ok", tag: "DSP", note: "GNOME keyring not available - cosmetic"}
+  elif .MESSAGE | test("failed to start.*no Qt platform plugin") then
+    {verdict: "action", tag: "DSP", note: "Qt cannot find display backend", action: "Install qt5-wayland or qt6-wayland"}
+  elif .MESSAGE | test("Xorg.*EE|glamor.*failed|nvidia.*error") then
+    {verdict: "action", tag: "GPU", note: "Display/GPU driver error", action: "grep EE /var/log/Xorg.0.log"}
+  elif .MESSAGE | test("nvidia.*GPU has fallen|nvidia.*SBE") then
+    {verdict: "action", tag: "GPU", note: "NVIDIA GPU fell off bus", action: "Update drivers, check thermals"}
+  elif .MESSAGE | test("Failed to open /dev/dri/card.*Device or resource busy|kwin_core.*Failed to open /dev/dri") then
+    {verdict: "ok", tag: "GPU", note: "DRI device busy - compositor/driver contention"}
+  elif .MESSAGE | test("MESA.*warning.*experimental.*Xe KMD") then
+    {verdict: "ok", tag: "GPU", note: "Intel Xe KMD - experimental support, harmless warning"}
+  elif .MESSAGE | test("kwin_scene_opengl.*Could not delete render time query") then
+    {verdict: "ok", tag: "GPU", note: "KWin render query cleanup - cosmetic"}
+  elif .MESSAGE | test("kwin_core.*Failed to load cursor theme") then
+    {verdict: "ok", tag: "GPU", note: "Cursor theme missing - install it or switch theme"}
+  elif .MESSAGE | test("Can.*t send tablet event with no proximity surface") then
+    {verdict: "ok", tag: "GPU", note: "Drawing tablet event ignored - no active surface"}
+  elif .MESSAGE | test("meta_window_set_stack_position_no_sync.*assertion failed") then
+    {verdict: "ok", tag: "GPU", note: "Window stacking assertion - harmless Mutter/GNOME bug"}
+  elif .MESSAGE | test("Applying output configuration failed") then
+    {verdict: "watch", tag: "GPU", note: "Display output configuration failed", action: "Check display settings, xrandr"}
+  elif .MESSAGE | test("xe.*\\[drm\\].*Engine reset|xe.*\\[drm\\].*Timedout job") then
+    {verdict: "ok", tag: "GPU", note: "Intel Xe GPU engine reset/timeout - usually transient"}
+  elif .MESSAGE | test("xe.*\\[drm\\].*Xe device coredump has been created") then
+    {verdict: "watch", tag: "GPU", note: "Intel Xe GPU coredump created", action: "Check /sys/class/drm/card0/device/devcoredump/data"}
+  elif .MESSAGE | test("xe.*\\[drm\\].*PF: migration disabled") then
+    {verdict: "ok", tag: "GPU", note: "Intel Xe GPU migration disabled - GuC version too old"}
+  elif .MESSAGE | test("xe.*\\[drm\\].*Reducing the compressed framebuffer") then
+    {verdict: "ok", tag: "GPU", note: "Intel Xe framebuffer size reduced - power saving"}
+  elif .MESSAGE | test("xe.*\\[drm\\].*fused off") then
+    {verdict: "ok", tag: "GPU", note: "Intel Xe GPU engine fused off - normal hardware config"}
+  elif .MESSAGE | test("igc.*can.*t disable ASPM") then
+    {verdict: "ok", tag: "NET", note: "Intel NIC ASPM control unavailable - BIOS/firmware"}
+  elif .MESSAGE | test("iwlwifi.*RFIm is deactivated") then
+    {verdict: "ok", tag: "NET", note: "Intel WiFi RF interference measurement deactivated"}
+  elif .MESSAGE | test("asus_armoury.*No matching power limits") then
+    {verdict: "ok", tag: "HW", note: "ASUS Armoury crate - no matching power limits for this system"}
+  elif .MESSAGE | test("kdeconnectd.*uses wireless extensions which will stop working") then
+    {verdict: "ok", tag: "NET", note: "KDE Connect uses deprecated wireless extensions"}
+  elif .MESSAGE | test("perf.*interrupt took too long") then
+    {verdict: "ok", tag: "SYS", note: "perf sampling rate too high - auto-lowered"}
+  elif .MESSAGE | test("EDAC.*No ECC support") then
+    {verdict: "ok", tag: "HW", note: "Memory controller has no ECC support"}
+  elif .MESSAGE | test("spi-nor.*supply vcc not found.*using dummy regulator") then
+    {verdict: "ok", tag: "HW", note: "SPI NOR flash using dummy regulator - normal"}
+  elif .MESSAGE | test("usb.*not running at top speed") then
+    {verdict: "ok", tag: "HW", note: "USB device not at full speed - use high-speed hub"}
+  elif .MESSAGE | test("input.*failed to attach handler leds to device") then
+    {verdict: "ok", tag: "INPUT", note: "LED handler attach failed - keyboard/tablet issue"}
+  elif .MESSAGE | test("Received SIGTERM from PID 1") then
+    {verdict: "ok", tag: "SD", note: "Process收到 SIGTERM from systemd - normal shutdown"}
+  elif .MESSAGE | test("cfg80211.*Loading compiled-in X\\.509 certificates") then
+    {verdict: "ok", tag: "NET", note: "WiFi regulatory database loaded"}
+  elif .MESSAGE | test("i2c.*Successfully instantiated SPD") then
+    {verdict: "ok", tag: "HW", note: "SPD EEPROM detected on i2c - RAM info"}
+  elif .MESSAGE | test("asus_wmi.*SFUN value|eeepc-wmi.*Detected ATK") then
+    {verdict: "ok", tag: "HW", note: "ASUS WMI/ATK platform detected"}
+  elif .MESSAGE | test("overlayfs.*xino.*feature enabled") then
+    {verdict: "ok", tag: "SYS", note: "OverlayFS xino feature enabled - normal"}
+  elif .MESSAGE | test("ntfs3.*Enabled Linux POSIX ACLs|ntfs3.*Read-only.*compression") then
+    {verdict: "ok", tag: "DISK", note: "NTFS3 driver features enabled"}
+  elif .MESSAGE | test("usb.*USB disconnect, device number") then
+    {verdict: "ok", tag: "HW", note: "USB device disconnected"}
+  elif .MESSAGE | test("igc.*NIC Link is Up") then
+    {verdict: "ok", tag: "NET", note: "Ethernet link up"}
+  elif .MESSAGE | test("igc.*Force mode currently not supported") then
+    {verdict: "ok", tag: "NET", note: "Intel NIC force mode not supported"}
+  elif .MESSAGE | test("Bluetooth.*hci0.*Waiting for firmware download|Bluetooth.*hci0.*Firmware loaded|Bluetooth.*hci0.*Device booted") then
+    {verdict: "ok", tag: "BT", note: "Bluetooth firmware loading sequence"}
+  elif .MESSAGE | test("Bluetooth.*hci0.*Applying Intel DDC parameters") then
+    {verdict: "ok", tag: "BT", note: "Intel Bluetooth DDC calibration applied"}
+  elif .MESSAGE | test("Adding.*swap on /dev/zram") then
+    {verdict: "ok", tag: "SYS", note: "zram swap device configured"}
+  elif .MESSAGE | test("systemd.*running in system mode") then
+    {verdict: "ok", tag: "SD", note: "Systemd boot information"}
+  elif .MESSAGE | test("bpf-restrict-fs.*LSM BPF program attached") then
+    {verdict: "ok", tag: "SEC", note: "BPF LSM filesystem restriction attached"}
+  elif .MESSAGE | test("Load Kernel Module.*skipped.*unmet condition") then
+    {verdict: "ok", tag: "SD", note: "Kernel module load skipped - condition not met"}
+  elif .MESSAGE | test("TPM.*skipped.*unmet condition") then
+    {verdict: "ok", tag: "SEC", note: "TPM operation skipped - security condition not met"}
+  elif .MESSAGE | test("virt/tdx.*TDX not supported") then
+    {verdict: "ok", tag: "SEC", note: "Intel TDX not supported by platform - informational"}
+  elif .MESSAGE | test("hpet_acpi_probe.*no address or irqs") then
+    {verdict: "ok", tag: "HW", note: "HPET ACPI probe failed - no IRQ/address in _CRS"}
+  elif .MESSAGE | test("usb.*port power management may be unreliable") then
+    {verdict: "ok", tag: "HW", note: "USB port power management unreliable - BIOS quirk"}
+  elif .MESSAGE | test("ENERGY_PERF_BIAS.*Set to.*was") then
+    {verdict: "ok", tag: "HW", note: "Energy performance bias changed - BIOS/OS setting"}
+
+  # --- I2C / MONITOR DETECTION ---
+  elif .MESSAGE | test("Open failed for /dev/i2c.*EACCES|User ACL is not RW|Current user not in group i2c") then
+    {verdict: "ok", tag: "I2C", note: "i2c permission denied - monitor EDID detection", action: "sudo usermod -aG i2c $USER"}
+  elif .MESSAGE | test("open.*EACCES failure.*recently resumed from sleep") then
+    {verdict: "ok", tag: "I2C", note: "i2c access failure after resume - transient"}
+  elif .MESSAGE | test("DPMS state changes unimplemented") then
+    {verdict: "ok", tag: "DSP", note: "DPMS not implemented in Wayland - harmless"}
+
+  # --- INPUT DEVICES ---
+  elif .MESSAGE | test("Failed to open /dev/input/event.*No such device") then
+    {verdict: "ok", tag: "INPUT", note: "Input device disconnected - USB removed"}
+  elif .MESSAGE | test("Could not open device /dev/input/event.*No such device|Could not open device /dev/input/event.*ENODEV") then
+    {verdict: "ok", tag: "INPUT", note: "Input device gone - USB device removed"}
+  elif .MESSAGE | test("input.*failed to attach handler leds to device") then
+    {verdict: "ok", tag: "INPUT", note: "LED handler attach failed - keyboard/tablet issue"}
+
+  # --- SYSTEMD ---
+  elif .MESSAGE | test("Failed to start.*Daily apt") then
+    {verdict: "ok", tag: "SD", note: "Scheduled apt task failed - network/lock issue"}
+  elif .MESSAGE | test("Failed to start.*Rotate log") then
+    {verdict: "ok", tag: "SD", note: "Logrotate failed - permissions or disk"}
+  elif .MESSAGE | test("Unit.*entered failed state") then
+    {verdict: "watch", tag: "SD", note: "Service entered failed state", action: "systemctl status <unit>"}
+  elif .MESSAGE | test("Was frozen|Killing process.*oom-kill") then
+    {verdict: "ok", tag: "SD", note: "Systemd resource management"}
+  elif .MESSAGE | test("\\.scope.*Failed with result.*timeout|Stopping timed out.*Killing") then
+    {verdict: "ok", tag: "SD", note: "Service scope timed out on stop - usually harmless"}
+  elif .MESSAGE | test("\\.scope.*Failed with result.*exit-code") then
+    {verdict: "watch", tag: "SD", note: "Service exited with error", action: "journalctl -u <unit> --since -1h"}
+
+  # --- OOM / MEMORY ---
+  elif .MESSAGE | test("Out of memory|oom-kill|oom_reaper") then
+    {verdict: "action", tag: "OOM", note: "OOM killer invoked", action: "ps aux --sort=-%mem | head"}
+  elif .MESSAGE | test("Low on memory|memory pressure") then
+    {verdict: "watch", tag: "MEM", note: "Memory pressure", action: "free -h"}
+
+  # --- KERNEL ---
+  elif .MESSAGE | test("kernel.*BUG:|kernel.*RIP:|kernel.*Call Trace") then
+    {verdict: "action", tag: "KRN", note: "Kernel bug/panic", action: "dmesg | tail -100"}
+  elif .MESSAGE | test("segfault at|segv at") then
+    {verdict: "action", tag: "KRN", note: "Segmentation fault", action: "Update crashing app"}
+  elif .MESSAGE | test("kernel.*hrtimer.*interrupts took") then
+    {verdict: "ok", tag: "KRN", note: "Timer overrun under load"}
+  elif .MESSAGE | test("kernel.*MCE|kernel.*machine check") then
+    {verdict: "action", tag: "HW", note: "Machine Check Exception", action: "Run mcelog, check RAM"}
+
+  # --- HARDWARE ---
+  elif .MESSAGE | test("thermal.*trip point|thermal.*critical") then
+    {verdict: "action", tag: "THM", note: "Temperature threshold", action: "sensors, clean dust"}
+  elif .MESSAGE | test("ModemManager.*couldn.*get paths") then
+    {verdict: "ok", tag: "HW", note: "No modem hardware"}
+  elif .MESSAGE | test("usb.*device.*not authorized|usb.*reset|bus.*was not an MTP device") then
+    {verdict: "ok", tag: "HW", note: "USB device issue - enumeration or MTP probe"}
+  elif .MESSAGE | test("Primary Battery seems to have been removed") then
+    {verdict: "ok", tag: "PWR", note: "Battery removed - system suspending packets"}
+  elif .MESSAGE | test("No Primary Battery detected on this system|Total quantity of batteries found.*0") then
+    {verdict: "ok", tag: "PWR", note: "No battery found - normal on desktops"}
+
+  # --- DISK ---
+  elif .MESSAGE | test("ext4.*error|xfs.*error|btrfs.*error") then
+    {verdict: "action", tag: "DISK", note: "Filesystem error", action: "Run fsck, check SMART"}
+  elif .MESSAGE | test("I/O error|buffer I/O error") then
+    {verdict: "action", tag: "DISK", note: "Disk I/O error - failing drive", action: "smartctl -a /dev/sdX"}
+  elif .MESSAGE | test("disk.*full|No space left|ENOSPC") then
+    {verdict: "action", tag: "DISK", note: "Disk full", action: "journalctl --vacuum-size=500M"}
+
+  # --- NETWORK ---
+  elif .MESSAGE | test("NetworkManager.*wifi.*disconnected|link.*down") then
+    {verdict: "watch", tag: "NET", note: "Network disconnected", action: "nmcli device status"}
+  elif .MESSAGE | test("DHCP.*timeout|dhcp.*failed") then
+    {verdict: "watch", tag: "NET", note: "DHCP lease failed", action: "dhclient -r && dhclient"}
+  elif .MESSAGE | test("conntrack.*table full|nf_conntrack.*dropped") then
+    {verdict: "action", tag: "NET", note: "Conntrack table full", action: "sysctl net.netfilter.nf_conntrack_max"}
+
+  # --- OPENVPN ---
+  elif .MESSAGE | test("WARNING.*--ping should normally be used with|NOTE.*script-security setting") then
+    {verdict: "ok", tag: "VPN", note: "OpenVPN config hint - informational"}
+  elif .MESSAGE | test("DEPRECATED OPTION.*persist-key.*ignored") then
+    {verdict: "ok", tag: "VPN", note: "OpenVPN deprecated option - now default behavior"}
+  elif .MESSAGE | test("Options error.*Unrecognized option.*block-outside-dns") then
+    {verdict: "ok", tag: "VPN", note: "OpenVPN unknown option - older version or typo"}
+
+  # --- SECURITY / POLICY ---
+  elif .MESSAGE | test("polkit.*action.*already registered") then
+    {verdict: "ok", tag: "SEC", note: "Polkit duplicate registration - harmless"}
+  elif .MESSAGE | test("apparmor.*DENIED|selinux.*denied") then
+    {verdict: "watch", tag: "SEC", note: "Access control denial", action: "aa-log | grep DENIED"}
+  elif .MESSAGE | test("A security policy denied.*send method call") then
+    {verdict: "ok", tag: "SEC", note: "D-Bus security policy denial - VPN or portal"}
+
+  # --- DBUS ---
+  elif .MESSAGE | test("Activation request.*failed.*could not be found") then
+    {verdict: "ok", tag: "DBUS", note: "D-Bus service not installed - optional component"}
+  elif .MESSAGE | test("Activation request.*failed") then
+    {verdict: "ok", tag: "DBUS", note: "D-Bus service activation failed - often optional"}
+  elif .MESSAGE | test("Service file.*is not named after the D-Bus name") then
+    {verdict: "ok", tag: "DBUS", note: "D-Bus service file naming mismatch - packaging bug"}
+  elif .MESSAGE | test("Ignoring duplicate name.*in service file") then
+    {verdict: "ok", tag: "DBUS", note: "D-Bus duplicate service registration"}
+  elif .MESSAGE | test("Error while sending AddMatch.*connection is closed") then
+    {verdict: "ok", tag: "DBUS", note: "D-Bus connection closed - transient"}
+
+  # --- DESKTOP ---
+  elif .MESSAGE | test("xdg-desktop-portal.*No AskDialog") then
+    {verdict: "ok", tag: "DESK", note: "Portal missing dialog - cosmetic"}
+  elif .MESSAGE | test("iio-sensor-proxy.*No sensors") then
+    {verdict: "ok", tag: "DESK", note: "No IIO sensors - normal on desktops"}
+  elif .MESSAGE | test("console-kit.*NOT-FOUND|logind.*not found") then
+    {verdict: "ok", tag: "DESK", note: "Session manager not available"}
+  elif .MESSAGE | test("Failed to register with host portal") then
+    {verdict: "ok", tag: "DESK", note: "Portal registration conflict - duplicate app ID"}
+  elif .MESSAGE | test("Couldn.*start.*from.*org\\.kde\\..*service") then
+    {verdict: "ok", tag: "DESK", note: "KDE service startup failed - D-Bus or dependency issue"}
+  elif .MESSAGE | test("App.*sets X-GNOME-Autostart-Phase.*gnome-session no longer manages") then
+    {verdict: "ok", tag: "DESK", note: "Legacy autostart desktop file - cosmetic"}
+  elif .MESSAGE | test("applications\\.menu.*not found") then
+    {verdict: "ok", tag: "DESK", note: "KDE menu file missing - packaging issue"}
+
+  # --- SNAP ---
+  elif .MESSAGE | test("snapd.*internal error") then
+    {verdict: "ok", tag: "SNAP", note: "Snap daemon internal error - transient"}
+
+  # --- CONTAINERS ---
+  elif .MESSAGE | test("docker.*error|containerd.*error") then
+    {verdict: "watch", tag: "CTR", note: "Container runtime error", action: "docker ps, systemctl status docker"}
+
+  # --- BROWSERS ---
+  elif .MESSAGE | test("chrome.*Segfault|chromium.*Segfault|firefox.*Segfault") then
+    {verdict: "ok", tag: "BROW", note: "Browser crashed - common with GPU issues"}
+
+  # --- PACKAGES ---
+  elif .MESSAGE | test("apt.*lock|dpkg.*lock|package manager.*locked") then
+    {verdict: "ok", tag: "PKG", note: "Package manager locked", action: "Wait or kill apt process"}
+  elif .MESSAGE | test("E: Unable to lock|Could not get lock") then
+    {verdict: "ok", tag: "PKG", note: "Package manager lock contention"}
+  elif .MESSAGE | test("Could not load plugin.*cannot open shared object") then
+    {verdict: "ok", tag: "PKG", note: "Plugin missing dependency - install missing lib"}
+
+  # --- IMAGES ---
+  elif .MESSAGE | test("Corrupt JPEG|corrupt image|invalid image") then
+    {verdict: "ok", tag: "IMG", note: "Corrupted image file - usually harmless warning"}
+
+  # --- TCB ---
+  elif .MESSAGE | test("Unable to open /etc/tcb.*No such file") then
+    {verdict: "ok", tag: "SEC", note: "tcb auth file missing - harmless on non-tcb systems"}
+
+  # --- SURFSHARK ---
+  elif .MESSAGE | test("surfshark.*error|@/opt/Surfshark") then
+    {verdict: "ok", tag: "VPN", note: "Surfshark VPN internal error - transient"}
+
+  else
+    {verdict: "unknown", tag: "???", note: null}
+  end;
+
+def ts_str:
+  if . == null or . == "0" or . == 0 then "?"
+  else (. / 1000000 | strftime("%H:%M:%S"))
+  end;
+
+def pri_tag:
+  if . == "0" then "\u001b[1;31mEMERG\u001b[0m"
+  elif . == "1" then "\u001b[1;31mALERT\u001b[0m"
+  elif . == "2" then "\u001b[1;31mCRIT \u001b[0m"
+  elif . == "3" then "\u001b[0;31mERROR\u001b[0m"
+  elif . == "4" then "\u001b[0;33mWARN \u001b[0m"
+  elif . == "5" then "\u001b[0;36mNOTE \u001b[0m"
+  elif . == "6" then "\u001b[2minfo \u001b[0m"
+  elif . == "7" then "\u001b[2mdebug\u001b[0m"
+  elif . == "0" or . == "1" or . == "2" or . == "3" then "\u001b[0;31mERROR\u001b[0m"
+  elif . == "4" then "\u001b[0;33mWARN \u001b[0m"
+  elif . == "5" then "\u001b[0;36mNOTE \u001b[0m"
+  else "\u001b[2minfo \u001b[0m"
+  end;
+
+def v_icon:
+  if . == "ok" then "\u001b[0;32m✓\u001b[0m"
+  elif . == "watch" then "\u001b[0;33m⚠\u001b[0m"
+  elif . == "action" then "\u001b[0;31m✗\u001b[0m"
+  else "\u001b[2m?\u001b[0m"
+  end;
+
+def v_color:
+  if . == "ok" then "\u001b[0;32m"
+  elif . == "watch" then "\u001b[0;33m"
+  elif . == "action" then "\u001b[0;31m"
+  else "\u001b[2m"
+  end;
+
+def tag_color:
+  if . == "FW" or . == "KRN" or . == "OOM" or . == "DISK" or . == "GPU" or . == "HW" or . == "THM" then "\u001b[1;31m"
+  elif . == "SSH" or . == "AUTH" or . == "SEC" then "\u001b[1;33m"
+  elif . == "DNS" or . == "NET" or . == "BT" or . == "AUD" then "\u001b[0;36m"
+  elif . == "DSP" or . == "DESK" then "\u001b[0;35m"
+  else "\u001b[2m"
+  end;
+
+def truncate(n):
+  if length > n then .[0:n] + "..."
+  else . end;
+
+# === MAIN ===
+annotations as $a |
+(.PRIORITY // "7") as $p |
+(.UNIT // ._SYSTEMD_UNIT // "kernel" | truncate(25)) as $u |
+((.__REALTIME_TIMESTAMP // "0") | tonumber | ts_str) as $t |
+(.MESSAGE // "" | gsub("\n"; " ") | truncate(90)) as $m |
+
+"\($p | pri_tag)  \($t)  \($a.verdict | v_color)\($a.verdict | v_icon)\u001b[0m  \($a.tag | tag_color)[\($a.tag)]\u001b[0m  \u001b[1m\($u)\u001b[0m  \($m)\(if $a.note != null then "\u001b[2m  ← \($a.note)\u001b[0m" else "" end)\(if $a.action then "\n        \u001b[36m→ \($a.action)\u001b[0m" else "" end)"
+'

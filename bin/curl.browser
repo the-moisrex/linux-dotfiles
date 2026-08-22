@@ -1,8 +1,39 @@
 #!/bin/bash
 
-if ! command -v chromium >/dev/null; then
-    echo "Chromium not found";
-    exit 1;
+show_help() {
+    echo "Usage: curl.browser [OPTIONS] URL"
+    echo "Fetch a page using headless Chromium and dump the rendered DOM."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help        Show this help message"
+    echo "  -o, --output FILE Save rendered HTML to FILE instead of stdout"
+    echo "  -W, --width N     Window width in pixels (default: 1920)"
+    echo "  -H, --height N    Window height in pixels (default: 1000)"
+    exit 0
+}
+
+OUTPUT=""
+WIDTH=1920
+HEIGHT=1000
+URL=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -o|--output) OUTPUT="$2"; shift 2 ;;
+        -W|--width) WIDTH="$2"; shift 2 ;;
+        -H|--height) HEIGHT="$2"; shift 2 ;;
+        *) URL="$1"; shift ;;
+    esac
+done
+
+if ! command -v chromium >/dev/null 2>&1; then
+    echo "Error: Chromium not found" >&2
+    exit 1
 fi
 
-chromium --headless --disable-gpu --window-size=1920,1000 --dump-dom "$@" 2>/dev/null
+if [[ -n "$OUTPUT" ]]; then
+    chromium --headless --disable-gpu --window-size="${WIDTH},${HEIGHT}" --dump-dom "$URL" 2>/dev/null > "$OUTPUT"
+else
+    chromium --headless --disable-gpu --window-size="${WIDTH},${HEIGHT}" --dump-dom "$URL" 2>/dev/null
+fi

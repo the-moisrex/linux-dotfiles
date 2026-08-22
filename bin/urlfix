@@ -12,8 +12,24 @@ echo "try {" >> "$file"
 for url in "$@"; do
     case $url in
         --help|-h)
-            echo "Fix the URL using WHATWG URL Parser. Requires nodejs.";
-            exit
+            echo "Usage: urlfix [OPTIONS] URL..."
+            echo
+            echo "Fix/normalize URLs using the WHATWG URL parser (requires nodejs)."
+            echo
+            echo "Options:"
+            echo "  -h, --help      Show this help message"
+            echo "  --hostname      Extract hostname"
+            echo "  --origin        Extract origin"
+            echo "  --protocol      Extract protocol"
+            echo "  --username      Extract username"
+            echo "  --password      Extract password"
+            echo "  --host          Extract host"
+            echo "  --port          Extract port"
+            echo "  --pathname      Extract pathname"
+            echo "  --search        Extract search params"
+            echo "  --hash          Extract hash/fragment"
+            echo "  --clean         Clean the output (remove www, TLD)"
+            exit 0
         ;;
         --hostname)
             value="hostname"

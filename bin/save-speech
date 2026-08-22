@@ -1,8 +1,29 @@
 #!/bin/bash
 
+show_help() {
+    echo "Usage: save-speech [OPTIONS] [WORDS...]"
+    echo "Reads words from stdin or arguments and plays their pronunciation."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo "  -o, --output FILE   Save audio to FILE (default: output.mp3)"
+    echo "  -l, --lang LANG     Language code (default: de)"
+    exit 0
+}
 
-while read word; 
-do 
-	wget -q -U Mozilla -O output.mp3 "https://ssl.gstatic.com/dictionary/static/sounds/de/0/$word.mp3";
-	mplayer -noconsolecontrols output.mp3 < /dev/null &> /dev/null;
+OUTPUT="output.mp3"
+LANG="de"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -o|--output) OUTPUT="$2"; shift 2 ;;
+        -l|--lang) LANG="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+while read word; do
+    wget -q -U Mozilla -O "$OUTPUT" "https://ssl.gstatic.com/dictionary/static/sounds/${LANG}/0/$word.mp3"
+    mplayer -noconsolecontrols "$OUTPUT" < /dev/null &> /dev/null
 done

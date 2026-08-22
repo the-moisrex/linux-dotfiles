@@ -2,13 +2,37 @@
 
 # https://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/Modules/
 
-case "$1" in
+show_help() {
+    echo "Usage: stream-audio [OPTIONS] <start|stop>"
+    echo
+    echo "  Stream the system audio over TCP using PulseAudio."
+    echo
+    echo "Commands:"
+    echo "  start               Start streaming the audio"
+    echo "  stop                Stop streaming"
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo "  -p, --port PORT     Port to stream on (default: 8000)"
+    exit 0
+}
+
+PORT=8000
+ACTION=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -p|--port) PORT="$2"; shift 2 ;;
+        start|stop) ACTION="$1"; shift ;;
+        *) echo "Unknown option: $1" >&2; show_help ;;
+    esac
+done
+
+case "$ACTION" in
   start)
     $0 stop 
-    # pactl load-module module-simple-protocol-tcp rate=48000 format=s16le channels=2 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') record=true port=8000
-    # pactl load-module module-simple-protocol-tcp format=s16le channels=1 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') record=true port=8000
-    # pactl load-module module-simple-protocol-tcp channels=2 rate=48000 format=s32le source=$(pactl list | grep "Monitor Source" | awk '{print $3}') record=true port=8000
-    pactl load-module module-simple-protocol-tcp channels=2 format=s16 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') port=8000 record=true
+    pactl load-module module-simple-protocol-tcp channels=2 format=s16 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') port=$PORT record=true
     ;;
   stop)
     mods=$(pactl list 2>/dev/null | grep -E -B1 'module-simple-protocol-tcp' | grep -oE '^Module #[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
@@ -20,17 +44,8 @@ case "$1" in
         pactl unload-module "$m"
     done
     ;;
-  --help|-h|help)
-    echo "Usage: $0 <start|stop>"
-    echo
-    echo "  Stream the system audio over TCP using PulseAudio."
-    echo
-    echo "Commands:"
-    echo "  start               Start streaming the audio on port 8000"
-    echo "  stop                Stop streaming"
-    echo "  -h, --help          Show this help message"
-    ;;
   *)
-    echo "Usage: $0 start|stop" >&2
+    echo "Error: specify 'start' or 'stop'" >&2
+    show_help
     ;;
 esac
