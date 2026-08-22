@@ -14,7 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-parse_arguments
+common_behavior
 set -- "${ARGS[@]}"
 
 echo "Translate to English; no explanations, no comments, no extra text, just the translation."

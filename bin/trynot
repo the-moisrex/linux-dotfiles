@@ -1,32 +1,133 @@
 #!/bin/bash
 
-if [ "$1" == "--help" ]; then
-    echo "Usage: $0 [--delay SECONDS] [retry-count=Infinite] [command]"
-    echo "  Retry the specified command until it returns failure."
-    echo
-    echo "Options:"
-    echo "  --delay SECONDS  Wait SECONDS between retries (default: 1)"
-    exit 0;
-fi
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage: trynot [OPTIONS] [RETRY_COUNT] [--] COMMAND [ARGS...]
+
+Retry a command until it fails (non-zero exit code).
+
+Options:
+  -h, --help            Show this help message
+  -d, --delay SECONDS   Wait SECONDS between retries (default: 1)
+  -v, --verbose         Print each attempt and its exit code
+  --backoff             Use exponential backoff (1s, 2s, 4s, 8s, ...)
+  --max-delay SECONDS   Maximum delay when using --backoff (default: 60)
+
+Arguments:
+  RETRY_COUNT           Maximum number of retries (0 or omitted = infinite)
+  COMMAND               The command to retry
+  ARGS...               Arguments for the command
+
+Examples:
+  trynot 5 ./check-service-down.sh     # Wait until service is down (max 5 tries)
+  trynot --delay 5 pgrep myapp         # Wait until myapp stops running
+  trynot --backoff 10 ./poll-endpoint  # Exponential backoff until failure
+  trynot -v 3 check-port 8080          # Verbose, 3 retries
+EOF
+}
 
 delay=1
-if [ "$1" == "--delay" ]; then
-    delay="${2:-1}"
-    shift 2
-fi
-
 retry_count=0
-if [ -n "$1" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
-    retry_count="$1"
-    shift
+verbose=false
+backoff=false
+max_delay=60
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+        ;;
+        -d|--delay)
+            if [[ $# -lt 2 ]]; then
+                echo "trynot: missing value for --delay" >&2
+                exit 1
+            fi
+            delay="$2"
+            shift 2
+            continue
+        ;;
+        -v|--verbose)
+            verbose=true
+            shift
+            continue
+        ;;
+        --backoff)
+            backoff=true
+            shift
+            continue
+        ;;
+        --max-delay)
+            if [[ $# -lt 2 ]]; then
+                echo "trynot: missing value for --max-delay" >&2
+                exit 1
+            fi
+            max_delay="$2"
+            shift 2
+            continue
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            echo "trynot: unknown option: $1" >&2
+            exit 1
+        ;;
+        *)
+            if [[ -n "$1" && "$1" =~ ^[0-9]+$ ]]; then
+                retry_count="$1"
+                shift
+                break
+            fi
+            break
+        ;;
+    esac
+done
+
+if [[ $# -eq 0 ]]; then
+    echo "trynot: no command specified" >&2
+    exit 1
 fi
 
-while "$@"; do
-    if [ "$retry_count" -gt 0 ]; then
-        retry_count=$((retry_count - 1))
-        if [ "$retry_count" -eq 0 ]; then
-            break
-        fi
+attempt=0
+current_delay="$delay"
+
+while true; do
+    attempt=$((attempt + 1))
+
+    if $verbose; then
+        echo "trynot: attempt $attempt: $*" >&2
     fi
-    sleep "$delay"s
+
+    if ! "$@"; then
+        exit_code=$?
+        if $verbose; then
+            echo "trynot: command failed on attempt $attempt (exit code $exit_code)" >&2
+        fi
+        exit "$exit_code"
+    fi
+
+    if $verbose; then
+        echo "trynot: attempt $attempt succeeded, retrying..." >&2
+    fi
+
+    if [[ $retry_count -gt 0 && $attempt -ge $retry_count ]]; then
+        if $verbose; then
+            echo "trynot: giving up after $attempt attempts (command still succeeds)" >&2
+        fi
+        exit 0
+    fi
+
+    if $backoff; then
+        sleep "$current_delay"
+        current_delay=$((current_delay * 2))
+        if [[ $current_delay -gt $max_delay ]]; then
+            current_delay=$max_delay
+        fi
+    else
+        sleep "$delay"
+    fi
 done

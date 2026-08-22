@@ -119,7 +119,6 @@ def complete_telegram_links [spans: list<string>] {
 def complete_prompt [spans: list<string>] {
     let word = ($spans | last | default "")
     let parts = ($spans | where {|x| $x != ""})
-    let head_prompts = ["spp" "files" "symbols" "stupid" "security" "tests" "refactor" "api" "review" "fix" "comments" "explain" "perf" "commit"]
 
     if ($parts | length) > 1 and ($parts | get 1) == "run" {
         let run_spans = (["run"] ++ ($parts | skip 2))
@@ -128,17 +127,11 @@ def complete_prompt [spans: list<string>] {
             {value: "--head", description: "Trim run output with head"}
         ]
         filter_completions $word ($static ++ $run_completion)
-    } else if ($parts | length) > 1 and (($head_prompts | any {|p| $p == ($parts | get 1)})) {
+    } else if ($parts | length) > 1 {
         let static = [
             {value: "-h", description: "Show help for the selected prompt"},
             {value: "--help", description: "Show help for the selected prompt"},
             {value: "--head", description: "Keep only the first N lines of embedded context"}
-        ]
-        filter_completions $word $static
-    } else if ($parts | length) > 1 {
-        let static = [
-            {value: "-h", description: "Show help for the selected prompt"},
-            {value: "--help", description: "Show help for the selected prompt"}
         ]
         filter_completions $word $static
     } else {

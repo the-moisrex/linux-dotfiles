@@ -3,8 +3,8 @@ set -euo pipefail
 
 show_help() {
   cat <<'EOF'
-Usage: prompt fast-compile [--head N] [FILE...]
-       some-command | prompt fast-compile [--head N] [FILE...]
+Usage: prompt compile-time [--head N] [FILE...]
+       some-command | prompt compile-time [--head N] [FILE...]
 
 Review C++ code for opportunities to reduce compile time.
 
@@ -41,9 +41,9 @@ for file in "$@"; do
         trim_context "$(cat -- "$file")"
         echo '
 ```'
-echo
-else
-echo "Warning: File not found or is not a regular file: $file" >&2
-fi
+        echo
+    else
+        echo "Warning: File not found or is not a regular file: $file" >&2
+    fi
 done
 

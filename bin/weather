@@ -1,17 +1,110 @@
 #!/bin/bash
 
-if [[ "$1" == "--help" || "$1" == "-h" || "$1" == "help" ]]; then
-    cat <<EOF
-Usage: weather [CITY]
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage: weather [OPTIONS] [CITY]
 
 Show the weather using wttr.in. If no CITY is given, the weather for your
 current location is shown.
 
 Options:
-  -h, --help    Show this help message
+  -h, --help       Show this help message
+  -1               Show only today's forecast
+  -2               Show today and tomorrow's forecast
+  -3               Show 3-day forecast
+  -n               No color output (plain text)
+  -u, --units U    Units: m (metric), M (imperial), u (US), h (UK)
+  -F               Show temperature in Fahrenheit
+  -C               Show temperature in Celsius
+  -q, --quiet      Quiet mode: one-line summary only
+  --json           Output raw JSON from wttr.in
+
+Examples:
+  weather                  # Auto-detect location
+  weather London           # Weather for London
+  weather -1 -n Tokyo      # One-day plain-text forecast for Tokyo
+  weather -F New York      # Fahrenheit for New York
+  weather --json Paris     # Raw JSON output
 EOF
-    exit 0
+}
+
+# Parse arguments
+city=""
+format_args=()
+quiet=false
+json_mode=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+        ;;
+        -1|-2|-3|-n)
+            format_args+=("$1")
+        ;;
+        -u|--units)
+            if [[ $# -lt 2 ]]; then
+                echo "weather: missing value for $1" >&2
+                exit 1
+            fi
+            format_args+=("$1" "$2")
+            shift 2
+            continue
+        ;;
+        -F)
+            format_args+=("-u" "u")
+        ;;
+        -C)
+            format_args+=("-u" "m")
+        ;;
+        -q|--quiet)
+            quiet=true
+        ;;
+        --json)
+            json_mode=true
+        ;;
+        -*)
+            echo "weather: unknown option: $1" >&2
+            exit 1
+        ;;
+        *)
+            city="$1"
+        ;;
+    esac
+    shift
+done
+
+if $json_mode; then
+    curl -sf "https://wttr.in/${city}?format=j1" 2>/dev/null || {
+        echo "weather: failed to fetch weather data" >&2
+        exit 1
+    }
+elif $quiet; then
+    curl -sf "wttr.in/${city}?format=3" 2>/dev/null || {
+        echo "weather: failed to fetch weather data" >&2
+        exit 1
+    }
+else
+    # Build the URL with format args
+    url="wttr.in"
+    if [[ ${#format_args[@]} -gt 0 ]]; then
+        query=""
+        for arg in "${format_args[@]}"; do
+            if [[ -n "$query" ]]; then
+                query="${query}&"
+            fi
+            query="${query}${arg#-}"
+        done
+        url="${url}/?${query}"
+    fi
+    if [[ -n "$city" ]]; then
+        url="${url}/${city}"
+    fi
+    curl -sf "$url" 2>/dev/null || {
+        echo "weather: failed to fetch weather data for '${city}'" >&2
+        exit 1
+    }
 fi
-
-curl "wttr.in/$1"
-

@@ -36,6 +36,7 @@ relative_path() {
 # printf 'Additional file context:\n\n'
 
 if [ $# -eq 0 ]; then
+    # shellcheck disable=SC2046
     set -- $(select_files)
 fi
 

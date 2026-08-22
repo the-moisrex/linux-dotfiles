@@ -1,10 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
-stdin_piped=false
-stdin_content=""
-head_lines=""
 exact_args=()
 
 show_help() {
@@ -20,17 +17,11 @@ Options:
 EOF
 }
 
-trim_context() {
-    local content="$1"
-    if [[ -n "$head_lines" ]]; then
-        printf '%s\n' "$content" | head -n "$head_lines"
-    else
-        printf '%s\n' "$content"
-    fi
-}
+source "$(dirname "$0")/_common.sh"
 
-POSITIONAL_ARGS=()
-
+# Parse _common.sh flags first, then handle --exact ourselves
+set -- "${ARGS[@]}"
+ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h)
@@ -50,26 +41,18 @@ while [[ $# -gt 0 ]]; do
             shift
         ;;
         *)
-            POSITIONAL_ARGS+=("$1")
+            ARGS+=("$1")
             shift
         ;;
     esac
 done
+set -- "${ARGS[@]}"
 
-set -- "${POSITIONAL_ARGS[@]}"
-
-if ! [ -t 0 ]; then
-    stdin_piped=true
-    stdin_content="$(cat)"
-fi
+print_stdin
 
 if [[ $# -eq 0 ]]; then
     echo "Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]" >&2
     exit 2
-fi
-
-if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
-    printf '%s\n\n' "$stdin_content"
 fi
 
 echo "Additional Google Test case context:"
