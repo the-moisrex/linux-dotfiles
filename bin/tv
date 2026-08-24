@@ -57,10 +57,14 @@ LOWER_TERM="${SEARCH_TERM,,}"
 
 # Find first match + extract title & index
 read -r INDEX TITLE < <(awk -v term="$LOWER_TERM" '
-  BEGIN { entry=0 }
+  BEGIN { entry=0; skip=0 }
   /^#EXTINF:/ {
+    skip=0
     line = $0
     if (index(tolower(line), term)) {
+      url_line = ""
+      getline url_line
+      if (url_line ~ /cnn_slate/) { entry++; next }
       sub(/^#EXTINF:[^,]+,/, "", line)
       gsub(/"/, "", line)
       print entry " " line
@@ -68,15 +72,19 @@ read -r INDEX TITLE < <(awk -v term="$LOWER_TERM" '
     }
     entry++
   }
-' "$CACHE")
+' "$CACHE") || true
 
 if [[ -z $INDEX ]]; then
     # Fallback to plain "cnn"
     read -r INDEX TITLE < <(awk -v term="cnn" '
-    BEGIN { entry=0 }
+    BEGIN { entry=0; skip=0 }
     /^#EXTINF:/ {
+      skip=0
       line = $0
-      if (index(tolower(line), term) && !index(tolower(line), "albania") && !index(tolower(line), "prima")) {
+      if (index(tolower(line), term) && !index(tolower(line), "albania") && !index(tolower(line), "prima") && !index(tolower(line), "news18") && !index(tolower(line), "indonesia") && !index(tolower(line), "portugal")) {
+        url_line = ""
+        getline url_line
+        if (url_line ~ /cnn_slate/) { entry++; next }
         sub(/^#EXTINF:[^,]+,/, "", line)
         gsub(/"/, "", line)
         print entry " " line
@@ -84,7 +92,7 @@ if [[ -z $INDEX ]]; then
       }
       entry++
     }
-    ' "$CACHE")
+    ' "$CACHE") || true
 fi
 
 if [[ -z $INDEX ]]; then

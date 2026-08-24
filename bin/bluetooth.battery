@@ -1,7 +1,15 @@
 #!/bin/bash
 
 function battery {
-    pactl list sinks | grep bluetooth.battery | sed -E 's/.*?"([0-9]+%)".*/\1/'
+    # Try PulseAudio/PipeWire property first
+    local bat
+    bat=$(pactl list sinks | grep bluetooth.battery | sed -E 's/.*?"([0-9]+%)".*/\1/')
+    if [ -n "$bat" ]; then
+        echo "$bat"
+        return
+    fi
+    # Fallback to bluetoothctl
+    bluetoothctl info 2>/dev/null | grep "Battery Percentage" | sed -E 's/.*\(([0-9]+)\)/\1%/'
 }
 
 function list_devices {
