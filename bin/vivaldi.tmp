@@ -16,6 +16,7 @@ vivaldi_default_opts=(
     --ignore-certificate-errors
     --disable-webrtc
     --disable-extensions
+    --disable-first-run-ui
 )
 
 tor_cmds=()
@@ -34,6 +35,26 @@ esac
 
 dir=$(mktemp -d)
 echo "Vivaldi Config Directory: $dir"
+
+# Pre-seed Preferences to skip Vivaldi's onboarding/welcome page.
+# vivaldi.startup.has_seen_welcome_page tells Vivaldi the welcome was already seen.
+# vivaldi.startup.has_seen_feature must be >= "mail" (1) or Vivaldi resets the welcome
+# page pref on major version upgrades (see vivaldi_profile_impl.cc PerformUpdates).
+mkdir -p "$dir/Default"
+cat > "$dir/Default/Preferences" <<'EOF'
+{
+  "browser": {
+    "has_seen_welcome_page": true,
+    "check_default_browser": false
+  },
+  "vivaldi": {
+    "startup": {
+      "has_seen_welcome_page": true,
+      "has_seen_feature": 1
+    }
+  }
+}
+EOF
 
 vivaldi "${vivaldi_default_opts[@]}" --user-data-dir="$dir" "${tor_cmds[@]}" "$@"
 rm -rf "$dir"
