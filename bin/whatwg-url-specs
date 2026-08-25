@@ -57,6 +57,27 @@ def extract_items(soup):
             
     return items
 
+
+def list_items_tree(items):
+    """Display items in a hierarchical tree structure with proper nesting."""
+    heading_levels = {'h1': 1, 'h2': 2, 'h3': 3, 'h4': 4, 'h5': 5, 'h6': 6}
+    heading_stack = []
+
+    for item in items:
+        if item['type'] == 'heading':
+            level = heading_levels.get(item['element'].name, 3)
+            while heading_stack and heading_stack[-1]['level'] >= level:
+                heading_stack.pop()
+            heading_stack.append({'level': level, 'item': item})
+
+            indent = '  ' * (len(heading_stack) - 1)
+            print(f"{indent}▪ {item['title']}")
+        else:
+            indent = '  ' * len(heading_stack)
+            type_label = 'definition' if item['type'] == 'id' else item['type']
+            print(f"{indent}• {item['id']} ({type_label})")
+
+
 def get_html_for_item(item, soup):
     if item['type'] == 'heading':
         # Grab the heading itself
@@ -93,8 +114,11 @@ def get_html_for_item(item, soup):
     return ""
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch and query the WHATWG URL specification.")
-    parser.add_argument("queries", nargs="*", help="Text to search for (supports URLs). Use 'list' to list all sections.")
+    parser = argparse.ArgumentParser(
+        description="Fetch and query the WHATWG URL specification.",
+        epilog="Commands: list  Display all sections in a hierarchical tree (first positional argument)"
+    )
+    parser.add_argument("queries", nargs="*", help="Section keywords to search for, or 'list' to show all sections in a tree.")
     parser.add_argument("--algorithm", action="store_true", help="Restrict search to algorithm sections only.")
     parser.add_argument("--all", action="store_true", help="Print the entire specification's main content.")
     parser.add_argument("--html", action="store_true", help="Output raw HTML instead of Markdown.")
@@ -131,8 +155,7 @@ def main():
         items = [i for i in items if i['type'] == 'algorithm']
 
     if do_list:
-        for item in items:
-            print(f"{item['id']} ({item['type']})")
+        list_items_tree(items)
         sys.exit(0)
 
     selected_items = []
