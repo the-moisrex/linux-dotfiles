@@ -1,13 +1,33 @@
 #!/bin/bash
 
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: $0 [input_string]"
-    echo "       command | $0"
-    echo
-    echo "Extracts paths of existing files (with optional line and column numbers) from the input."
-    echo
-    echo "Options:"
-    echo "  -h, --help    Show this help message"
+    cat <<'EOF'
+Usage: paths [input_string]
+       command | paths
+
+Extracts paths of existing files (with optional :line:column) from input.
+
+Only paths that exist on the filesystem are printed. Paths with ~ are expanded.
+
+Options:
+  -h, --help    Show this help message
+
+Examples:
+  # Pipe compiler/build output to extract source files
+  make 2>&1 | paths
+
+  # Extract file:line:col from grep results
+  grep -rn 'TODO' src/ | paths
+
+  # Pass a path string directly
+  paths src/main.cpp:42:8
+
+  # Extract paths from error messages
+  g++ main.cpp 2>&1 | paths
+
+  # Use in a pipeline with other tools
+  clang-tidy file.cpp 2>&1 | paths | head -5
+EOF
     exit 0
 fi
 
