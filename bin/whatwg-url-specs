@@ -108,7 +108,15 @@ def get_html_for_item(item, soup):
         
         parent = item['element'].find_parent(['p', 'li', 'div'])
         if parent:
-            return str(parent)
+            elements = [str(parent)]
+            for sibling in parent.find_next_siblings():
+                if sibling.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'dt', 'div']:
+                    break
+                # Stop if sibling introduces a new <dfn> definition
+                if sibling.find('dfn', id=True):
+                    break
+                elements.append(str(sibling))
+            return "\n".join(elements)
         return str(item['element'])
         
     return ""
@@ -202,12 +210,33 @@ def main():
     output_result(html_output, args.html)
 
 
+def collapse_list_blank_lines(text):
+    """Remove blank lines between single-paragraph list items."""
+    import re
+    lines = text.split('\n')
+    result = []
+    for i, line in enumerate(lines):
+        if line.strip() == '' and i > 0 and i < len(lines) - 1:
+            prev = lines[i - 1]
+            nxt = lines[i + 1]
+            prev_is_list = bool(re.match(r'\s*\d+\.\s', prev) or re.match(r'\s*[-*+]\s', prev))
+            next_is_list = bool(re.match(r'\s*\d+\.\s', nxt) or re.match(r'\s*[-*+]\s', nxt))
+            if prev_is_list and next_is_list:
+                continue
+        result.append(line)
+    return '\n'.join(result)
+
+
 def output_result(html_output, use_html):
     if use_html:
         print(html_output)
     else:
+        # Re-serialize through html5lib to fix malformed HTML (e.g. missing </li> closing tags)
+        soup = BeautifulSoup(html_output, 'html5lib')
+        body = soup.find('body')
+        html_output = ''.join(str(child) for child in body.children)
         # Define the Lua filter that strips links and keeps their inner text
-        lua_filter_content = "function Link(el) return el.content end"
+        lua_filter_content = "function Link(el) return el.content end\nfunction Span(el) return el.content end"
         
         # Create a temporary file for the Lua filter
         with tempfile.NamedTemporaryFile(mode='w', suffix='.lua', delete=False) as temp_lua_file:
@@ -226,7 +255,7 @@ def output_result(html_output, use_html):
             out, err = process.communicate(input=html_output)
             
             if process.returncode == 0:
-                print(out.strip())
+                print(collapse_list_blank_lines(out.strip()))
             else:
                 # If pandoc fails, print stderr to assist debugging
                 if err:
