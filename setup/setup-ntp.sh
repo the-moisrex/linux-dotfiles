@@ -28,7 +28,7 @@ fi
 
 
 # NTP servers to configure
-NTP_SERVERS="ntp.day.ir ntp.meetbsd.ir 0.arch.pool.ntp.org 1.arch.pool.ntp.org 2.arch.pool.ntp.org 3.arch.pool.ntp.org"
+NTP_SERVERS="ntp.time.ir ntp.day.ir ntp.meetbsd.ir 0.arch.pool.ntp.org 1.arch.pool.ntp.org 2.arch.pool.ntp.org 3.arch.pool.ntp.org"
 
 log "Managing NTP Protocol (for time and date)"
 

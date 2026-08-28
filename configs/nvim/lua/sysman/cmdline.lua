@@ -312,7 +312,7 @@ end
 -- Function to check filetype and set state accordingly
 local function update_cmdrunner_state_for_buffer()
     local bufnr = vim.api.nvim_get_current_buf()
-    if not vim.api.nvim_buf_is_loaded(bufnr) or vim.api.nvim_buf_get_option(bufnr, 'buftype') ~= '' then
+    if not vim.api.nvim_buf_is_loaded(bufnr) or vim.bo[bufnr].buftype ~= '' then
         if vim.g.cmdrunner_enabled then
              remove_cmdrunner_mappings()
         end

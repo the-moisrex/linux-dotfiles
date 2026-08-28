@@ -24,7 +24,7 @@ vim.keymap.set("n", "N", "Nzzzv", { desc = "Prev" })
 -- Preserving the yanked string, but paste it without yanking anything
 vim.keymap.set("x", "<leader>p", "\"_dP")
 
--- Ynak into system's clipboard
+-- Yank into system's clipboard
 vim.keymap.set("n", "<leader>y", "\"+y", { desc = "Copy to clipboard" })
 vim.keymap.set("v", "<leader>y", "\"+y", { desc = "Copy to clipboard" })
 vim.keymap.set("n", "<leader>Y", "\"+Y", { desc = "Copy to clipboard" })

@@ -64,9 +64,57 @@ require('pckr').add{
   {'hrsh7th/cmp-nvim-lsp'};
   {'hrsh7th/nvim-cmp'};
 
-  -- NerdTree
-  'preservim/nerdtree';
-  'ryanoasis/vim-devicons'; -- icons
+  -- File explorer
+  {
+    "nvim-neo-tree/neo-tree.nvim",
+    branch = "v3.x",
+    dependencies = {
+      "nvim-lua/plenary.nvim",
+      "nvim-tree/nvim-web-devicons",
+      "MunifTanjim/nui.nvim",
+    },
+  };
+
+  -- Formatting
+  {
+    'stevearc/conform.nvim',
+    config = function()
+      require('conform').setup({
+        formatters_by_ft = {
+          lua = { 'stylua' },
+          python = { 'black' },
+          javascript = { 'prettierd' },
+          typescript = { 'prettierd' },
+          json = { 'prettierd' },
+          yaml = { 'prettierd' },
+          markdown = { 'prettierd' },
+          c = { 'clang-format' },
+          cpp = { 'clang-format' },
+          rust = { 'rustfmt' },
+          sh = { 'shfmt' },
+        },
+        format_on_save = {
+          timeout_ms = 500,
+          lsp_format = 'fallback',
+        },
+      })
+      vim.keymap.set("n", "<leader>cf", function()
+        require('conform').format({ async = true, lsp_format = 'fallback' })
+      end, { desc = "Format file" })
+    end,
+  };
+
+  -- Diagnostics / Quickfix
+  {
+    "folke/trouble.nvim",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    config = function()
+      require('trouble').setup({})
+      vim.keymap.set("n", "<leader>xx", "<cmd>Trouble diagnostics toggle<cr>", { desc = "Diagnostics (Trouble)" })
+      vim.keymap.set("n", "<leader>xb", "<cmd>Trouble diagnostics toggle filter.buf=0<cr>", { desc = "Buffer Diagnostics (Trouble)" })
+      vim.keymap.set("n", "<leader>q", "<cmd>Trouble qflist toggle<cr>", { desc = "Quickfix List (Trouble)" })
+    end,
+  };
 
   -- scrollbar:
   'lewis6991/satellite.nvim';
@@ -78,9 +126,6 @@ require('pckr').add{
 
   -- indent blankline
   'lukas-reineke/indent-blankline.nvim';
-
-  -- comments
-  'numToStr/Comment.nvim';
 
   -- todo comments
   {'folke/todo-comments.nvim', requires = { 'nvim-lua/plenary.nvim' }};

@@ -1,6 +1,4 @@
--- })
 -- LSP configuration
----
 local lsp_zero = require('lsp-zero')
 
 local lsp_attach = function(client, bufnr)
