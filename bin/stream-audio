@@ -32,7 +32,8 @@ done
 case "$ACTION" in
   start)
     $0 stop 
-    pactl load-module module-simple-protocol-tcp channels=2 format=s16 source=$(pactl list | grep "Monitor Source" | awk '{print $3}') port=$PORT record=true
+    source=$(pactl list | grep "Monitor Source" | awk '{print $3}')
+    pactl load-module module-simple-protocol-tcp channels=2 format=s16 source="$source" port="$PORT" record=true
     ;;
   stop)
     mods=$(pactl list 2>/dev/null | grep -E -B1 'module-simple-protocol-tcp' | grep -oE '^Module #[0-9]+' | grep -oE '[0-9]+' | sort -u || true)

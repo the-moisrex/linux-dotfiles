@@ -57,13 +57,12 @@ function play_recording {
   asciinema play "$file"
 }
 
-pretext=$1
 no_tmux=false
 cmd="$SHELL"
 working_dir="$HOME"
 
 
-case $1 in
+case "${1:-}" in
     --help|-h|help)
         print_help;
         ;;
@@ -88,7 +87,7 @@ case $1 in
         shift;
 esac
 
-if [ -z "$pretext" ]; then
+if [ -z "${pretext:-}" ]; then
     print_help;
 fi
 

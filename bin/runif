@@ -1,5 +1,23 @@
 #!/bin/sh
 
+show_help() {
+    cat <<'EOF'
+Usage: runif COMMAND [ARGS...]
+
+Run a command in an interactive shell only if it exists in PATH.
+
+Options:
+  -h, --help    Show this help message
+
+If the command is found, it is launched via $SHELL -i -c.
+Otherwise, an error message is printed and the script exits with code 1.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) show_help; exit 0 ;;
+esac
+
 cmd="$1"
 
 if [ -z "$cmd" ]; then

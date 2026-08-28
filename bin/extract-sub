@@ -1,7 +1,41 @@
 #!/bin/bash
 
+if ! command -v ffmpeg >/dev/null; then
+    echo "Error: ffmpeg is not installed." >&2
+    exit 1
+fi
+
+show_help() {
+    echo "Usage: extract-sub LANG FILE"
+    echo
+    echo "Extract a subtitle track from a video file."
+    echo
+    echo "  LANG    Language code of the subtitle to extract (e.g., eng, fas)"
+    echo "  FILE    Video file to extract subtitles from"
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
+    exit 0
+}
+
+case "${1:-}" in
+    -h|--help) show_help ;;
+esac
+
+if [ $# -lt 2 ]; then
+    echo "Error: LANG and FILE are required." >&2
+    echo "Usage: extract-sub LANG FILE" >&2
+    exit 1
+fi
+
 lang=$1
 file=$2
+
+if [ ! -f "$file" ]; then
+    echo "Error: File not found: $file" >&2
+    exit 1
+fi
+
 index=$(ffmpeg -i "$file" 2>&1 | grep -F "$lang" | grep Subtitle | head -1 | grep -Eo '[0-9]+:[0-9]+');
 [ -z "$index" ] && { echo "No subtitle stream matching '$lang' found in '$file'." >&2; exit 1; }
 ffmpeg -i "$file" -map "$index" "$file.$lang.srt";

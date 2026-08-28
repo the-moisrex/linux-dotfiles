@@ -13,9 +13,19 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     exit 0
 fi
 
-REC_iface=$(pactl list sources short | awk '{print$2}' | grep 'monitor')
-SCREEN_res=$(xrandr -q --current | grep '*' | awk '{print$1}')
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "Error: ffmpeg is not installed." >&2
+    exit 1
+fi
+
+REC_iface=$(pactl list sources short 2>/dev/null | awk '{print$2}' | grep 'monitor')
+SCREEN_res=$(xrandr -q --current 2>/dev/null | grep '\*' | awk '{print$1}')
+
+if [ -z "$SCREEN_res" ]; then
+    echo "Error: Could not detect screen resolution." >&2
+    exit 1
+fi
 
 output="${1:-output.mkv}"
 
-ffmpeg -f alsa -thread_queue_size 1024 -i hw:0,0 -c:a aac -f x11grab -r 25 -s $SCREEN_res -i $DISPLAY -c:v libx264 -crf 18 -preset superfast "$output"
+ffmpeg -f alsa -thread_queue_size 1024 -i hw:0,0 -c:a aac -f x11grab -r 25 -s "$SCREEN_res" -i "$DISPLAY" -c:v libx264 -crf 18 -preset superfast "$output"

@@ -324,8 +324,10 @@ for file in "$@"; do
     esac
 done
 
-links=($(remove_duplicates "${links[@]}"));
-args=($(remove_duplicates "${args[@]}"));
+# shellcheck disable=SC2207
+links=($(remove_duplicates "${links[@]}"))
+# shellcheck disable=SC2207
+args=($(remove_duplicates "${args[@]}"))
 
 if [ "$action" = "download" ]; then
     if [ -z "${links[*]}" ]; then
@@ -334,7 +336,7 @@ if [ "$action" = "download" ]; then
 fi
 
 
-args_str="${args[@]}";
+args_str="${args[*]}";
 case "$action" in
     run)
         if [ ! -f "$default_list" ]; then

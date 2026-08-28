@@ -224,7 +224,7 @@ video_data_file=$(mktemp)
 result_file=$(mktemp)
 # Create a lock directory for job counting
 lock_dir=$(mktemp -d)
-trap "rm -rf '$video_data_file' '$result_file' '$lock_dir'" EXIT
+trap 'rm -rf "$video_data_file" "$result_file" "$lock_dir"' EXIT
 
 # Store video data in file for parallel processing
 while IFS= read -r line; do

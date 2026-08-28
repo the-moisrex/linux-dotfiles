@@ -5,7 +5,7 @@ if ! command -v fzf >/dev/null; then
     exit 1
 fi
 
-if [ "$1" == "--help" || "$1" == "-h" ]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo "Usage: fzf1 QUERY"
     echo
     echo "Shortcut for 'fzf -f QUERY | head -1'"

@@ -19,8 +19,23 @@ vivaldi_default_opts=(
     --disable-first-run-ui
 )
 
+show_help() {
+    cat <<'EOF'
+Usage: vivaldi.tmp [--tor [PORT]] [-- URL...]
+
+Launch Vivaldi with a temporary profile (deleted on exit).
+
+Options:
+  --tor [PORT]  Route traffic through a local Tor SOCKS5 proxy (default: 9050)
+  -h, --help    Show this help message
+
+All other arguments are passed directly to Vivaldi.
+EOF
+}
+
 tor_cmds=()
-case $1 in
+case "${1:-}" in
+    -h|--help) show_help; exit 0 ;;
 	--tor|tor)
         if [ -z "$2" ]; then
             port="9050";

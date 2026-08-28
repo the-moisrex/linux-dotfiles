@@ -1,8 +1,28 @@
 #!/bin/bash
 
+show_help() {
+    echo "Usage: keep-cpu-priority [OPTIONS] PROCESS..."
+    echo
+    echo "Continuously reapply CPU priority to the given processes."
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
+    exit 0
+}
+
+case "${1:-}" in
+    -h|--help) show_help ;;
+esac
+
+if [ $# -eq 0 ]; then
+    echo "Error: No processes specified." >&2
+    echo "Usage: keep-cpu-priority PROCESS..." >&2
+    exit 1
+fi
+
 while true; do
-    for process in $@; do
-        cpu-priority $process;
+    for process in "$@"; do
+        cpu-priority "$process";
     done
     sleep 5s;
 done

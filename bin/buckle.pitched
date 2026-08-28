@@ -3,11 +3,38 @@
 # example usage:
 #  setsid buckle.pitched pitch 2000
 
+show_help() {
+    echo "Usage: buckle.pitched [SOX_OPTIONS...]"
+    echo
+    echo "Run buckle with pitch-shifted key sounds."
+    echo "Applies sox effects to all bucklespring wav files before launching."
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message"
+    echo
+    echo "All arguments are passed to sox as effects (e.g., pitch 2000)."
+    exit 0
+}
+
+case "${1:-}" in
+    -h|--help) show_help ;;
+esac
+
+if ! command -v sox >/dev/null; then
+    echo "Error: sox is not installed." >&2
+    exit 1
+fi
+
+if ! command -v buckle >/dev/null; then
+    echo "Error: buckle is not installed." >&2
+    exit 1
+fi
+
 tmpdir=$(mktemp -d);
+trap 'rm -rf "$tmpdir"' EXIT
 echo "Files stored at: ${tmpdir}"
 for file in /usr/share/bucklespring/*.wav; do
   filename=$(basename "$file");
   sox "$file" "$tmpdir/$filename" "$@"
 done;
-# buckle -p "$tmpdir" -g 75 &>/dev/null
 buckle --fallback-sound -p "$tmpdir" &>/dev/null

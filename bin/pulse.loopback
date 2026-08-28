@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# Reconfigure PulseAudio module-loopback by unloading existing instances
+# and loading a new one with a user-selected source.
+
+if ! command -v pactl >/dev/null; then
+    echo "Error: pactl (PulseAudio) is not installed." >&2
+    exit 1
+fi
+
+if ! command -v fzf >/dev/null; then
+    echo "Error: fzf is not installed." >&2
+    exit 1
+fi
+
+INTERACTIVE=false
+MODULE_FILTER=""
+SOURCE_FILTER=""
+
+show_help() {
+    cat <<'EOF'
+Usage: pulse.loopback [OPTIONS]
+
+Reconfigure PulseAudio module-loopback.
+
+Unloads existing module-loopback instances, then loads a new one with a
+user-selected source.
+
+Options:
+  -h, --help                  Show this help message
+  -i, --interactive           Use fzf to select modules and source interactively
+  -m, --module-filter TEXT    Filter for modules to unload (default: "module-loopback")
+  -s, --source-filter TEXT    Filter for source selection (default: "input pci")
+
+Interactive mode:
+  First fzf prompt: select which loopback modules to unload
+  Second fzf prompt: select which source to use for the new loopback
+
+Examples:
+  pulse.loopback                                    # Unload all loopback modules, pick source matching "input pci"
+  pulse.loopback -i                                 # Fully interactive: pick modules and source via fzf
+  pulse.loopback -m "module-loopback monitor"       # Unload loopback modules matching "monitor"
+  pulse.loopback -s "pci"                           # Pick a source matching "pci"
+  pulse.loopback -i -m "monitor"                    # Interactive unload, then interactive source pick
+EOF
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -i|--interactive) INTERACTIVE=true; shift ;;
+        -m|--module-filter) MODULE_FILTER="$2"; shift 2 ;;
+        -s|--source-filter) SOURCE_FILTER="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; show_help ;;
+    esac
+done
+
+# --- Unload existing loopback modules ---
+
+if [ -n "$MODULE_FILTER" ]; then
+    # Use the provided filter
+    pactl list short modules 2>/dev/null \
+        | fzf1 "$MODULE_FILTER" \
+        | cut -f 1 \
+        | xargs -rl pactl unload-module
+elif $INTERACTIVE; then
+    # Let user pick which modules to unload via fzf
+    selected=$(pactl list short modules 2>/dev/null \
+        | fzf --multi --prompt "Select modules to unload > " \
+        | cut -f 1)
+    if [ -n "$selected" ]; then
+        echo "$selected" | xargs -rl pactl unload-module
+    else
+        echo "No modules selected for unload."
+    fi
+else
+    # Default: unload all module-loopback instances
+    pactl list short modules 2>/dev/null \
+        | fzf1 module-loopback \
+        | cut -f 1 \
+        | xargs -rl pactl unload-module
+fi
+
+# --- Load a new module-loopback ---
+
+if [ -n "$SOURCE_FILTER" ]; then
+    source=$(pactl list short sources 2>/dev/null | cut -f 2 | fzf1 "$SOURCE_FILTER")
+elif $INTERACTIVE; then
+    source=$(pactl list short sources 2>/dev/null \
+        | fzf --prompt "Select source for loopback > " \
+        | cut -f 2)
+else
+    source=$(pactl list short sources 2>/dev/null | cut -f 2 | fzf1 "input pci")
+fi
+
+if [ -z "$source" ]; then
+    echo "Error: No source selected." >&2
+    exit 1
+fi
+
+echo "Loading module-loopback with source: $source"
+pactl load-module module-loopback source="$source"

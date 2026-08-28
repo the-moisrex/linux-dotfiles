@@ -20,7 +20,7 @@ if [ -z "$1" ]; then
 else
     domain="$1"
 fi
-ip=$(dig +short $domain)
+ip=$(dig +short "$domain")
 
 if [ -z "$ip" ]; then
     echo "We're not able to get the ip address of $domain.";
@@ -29,8 +29,8 @@ fi
 function restart_vpn {
     # I'm duplicating the below line in order to make sure we always get the latest gateway
     gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
-    if ssh $gateway_router /ip/ipsec/active-peers/kill-connections; then
-        echo VPN Restarted from vpn-healthcheck | mail -s "VPN Restart" $USER@$(hostname);
+    if ssh "$gateway_router" /ip/ipsec/active-peers/kill-connections; then
+        echo VPN Restarted from vpn-healthcheck | mail -s "VPN Restart" "$USER@$(hostname)";
         echo VPN Restarted from vpn-healthcheck
 
         # sleep some seconds before retrying agian
@@ -44,8 +44,8 @@ function restart_vpn {
 }
 
 gateway_router=$(ip route show 0.0.0.0/0  | cut -d" " -f3);
-echo Testing SSH\; using ip address $ip of $domain
-if ssh $gateway_router nothing; then
+echo Testing SSH\; using ip address "$ip" of "$domain"
+if ssh "$gateway_router" nothing; then
     echo SSH Test passed.
     echo
     echo
@@ -56,6 +56,6 @@ fi
 
 while true; do
     # double check before restarting
-    ping -W 1 -w 3 -c 3 $ip || (sleep 5s; ping -W 1 -w 3 -c 3 $ip) || (sleep 5s; ping -W 1 -w 3 -c 3 $ip) || restart_vpn;
+    ping -W 1 -w 3 -c 3 "$ip" || (sleep 5s; ping -W 1 -w 3 -c 3 "$ip") || (sleep 5s; ping -W 1 -w 3 -c 3 "$ip") || restart_vpn;
     sleep 1s;
 done

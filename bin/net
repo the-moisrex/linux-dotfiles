@@ -34,6 +34,26 @@ function macvlan_exists {
   link_exists "$macvlan@$device"
 }
 
+show_help() {
+    cat <<'EOF'
+Usage: net [OPTIONS]
+
+Create a network namespace with a macvlan interface for VPN bypassing.
+Can also be sourced as a library.
+
+Options:
+  --device=IFACE       Network device to use (auto-detected if omitted)
+  --nsname=NAME        Namespace name (default: ns0, ns1, ...)
+  --linkname=NAME      Link name (default: ln0, ln1, ...)
+  --mvlan=NAME         Macvlan interface name (default: mvlan0, mvlan1, ...)
+  -h, --help           Show this help message
+
+Functions available when sourced:
+  add_skip_vpn_ns      Create the namespace and macvlan
+  run_in_skip_vpn_ns   Execute a command inside the namespace
+EOF
+}
+
 # Only parse CLI args when executed directly
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 for i in "$@"; do
@@ -53,6 +73,8 @@ for i in "$@"; do
     -mn=*|--mvlan=*|--macvlan=*)
       mvlan_name="${i#*=}"
       ;;
+
+    -h|--help) show_help; exit 0 ;;
 
   esac
 done
@@ -164,12 +186,12 @@ function add_skip_vpn_ns {
   fi
 
 
-  sudo ip netns add $_nsn
-  sudo ip link add link $_device dev $_mvlan_name type macvlan
-  sudo ip link set up $_mvlan_name netns $_nsn
-  sudo ip netns exec $_nsn ip link set up lo
-  sudo ip netns exec $_nsn ip route add default dev $_mvlan_name metric 50
-  sudo ip netns exec $_nsn dhclient -d $_mvlan_name &
+  sudo ip netns add "$_nsn"
+  sudo ip link add link "$_device" dev "$_mvlan_name" type macvlan
+  sudo ip link set up "$_mvlan_name" netns "$_nsn"
+  sudo ip netns exec "$_nsn" ip link set up lo
+  sudo ip netns exec "$_nsn" ip route add default dev "$_mvlan_name" metric 50
+  sudo ip netns exec "$_nsn" dhclient -d "$_mvlan_name" &
 }
 
 function run_in_skip_vpn_ns {
@@ -194,10 +216,10 @@ function run_in_skip_vpn_ns {
     _background="yes"
   fi
 
-  if [ $_background == "yes" ]; then
-    setsid sudo -E ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
+  if [ "$_background" == "yes" ]; then
+    setsid sudo -E ip netns exec "$_nsn" su "$_user" -s /usr/bin/bash -c "$_cmd"
   else
-    sudo -E ip netns exec $_nsn su $_user -s /usr/bin/bash -c "$_cmd"
+    sudo -E ip netns exec "$_nsn" su "$_user" -s /usr/bin/bash -c "$_cmd"
   fi
 }
 

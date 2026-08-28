@@ -6,12 +6,12 @@ enc_key=""
 enc_key_arg="--default-recipient-self"
 file=""
 curdir=$(dirname "$0")
-tmp_dir="$(mktemp -d --suffix=-$USER-vault)"
+tmp_dir="$(mktemp -d --suffix=-"$USER"-vault)"
 enc_dir="${curdir}/../vault"
 
 function closing {
     rm -rf "$tmp_dir";
-    exit $1;
+    exit "$1";
 }
 
 if command -v gpg2 --version >/dev/null; then
@@ -58,7 +58,7 @@ function decrypt_file {
         touch "$tmp_dir/$file";
     else
         echo "Decrypting '$enc_dir/$file'..." >&2;
-        $gpg $enc_key_arg --output "$tmp_dir/$file" --decrypt "$enc_dir/$file";
+        $gpg "$enc_key_arg" --output "$tmp_dir/$file" --decrypt "$enc_dir/$file";
     fi
 }
 
@@ -69,7 +69,7 @@ function encrypt_file {
         echo "Encrypting '$tmp_dir/$file'..." >&2;
         file_dir=$(dirname "$file");
         mkdir -p "$enc_dir/$file_dir";
-        $gpg $enc_key_arg --encrypt "$tmp_dir/$file";
+        $gpg "$enc_key_arg" --encrypt "$tmp_dir/$file";
         mv "$tmp_dir/$file.gpg" "$enc_dir/$file";
         rm -f "$tmp_dir/$file"
     fi
@@ -118,7 +118,7 @@ function replace_file {
     else
         echo "Encrypting '$file'..." >&2;
         file_name=$(basename "$file");
-        $gpg $enc_key_arg --encrypt "$file";
+        $gpg "$enc_key_arg" --encrypt "$file";
         mv "$file.gpg" "$enc_dir/$file_name";
         rm -f "$file.gpg";
     fi
@@ -132,7 +132,7 @@ function get_file {
     else
         echo "Decrypting '$enc_dir/$file'..." >&2;
         file_name=$(basename "$file")
-        $gpg $enc_key_arg --output "$file_name" --decrypt "$enc_dir/$file";
+        $gpg "$enc_key_arg" --output "$file_name" --decrypt "$enc_dir/$file";
     fi
 }
 
@@ -156,7 +156,7 @@ function print_file {
 ############################## Options ###############################
 
 action="help"
-params="$@"
+params="$*"
 for i in "$@"; do
     case "$1" in
         help)

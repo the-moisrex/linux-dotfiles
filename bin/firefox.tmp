@@ -10,6 +10,24 @@ elif ! command -v firefox >/dev/null; then
     exit 1;
 fi
 
+show_help() {
+    cat <<'EOF'
+Usage: firefox.tmp [-- URL...]
+
+Launch Firefox with a temporary profile (deleted on exit).
+Defaults to 'about:blank' if no arguments are given.
+
+Options:
+  -h, --help    Show this help message
+
+All other arguments are passed directly to Firefox.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) show_help; exit 0 ;;
+esac
+
 the_args=("about:blank")
 if [ $# -gt 0 ]; then
     the_args=("$@")

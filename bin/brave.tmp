@@ -33,8 +33,23 @@ chromium_default_opts=(
 )
 
 
+show_help() {
+    cat <<'EOF'
+Usage: brave.tmp [--tor [PORT]] [-- URL...]
+
+Launch Brave with a temporary profile (deleted on exit).
+
+Options:
+  --tor [PORT]  Route traffic through a local Tor SOCKS5 proxy (default: 9050)
+  -h, --help    Show this help message
+
+All other arguments are passed directly to Brave.
+EOF
+}
+
 tor_cmds=()
-case $1 in
+case "${1:-}" in
+    -h|--help) show_help; exit 0 ;;
 	--tor|tor)
         if [ -z "$2" ]; then
             port="9050";

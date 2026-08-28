@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# Undo/redo the last pulse.loopback action.
+# Unloads the current module-loopback and optionally loads a new one.
+
+if ! command -v pactl >/dev/null; then
+    echo "Error: pactl (PulseAudio) is not installed." >&2
+    exit 1
+fi
+
+if ! command -v fzf >/dev/null; then
+    echo "Error: fzf is not installed." >&2
+    exit 1
+fi
+
+INTERACTIVE=false
+SOURCE_FILTER=""
+RELOAD=false
+
+show_help() {
+    cat <<'EOF'
+Usage: pulse.loopback.redo [OPTIONS]
+
+Undo (or redo) the last pulse.loopback action.
+
+By default, unloads all active module-loopback instances (reverting to the
+state before pulse.loopback was run).
+
+With --reload, unloads the current loopback and loads a new one with a
+freshly selected source (i.e., redo).
+
+Options:
+  -h, --help                  Show this help message
+  -r, --reload                Unload current loopback and load a new one
+  -i, --interactive           Use fzf to select the source interactively
+  -s, --source-filter TEXT    Filter for source selection (default: "input pci")
+
+Examples:
+  pulse.loopback.redo                    # Undo: unload all loopback modules
+  pulse.loopback.redo -r                 # Redo: pick a new source
+  pulse.loopback.redo -r -i              # Redo with interactive fzf source pick
+  pulse.loopback.redo -r -s "monitor"   # Redo, source matching "monitor"
+EOF
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help ;;
+        -r|--reload) RELOAD=true; shift ;;
+        -i|--interactive) INTERACTIVE=true; shift ;;
+        -s|--source-filter) SOURCE_FILTER="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; show_help ;;
+    esac
+done
+
+# --- Unload current loopback modules ---
+
+pactl list short modules 2>/dev/null \
+    | fzf1 module-loopback \
+    | cut -f 1 \
+    | xargs -rl pactl unload-module
+
+echo "Unloaded all module-loopback instances."
+
+# --- Optionally reload with a new source ---
+
+if $RELOAD; then
+    if [ -n "$SOURCE_FILTER" ]; then
+        source=$(pactl list short sources 2>/dev/null | cut -f 2 | fzf1 "$SOURCE_FILTER")
+    elif $INTERACTIVE; then
+        source=$(pactl list short sources 2>/dev/null \
+            | fzf --prompt "Select source for loopback > " \
+            | cut -f 2)
+    else
+        source=$(pactl list short sources 2>/dev/null | cut -f 2 | fzf1 "input pci")
+    fi
+
+    if [ -z "$source" ]; then
+        echo "Error: No source selected." >&2
+        exit 1
+    fi
+
+    echo "Loading module-loopback with source: $source"
+    pactl load-module module-loopback source="$source"
+fi

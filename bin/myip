@@ -3,7 +3,7 @@
 domain="myadd.ir"
 
 function get {
-    curl -s $domain$@
+    curl -s "$domain$*"
 }
 
 function get_json {

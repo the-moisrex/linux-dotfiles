@@ -28,7 +28,7 @@ done
 INPUT="${TEXT_ARGS[*]}"
 STRINGNUM=0
  
-ary=($INPUT)
+mapfile -t ary <<< "$INPUT"
 for key in "${!ary[@]}" 
   do
     SHORTTMP[$STRINGNUM]="${SHORTTMP[$STRINGNUM]} ${ary[$key]}"

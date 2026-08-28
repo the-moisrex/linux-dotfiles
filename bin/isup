@@ -3,13 +3,13 @@
 # Check if a device is up or not
 # Usage: try isup router && ssh router
 function isup {
-    ping -w1 -c1 $@ &>/dev/null || ping -w6 -W1 -c3 $@ &>/dev/null
+    ping -w1 -c1 "$@" &>/dev/null || ping -w6 -W1 -c3 "$@" &>/dev/null
 }
 
 function ishttpfiltered {
     # timeout:     3  seconds
     # max timeout: 10 seconds
-    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter $@ 2>&1);
+    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter "$@" 2>&1);
     if [ "$?" != 0 ]; then
         return 0;
     fi
@@ -19,7 +19,7 @@ function ishttpfiltered {
 function ishttpsfiltered {
     # timeout:     3  seconds
     # max timeout: 10 seconds
-    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter https://$@ 2>&1);
+    res=$(timeout 3s curl --connect-timeout 3 --max-time 10 --no-progress-meter "https://$*" 2>&1);
     if [ "$?" != 0 ]; then
         return 0;
     fi
@@ -41,7 +41,7 @@ function isnotempty {
         test -z "$@" && false || true;
     elif test ! -t 0; then
         # (cat | xargs test -z) && false || true;
-        read line || return 1
+        read -r line || return 1
         test -z "$line" && false || true;
         # (echo "$line"; cat) | eval "$@"
     else
@@ -51,7 +51,7 @@ function isnotempty {
 
 function ishttpup {
     # todo: ishttpup IPAddr is not supported
-    (ipof $@ | isnotempty) && (! ishttpfiltered $@)
+    (ipof "$@" | isnotempty) && (! ishttpfiltered "$@")
 }
 
 function ishttpsup {
@@ -59,7 +59,7 @@ function ishttpsup {
     if [ -z "$1" ]; then
         domain="youtube.com"
     fi
-    (ipof $domain | isnotempty) && (! ishttpsfiltered $domain)
+    (ipof "$domain" | isnotempty) && (! ishttpsfiltered "$domain")
 }
 
 function print_help {
@@ -85,19 +85,19 @@ case $1 in
 
     http)
         shift;
-        ishttpup $@;
+        ishttpup "$@";
         exit $?
         ;;
 
     https)
         shift
-        ishttpsup $@;
+        ishttpsup "$@";
         exit $?
         ;;
 
     ping)
         shift;
-        isup $@;
+        isup "$@";
         ;;
 
     filtered|filter|is-filter)
@@ -105,23 +105,23 @@ case $1 in
         case $1 in
             http)
                 shift;
-                ishttpfiltered $@;
+                ishttpfiltered "$@";
                 exit $?
                 ;;
             https)
                 shift;
-                ishttpsfiltered $@;
+                ishttpsfiltered "$@";
                 exit $?;
                 ;;
             *)
                 code=0
-                if ishttpfiltered $@; then
+                if ishttpfiltered "$@"; then
                     echo "HTTP is filtred."
                 else
                     code=$?;
                     echo "HTTP is OK."
                 fi
-                if ishttpsfiltered $@; then
+                if ishttpsfiltered "$@"; then
                     echo "HTTPS is filtrered.";
                 else
                     code=$?
@@ -135,19 +135,19 @@ case $1 in
     *)
         # all information:
         code=0
-        if isup $@; then
+        if isup "$@"; then
             echo "Ping OK.";
         else
             code=$(( $code + $? ));
             echo "Ping Failed.";
         fi
-        if ishttpup $@; then
+        if ishttpup "$@"; then
             echo "HTTP OK.";
         else
             code=$(( $code + $? ));
             echo "HTTP Failed.";
         fi
-        if ishttpsup $@; then
+        if ishttpsup "$@"; then
             echo "HTTPS OK.";
         else
             code=$(( $code + $? ));

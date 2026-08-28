@@ -376,7 +376,7 @@ for arg in "${args[@]}"; do
 done
 
 if ! $is_oneline; then
-  echo "---------${args[@]}";
+  echo "---------${args[*]}";
 fi
 
 for arg in "${args[@]}"; do

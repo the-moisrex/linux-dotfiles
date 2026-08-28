@@ -157,7 +157,7 @@ for i in "$@"; do
 
     ls|list|--list)
         shift;
-        ls "$codeshells_dir" --color=auto --hyperlink=auto $@
+        ls "$codeshells_dir" --color=auto --hyperlink=auto "$@"
         exit;
         ;;
         
@@ -235,7 +235,7 @@ tmux send-keys -t "${window}.${side}" "cd ${tmpdir}" C-m
 
 
 # copy files if the directory does not exists
-if [ `ls -A "${tmpdir}" | wc -m` == "0" ]; then
+if [ "$(ls -A "${tmpdir}" | wc -m)" == "0" ]; then
   cp -nTr "$template_dir" "${tmpdir}"
 fi;
 
