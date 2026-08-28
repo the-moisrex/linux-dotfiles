@@ -92,7 +92,7 @@ services:
     volumes:
       - sentry-data:/var/lib/sentry
     ports:
-      - "9000:9000"
+      - "9002:9000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sentry.entrypoints=web"

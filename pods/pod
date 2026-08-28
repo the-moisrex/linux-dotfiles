@@ -36,7 +36,7 @@ find_pod_dirs() {
         if [[ -d "$dir" ]]; then
             local dirname=$(basename "$dir")
             # Look for common compose file names
-            if [[ -f "$dir/podman-compose.yml" ]] || [[ -f "$dir/docker-compose.yml" ]] || [[ -f "$dir/compose.yml" ]] || [[ -f "$dir/compose.yaml" ]]; then
+            if [[ -f "$dir/podman-compose.yml" ]] || [[ -f "$dir/podman-compose.yaml" ]] || [[ -f "$dir/docker-compose.yml" ]] || [[ -f "$dir/docker-compose.yaml" ]] || [[ -f "$dir/compose.yml" ]] || [[ -f "$dir/compose.yaml" ]]; then
                 pods+=("$dirname")
             fi
         fi
@@ -305,7 +305,7 @@ clean_database_dir() {
     local force=false
     
     # Check if --force flag is provided
-    if [[ "$2" == "--force" ]]; then
+    if [[ "$1" == "--force" ]]; then
         force=true
     fi
     

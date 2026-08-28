@@ -197,8 +197,6 @@ services:
       - mariadb
       - postgres
       - supabase-db
-      - mongodb
-      - redis
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.adminer.rule=Host(`adminer.localhost`)"
@@ -281,10 +279,10 @@ services:
     container_name: supabase-studio
     restart: unless-stopped
     environment:
-      - STUDIO_PG_META_URL=http://supabase-db:5432
+      - STUDIO_PG_META_URL=http://supabase-db:8080
       - DEFAULT_ORGANIZATION_NAME=Supabase
       - DEFAULT_PROJECT_NAME=supabase_project
-      - STUDIO_SUPABASE_URL=http://supabase-db:5432
+      - STUDIO_SUPABASE_URL=http://supabase-db:8080
       - STUDIO_SUPABASE_ANON_KEY=anon_key
       - STUDIO_SUPABASE_SERVICE_KEY=service_role_key
     ports:
