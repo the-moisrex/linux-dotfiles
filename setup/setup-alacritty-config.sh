@@ -11,7 +11,17 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-alacritty-config.sh [--offline] [--uninstall] [--verbose]
+Usage: ./setup/setup-alacritty-config.sh [flags...]
+
+Install or remove Alacritty terminal emulator config.
+
+Optionally fetches updated themes (skipped with --offline).
+
+Options:
+  --offline    Skip fetching Alacritty themes.
+  --uninstall  Remove the Alacritty config symlink.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

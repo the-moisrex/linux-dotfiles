@@ -11,7 +11,14 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-gdb-config.sh [--uninstall] [--verbose]
+Usage: ./setup/setup-gdb-config.sh [flags...]
+
+Install or remove GDB config (.gdbinit).
+
+Options:
+  --uninstall  Remove the GDB config symlink.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

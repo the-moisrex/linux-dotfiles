@@ -11,7 +11,16 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-editor-configs.sh [--uninstall] [--verbose]
+Usage: ./setup/setup-editor-configs.sh [flags...]
+
+Install or remove editor configs (Neovim and SpaceVim).
+
+SpaceVim config is only installed if ~/.SpaceVim.d already exists.
+
+Options:
+  --uninstall  Remove all editor config symlinks.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

@@ -10,8 +10,16 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/disable-screen-lock.sh [--uninstall] [--verbose]
-  --uninstall  Restore common lock/power defaults (best effort)
+Usage: ./setup/disable-screen-lock.sh [flags...]
+
+Disable or restore screen lock and display sleep settings.
+
+Affects GNOME, KDE, XFCE, and logind lid-switch behavior.
+
+Options:
+  --uninstall  Restore common lock/power defaults (best effort).
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

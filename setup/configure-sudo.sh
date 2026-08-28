@@ -10,7 +10,14 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/configure-sudo.sh [--uninstall] [--verbose]
+Usage: ./setup/configure-sudo.sh [flags...]
+
+Configure passwordless sudo for the current user.
+
+Options:
+  --uninstall  Remove the sudoers override for the current user.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

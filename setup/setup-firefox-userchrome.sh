@@ -29,9 +29,18 @@ parse_common_flags "${REMAINING_ARGS[@]}"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-firefox-userchrome.sh [--profile <profile-path>] [--uninstall] [--verbose]
-  --profile  Absolute path to a Firefox profile directory.
-             If omitted, the default profile from ~/.mozilla/firefox/profiles.ini is used.
+Usage: ./setup/setup-firefox-userchrome.sh [flags...]
+
+Install or remove userChrome.css in a Firefox profile.
+
+If --profile is omitted, the default profile from
+~/.mozilla/firefox/profiles.ini is used.
+
+Options:
+  --profile <path>  Absolute path to a Firefox profile directory.
+  --uninstall       Remove userChrome.css from the profile.
+  --verbose         Show extra debug output.
+  -h, --help        Show this help message.
 USAGE
     exit 0
 fi

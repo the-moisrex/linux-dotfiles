@@ -12,7 +12,16 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-ntp.sh [--verbose]
+Usage: ./setup/setup-ntp.sh [flags...]
+
+Configure NTP servers for accurate time synchronization.
+
+Supports systemd-timesyncd, ntpd, and chrony. Configures
+Iranian and Arch pool NTP servers.
+
+Options:
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

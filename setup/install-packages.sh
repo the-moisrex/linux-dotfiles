@@ -11,8 +11,17 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/install-packages.sh [--offline] [--uninstall] [--verbose]
-  --uninstall  Remove listed packages instead of installing them
+Usage: ./setup/install-packages.sh [flags...]
+
+Install or remove packages from distro-specific lists in pkgs/.
+
+Supports Arch/Manjaro (pacman) and Fedora/RHEL (dnf).
+
+Options:
+  --offline    Skip downloading/updating packages.
+  --uninstall  Remove listed packages instead of installing them.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

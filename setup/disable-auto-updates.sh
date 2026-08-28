@@ -10,8 +10,17 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/disable-auto-updates.sh [--uninstall] [--verbose]
-  --uninstall  Re-enable automatic updates (best effort)
+Usage: ./setup/disable-auto-updates.sh [flags...]
+
+Disable or re-enable automatic update mechanisms.
+
+Supports Debian/Ubuntu (unattended-upgrades), Fedora/RHEL (dnf-automatic),
+and Arch (pacman timers).
+
+Options:
+  --uninstall  Re-enable automatic updates (best effort).
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

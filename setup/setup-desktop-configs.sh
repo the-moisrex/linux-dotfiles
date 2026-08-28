@@ -11,7 +11,17 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-desktop-configs.sh [--uninstall] [--verbose]
+Usage: ./setup/setup-desktop-configs.sh [flags...]
+
+Install or remove desktop integration configs.
+
+Includes Firefox policies, Nautilus scripts, KDE services,
+and KDE config files.
+
+Options:
+  --uninstall  Remove all installed desktop integration configs.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

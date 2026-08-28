@@ -11,7 +11,19 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-vscode-config.sh [--offline] [--uninstall] [--verbose]
+Usage: ./setup/setup-vscode-config.sh [flags...]
+
+Install or remove VS Code settings and extensions.
+
+Supports both Code (desktop) and code-server. Extensions
+are installed from configs/vscode/extensions.txt (skipped
+with --offline or --uninstall).
+
+Options:
+  --offline    Skip installing extensions.
+  --uninstall  Remove VS Code config symlinks (extensions are kept).
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

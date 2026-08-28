@@ -11,7 +11,16 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-shell-configs.sh [--uninstall] [--verbose]
+Usage: ./setup/setup-shell-configs.sh [flags...]
+
+Install or remove Fish and Nushell configs.
+
+Includes aliases, completions, functions, and sound assets.
+
+Options:
+  --uninstall  Remove all shell config symlinks.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi

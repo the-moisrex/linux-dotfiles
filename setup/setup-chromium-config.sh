@@ -11,7 +11,14 @@ parse_common_flags "$@"
 
 if [[ "$SHOW_HELP" == "true" ]]; then
   cat <<'USAGE'
-Usage: ./setup/setup-chromium-config.sh [--uninstall] [--verbose]
+Usage: ./setup/setup-chromium-config.sh [flags...]
+
+Install or remove Chromium flags config.
+
+Options:
+  --uninstall  Remove the Chromium flags config symlink.
+  --verbose    Show extra debug output.
+  -h, --help   Show this help message.
 USAGE
     exit 0
 fi
