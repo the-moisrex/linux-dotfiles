@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for Wikipedia (English)
+# Usage: wiki <query>
+# Example: wiki "recursion"
+
+wiki_help() {
+    echo "Usage: wiki <query>"
+    echo ""
+    echo "Generate a Wikipedia article URL (English)."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Article title or search term"
+    echo ""
+    echo "Examples:"
+    echo "  url wiki \"recursion\""
+    echo "  url wiki \"dynamic programming\""
+}
+
+wiki() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://en.wikipedia.org/wiki/$encoded"
+}

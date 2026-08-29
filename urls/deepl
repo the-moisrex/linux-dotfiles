@@ -1,0 +1,37 @@
+#!/bin/bash
+# URL function for DeepL translate
+# Usage: deepl <source_lang> <target_lang> <text>
+# Example: deepl en fa "hello world"
+
+deepl_help() {
+    echo "Usage: deepl <source_lang> <target_lang> <text>"
+    echo ""
+    echo "Generate a DeepL translate URL."
+    echo ""
+    echo "Arguments:"
+    echo "  source_lang  Source language code (e.g., EN, FA, auto)"
+    echo "  target_lang  Target language code (e.g., EN, FA)"
+    echo "  text         Text to translate"
+    echo ""
+    echo "Language codes: EN, DE, FR, ES, IT, NL, PL, PT, RU, JA, ZH, FA, etc."
+    echo ""
+    echo "Examples:"
+    echo "  url deepl EN FA \"hello world\""
+    echo "  url deepl FA EN \"سلام دنیا\""
+}
+
+deepl() {
+    local src="$1"
+    local tgt="$2"
+    shift 2 2>/dev/null || true
+    local text="$*"
+
+    if [ -z "$src" ] || [ -z "$tgt" ] || [ -z "$text" ]; then
+        echo "Error: Missing arguments (source_lang target_lang text)" >&2
+        return 1
+    fi
+
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$text'))")
+    echo "https://www.deepl.com/translator#${src}/${tgt}/$encoded"
+}

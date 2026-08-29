@@ -1,0 +1,44 @@
+#!/bin/bash
+# URL function for GitLab repos, issues, and pipelines
+# Usage: gitlab <user/repo> [type]
+# Example: gitlab gitlab-org/gitlab
+
+gitlab_help() {
+    echo "Usage: gitlab <user/repo> [type]"
+    echo ""
+    echo "Generate a GitLab URL."
+    echo ""
+    echo "Arguments:"
+    echo "  user/repo  GitLab namespace and project"
+    echo "  type       Optional: repo, issues, pipelines, merge_requests, wiki"
+    echo ""
+    echo "Examples:"
+    echo "  url gitlab gitlab-org/gitlab"
+    echo "  url gitlab gitlab-org/gitlab issues"
+    echo "  url gitlab gitlab-org/gitlab pipelines"
+}
+
+gitlab() {
+    local project="$1"
+    local type="${2:-repo}"
+
+    if [ -z "$project" ]; then
+        echo "Error: No project provided" >&2
+        return 1
+    fi
+
+    local base="https://gitlab.com/$project"
+
+    case "$type" in
+        repo|"")    echo "$base" ;;
+        issues)     echo "$base/-/issues" ;;
+        pipelines)  echo "$base/-/pipelines" ;;
+        mr|merge_requests|merge) echo "$base/-/merge_requests" ;;
+        wiki)       echo "$base/-/wikis" ;;
+        *)
+            echo "Error: Unknown type '$type'" >&2
+            echo "Valid types: repo, issues, pipelines, merge_requests, wiki" >&2
+            return 1
+            ;;
+    esac
+}

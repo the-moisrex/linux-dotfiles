@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for crates.io (Rust) package lookup
+# Usage: crates <package>
+# Example: crates serde
+
+crates_help() {
+    echo "Usage: crates <package>"
+    echo ""
+    echo "Generate a crates.io package URL."
+    echo ""
+    echo "Arguments:"
+    echo "  package  Crate name"
+    echo ""
+    echo "Examples:"
+    echo "  url crates serde"
+    echo "  url crates tokio"
+}
+
+crates() {
+    local pkg="$*"
+    if [ -z "$pkg" ]; then
+        echo "Error: No package name provided" >&2
+        return 1
+    fi
+    echo "https://crates.io/crates/$pkg"
+}

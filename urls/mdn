@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for MDN Web Docs search
+# Usage: mdn <query>
+# Example: mdn "fetch api"
+
+mdn_help() {
+    echo "Usage: mdn <query>"
+    echo ""
+    echo "Generate an MDN Web Docs search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query or topic"
+    echo ""
+    echo "Examples:"
+    echo "  url mdn \"fetch api\""
+    echo "  url mdn \"array map\""
+}
+
+mdn() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://developer.mozilla.org/en-US/search?q=$encoded"
+}

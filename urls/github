@@ -1,0 +1,35 @@
+#!/bin/bash
+# URL function for GitHub profiles and repositories
+# Usage: github [user] [repo]
+# Example: github moisrex
+
+github_help() {
+    echo "Usage: github [user] [repo]"
+    echo ""
+    echo "Generate GitHub URLs for profiles and repositories."
+    echo ""
+    echo "Arguments:"
+    echo "  user  GitHub username (optional if GITHUB_USER is set)"
+    echo "  repo  Repository name (optional)"
+    echo ""
+    echo "Examples:"
+    echo "  url github              # profile of default user"
+    echo "  url github moisrex      # profile of moisrex"
+    echo "  url github moisrex cmd  # repo moisrex/cmd"
+}
+
+github() {
+    local user="${1:-$GITHUB_USER}"
+    local repo="$2"
+
+    if [ -z "$user" ]; then
+        echo "Error: No GitHub username provided and GITHUB_USER not set" >&2
+        return 1
+    fi
+
+    if [ -n "$repo" ]; then
+        echo "https://github.com/$user/$repo"
+    else
+        echo "https://github.com/$user"
+    fi
+}

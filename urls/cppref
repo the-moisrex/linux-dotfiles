@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for cppreference.com search
+# Usage: cppref <query>
+# Example: cppref "std::vector"
+
+cppref_help() {
+    echo "Usage: cppref <query>"
+    echo ""
+    echo "Generate a cppreference.com search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  C++ symbol, class, or topic"
+    echo ""
+    echo "Examples:"
+    echo "  url cppref \"std::vector\""
+    echo "  url cppref \"std::ranges::transform\""
+}
+
+cppref() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://en.cppreference.com/w/cpp/$encoded"
+}

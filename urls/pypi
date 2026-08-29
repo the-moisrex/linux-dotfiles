@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for PyPI package lookup
+# Usage: pypi <package>
+# Example: pypi requests
+
+pypi_help() {
+    echo "Usage: pypi <package>"
+    echo ""
+    echo "Generate a PyPI package URL."
+    echo ""
+    echo "Arguments:"
+    echo "  package  PyPI package name"
+    echo ""
+    echo "Examples:"
+    echo "  url pypi requests"
+    echo "  url pypi numpy"
+}
+
+pypi() {
+    local pkg="$*"
+    if [ -z "$pkg" ]; then
+        echo "Error: No package name provided" >&2
+        return 1
+    fi
+    echo "https://pypi.org/project/$pkg"
+}

@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for YouTube search
+# Usage: yt <query>
+# Example: yt "bash scripting tutorial"
+
+yt_help() {
+    echo "Usage: yt <query>"
+    echo ""
+    echo "Generate a YouTube search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query string"
+    echo ""
+    echo "Examples:"
+    echo "  url yt \"bash scripting tutorial\""
+    echo "  url yt \"cmake tutorial\""
+}
+
+yt() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://www.youtube.com/results?search_query=$encoded"
+}

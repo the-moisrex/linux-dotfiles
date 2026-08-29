@@ -1,0 +1,30 @@
+#!/bin/bash
+# URL function for YouTube channel
+# Usage: ytch <channel>
+# Example: ytch @ThePrimeagen
+
+ytch_help() {
+    echo "Usage: ytch <channel>"
+    echo ""
+    echo "Generate a YouTube channel URL."
+    echo ""
+    echo "Arguments:"
+    echo "  channel  Channel name, handle, or ID"
+    echo ""
+    echo "Examples:"
+    echo "  url ytch @ThePrimeagen"
+    echo "  url ytch UCsfA1qU0mE4XcHJYQcTdkNw"
+}
+
+ytch() {
+    local channel="$*"
+    if [ -z "$channel" ]; then
+        echo "Error: No channel provided" >&2
+        return 1
+    fi
+    if [[ "$channel" == @* ]]; then
+        echo "https://www.youtube.com/$channel"
+    else
+        echo "https://www.youtube.com/channel/$channel"
+    fi
+}

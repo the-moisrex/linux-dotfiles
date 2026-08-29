@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for Wikipedia (Persian)
+# Usage: wikifa <query>
+# Example: wikifa "بازگشت"
+
+wikifa_help() {
+    echo "Usage: wikifa <query>"
+    echo ""
+    echo "Generate a Wikipedia article URL (Persian)."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Article title or search term"
+    echo ""
+    echo "Examples:"
+    echo "  url wikifa \"بازگشت\""
+    echo "  url wikifa \"برنامه‌نویسی\""
+}
+
+wikifa() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://fa.wikipedia.org/wiki/$encoded"
+}

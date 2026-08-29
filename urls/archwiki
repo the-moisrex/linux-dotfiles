@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for Arch Wiki search
+# Usage: archwiki <query>
+# Example: archwiki "network configuration"
+
+archwiki_help() {
+    echo "Usage: archwiki <query>"
+    echo ""
+    echo "Generate an Arch Wiki search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query or article title"
+    echo ""
+    echo "Examples:"
+    echo "  url archwiki \"network configuration\""
+    echo "  url archwiki \"systemd services\""
+}
+
+archwiki() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://wiki.archlinux.org/index.php?search=$encoded"
+}

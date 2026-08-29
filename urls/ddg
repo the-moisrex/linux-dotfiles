@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for DuckDuckGo search
+# Usage: ddg <query>
+# Example: ddg "bash scripting"
+
+ddg_help() {
+    echo "Usage: ddg <query>"
+    echo ""
+    echo "Generate a DuckDuckGo search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query string"
+    echo ""
+    echo "Examples:"
+    echo "  url ddg \"bash scripting\""
+    echo "  url ddg cmake fetchcontent"
+}
+
+ddg() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://duckduckgo.com/?q=$encoded"
+}

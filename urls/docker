@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for Docker Hub search
+# Usage: docker <image>
+# Example: docker nginx
+
+docker_help() {
+    echo "Usage: docker <image>"
+    echo ""
+    echo "Generate a Docker Hub image URL."
+    echo ""
+    echo "Arguments:"
+    echo "  image  Docker image name"
+    echo ""
+    echo "Examples:"
+    echo "  url docker nginx"
+    echo "  url docker postgres"
+}
+
+docker() {
+    local image="$*"
+    if [ -z "$image" ]; then
+        echo "Error: No image name provided" >&2
+        return 1
+    fi
+    echo "https://hub.docker.com/r/$image"
+}

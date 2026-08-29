@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for Reddit subreddit
+# Usage: subreddit <name>
+# Example: subreddit linux
+
+subreddit_help() {
+    echo "Usage: subreddit <name>"
+    echo ""
+    echo "Generate a Reddit subreddit URL."
+    echo ""
+    echo "Arguments:"
+    echo "  name  Subreddit name (without r/)"
+    echo ""
+    echo "Examples:"
+    echo "  url subreddit linux"
+    echo "  url subreddit cpp"
+}
+
+subreddit() {
+    local name="$*"
+    if [ -z "$name" ]; then
+        echo "Error: No subreddit name provided" >&2
+        return 1
+    fi
+    echo "https://www.reddit.com/r/$name"
+}

@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for X/Twitter search
+# Usage: xsearch <query>
+# Example: xsearch "openai"
+
+xsearch_help() {
+    echo "Usage: xsearch <query>"
+    echo ""
+    echo "Generate an X/Twitter search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query string"
+    echo ""
+    echo "Examples:"
+    echo "  url xsearch \"openai\""
+    echo "  url xsearch \"from:elonmusk\""
+}
+
+xsearch() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://x.com/search?q=$encoded"
+}

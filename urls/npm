@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for npm package lookup
+# Usage: npm <package>
+# Example: npm express
+
+npm_help() {
+    echo "Usage: npm <package>"
+    echo ""
+    echo "Generate an npm package URL."
+    echo ""
+    echo "Arguments:"
+    echo "  package  npm package name"
+    echo ""
+    echo "Examples:"
+    echo "  url npm express"
+    echo "  url npm lodash"
+}
+
+npm() {
+    local pkg="$*"
+    if [ -z "$pkg" ]; then
+        echo "Error: No package name provided" >&2
+        return 1
+    fi
+    echo "https://www.npmjs.com/package/$pkg"
+}

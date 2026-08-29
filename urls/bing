@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for Bing search
+# Usage: bing <query>
+# Example: bing "bash scripting"
+
+bing_help() {
+    echo "Usage: bing <query>"
+    echo ""
+    echo "Generate a Bing search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query string"
+    echo ""
+    echo "Examples:"
+    echo "  url bing \"bash scripting\""
+    echo "  url bing cmake fetchcontent"
+}
+
+bing() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://www.bing.com/search?q=$encoded"
+}

@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for X/Twitter user profile
+# Usage: xuser <username>
+# Example: xuser elonmusk
+
+xuser_help() {
+    echo "Usage: xuser <username>"
+    echo ""
+    echo "Generate an X/Twitter user profile URL."
+    echo ""
+    echo "Arguments:"
+    echo "  username  X/Twitter username (without @)"
+    echo ""
+    echo "Examples:"
+    echo "  url xuser elonmusk"
+}
+
+xuser() {
+    local user="$*"
+    if [ -z "$user" ]; then
+        echo "Error: No username provided" >&2
+        return 1
+    fi
+    user="${user#@}"
+    echo "https://x.com/$user"
+}

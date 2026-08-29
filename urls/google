@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for Google search
+# Usage: google <query>
+# Example: google "bash scripting"
+
+google_help() {
+    echo "Usage: google <query>"
+    echo ""
+    echo "Generate a Google search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query string"
+    echo ""
+    echo "Examples:"
+    echo "  url google \"bash scripting\""
+    echo "  url google cmake fetchcontent"
+}
+
+google() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://www.google.com/search?q=$encoded"
+}

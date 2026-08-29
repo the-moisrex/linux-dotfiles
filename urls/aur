@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for AUR (Arch User Repository) package lookup
+# Usage: aur <package>
+# Example: aur visual-studio-code-bin
+
+aur_help() {
+    echo "Usage: aur <package>"
+    echo ""
+    echo "Generate an AUR package URL."
+    echo ""
+    echo "Arguments:"
+    echo "  package  AUR package name"
+    echo ""
+    echo "Examples:"
+    echo "  url aur visual-studio-code-bin"
+    echo "  url aur yay"
+}
+
+aur() {
+    local pkg="$*"
+    if [ -z "$pkg" ]; then
+        echo "Error: No package name provided" >&2
+        return 1
+    fi
+    echo "https://aur.archlinux.org/packages/$pkg"
+}

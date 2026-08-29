@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for VS Code marketplace extension lookup
+# Usage: vscode <extension>
+# Example: vscode ms-vscode.cpptools
+
+vscode_help() {
+    echo "Usage: vscode <extension>"
+    echo ""
+    echo "Generate a VS Code marketplace extension URL."
+    echo ""
+    echo "Arguments:"
+    echo "  extension  Extension ID (publisher.name)"
+    echo ""
+    echo "Examples:"
+    echo "  url vscode ms-vscode.cpptools"
+    echo "  url vscode vscodevim.vim"
+}
+
+vscode() {
+    local ext="$*"
+    if [ -z "$ext" ]; then
+        echo "Error: No extension name provided" >&2
+        return 1
+    fi
+    echo "https://marketplace.visualstudio.com/items?itemName=$ext"
+}

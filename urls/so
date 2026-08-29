@@ -1,0 +1,28 @@
+#!/bin/bash
+# URL function for Stack Overflow search
+# Usage: so <query>
+# Example: so "bash array"
+
+so_help() {
+    echo "Usage: so <query>"
+    echo ""
+    echo "Generate a Stack Overflow search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query  Search query string"
+    echo ""
+    echo "Examples:"
+    echo "  url so \"bash array\""
+    echo "  url so \"cmake target_link_libraries\""
+}
+
+so() {
+    local query="$*"
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+    echo "https://stackoverflow.com/search?q=$encoded"
+}

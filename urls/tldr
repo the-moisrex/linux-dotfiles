@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for tldr pages
+# Usage: tldr <command>
+# Example: tldr tar
+
+tldr_help() {
+    echo "Usage: tldr <command>"
+    echo ""
+    echo "Generate a tldr pages URL for a command."
+    echo ""
+    echo "Arguments:"
+    echo "  command  Command name"
+    echo ""
+    echo "Examples:"
+    echo "  url tldr tar"
+    echo "  url tldr curl"
+}
+
+tldr() {
+    local cmd="$*"
+    if [ -z "$cmd" ]; then
+        echo "Error: No command name provided" >&2
+        return 1
+    fi
+    echo "https://tldr.inbrowser.app/pages/linux/$cmd"
+}

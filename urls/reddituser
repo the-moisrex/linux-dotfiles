@@ -1,0 +1,25 @@
+#!/bin/bash
+# URL function for Reddit user profile
+# Usage: reddituser <username>
+# Example: reddituser spez
+
+reddituser_help() {
+    echo "Usage: reddituser <username>"
+    echo ""
+    echo "Generate a Reddit user profile URL."
+    echo ""
+    echo "Arguments:"
+    echo "  username  Reddit username"
+    echo ""
+    echo "Examples:"
+    echo "  url reddituser spez"
+}
+
+reddituser() {
+    local user="$*"
+    if [ -z "$user" ]; then
+        echo "Error: No username provided" >&2
+        return 1
+    fi
+    echo "https://www.reddit.com/user/$user"
+}

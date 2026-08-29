@@ -1,0 +1,26 @@
+#!/bin/bash
+# URL function for Flathub app search
+# Usage: flathub <app>
+# Example: flathub org.mozilla.firefox
+
+flathub_help() {
+    echo "Usage: flathub <app>"
+    echo ""
+    echo "Generate a Flathub app URL."
+    echo ""
+    echo "Arguments:"
+    echo "  app  Flatpak app ID or name"
+    echo ""
+    echo "Examples:"
+    echo "  url flathub org.mozilla.firefox"
+    echo "  url flathub com.visualstudio.code"
+}
+
+flathub() {
+    local app="$*"
+    if [ -z "$app" ]; then
+        echo "Error: No app name provided" >&2
+        return 1
+    fi
+    echo "https://flathub.org/apps/$app"
+}

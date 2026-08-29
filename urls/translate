@@ -1,0 +1,36 @@
+#!/bin/bash
+# URL function for Google Translate
+# Usage: translate <source_lang> <target_lang> <text>
+# Example: translate en fa "hello world"
+
+translate_help() {
+    echo "Usage: translate <source_lang> <target_lang> <text>"
+    echo ""
+    echo "Generate a Google Translate URL."
+    echo ""
+    echo "Arguments:"
+    echo "  source_lang  Source language code (e.g., en, fa, auto)"
+    echo "  target_lang  Target language code (e.g., en, fa)"
+    echo "  text         Text to translate"
+    echo ""
+    echo "Examples:"
+    echo "  url translate en fa \"hello world\""
+    echo "  url translate fa en \"سلام دنیا\""
+    echo "  url translate auto en \"مرحبا\""
+}
+
+translate() {
+    local src="$1"
+    local tgt="$2"
+    shift 2 2>/dev/null || true
+    local text="$*"
+
+    if [ -z "$src" ] || [ -z "$tgt" ] || [ -z "$text" ]; then
+        echo "Error: Missing arguments (source_lang target_lang text)" >&2
+        return 1
+    fi
+
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$text'))")
+    echo "https://translate.google.com/?sl=$src&tl=$tgt&op=translate&text=$encoded"
+}

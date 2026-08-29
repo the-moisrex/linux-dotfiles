@@ -1,0 +1,35 @@
+#!/bin/bash
+# URL function for GitHub Gists
+# Usage: gist [user] [gist_id]
+# Example: gist moisrex
+
+gist_help() {
+    echo "Usage: gist [user] [gist_id]"
+    echo ""
+    echo "Generate GitHub Gist URLs."
+    echo ""
+    echo "Arguments:"
+    echo "  user    GitHub username (optional if GITHUB_USER is set)"
+    echo "  gist_id Gist ID (optional)"
+    echo ""
+    echo "Examples:"
+    echo "  url gist                  # list gists for default user"
+    echo "  url gist moisrex          # list gists for moisrex"
+    echo "  url gist moisrex abc123   # specific gist"
+}
+
+gist() {
+    local user="${1:-$GITHUB_USER}"
+    local gist_id="$2"
+
+    if [ -z "$user" ]; then
+        echo "Error: No GitHub username provided and GITHUB_USER not set" >&2
+        return 1
+    fi
+
+    if [ -n "$gist_id" ]; then
+        echo "https://gist.github.com/$user/$gist_id"
+    else
+        echo "https://gist.github.com/$user"
+    fi
+}

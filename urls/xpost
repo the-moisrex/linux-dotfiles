@@ -1,0 +1,27 @@
+#!/bin/bash
+# URL function for X/Twitter status by ID
+# Usage: xpost <username> <status_id>
+# Example: xpost elonmusk 1234567890
+
+xpost_help() {
+    echo "Usage: xpost <username> <status_id>"
+    echo ""
+    echo "Generate an X/Twitter post URL."
+    echo ""
+    echo "Arguments:"
+    echo "  username   X/Twitter username"
+    echo "  status_id  Post/status ID"
+    echo ""
+    echo "Examples:"
+    echo "  url xpost elonmusk 1234567890"
+}
+
+xpost() {
+    local user="$1"
+    local id="$2"
+    if [ -z "$user" ] || [ -z "$id" ]; then
+        echo "Error: Missing arguments (username status_id)" >&2
+        return 1
+    fi
+    echo "https://x.com/$user/status/$id"
+}

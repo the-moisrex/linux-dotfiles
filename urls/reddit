@@ -1,0 +1,37 @@
+#!/bin/bash
+# URL function for Reddit search
+# Usage: reddit <query> [subreddit]
+# Example: reddit "bash scripting"
+
+reddit_help() {
+    echo "Usage: reddit <query> [subreddit]"
+    echo ""
+    echo "Generate a Reddit search URL."
+    echo ""
+    echo "Arguments:"
+    echo "  query      Search query string"
+    echo "  subreddit  Subreddit to search in (optional)"
+    echo ""
+    echo "Examples:"
+    echo "  url reddit \"bash scripting\""
+    echo "  url reddit \"cmake\" linux"
+}
+
+reddit() {
+    local query="$1"
+    local sub="$2"
+
+    if [ -z "$query" ]; then
+        echo "Error: No search query provided" >&2
+        return 1
+    fi
+
+    local encoded
+    encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+
+    if [ -n "$sub" ]; then
+        echo "https://www.reddit.com/r/$sub/search?q=$encoded"
+    else
+        echo "https://www.reddit.com/search?q=$encoded"
+    fi
+}
