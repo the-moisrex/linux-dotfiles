@@ -248,16 +248,17 @@ def cmd_list_flat(pipe_mode, with_titles):
 
 def cmd_search(term, pipe_mode, with_titles, tag_only):
     count = 0
+    term_l = term.lower()
     for depth, path, url, title, tags in extract_bookmarks():
         t = title.lower()
         u = url.lower()
         tg = tags.lower()
-        term_l = term.lower()
+        p = path.lower()
         matched = False
         if tag_only:
             matched = term_l in tg
         else:
-            matched = term_l in t or term_l in u or term_l in tg
+            matched = term_l in t or term_l in u or term_l in tg or term_l in p
         if matched:
             count += 1
             if pipe_mode and not with_titles:

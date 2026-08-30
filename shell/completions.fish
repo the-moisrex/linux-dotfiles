@@ -133,3 +133,78 @@ complete -c gdb.run -f -a watch -n "not __fish_seen_subcommand_from watch" -d "W
 
 # Suggest local scripts (.py, .gdb) dynamically, showing only the file name
 complete -c gdb.run -f -a "(find . -maxdepth 2 -type f \( -name '*.py' -o -name '*.gdb' \) 2>/dev/null | string replace -r '.*/' '')" -d "GDB/Python script"
+
+# ---- bookmarks ----
+
+function __bm_folders
+    bookmarks folders 2>/dev/null
+end
+
+function __bm_no_subcommand
+    set -l tokens (commandline -opc)
+    test (count $tokens) -le 1
+end
+
+function __bm_subcommand
+    set -l tokens (commandline -opc)
+    if test (count $tokens) -ge 2
+        echo $tokens[2]
+    end
+end
+
+function __bm_is_subcommand
+    set -l sub (__bm_subcommand)
+    test -n "$sub"; and test "$sub" = "$argv[1]"
+end
+
+function __bm_bookmark_queries
+    bookmarks list --with-titles 2>/dev/null
+end
+
+# Global options
+complete -c bookmarks -l file -s f -r -d "Bookmark file path"
+complete -c bookmarks -l no-color -d "Disable colored output"
+complete -c bookmarks -l with-titles -d "Show titles when piped"
+complete -c bookmarks -l no-backup -d "Skip backup before write operations"
+complete -c bookmarks -s h -l help -d "Show help message"
+
+# Subcommands (only when no subcommand given yet)
+complete -c bookmarks -f -n __bm_no_subcommand -a list -d "List bookmarks"
+complete -c bookmarks -f -n __bm_no_subcommand -a search -d "Search by title, URL, or tags"
+complete -c bookmarks -f -n __bm_no_subcommand -a folders -d "List all folder names"
+complete -c bookmarks -f -n __bm_no_subcommand -a count -d "Show bookmark statistics"
+complete -c bookmarks -f -n __bm_no_subcommand -a duplicates -d "Find duplicate URLs"
+complete -c bookmarks -f -n __bm_no_subcommand -a add -d "Add a bookmark"
+complete -c bookmarks -f -n __bm_no_subcommand -a add-folder -d "Add a new folder"
+complete -c bookmarks -f -n __bm_no_subcommand -a edit -d "Edit a bookmark"
+complete -c bookmarks -f -n __bm_no_subcommand -a move -d "Move bookmark to another folder"
+complete -c bookmarks -f -n __bm_no_subcommand -a open -d "Open URL in browser"
+complete -c bookmarks -f -n __bm_no_subcommand -a remove -d "Remove a bookmark"
+complete -c bookmarks -f -n __bm_no_subcommand -a help -d "Show help"
+
+# Disable file completion when a subcommand is active
+function __bm_has_subcommand
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2; and test -n "$tokens[2]"
+end
+complete -c bookmarks -f -n __bm_has_subcommand -a ""
+
+# list options
+complete -c bookmarks -f -n "__bm_is_subcommand list" -l tree -d "Show as tree with folder hierarchy"
+
+# search options
+complete -c bookmarks -f -n "__bm_is_subcommand search" -l tag -d "Search by tag only"
+
+# add options
+complete -c bookmarks -f -n "__bm_is_subcommand add" -l folder -r -a "(__bm_folders)" -d "Add to folder"
+
+# add-folder options
+complete -c bookmarks -f -n "__bm_is_subcommand add-folder" -l parent -r -a "(__bm_folders)" -d "Parent folder"
+
+# edit options
+complete -c bookmarks -f -n "__bm_is_subcommand edit" -l url -r -d "New URL"
+complete -c bookmarks -f -n "__bm_is_subcommand edit" -l title -r -d "New title"
+complete -c bookmarks -f -n "__bm_is_subcommand edit" -l folder -r -a "(__bm_folders)" -d "Move to folder"
+
+# move options
+complete -c bookmarks -f -n "__bm_is_subcommand move" -l to -r -a "(__bm_folders)" -d "Target folder"
