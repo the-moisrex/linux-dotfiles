@@ -1,13 +1,54 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BOOKMARKS_FILE="${BOOKMARKS_FILE:-bookmarks.html}"
+BOOKMARKS_FILE="${BOOKMARKS_FILE:-}"
 
-die() { echo "ERROR: $*" >&2; exit 1; }
+# ---- Auto-detect bookmarks file ----
+detect_bookmarks_file() {
+  # If explicitly set via env or --file, use that
+  if [ -n "$BOOKMARKS_FILE" ]; then
+    [ -f "$BOOKMARKS_FILE" ] || die "Bookmark file not found: $BOOKMARKS_FILE"
+    return
+  fi
+
+  # Find .html files in current directory and check for Netscape bookmark header
+  local candidates=()
+  for f in ./*.html; do
+    [ -f "$f" ] || continue
+    if head -1 "$f" 2>/dev/null | grep -q 'DOCTYPE NETSCAPE-Bookmark-file-1'; then
+      candidates+=("$f")
+    fi
+  done
+
+  case ${#candidates[@]} in
+    0) die "No bookmark file found in current directory. Use --file <path> or set BOOKMARKS_FILE." ;;
+    1) BOOKMARKS_FILE="${candidates[0]}" ;;
+    *) die "Multiple bookmark files found: ${candidates[*]}. Use --file <path> to specify." ;;
+  esac
+}
+
+# ---- Color support ----
+COLOR=1
+[[ -t 1 ]] || COLOR=0
+[[ "${NO_COLOR:-}" == "1" ]] && COLOR=0
+
+if [[ $COLOR -eq 1 ]]; then
+  RED='\033[0;31m' GRN='\033[0;32m' YEL='\033[0;33m'
+  BLU='\033[0;34m' CYN='\033[0;36m' DIM='\033[2m'
+  BLD='\033[1m' RST='\033[0m'
+else
+  RED='' GRN='' YEL='' BLU='' CYN='' DIM='' BLD='' RST=''
+fi
+
+# ---- Pipe detection ----
+PIPE_MODE=0
+[[ -t 1 ]] || PIPE_MODE=1
+
+die() { echo -e "${RED}ERROR: $*${RST}" >&2; exit 1; }
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [--file <path>] <command> [args]
+Usage: $(basename "$0") [--file <path>] [--no-color] <command> [args]
 
 Manage Firefox HTML bookmark files.
 
@@ -15,26 +56,59 @@ Commands:
   list                    List bookmarks (flat)
   list --tree             Show as tree with folder hierarchy
   search <term>           Search by title, URL, or tags
+  search --tag <tag>      Search by tag only
   folders                 List all folder names
+  count                   Show bookmark statistics
+  duplicates              Find duplicate URLs
   add <url> <title>       Add a bookmark
   add --folder <name>     Add to a specific folder
   add-folder <name>       Add a new folder
   add-folder --parent <n> Add inside a parent folder
+  edit <query>            Edit a bookmark
+    --url <new-url>         Change URL
+    --title <new-title>     Change title
+    --folder <folder>       Move to folder
+  move <query> --to <f>  Move bookmark to another folder
+  open <query>            Open URL in browser
   remove <query>          Remove by exact URL or title match
   help                    Show this help
 
 Options:
   --file <path>           Bookmark file (default: ./bookmarks.html)
   -f <path>               Shorthand for --file
+  --no-color              Disable colored output
+  --with-titles           Show titles when piped (default: URLs only)
+  --no-backup             Skip backup before write operations
+
+Output:
+  When piped, list/search output URLs only (no titles).
+  Use --with-titles to include titles when piped.
+
+Environment:
+  BOOKMARKS_FILE          Path to bookmarks file
+  NO_COLOR=1              Disable colors
+  BROWSER                 Browser for 'open' command (default: xdg-open)
 
 Examples:
   $(basename "$0") list --tree
   $(basename "$0") search docker
+  $(basename "$0") search --tag python
   $(basename "$0") add --folder "Dev" "https://github.com" "GitHub"
-  $(basename "$0") add-folder "Dev Tools"
-  $(basename "$0") remove "https://example.com"
+  $(basename "$0") edit "GitHub" --title "GitHub.com" --folder "Work"
+  $(basename "$0") move "GitHub" --to "Work"
+  $(basename "$0") open "GitHub"
+  $(basename "$0") duplicates
+  $(basename "$0") list | grep github   # URLs only when piped
 EOF
   exit 0
+}
+
+# ---- Backup ----
+NO_BACKUP=0
+
+backup_file() {
+  [[ $NO_BACKUP -eq 1 ]] && return
+  [[ -f "$BOOKMARKS_FILE" ]] && cp "$BOOKMARKS_FILE" "${BOOKMARKS_FILE}.bak"
 }
 
 # ---- Python helper ----
@@ -44,6 +118,17 @@ import sys, re, html as _html
 
 BOOKMARKS_FILE = sys.argv[1]
 CMD = sys.argv[2] if len(sys.argv) > 2 else ''
+COLOR = sys.argv[3] == '1' if len(sys.argv) > 3 else False
+
+# Color codes
+C_RST = '\033[0m' if COLOR else ''
+C_RED = '\033[0;31m' if COLOR else ''
+C_GRN = '\033[0;32m' if COLOR else ''
+C_YEL = '\033[0;33m' if COLOR else ''
+C_BLU = '\033[0;34m' if COLOR else ''
+C_CYN = '\033[0;36m' if COLOR else ''
+C_DIM = '\033[2m' if COLOR else ''
+C_BLD = '\033[1m' if COLOR else ''
 
 with open(BOOKMARKS_FILE) as f:
     raw = f.read()
@@ -77,6 +162,8 @@ def extract_bookmarks():
         m = re.search(r'<DT>.*<A HREF=\"([^\"]*)\"([^>]*)>(.*?)</A>', line)
         if m:
             url = m.group(1)
+            if url.startswith('place:'):
+                continue
             attrs = m.group(2)
             title = unescape(m.group(3))
             tags = ''
@@ -114,7 +201,7 @@ def find_last_close_dl():
             return i
     return None
 
-def cmd_list_tree():
+def cmd_list_tree(pipe_mode, with_titles):
     lines = raw.splitlines()
     folders = []
     depth = 0
@@ -125,7 +212,7 @@ def cmd_list_tree():
                 folders.append('')
             folders[depth] = unescape(m.group(1))
             indent = '  ' * depth
-            print(f'{indent}[{folders[depth]}]')
+            print(f'{indent}{C_CYN}{C_BLD}[{folders[depth]}]{C_RST}')
         if '<DL>' in line:
             depth += 1
         if '</DL>' in line:
@@ -133,40 +220,62 @@ def cmd_list_tree():
             continue
         m = re.search(r'<DT>.*<A HREF=\"([^\"]*)\"([^>]*)>(.*?)</A>', line)
         if m:
-            title = unescape(m.group(3))
             url = m.group(1)
+            if url.startswith('place:'):
+                continue
+            title = unescape(m.group(3))
             indent = '  ' * depth
-            print(f'{indent}  {title}')
-            print(f'{indent}    {url}')
+            if pipe_mode and not with_titles:
+                print(url)
+            else:
+                print(f'{indent}  {C_BLD}{title}{C_RST}')
+                print(f'{indent}    {C_DIM}{url}{C_RST}')
 
-def cmd_list_flat():
-    for depth, path, url, title, tags in extract_bookmarks():
-        prefix = f'[{path}] ' if path else ''
-        print(f'  {prefix}{title}')
-        print(f'    {url}')
-        if tags:
-            print(f'    tags: {tags}')
-        print()
+def cmd_list_flat(pipe_mode, with_titles):
+    items = extract_bookmarks()
+    for depth, path, url, title, tags in items:
+        if pipe_mode and not with_titles:
+            print(url)
+        else:
+            prefix = ''
+            if path:
+                prefix = f'{C_CYN}[{path}]{C_RST} '
+            print(f'  {prefix}{C_BLD}{title}{C_RST}')
+            print(f'    {C_DIM}{url}{C_RST}')
+            if tags:
+                print(f'    {C_YEL}tags: {tags}{C_RST}')
+            print()
 
-def cmd_search(term):
+def cmd_search(term, pipe_mode, with_titles, tag_only):
     count = 0
     for depth, path, url, title, tags in extract_bookmarks():
         t = title.lower()
         u = url.lower()
         tg = tags.lower()
         term_l = term.lower()
-        if term_l in t or term_l in u or term_l in tg:
+        matched = False
+        if tag_only:
+            matched = term_l in tg
+        else:
+            matched = term_l in t or term_l in u or term_l in tg
+        if matched:
             count += 1
-            prefix = f'[{path}] ' if path else ''
-            print(f'  {prefix}{title}')
-            print(f'    {url}')
-            if tags:
-                print(f'    tags: {tags}')
-            print()
+            if pipe_mode and not with_titles:
+                print(url)
+            else:
+                prefix = ''
+                if path:
+                    prefix = f'{C_CYN}[{path}]{C_RST} '
+                print(f'  {prefix}{C_BLD}{title}{C_RST}')
+                print(f'    {C_DIM}{url}{C_RST}')
+                if tags:
+                    print(f'    {C_YEL}tags: {tags}{C_RST}')
+                print()
     if count == 0:
-        print('No results found')
+        print(f'{C_RED}No results found{C_RST}')
     else:
-        print(f'Found {count} result(s)')
+        if not pipe_mode or with_titles:
+            print(f'{C_CYN}Found {count} result(s){C_RST}')
 
 def cmd_folders():
     seen = set()
@@ -176,31 +285,83 @@ def cmd_folders():
             name = unescape(m.group(1))
             if name not in seen:
                 seen.add(name)
-                print(name)
+                print(f'{C_CYN}{C_BLD}{name}{C_RST}')
+
+def cmd_count():
+    bookmarks = extract_bookmarks()
+    total = len(bookmarks)
+    folders_map = {}
+    for depth, path, url, title, tags in bookmarks:
+        root = path.split('/')[0] if path else '(root)'
+        folders_map[root] = folders_map.get(root, 0) + 1
+
+    print(f'{C_BLD}Total bookmarks: {C_CYN}{total}{C_RST}')
+    print()
+    for folder in sorted(folders_map.keys()):
+        count = folders_map[folder]
+        print(f'  {C_CYN}{folder}{C_RST}: {count}')
+
+def cmd_duplicates():
+    seen = {}
+    dupes = []
+    for depth, path, url, title, tags in extract_bookmarks():
+        if url in seen:
+            dupes.append((url, title, path, seen[url]))
+        else:
+            seen[url] = title
+    if not dupes:
+        print(f'{C_GRN}No duplicates found{C_RST}')
+        return
+    print(f'{C_YEL}Found {len(dupes)} duplicate URL(s):{C_RST}')
+    print()
+    for url, title, path, first_title in dupes:
+        print(f'  {C_DIM}{url}{C_RST}')
+        print(f'    {C_BLD}{title}{C_RST} [{path}]')
+        print(f'    {C_DIM}(first: {first_title}){C_RST}')
+        print()
 
 if CMD == 'list-tree':
-    cmd_list_tree()
+    cmd_list_tree(sys.argv[4] == '1' if len(sys.argv) > 4 else False,
+                  sys.argv[5] == '1' if len(sys.argv) > 5 else False)
 elif CMD == 'list-flat':
-    cmd_list_flat()
+    cmd_list_flat(sys.argv[4] == '1' if len(sys.argv) > 4 else False,
+                  sys.argv[5] == '1' if len(sys.argv) > 5 else False)
 elif CMD == 'search':
-    cmd_search(sys.argv[3] if len(sys.argv) > 3 else '')
+    cmd_search(sys.argv[7] if len(sys.argv) > 7 else '',
+               sys.argv[4] == '1' if len(sys.argv) > 4 else False,
+               sys.argv[5] == '1' if len(sys.argv) > 5 else False,
+               sys.argv[6] == '1' if len(sys.argv) > 6 else False)
 elif CMD == 'folders':
     cmd_folders()
+elif CMD == 'count':
+    cmd_count()
+elif CMD == 'duplicates':
+    cmd_duplicates()
 elif CMD == 'find-folder-line':
-    result = find_folder_line(sys.argv[3] if len(sys.argv) > 3 else '')
+    result = find_folder_line(sys.argv[4] if len(sys.argv) > 4 else '')
     if result:
         print(f'{result[0]}|{result[1]}')
     else:
         print('')
 elif CMD == 'find-dl-line':
-    result = find_dl_after_line(int(sys.argv[3]))
+    result = find_dl_after_line(int(sys.argv[4]))
     print(result if result is not None else '')
 elif CMD == 'find-last-close-dl':
     print(find_last_close_dl())
 elif CMD == 'unescape':
-    print(unescape(sys.argv[3] if len(sys.argv) > 3 else ''))
+    print(unescape(sys.argv[4] if len(sys.argv) > 4 else ''))
 elif CMD == 'escape':
-    print(escape(sys.argv[3] if len(sys.argv) > 3 else ''))
+    print(escape(sys.argv[4] if len(sys.argv) > 4 else ''))
+elif CMD == 'get-bookmark':
+    query = sys.argv[4] if len(sys.argv) > 4 else ''
+    for depth, path, url, title, tags in extract_bookmarks():
+        if url == query or title == query:
+            print(f'URL={url}')
+            print(f'TITLE={title}')
+            print(f'FOLDER={path}')
+            print(f'TAGS={tags}')
+            sys.exit(0)
+    sys.exit(1)
 " "$@"
 }
 
@@ -216,34 +377,57 @@ cmd_list() {
   local tree=false
   local args=()
   for arg in "$@"; do
-    if [[ "$arg" == "--tree" ]]; then
-      tree=true
-    else
-      args+=("$arg")
-    fi
+    case "$arg" in
+      --tree) tree=true ;;
+      *) args+=("$arg") ;;
+    esac
   done
-  set -- "${args[@]}"
 
   if $tree; then
-    py "$BOOKMARKS_FILE" "list-tree"
+    py "$BOOKMARKS_FILE" "list-tree" "$COLOR" "$PIPE_MODE" "$WITH_TITLES"
   else
-    py "$BOOKMARKS_FILE" "list-flat"
+    py "$BOOKMARKS_FILE" "list-flat" "$COLOR" "$PIPE_MODE" "$WITH_TITLES"
   fi
 }
 
 cmd_search() {
-  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") search <term>"
+  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") search [--tag] <term>"
   check_file
-  py "$BOOKMARKS_FILE" "search" "$1"
+
+  local tag_only=false
+  local term=""
+  local args=("$@")
+  local new_args=()
+  for arg in "${args[@]}"; do
+    if [[ "$arg" == "--tag" ]]; then
+      tag_only=true
+    else
+      term="$arg"
+    fi
+  done
+
+  [ -n "$term" ] || die "Usage: $(basename "$0") search [--tag] <term>"
+  py "$BOOKMARKS_FILE" "search" "$COLOR" "$PIPE_MODE" "$WITH_TITLES" "$tag_only" "$term"
 }
 
 cmd_folders() {
   check_file
-  py "$BOOKMARKS_FILE" "folders"
+  py "$BOOKMARKS_FILE" "folders" "$COLOR"
+}
+
+cmd_count() {
+  check_file
+  py "$BOOKMARKS_FILE" "count" "$COLOR"
+}
+
+cmd_duplicates() {
+  check_file
+  py "$BOOKMARKS_FILE" "duplicates" "$COLOR"
 }
 
 cmd_add() {
   [ "${#@}" -ge 2 ] || die "Usage: $(basename "$0") add [--folder <name>] <url> <title>"
+  check_file
 
   local folder=""
   local args=()
@@ -261,39 +445,42 @@ cmd_add() {
   now="$(date +%s)"
   local escaped_url
   local escaped_title
-  escaped_url="$(py "$BOOKMARKS_FILE" "escape" "$url")"
-  escaped_title="$(py "$BOOKMARKS_FILE" "escape" "$title")"
+  escaped_url="$(py "$BOOKMARKS_FILE" "escape" "$COLOR" "$url")"
+  escaped_title="$(py "$BOOKMARKS_FILE" "escape" "$COLOR" "$title")"
   local entry="        <DT><A HREF=\"$escaped_url\" ADD_DATE=\"$now\" LAST_MODIFIED=\"$now\">$escaped_title</A>"
+
+  backup_file
 
   if [ -n "$folder" ]; then
     local result
-    result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$folder")"
+    result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$COLOR" "$folder")"
     [ -n "$result" ] || die "Folder not found: $folder"
     local line_num="${result%%|*}"
 
     local dl_line
-    dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$line_num")"
+    dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$COLOR" "$line_num")"
     [ -n "$dl_line" ] || die "Could not find content block for folder: $folder"
 
-    local insert_after=$((dl_line))
+    local insert_after=$((dl_line + 1))
     awk -v n="$insert_after" -v entry="$entry" '
     NR == n { print; print entry; next }
     { print }
     ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
   else
     local last_close
-    last_close="$(py "$BOOKMARKS_FILE" "find-last-close-dl")"
-    awk -v n="$last_close" -v entry="$entry" '
+    last_close="$(py "$BOOKMARKS_FILE" "find-last-close-dl" "$COLOR")"
+    awk -v n="$((last_close + 1))" -v entry="$entry" '
     NR == n { print entry; print; next }
     { print }
     ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
   fi
 
-  echo "Added: $title ($url)"
+  echo -e "${GRN}Added:${RST} $title ($url)"
 }
 
 cmd_add_folder() {
   [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") add-folder [--parent <name>] <name>"
+  check_file
 
   local parent=""
   local args=()
@@ -309,22 +496,24 @@ cmd_add_folder() {
   local now
   now="$(date +%s)"
   local escaped_name
-  escaped_name="$(py "$BOOKMARKS_FILE" "escape" "$name")"
+  escaped_name="$(py "$BOOKMARKS_FILE" "escape" "$COLOR" "$name")"
   local h3_entry="        <DT><H3 ADD_DATE=\"$now\" LAST_MODIFIED=\"$now\">$escaped_name</H3>"
   local dl_entry="        <DL><p>"
   local dl_close="        </DL>"
 
+  backup_file
+
   if [ -n "$parent" ]; then
     local result
-    result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$parent")"
+    result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$COLOR" "$parent")"
     [ -n "$result" ] || die "Parent folder not found: $parent"
     local line_num="${result%%|*}"
 
     local dl_line
-    dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$line_num")"
+    dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$COLOR" "$line_num")"
     [ -n "$dl_line" ] || die "Could not find content block for parent: $parent"
 
-    local insert_after=$((dl_line))
+    local insert_after=$((dl_line + 1))
     awk -v n="$insert_after" \
         -v h3="$h3_entry" \
         -v dl="$dl_entry" \
@@ -334,8 +523,8 @@ cmd_add_folder() {
     ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
   else
     local last_close
-    last_close="$(py "$BOOKMARKS_FILE" "find-last-close-dl")"
-    awk -v n="$last_close" \
+    last_close="$(py "$BOOKMARKS_FILE" "find-last-close-dl" "$COLOR")"
+    awk -v n="$((last_close + 1))" \
         -v h3="$h3_entry" \
         -v dl="$dl_entry" \
         -v dc="$dl_close" '
@@ -344,17 +533,236 @@ cmd_add_folder() {
     ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
   fi
 
-  echo "Added folder: $name"
+  echo -e "${GRN}Added folder:${RST} $name"
+}
+
+cmd_edit() {
+  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") edit <query> [--url <new>] [--title <new>] [--folder <folder>]"
+  check_file
+
+  local query="$1"
+  shift
+
+  local new_url=""
+  local new_title=""
+  local new_folder=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --url) new_url="$2"; shift 2 ;;
+      --title) new_title="$2"; shift 2 ;;
+      --folder) new_folder="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  [[ -n "$new_url" || -n "$new_title" || -n "$new_folder" ]] || \
+    die "Specify at least one of --url, --title, --folder"
+
+  # Get current bookmark info
+  local info
+  info="$(py "$BOOKMARKS_FILE" "get-bookmark" "$COLOR" "$query")" || die "Bookmark not found: $query"
+  local cur_url="" cur_title="" cur_folder="" cur_tags=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      URL) cur_url="$value" ;;
+      TITLE) cur_title="$value" ;;
+      FOLDER) cur_folder="$value" ;;
+      TAGS) cur_tags="$value" ;;
+    esac
+  done <<< "$info"
+
+  local url="${new_url:-$cur_url}"
+  local title="${new_title:-$cur_title}"
+  local folder="${new_folder:-$cur_folder}"
+
+  backup_file
+
+  # Remove old, add new
+  local tmpfile
+  tmpfile="$(mktemp)"
+
+  printf '%s' "$query" | python3 -c "
+import sys, re, html
+
+with open(sys.argv[2]) as f:
+    lines = f.readlines()
+
+query = sys.stdin.read()
+remove_indices = set()
+
+for i, line in enumerate(lines):
+    m = re.search(r'<DT>.*<A HREF=\"([^\"]*)\"([^>]*)>(.*?)</A>', line)
+    if m:
+        url = m.group(1)
+        title = html.unescape(m.group(3))
+        if url == query or title == query:
+            remove_indices.add(i)
+    m = re.search(r'<DT>\s*<H3[^>]*>(.*?)</H3>', line)
+    if m:
+        name = html.unescape(m.group(1))
+        if name == query:
+            remove_indices.add(i)
+            for j in range(i + 1, len(lines)):
+                if '<DL>' in lines[j]:
+                    remove_indices.add(j)
+                    break
+            for j in range(i + 1, len(lines)):
+                if '</DL>' in lines[j]:
+                    remove_indices.add(j)
+                    break
+                if '<DL>' in lines[j]:
+                    remove_indices.add(j)
+
+with open(sys.argv[3], 'w') as f:
+    for i, line in enumerate(lines):
+        if i not in remove_indices:
+            f.write(line)
+" _ "$BOOKMARKS_FILE" "$tmpfile" || true
+
+  mv "$tmpfile" "$BOOKMARKS_FILE"
+
+  # Add updated bookmark
+  local now
+  now="$(date +%s)"
+  local escaped_url escaped_title
+  escaped_url="$(py "$BOOKMARKS_FILE" "escape" "$COLOR" "$url")"
+  escaped_title="$(py "$BOOKMARKS_FILE" "escape" "$COLOR" "$title")"
+  local entry="        <DT><A HREF=\"$escaped_url\" ADD_DATE=\"$now\" LAST_MODIFIED=\"$(date +%s)\">$escaped_title</A>"
+
+  if [ -n "$folder" ]; then
+    local result
+    result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$COLOR" "$folder")"
+    [ -n "$result" ] || die "Target folder not found: $folder"
+    local line_num="${result%%|*}"
+    local dl_line
+    dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$COLOR" "$line_num")"
+    [ -n "$dl_line" ] || die "Could not find content block for folder: $folder"
+    awk -v n="$((dl_line + 1))" -v entry="$entry" '
+    NR == n { print; print entry; next }
+    { print }
+    ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
+  else
+    local last_close
+    last_close="$(py "$BOOKMARKS_FILE" "find-last-close-dl" "$COLOR")"
+    awk -v n="$((last_close + 1))" -v entry="$entry" '
+    NR == n { print entry; print; next }
+    { print }
+    ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
+  fi
+
+  echo -e "${GRN}Updated:${RST} $title ($url)"
+}
+
+cmd_move() {
+  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") move <query> --to <folder>"
+  check_file
+
+  local query=""
+  local target_folder=""
+  local args=("$@")
+  for ((i=0; i<${#args[@]}; i++)); do
+    if [[ "${args[$i]}" == "--to" ]]; then
+      target_folder="${args[$((i+1))]}"
+    elif [[ "${args[$i]}" != "--to" && -z "$query" ]]; then
+      query="${args[$i]}"
+    fi
+  done
+
+  [ -n "$query" ] || die "Usage: $(basename "$0") move <query> --to <folder>"
+  [ -n "$target_folder" ] || die "Usage: $(basename "$0") move <query> --to <folder>"
+
+  # Get current bookmark info
+  local info
+  info="$(py "$BOOKMARKS_FILE" "get-bookmark" "$COLOR" "$query")" || die "Bookmark not found: $query"
+  local cur_url="" cur_title=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      URL) cur_url="$value" ;;
+      TITLE) cur_title="$value" ;;
+    esac
+  done <<< "$info"
+
+  # Remove from current location
+  local tmpfile
+  tmpfile="$(mktemp)"
+
+  printf '%s' "$query" | python3 -c "
+import sys, re, html
+
+with open(sys.argv[2]) as f:
+    lines = f.readlines()
+
+query = sys.stdin.read()
+remove_indices = set()
+
+for i, line in enumerate(lines):
+    m = re.search(r'<DT>.*<A HREF=\"([^\"]*)\"([^>]*)>(.*?)</A>', line)
+    if m:
+        url = m.group(1)
+        title = html.unescape(m.group(3))
+        if url == query or title == query:
+            remove_indices.add(i)
+
+with open(sys.argv[3], 'w') as f:
+    for i, line in enumerate(lines):
+        if i not in remove_indices:
+            f.write(line)
+" _ "$BOOKMARKS_FILE" "$tmpfile" || true
+
+  mv "$tmpfile" "$BOOKMARKS_FILE"
+
+  # Add to target folder
+  local now
+  now="$(date +%s)"
+  local escaped_url escaped_title
+  escaped_url="$(py "$BOOKMARKS_FILE" "escape" "$COLOR" "$cur_url")"
+  escaped_title="$(py "$BOOKMARKS_FILE" "escape" "$COLOR" "$cur_title")"
+  local entry="        <DT><A HREF=\"$escaped_url\" ADD_DATE=\"$now\" LAST_MODIFIED=\"$now\">$escaped_title</A>"
+
+  local result
+  result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$COLOR" "$target_folder")"
+  [ -n "$result" ] || die "Target folder not found: $target_folder"
+  local line_num="${result%%|*}"
+  local dl_line
+  dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$COLOR" "$line_num")"
+  [ -n "$dl_line" ] || die "Could not find content block for folder: $target_folder"
+
+  backup_file
+
+  awk -v n="$((dl_line + 1))" -v entry="$entry" '
+  NR == n { print; print entry; next }
+  { print }
+  ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
+
+  echo -e "${GRN}Moved:${RST} $cur_title -> $target_folder"
+}
+
+cmd_open() {
+  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") open <query>"
+  check_file
+
+  local query="$1"
+  local info
+  info="$(py "$BOOKMARKS_FILE" "get-bookmark" "$COLOR" "$query")" || die "Bookmark not found: $query"
+  local cur_url=""
+  while IFS='=' read -r key value; do
+    [[ "$key" == "URL" ]] && cur_url="$value"
+  done <<< "$info"
+
+  local browser="${BROWSER:-xdg-open}"
+  echo -e "${CYN}Opening:${RST} $cur_url"
+  "$browser" "$cur_url" 2>/dev/null &
 }
 
 cmd_remove() {
   [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") remove <query>"
-
-  local query="$1"
   check_file
 
+  local query="$1"
   local tmpfile
   tmpfile="$(mktemp)"
+
+  backup_file
 
   local out
   out="$(printf '%s' "$query" | python3 -c "
@@ -401,11 +809,11 @@ sys.stdout.write(chr(10).join(output_lines))
 " _ "$BOOKMARKS_FILE" "$tmpfile")" || true
 
   if [ -n "$out" ]; then
-    echo "$out"
+    echo -e "${GRN}${out}${RST}"
     mv "$tmpfile" "$BOOKMARKS_FILE"
   else
     rm -f "$tmpfile"
-    echo "No matches found for: $query"
+    echo -e "${RED}No matches found for: $query${RST}"
   fi
 }
 
@@ -414,10 +822,15 @@ sys.stdout.write(chr(10).join(output_lines))
 main() {
   [ "${#@}" -eq 0 ] && show_help
 
+  WITH_TITLES=0
+
   local args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --file|-f) BOOKMARKS_FILE="$2"; shift 2 ;;
+      --no-color) COLOR=0; RED='' GRN='' YEL='' BLU='' CYN='' DIM='' BLD='' RST=''; shift ;;
+      --with-titles) WITH_TITLES=1; shift ;;
+      --no-backup) NO_BACKUP=1; shift ;;
       -h|--help|help) show_help ;;
       *) args+=("$1"); shift ;;
     esac
@@ -426,6 +839,8 @@ main() {
   set -- "${args[@]}"
   [ "${#@}" -eq 0 ] && show_help
 
+  detect_bookmarks_file
+
   local cmd="$1"
   shift
 
@@ -433,8 +848,13 @@ main() {
     list)       cmd_list "$@" ;;
     search)     cmd_search "$@" ;;
     folders)    cmd_folders "$@" ;;
+    count)      cmd_count "$@" ;;
+    duplicates) cmd_duplicates "$@" ;;
     add)        cmd_add "$@" ;;
     add-folder) cmd_add_folder "$@" ;;
+    edit)       cmd_edit "$@" ;;
+    move)       cmd_move "$@" ;;
+    open)       cmd_open "$@" ;;
     remove)     cmd_remove "$@" ;;
     help)       show_help ;;
     *)          die "Unknown command: $cmd. Use --help for usage." ;;
