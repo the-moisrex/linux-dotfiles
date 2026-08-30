@@ -1,5 +1,24 @@
 #!/bin/bash
 
+show_help() {
+    cat <<'EOF'
+Usage: configure_pgadmin.sh
+
+Configure pgAdmin with preconfigured PostgreSQL servers.
+
+This script waits for the pgAdmin container to be ready, then adds
+preconfigured server connections to the pgAdmin SQLite database.
+
+Options:
+  -h, --help    Show this help message
+EOF
+}
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    show_help
+    exit 0
+fi
+
 echo "Configuring pgAdmin with preconfigured servers..."
 
 # Wait for pgAdmin to be fully started

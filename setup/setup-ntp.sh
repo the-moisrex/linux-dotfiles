@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# todo: add uninstall
 
 set -euo pipefail
 
@@ -20,6 +19,7 @@ Supports systemd-timesyncd, ntpd, and chrony. Configures
 Iranian and Arch pool NTP servers.
 
 Options:
+  --uninstall  Remove configured NTP servers and restore defaults.
   --verbose    Show extra debug output.
   -h, --help   Show this help message.
 USAGE
@@ -32,6 +32,51 @@ NTP_SERVERS="ntp.time.ir ntp.day.ir ntp.meetbsd.ir 0.arch.pool.ntp.org 1.arch.po
 
 log "Managing NTP Protocol (for time and date)"
 
+if [[ "$UNINSTALL" == "true" ]]; then
+    # Uninstall: remove NTP servers and restore defaults
+    # Configure systemd timesyncd (modern systems)
+    if [ -f /etc/systemd/timesyncd.conf ]; then
+        log_step "Remove NTP servers from systemd timesyncd"
+        run_cmd sudo sed -i -r 's/^FallbackNTP=.*/#FallbackNTP=/' /etc/systemd/timesyncd.conf
+        run_cmd sudo timedatectl set-ntp 1
+        log_step "✓ systemd timesyncd restored"
+    fi
+
+    # Configure ntpd (older Debian/Ubuntu/RHEL)
+    if [ -f /etc/ntp.conf ]; then
+        log_step "Remove NTP servers from ntpd"
+        run_cmd sudo sed -i '/^server ntp\.(time|day|meetbsd)\.ir/d' /etc/ntp.conf
+        run_cmd sudo sed -i '/^server [0-3]\.arch\.pool\.ntp\.org/d' /etc/ntp.conf
+        run_cmd sudo systemctl restart ntpd
+        log_step "✓ ntpd restored"
+    fi
+
+    # Configure chrony (Ubuntu/Fedora/RHEL/CentOS)
+    if [ -f /etc/chrony.conf ] || [ -f /etc/chrony/chrony.conf ]; then
+        log_step "Remove NTP servers from chrony"
+        if [ -d /etc/chrony/sources.d/ ]; then
+            chrony_config="/etc/chrony/sources.d/users-ntp-servers.conf"
+            run_cmd_may_fail sudo rm -f "$chrony_config"
+        else
+            if [ -f /etc/chrony/chrony.conf ]; then
+                chrony_config="/etc/chrony/chrony.conf"
+            elif [ -f /etc/chrony.conf ]; then
+                chrony_config="/etc/chrony.conf"
+            else
+                die "Could not find chrony config file"
+            fi
+            run_cmd sudo sed -i '/^server ntp\.(time|day|meetbsd)\.ir iburst/d' "$chrony_config"
+            run_cmd sudo sed -i '/^server [0-3]\.arch\.pool\.ntp\.org iburst/d' "$chrony_config"
+        fi
+        run_cmd_may_fail sudo chronyc reload sources
+        log_step "✓ chrony restored"
+    fi
+
+    log "Done"
+    exit 0
+fi
+
+# Install: configure NTP servers
 # Configure systemd timesyncd (modern systems)
 if [ -f /etc/systemd/timesyncd.conf ]; then
     log_step "Configure systemd timesyncd (modern systems)"
@@ -56,7 +101,7 @@ else
     log_step "ntpd is not installed."
 fi
 
-# Configure chrony (Ubunut/Fedora/RHEL/CentOS)
+# Configure chrony (Ubuntu/Fedora/RHEL/CentOS)
 if [ -f /etc/chrony.conf ] || [ -f /etc/chrony/chrony.conf ]; then
     log_step "Configure chrony (Ubuntu/Fedora/RHEL/CentOS)"
     if [ -d /etc/chrony/sources.d/ ]; then
@@ -103,3 +148,4 @@ if ! command -v timedatectl &> /dev/null && ! command -v systemctl &> /dev/null;
 fi
 
 log "Done"
+

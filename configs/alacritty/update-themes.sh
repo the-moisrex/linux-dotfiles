@@ -1,5 +1,24 @@
 #!/usr/bin/env bash
 
+show_help() {
+    cat <<'EOF'
+Usage: update-themes.sh
+
+Fetch the latest Alacritty themes from the upstream repository.
+
+This script clones the alacritty-theme repository and performs a sparse
+checkout to get only the theme files (excluding images).
+
+Options:
+  -h, --help    Show this help message
+EOF
+}
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    show_help
+    exit 0
+fi
+
 set -euo pipefail
 
 curdir=$(dirname "$0" | xargs realpath)

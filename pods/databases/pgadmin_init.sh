@@ -1,5 +1,25 @@
 #!/bin/bash
 
+show_help() {
+    cat <<'EOF'
+Usage: pgadmin_init.sh
+
+Initialize pgAdmin with preconfigured server connections.
+
+This script waits for pgAdmin to start, then checks if server
+configurations exist and adds them if missing. Runs inside the
+pgAdmin container as the entrypoint.
+
+Options:
+  -h, --help    Show this help message
+EOF
+}
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    show_help
+    exit 0
+fi
+
 # Wait for pgAdmin to be fully started
 sleep 30
 
