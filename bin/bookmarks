@@ -1,0 +1,444 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BOOKMARKS_FILE="${BOOKMARKS_FILE:-bookmarks.html}"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [--file <path>] <command> [args]
+
+Manage Firefox HTML bookmark files.
+
+Commands:
+  list                    List bookmarks (flat)
+  list --tree             Show as tree with folder hierarchy
+  search <term>           Search by title, URL, or tags
+  folders                 List all folder names
+  add <url> <title>       Add a bookmark
+  add --folder <name>     Add to a specific folder
+  add-folder <name>       Add a new folder
+  add-folder --parent <n> Add inside a parent folder
+  remove <query>          Remove by exact URL or title match
+  help                    Show this help
+
+Options:
+  --file <path>           Bookmark file (default: ./bookmarks.html)
+  -f <path>               Shorthand for --file
+
+Examples:
+  $(basename "$0") list --tree
+  $(basename "$0") search docker
+  $(basename "$0") add --folder "Dev" "https://github.com" "GitHub"
+  $(basename "$0") add-folder "Dev Tools"
+  $(basename "$0") remove "https://example.com"
+EOF
+  exit 0
+}
+
+# ---- Python helper ----
+py() {
+  python3 -c "
+import sys, re, html as _html
+
+BOOKMARKS_FILE = sys.argv[1]
+CMD = sys.argv[2] if len(sys.argv) > 2 else ''
+
+with open(BOOKMARKS_FILE) as f:
+    raw = f.read()
+
+def unescape(s):
+    return _html.unescape(s)
+
+def escape(s):
+    s = s.replace('&', '&amp;')
+    s = s.replace('\"', '&quot;')
+    s = s.replace('<', '&lt;')
+    s = s.replace('>', '&gt;')
+    s = s.replace(\"'\", '&#39;')
+    return s
+
+def extract_bookmarks():
+    results = []
+    folders = []
+    depth = 0
+    for line in raw.splitlines():
+        m = re.search(r'<DT>\\s*<H3[^>]*>(.*?)</H3>', line)
+        if m:
+            while len(folders) <= depth:
+                folders.append('')
+            folders[depth] = unescape(m.group(1))
+        if '<DL>' in line:
+            depth += 1
+        if '</DL>' in line:
+            depth -= 1
+            continue
+        m = re.search(r'<DT>.*<A HREF=\"([^\"]*)\"([^>]*)>(.*?)</A>', line)
+        if m:
+            url = m.group(1)
+            attrs = m.group(2)
+            title = unescape(m.group(3))
+            tags = ''
+            tm = re.search(r'TAGS=\"([^\"]*)\"', attrs)
+            if tm:
+                tags = tm.group(1)
+            path = '/'.join(folders[1:depth]) if depth > 1 else ''
+            results.append((depth, path, url, title, tags))
+    return results
+
+def find_folder_line(folder_name):
+    lines = raw.splitlines()
+    depth = 0
+    for i, line in enumerate(lines):
+        m = re.search(r'<DT>\\s*<H3[^>]*>(.*?)</H3>', line)
+        if m and unescape(m.group(1)) == folder_name:
+            return (i, depth)
+        if '<DL>' in line:
+            depth += 1
+        if '</DL>' in line:
+            depth -= 1
+    return None
+
+def find_dl_after_line(line_num):
+    lines = raw.splitlines()
+    for i in range(line_num + 1, len(lines)):
+        if '<DL>' in lines[i]:
+            return i
+    return None
+
+def find_last_close_dl():
+    lines = raw.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if '</DL>' in lines[i]:
+            return i
+    return None
+
+def cmd_list_tree():
+    lines = raw.splitlines()
+    folders = []
+    depth = 0
+    for line in lines:
+        m = re.search(r'<DT>\\s*<H3[^>]*>(.*?)</H3>', line)
+        if m:
+            while len(folders) <= depth:
+                folders.append('')
+            folders[depth] = unescape(m.group(1))
+            indent = '  ' * depth
+            print(f'{indent}[{folders[depth]}]')
+        if '<DL>' in line:
+            depth += 1
+        if '</DL>' in line:
+            depth -= 1
+            continue
+        m = re.search(r'<DT>.*<A HREF=\"([^\"]*)\"([^>]*)>(.*?)</A>', line)
+        if m:
+            title = unescape(m.group(3))
+            url = m.group(1)
+            indent = '  ' * depth
+            print(f'{indent}  {title}')
+            print(f'{indent}    {url}')
+
+def cmd_list_flat():
+    for depth, path, url, title, tags in extract_bookmarks():
+        prefix = f'[{path}] ' if path else ''
+        print(f'  {prefix}{title}')
+        print(f'    {url}')
+        if tags:
+            print(f'    tags: {tags}')
+        print()
+
+def cmd_search(term):
+    count = 0
+    for depth, path, url, title, tags in extract_bookmarks():
+        t = title.lower()
+        u = url.lower()
+        tg = tags.lower()
+        term_l = term.lower()
+        if term_l in t or term_l in u or term_l in tg:
+            count += 1
+            prefix = f'[{path}] ' if path else ''
+            print(f'  {prefix}{title}')
+            print(f'    {url}')
+            if tags:
+                print(f'    tags: {tags}')
+            print()
+    if count == 0:
+        print('No results found')
+    else:
+        print(f'Found {count} result(s)')
+
+def cmd_folders():
+    seen = set()
+    for line in raw.splitlines():
+        m = re.search(r'<DT>\\s*<H3[^>]*>(.*?)</H3>', line)
+        if m:
+            name = unescape(m.group(1))
+            if name not in seen:
+                seen.add(name)
+                print(name)
+
+if CMD == 'list-tree':
+    cmd_list_tree()
+elif CMD == 'list-flat':
+    cmd_list_flat()
+elif CMD == 'search':
+    cmd_search(sys.argv[3] if len(sys.argv) > 3 else '')
+elif CMD == 'folders':
+    cmd_folders()
+elif CMD == 'find-folder-line':
+    result = find_folder_line(sys.argv[3] if len(sys.argv) > 3 else '')
+    if result:
+        print(f'{result[0]}|{result[1]}')
+    else:
+        print('')
+elif CMD == 'find-dl-line':
+    result = find_dl_after_line(int(sys.argv[3]))
+    print(result if result is not None else '')
+elif CMD == 'find-last-close-dl':
+    print(find_last_close_dl())
+elif CMD == 'unescape':
+    print(unescape(sys.argv[3] if len(sys.argv) > 3 else ''))
+elif CMD == 'escape':
+    print(escape(sys.argv[3] if len(sys.argv) > 3 else ''))
+" "$@"
+}
+
+check_file() {
+  [ -f "$BOOKMARKS_FILE" ] || die "Bookmark file not found: $BOOKMARKS_FILE"
+}
+
+# ---- Commands ----
+
+cmd_list() {
+  check_file
+
+  local tree=false
+  local args=()
+  for arg in "$@"; do
+    if [[ "$arg" == "--tree" ]]; then
+      tree=true
+    else
+      args+=("$arg")
+    fi
+  done
+  set -- "${args[@]}"
+
+  if $tree; then
+    py "$BOOKMARKS_FILE" "list-tree"
+  else
+    py "$BOOKMARKS_FILE" "list-flat"
+  fi
+}
+
+cmd_search() {
+  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") search <term>"
+  check_file
+  py "$BOOKMARKS_FILE" "search" "$1"
+}
+
+cmd_folders() {
+  check_file
+  py "$BOOKMARKS_FILE" "folders"
+}
+
+cmd_add() {
+  [ "${#@}" -ge 2 ] || die "Usage: $(basename "$0") add [--folder <name>] <url> <title>"
+
+  local folder=""
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --folder) folder="$2"; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  set -- "${args[@]}"
+
+  local url="$1"
+  local title="$2"
+  local now
+  now="$(date +%s)"
+  local escaped_url
+  local escaped_title
+  escaped_url="$(py "$BOOKMARKS_FILE" "escape" "$url")"
+  escaped_title="$(py "$BOOKMARKS_FILE" "escape" "$title")"
+  local entry="        <DT><A HREF=\"$escaped_url\" ADD_DATE=\"$now\" LAST_MODIFIED=\"$now\">$escaped_title</A>"
+
+  if [ -n "$folder" ]; then
+    local result
+    result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$folder")"
+    [ -n "$result" ] || die "Folder not found: $folder"
+    local line_num="${result%%|*}"
+
+    local dl_line
+    dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$line_num")"
+    [ -n "$dl_line" ] || die "Could not find content block for folder: $folder"
+
+    local insert_after=$((dl_line))
+    awk -v n="$insert_after" -v entry="$entry" '
+    NR == n { print; print entry; next }
+    { print }
+    ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
+  else
+    local last_close
+    last_close="$(py "$BOOKMARKS_FILE" "find-last-close-dl")"
+    awk -v n="$last_close" -v entry="$entry" '
+    NR == n { print entry; print; next }
+    { print }
+    ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
+  fi
+
+  echo "Added: $title ($url)"
+}
+
+cmd_add_folder() {
+  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") add-folder [--parent <name>] <name>"
+
+  local parent=""
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --parent) parent="$2"; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  set -- "${args[@]}"
+
+  local name="$1"
+  local now
+  now="$(date +%s)"
+  local escaped_name
+  escaped_name="$(py "$BOOKMARKS_FILE" "escape" "$name")"
+  local h3_entry="        <DT><H3 ADD_DATE=\"$now\" LAST_MODIFIED=\"$now\">$escaped_name</H3>"
+  local dl_entry="        <DL><p>"
+  local dl_close="        </DL>"
+
+  if [ -n "$parent" ]; then
+    local result
+    result="$(py "$BOOKMARKS_FILE" "find-folder-line" "$parent")"
+    [ -n "$result" ] || die "Parent folder not found: $parent"
+    local line_num="${result%%|*}"
+
+    local dl_line
+    dl_line="$(py "$BOOKMARKS_FILE" "find-dl-line" "$line_num")"
+    [ -n "$dl_line" ] || die "Could not find content block for parent: $parent"
+
+    local insert_after=$((dl_line))
+    awk -v n="$insert_after" \
+        -v h3="$h3_entry" \
+        -v dl="$dl_entry" \
+        -v dc="$dl_close" '
+    NR == n { print; print h3; print dl; print dc; next }
+    { print }
+    ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
+  else
+    local last_close
+    last_close="$(py "$BOOKMARKS_FILE" "find-last-close-dl")"
+    awk -v n="$last_close" \
+        -v h3="$h3_entry" \
+        -v dl="$dl_entry" \
+        -v dc="$dl_close" '
+    NR == n { print h3; print dl; print dc; print; next }
+    { print }
+    ' "$BOOKMARKS_FILE" > "${BOOKMARKS_FILE}.tmp" && mv "${BOOKMARKS_FILE}.tmp" "$BOOKMARKS_FILE"
+  fi
+
+  echo "Added folder: $name"
+}
+
+cmd_remove() {
+  [ "${#@}" -ge 1 ] || die "Usage: $(basename "$0") remove <query>"
+
+  local query="$1"
+  check_file
+
+  local tmpfile
+  tmpfile="$(mktemp)"
+
+  local out
+  out="$(printf '%s' "$query" | python3 -c "
+import sys, re, html
+
+with open(sys.argv[2]) as f:
+    lines = f.readlines()
+
+query = sys.stdin.read()
+remove_indices = set()
+output_lines = []
+
+for i, line in enumerate(lines):
+    m = re.search(r'<DT>.*<A HREF=\"([^\"]*)\"([^>]*)>(.*?)</A>', line)
+    if m:
+        url = m.group(1)
+        title = html.unescape(m.group(3))
+        if url == query or title == query:
+            remove_indices.add(i)
+            output_lines.append('Removed: %s (%s)' % (title, url))
+    m = re.search(r'<DT>\s*<H3[^>]*>(.*?)</H3>', line)
+    if m:
+        name = html.unescape(m.group(1))
+        if name == query:
+            remove_indices.add(i)
+            for j in range(i + 1, len(lines)):
+                if '<DL>' in lines[j]:
+                    remove_indices.add(j)
+                    break
+            for j in range(i + 1, len(lines)):
+                if '</DL>' in lines[j]:
+                    remove_indices.add(j)
+                    break
+                if '<DL>' in lines[j]:
+                    remove_indices.add(j)
+            output_lines.append('Removed folder: %s' % name)
+
+with open(sys.argv[3], 'w') as f:
+    for i, line in enumerate(lines):
+        if i not in remove_indices:
+            f.write(line)
+
+sys.stdout.write(chr(10).join(output_lines))
+" _ "$BOOKMARKS_FILE" "$tmpfile")" || true
+
+  if [ -n "$out" ]; then
+    echo "$out"
+    mv "$tmpfile" "$BOOKMARKS_FILE"
+  else
+    rm -f "$tmpfile"
+    echo "No matches found for: $query"
+  fi
+}
+
+# ---- Main ----
+
+main() {
+  [ "${#@}" -eq 0 ] && show_help
+
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file|-f) BOOKMARKS_FILE="$2"; shift 2 ;;
+      -h|--help|help) show_help ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+
+  set -- "${args[@]}"
+  [ "${#@}" -eq 0 ] && show_help
+
+  local cmd="$1"
+  shift
+
+  case "$cmd" in
+    list)       cmd_list "$@" ;;
+    search)     cmd_search "$@" ;;
+    folders)    cmd_folders "$@" ;;
+    add)        cmd_add "$@" ;;
+    add-folder) cmd_add_folder "$@" ;;
+    remove)     cmd_remove "$@" ;;
+    help)       show_help ;;
+    *)          die "Unknown command: $cmd. Use --help for usage." ;;
+  esac
+}
+
+main "$@"
