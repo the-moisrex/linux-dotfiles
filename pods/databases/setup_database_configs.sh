@@ -1,5 +1,24 @@
 #!/bin/bash
 
+show_help() {
+    cat <<'EOF'
+Usage: setup_database_configs.sh
+
+Set up database configuration files and directories for the pod.
+
+This script creates the necessary directory structure, configuration
+files, and sample data for all databases in the pod.
+
+Options:
+  -h, --help    Show this help message
+EOF
+}
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    show_help
+    exit 0
+fi
+
 set -e  # Exit on any error
 
 echo "Setting up database configurations..."
