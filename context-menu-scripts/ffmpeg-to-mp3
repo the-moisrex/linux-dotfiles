@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# MimeType: video/*,audio/*
+#
+# Convert selected audio or video files to MP3 using ffmpeg.
+#
+# Works with:
+#   Nautilus  — uses $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS
+#   Dolphin   — receives files as arguments (via .desktop %F)
+#   Thunar    — receives files as arguments
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TERMINAL="${SCRIPT_DIR}/../bin/terminal"
+
+# Gather file list: prefer positional args (Dolphin/Thunar),
+# fall back to Nautilus environment variables.
+files=()
+
+if [[ $# -gt 0 ]]; then
+    files=("$@")
+elif [[ -n "${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}" ]]; then
+    while IFS= read -r path; do
+        [[ -n "$path" ]] && files+=("$path")
+    done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+elif [[ -n "${NAUTILUS_SCRIPT_SELECTED_URIS:-}" ]]; then
+    echo "Remote files are not supported (ffmpeg requires local files)." >&2
+    exit 1
+fi
+
+if [[ ${#files[@]} -eq 0 ]]; then
+    echo "No files selected." >&2
+    exit 1
+fi
+
+# Write a conversion script to a temp file and run it in a terminal
+dir=$(mktemp -d)
+script="$dir/convert.sh"
+{
+    echo "#!/bin/bash"
+    for file in "${files[@]}"; do
+        # Quote each file path safely for embedding in the script
+        printf 'echo "Converting: %s"\n' "$file"
+        printf 'ffmpeg -i %q %q || echo "Failed: %s" >&2\n' "$file" "${file%.*}.mp3" "$file"
+    done
+    echo 'echo "Done."'
+} > "$script"
+
+"$TERMINAL" -- bash "$script"

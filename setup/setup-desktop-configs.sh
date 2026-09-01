@@ -15,7 +15,7 @@ Usage: ./setup/setup-desktop-configs.sh [flags...]
 
 Install or remove desktop integration configs.
 
-Includes Firefox policies, Nautilus scripts, KDE services,
+Includes Firefox policies, KDE services,
 and KDE config files.
 
 Options:
@@ -37,9 +37,6 @@ else
     run_cmd sudo cp "$ROOT_DIR/configs/firefox/policies.json" /etc/firefox/policies/policies.json
     log_step "Installed Firefox policy"
 fi
-
-log_step "Nautilus action"
-link_path "$ROOT_DIR/nautilus/ffmpeg-to-mp3" "$HOME/.local/share/nautilus/scripts/Convert To MP3 (ffmpeg)"
 
 log_step "KServices"
 if [[ "$UNINSTALL" == "true" ]]; then

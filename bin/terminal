@@ -1,0 +1,245 @@
+#!/bin/bash
+
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage: terminal [-- <command> [args...]]
+       terminal -e <command> [args...]
+
+Open a new terminal window. If a command is specified, run it inside.
+
+Options:
+  -e, --exec <cmd>  Run <cmd> in the new terminal
+  --verbose         Show stderr from the launched terminal
+  -h, --help        Show this help message
+
+Examples:
+  terminal                    # open a new terminal window
+  terminal -- bash            # open a new bash shell
+  terminal -e ffmpeg -i a.wav # run ffmpeg in a new terminal
+EOF
+}
+
+# Count running instances of each known terminal and return the most used one.
+# Falls back to empty if nothing is running.
+most_used_terminal() {
+    local -A counts
+    local -a known=(alacritty kitty konsole gnome-terminal xfce4-terminal foot xterm)
+    
+    for term in "${known[@]}"; do
+        # Use pgrep -c to count; ignore failures (no processes = 0)
+        local n
+        n=$(pgrep -c "$term" 2>/dev/null) || n=0
+        counts[$term]=$n
+    done
+    
+    local best="" best_count=0
+    for term in "${known[@]}"; do
+        if (( counts[$term] > best_count )); then
+            best="$term"
+            best_count=${counts[$term]}
+        fi
+    done
+    
+    [[ -n "$best" ]] && echo "$best"
+}
+
+detect_terminal() {
+    # Check $TERM_PROGRAM first (set by many terminals)
+    case "${TERM_PROGRAM:-}" in
+        Alacritty)             echo alacritty; return ;;
+        kitty)                 echo kitty; return ;;
+        konsole|kglobalaccel)  echo konsole; return ;;
+        gnome-terminal)        echo gnome-terminal; return ;;
+        xfce4-terminal)        echo xfce4-terminal; return ;;
+        foot)                  echo foot; return ;;
+    esac
+    
+    # If a terminal is already running, match it
+    local running
+    running=$(most_used_terminal)
+    if [[ -n "$running" ]]; then
+        echo "$running"; return
+    fi
+    
+    # Preferred terminals (check before DE defaults)
+    for term in alacritty kitty; do
+        if command -v "$term" &>/dev/null; then
+            echo "$term"; return
+        fi
+    done
+    
+    # Fall back to desktop-environment default
+    case "${XDG_CURRENT_DESKTOP:-}" in
+        KDE|LXQt)
+            if command -v konsole &>/dev/null; then
+                echo konsole; return
+            fi
+        ;;
+        GNOME|Unity|Cinnamon|MATE|Budgie)
+            if command -v gnome-terminal &>/dev/null; then
+                echo gnome-terminal; return
+            fi
+        ;;
+        XFCE)
+            if command -v xfce4-terminal &>/dev/null; then
+                echo xfce4-terminal; return
+            fi
+        ;;
+    esac
+    
+    # Fallback: try each in order
+    local candidates=(alacritty kitty konsole gnome-terminal xfce4-terminal foot xterm)
+    for term in "${candidates[@]}"; do
+        if command -v "$term" &>/dev/null; then
+            echo "$term"
+            return
+        fi
+    done
+    
+    echo ""
+    return 1
+}
+
+open_terminal() {
+    local term="$1"
+    shift
+
+    local zsh_wrapper_dir=""
+
+    # Build the shell command to run.
+    # Without arguments, just open an interactive shell.
+    # With arguments, run the command inside the shell, then stay interactive.
+    local shell_cmd=()
+    if [[ $# -gt 0 ]]; then
+        local cmd="$*"
+        local shell_name
+        shell_name=$(basename "$SHELL")
+        case "$shell_name" in
+            bash)
+                shell_cmd=(bash -i --init-file <(printf 'source ~/.bashrc 2>/dev/null\n%s\n' "$cmd"))
+                ;;
+            zsh)
+                # ZDOTDIR trick: symlink real startup files, override .zshrc
+                zsh_wrapper_dir=$(mktemp -d)
+                for f in .zshenv .zprofile .zlogin; do
+                    [[ -f "$HOME/$f" ]] && ln -s "$HOME/$f" "$zsh_wrapper_dir/$f"
+                done
+                printf 'source ~/.zshrc 2>/dev/null\n%s\n' "$cmd" > "$zsh_wrapper_dir/.zshrc"
+                shell_cmd=(env ZDOTDIR="$zsh_wrapper_dir" zsh -i)
+                ;;
+            fish)
+                shell_cmd=(fish -C "$cmd")
+                ;;
+            *)
+                shell_cmd=("$SHELL" -ic "$cmd")
+                ;;
+        esac
+    fi
+
+    case "$term" in
+        konsole)
+            if [[ $# -gt 0 ]]; then
+                konsole -e "${shell_cmd[@]}"
+            else
+                konsole
+            fi
+            ;;
+        gnome-terminal)
+            if [[ $# -gt 0 ]]; then
+                gnome-terminal -- "${shell_cmd[@]}"
+            else
+                gnome-terminal
+            fi
+            ;;
+        alacritty)
+            if [[ "$VERBOSE" == "true" ]]; then
+                alacritty -e "${shell_cmd[@]}" &
+            else
+                alacritty -e "${shell_cmd[@]}" 2>/dev/null &
+            fi
+            ;;
+        kitty)
+            if [[ "$VERBOSE" == "true" ]]; then
+                kitty "${shell_cmd[@]}" &
+            else
+                kitty "${shell_cmd[@]}" 2>/dev/null &
+            fi
+            ;;
+        xfce4-terminal)
+            if [[ "$VERBOSE" == "true" ]]; then
+                xfce4-terminal -e "${shell_cmd[*]}" &
+            else
+                xfce4-terminal -e "${shell_cmd[*]}" 2>/dev/null &
+            fi
+            ;;
+        foot)
+            if [[ "$VERBOSE" == "true" ]]; then
+                foot "${shell_cmd[@]}" &
+            else
+                foot "${shell_cmd[@]}" 2>/dev/null &
+            fi
+            ;;
+        xterm)
+            if [[ "$VERBOSE" == "true" ]]; then
+                xterm -e "${shell_cmd[@]}" &
+            else
+                xterm -e "${shell_cmd[@]}" 2>/dev/null &
+            fi
+            ;;
+        *)
+            echo "No terminal emulator found." >&2
+            return 1
+            ;;
+    esac
+
+    # Clean up zsh wrapper dir after a short delay (zsh reads files at startup)
+    if [[ -n "$zsh_wrapper_dir" ]]; then
+        (sleep 1; rm -rf "$zsh_wrapper_dir") &
+    fi
+}
+
+# Parse arguments
+exec_cmd=()
+show_help=false
+VERBOSE=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help=true
+            shift
+        ;;
+        --verbose)
+            VERBOSE=true
+            shift
+        ;;
+        -e|--exec)
+            shift
+            exec_cmd=("$@")
+            break
+        ;;
+        --)
+            shift
+            exec_cmd=("$@")
+            break
+        ;;
+        *)
+            exec_cmd=("$@")
+            break
+        ;;
+    esac
+done
+
+if [[ "$show_help" == "true" ]]; then
+    show_help
+    exit 0
+fi
+
+term=$(detect_terminal) || {
+    echo "No terminal emulator found." >&2
+    exit 1
+}
+
+open_terminal "$term" "${exec_cmd[@]+"${exec_cmd[@]}"}"
