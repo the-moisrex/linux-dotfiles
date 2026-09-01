@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+#
+# nvim.pipe - Interactively edit text in Neovim and stream the result to stdout.
+#
+
+set -eo pipefail
+
+VERSION="1.0.0"
+PROGRAM_NAME="$(basename "$0")"
+
+# Print help message
+show_help() {
+  cat << EOF
+Usage: $PROGRAM_NAME [OPTIONS] [NVIM_ARGS...]
+
+Interactively edit text in Neovim and pipe the resulting buffer directly to stdout.
+
+Arguments & Options:
+  -h, --help       Show this help message and exit.
+  -v, --version    Show version information and exit.
+  --               Treat all subsequent arguments as Neovim arguments.
+  [NVIM_ARGS...]   Any arguments or files to pass directly to Neovim.
+
+How It Works:
+  1. If standard input (stdin) is piped in, it is loaded into a temporary buffer.
+  2. If an existing file is passed as an argument, it is opened directly.
+  3. Neovim's interactive TUI renders directly to /dev/tty so pipes do not break.
+  4. Upon saving and exiting (:wq / :x / ZZ), the content is written to stdout.
+  5. If you exit without saving (:q!), the unmodified or original content is printed.
+
+Examples:
+  # 1. Edit an empty buffer interactively and pipe to clipboard:
+  $PROGRAM_NAME | pbcopy
+
+  # 2. Pipe JSON from curl, format/edit interactively, and pipe to jq:
+  curl -s https://api.github.com | $PROGRAM_NAME -c "set ft=json" | jq .
+
+  # 3. Edit an existing file interactively and pass output to another tool:
+  $PROGRAM_NAME config.yaml | yq .
+
+  # 4. Use in a downstream pipe chain:
+  cat data.csv | $PROGRAM_NAME | tr ',' '\t' > output.tsv
+EOF
+}
+
+# Print version
+show_version() {
+  echo "$PROGRAM_NAME version $VERSION"
+}
+
+# Ensure /dev/tty exists and is accessible
+if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+  echo "Error: /dev/tty is not available. $PROGRAM_NAME requires an interactive terminal." >&2
+  exit 1
+fi
+
+# Ensure neovim is installed
+if ! command -v nvim >/dev/null 2>&1; then
+  echo "Error: 'nvim' command not found. Please install Neovim first." >&2
+  exit 1
+fi
+
+# Parse initial flags
+NVIM_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -v|--version)
+      show_version
+      exit 0
+      ;;
+    --)
+      shift
+      NVIM_ARGS+=("$@")
+      break
+      ;;
+    *)
+      NVIM_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Create a secure temporary file
+TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/nvim-pipe.XXXXXX")" || {
+  echo "Error: Failed to create temporary file." >&2
+  exit 1
+}
+
+# Ensure temporary file is always deleted on exit or interrupt
+cleanup() {
+  local exit_code=$?
+  rm -f "$TMP_FILE"
+  exit "$exit_code"
+}
+trap cleanup EXIT INT TERM HUP
+
+# If data was piped via stdin, write it into the temporary file
+if [ ! -t 0 ]; then
+  cat > "$TMP_FILE"
+fi
+
+# Launch Neovim
+# If no files were passed in NVIM_ARGS, target the temporary file
+if [ ${#NVIM_ARGS[@]} -eq 0 ]; then
+  nvim "$TMP_FILE" < /dev/tty > /dev/tty
+else
+  nvim "${NVIM_ARGS[@]}" < /dev/tty > /dev/tty
+fi
+
+NVIM_STATUS=$?
+
+# If Neovim exited with an error status, propagate the failure
+if [ $NVIM_STATUS -ne 0 ]; then
+  exit $NVIM_STATUS
+fi
+
+# Stream output to stdout
+if [ ${#NVIM_ARGS[@]} -eq 0 ]; then
+  cat "$TMP_FILE"
+else
+  # If a specific file was edited as the first non-flag arg, output that file,
+  # otherwise output the temp file.
+  TARGET_FILE=""
+  for arg in "${NVIM_ARGS[@]}"; do
+    if [[ "$arg" != -* ]] && [ -f "$arg" ]; then
+      TARGET_FILE="$arg"
+      break
+    fi
+  done
+
+  if [ -n "$TARGET_FILE" ]; then
+    cat "$TARGET_FILE"
+  else
+    cat "$TMP_FILE"
+  fi
+fi
+
