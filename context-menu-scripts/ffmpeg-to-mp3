@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# MimeType: video/*,audio/*
+# Name: Convert to MP3 (ffmpeg)
+# MimeType: video/*;audio/*
 #
 # Convert selected audio or video files to MP3 using ffmpeg.
 #
@@ -11,8 +12,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-TERMINAL="${SCRIPT_DIR}/../bin/terminal"
+TERMINAL=$(command -v terminal)
 
 # Gather file list: prefer positional args (Dolphin/Thunar),
 # fall back to Nautilus environment variables.
