@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Name: Toggle Done
+# MimeType: all/all
+#
+# Toggle [done] prefix on a file to mark it as completed.
+
+BIN="$(command -v done)" || { echo "done not found in PATH" >&2; exit 1; }
+
+exec "$BIN" "$@"

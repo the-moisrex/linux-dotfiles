@@ -653,7 +653,7 @@ for line in "${ESTIMATES[@]}"; do
 
   # run ffmpeg command: but we need to run command string carefully (array)
   build_ffmpeg_cmd "$file" "$outfile"
-  local cmd_array=("${FFMPEG_CMD[@]}")
+  cmd_array=("${FFMPEG_CMD[@]}")
 
   # if verbose, show final command with visible args; else hide ffmpeg output
   if $VERBOSE; then

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Name: Extract Subtitles (English)
+# MimeType: video/*
+#
+# Extract English subtitles from a video file.
+
+BIN="$(command -v extract-sub)" || { echo "extract-sub not found in PATH" >&2; exit 1; }
+TERMINAL="$(command -v terminal)" || { echo "terminal not found in PATH" >&2; exit 1; }
+
+if [[ $# -eq 0 ]]; then
+    echo "Usage: extract-subtitles-en <video-file>" >&2
+    exit 1
+fi
+
+exec "$TERMINAL" -- "$BIN" eng "$@"

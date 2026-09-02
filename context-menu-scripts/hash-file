@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Name: Show File Hash
+# MimeType: all/all
+#
+# Show SHA256 hash of selected files.
+
+BIN="$(command -v terminal)" || { echo "terminal not found in PATH" >&2; exit 1; }
+
+if [[ $# -eq 0 ]]; then
+    echo "No files specified." >&2
+    exit 1
+fi
+
+# Write a script that hashes all files
+dir=$(mktemp -d)
+script="$dir/hash.sh"
+{
+    echo '#!/bin/bash'
+    printf 'sha256sum %q\n' "$@"
+    echo 'echo'
+    echo 'echo "Press Enter to close."'
+    echo 'read'
+} > "$script"
+
+exec "$BIN" -- bash "$script"

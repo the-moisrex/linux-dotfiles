@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# Name: Decrypt File (Vault)
+# MimeType: all/all
+#
+# Decrypt a file from the GPG vault.
+
+BIN="$(command -v vault)" || { echo "vault not found in PATH" >&2; exit 1; }
+
+if [[ $# -eq 0 ]]; then
+    echo "Usage: decrypt-file <file>" >&2
+    exit 1
+fi
+
+exec "$BIN" get "$@"

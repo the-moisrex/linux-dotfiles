@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Name: Convert Subtitles to Text
+# MimeType: application/x-subrip;application/x-vtt
+#
+# Convert subtitle files (SRT, VTT) to cleaned plain text.
+
+BIN="$(command -v srt2text)" || { echo "srt2text not found in PATH" >&2; exit 1; }
+TERMINAL="$(command -v terminal)" || { echo "terminal not found in PATH" >&2; exit 1; }
+
+exec "$TERMINAL" -- "$BIN" "$@"

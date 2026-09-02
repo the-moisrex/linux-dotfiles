@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Name: Show Video Duration
+# MimeType: video/*
+#
+# Print the duration of video files.
+
+BIN="$(command -v vid.dur)" || { echo "vid.dur not found in PATH" >&2; exit 1; }
+TERMINAL="$(command -v terminal)" || { echo "terminal not found in PATH" >&2; exit 1; }
+
+exec "$TERMINAL" -- "$BIN" "$@"

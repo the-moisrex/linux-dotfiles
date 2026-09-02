@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Name: Sanitize Personal Info
+# MimeType: text/*;application/x-log
+#
+# Redact personal information from a text file (usernames, IPs, emails, etc.).
+# Writes a new .sanitized copy next to the original.
+
+BIN="$(command -v clean.privacy)" || { echo "clean.privacy not found in PATH" >&2; exit 1; }
+
+if [[ $# -eq 0 ]]; then
+    echo "Usage: sanitize-file <file>" >&2
+    exit 1
+fi
+
+for file in "$@"; do
+    if [[ ! -f "$file" ]]; then
+        echo "Skipping (not a file): $file" >&2
+        continue
+    fi
+    out="${file%.*}.sanitized.${file##*.}"
+    [[ "$file" == *.* ]] || out="${file}.sanitized"
+    "$BIN" "$file" > "$out"
+    echo "Sanitized: $out"
+done

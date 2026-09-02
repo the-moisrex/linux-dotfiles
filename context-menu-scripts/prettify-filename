@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Name: Prettify Filename
+# MimeType: all/all
+#
+# Clean up filenames: remove ad suffixes, replace dots with spaces, etc.
+
+BIN="$(command -v mv.prettify)" || { echo "mv.prettify not found in PATH" >&2; exit 1; }
+
+exec "$BIN" "$@"

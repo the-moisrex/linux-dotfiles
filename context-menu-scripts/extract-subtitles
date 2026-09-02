@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Name: Extract Subtitles
+# MimeType: video/*
+#
+# Extract subtitles from video files (embedded or online).
+
+BIN="$(command -v subtitle)" || { echo "subtitle not found in PATH" >&2; exit 1; }
+TERMINAL="$(command -v terminal)" || { echo "terminal not found in PATH" >&2; exit 1; }
+
+exec "$TERMINAL" -- "$BIN" "$@"

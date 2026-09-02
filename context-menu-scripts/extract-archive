@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Name: Extract Archive
+# MimeType: application/zip;application/x-tar;application/gzip;application/x-7z-compressed;application/x-xz;application/x-bzip2
+#
+# Extract an archive to the current directory.
+
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage: extract <archive>
+
+Extract an archive to the current directory.
+Supports: zip, tar.gz, tar.zst, tar.xz, tar.bz2, 7z
+
+Examples:
+  extract backup.tar.zst
+  extract photos.zip
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+if [[ $# -eq 0 ]]; then
+    echo "No archive specified." >&2
+    exit 1
+fi
+
+for archive in "$@"; do
+    if [[ ! -f "$archive" ]]; then
+        echo "Skipping (not a file): $archive" >&2
+        continue
+    fi
+
+    echo "Extracting: $archive"
+    case "$archive" in
+        *.tar.zst)
+            zstd -dq "$archive" | tar xf - ;;
+        *.tar.gz|*.tgz)
+            tar xzf "$archive" ;;
+        *.tar.xz|*.txz)
+            tar xJf "$archive" ;;
+        *.tar.bz2|*.tbz2)
+            tar xjf "$archive" ;;
+        *.tar)
+            tar xf "$archive" ;;
+        *.zip)
+            unzip -o "$archive" ;;
+        *.7z)
+            7z x "$archive" ;;
+        *)
+            echo "Unknown archive format: $archive" >&2
+            continue
+            ;;
+    esac
+    echo "Done: $archive"
+done

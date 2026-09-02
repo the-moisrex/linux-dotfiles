@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Name: Optimize Video
+# MimeType: video/*
+#
+# Optimize/compress video files using ffmpeg with preset categories.
+
+BIN="$(command -v vid.opt)" || { echo "vid.opt not found in PATH" >&2; exit 1; }
+TERMINAL="$(command -v terminal)" || { echo "terminal not found in PATH" >&2; exit 1; }
+
+exec "$TERMINAL" -- "$BIN" "$@"

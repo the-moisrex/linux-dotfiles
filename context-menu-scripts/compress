@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Name: Compress Files
+# MimeType: all/all
+#
+# Compress selected files into a .tar.zst archive.
+
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage: compress <files...>
+
+Compress selected files into a .tar.zst archive.
+The archive is created in the current directory.
+
+Examples:
+  compress video.mp4 subtitle.srt
+  compress *.jpg
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+if [[ $# -eq 0 ]]; then
+    echo "No files specified." >&2
+    exit 1
+fi
+
+# Create archive name from first file's directory
+first_dir="$(dirname "$1")"
+first_base="$(basename "$1")"
+if [[ $# -eq 1 ]]; then
+    archive="${first_base}.tar.zst"
+else
+    archive="$(basename "$first_dir").tar.zst"
+fi
+
+echo "Creating: $archive"
+if command -v zstd &>/dev/null; then
+    tar cf - "$@" | zstd -o "$archive" -q
+else
+    tar czf "$archive" "$@"
+    echo "Note: zstd not found, created .tar.gz instead"
+    archive="${archive%.tar.zst}.tar.gz"
+fi
+
+echo "Done: $archive ($(du -h "$archive" | cut -f1))"
