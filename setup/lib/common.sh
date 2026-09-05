@@ -21,29 +21,29 @@ else
 fi
 
 log() {
-    echo "${C_INFO}$*${C_RESET}"
+    printf '%s%s%s\n' "$C_INFO" "$*" "$C_RESET"
 }
 
 log_step() {
-    echo "${C_STEP}  $*${C_RESET}"
+    printf '%s  %s%s\n' "$C_STEP" "$*" "$C_RESET"
 }
 
 log_verbose() {
     if [[ "$VERBOSE" == "true" ]]; then
-        echo "    $*"
+        printf '    %s\n' "$*"
     fi
 }
 
 warn() {
-    echo "${C_WARN}WARNING:${C_RESET} $*" >&2
+    printf '%sWARNING:%s %s\n' "$C_WARN" "$C_RESET" "$*" >&2
 }
 
 warn_step() {
-    echo "${C_WARN}  WARNING:${C_RESET} $*" >&2
+    printf '%s  WARNING:%s %s\n' "$C_WARN" "$C_RESET" "$*" >&2
 }
 
 die() {
-    echo "${C_ERROR}ERROR:${C_RESET} $*" >&2
+    printf '%sERROR:%s %s\n' "$C_ERROR" "$C_RESET" "$*" >&2
     exit 1
 }
 
@@ -89,7 +89,7 @@ replace_or_append_kv() {
         run_cmd_may_fail sudo sed -i "s|^\s*${key}.*|${key} ${value}|" "$file"
     else
         log_verbose "Appending ${key} ${value} to $file"
-        if ! printf '%s %s\n' "$key" "$value" | sudo tee -a "$file" >/dev/null 2>&1; then
+        if ! sudo bash -c "printf '%s %s\n' '$key' '$value' >> '$file'"; then
             warn_step "Failed to append ${key} to $file"
         fi
     fi

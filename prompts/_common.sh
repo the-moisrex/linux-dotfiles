@@ -10,18 +10,18 @@ STDIN_CONSUMED=${STDIN_CONSUMED:="false"}
 stdin_content="${stdin_content:=""}"
 
 find_git_root() {
-    if [ ! -z "$GIT_ROOT" ]; then
+    if [[ -n "$GIT_ROOT" ]]; then
         return
     fi
     if git rev-parse --show-toplevel >/dev/null 2>&1; then
         GIT_ROOT="$(git rev-parse --show-toplevel)"
     else
-        gitroot=".git";
-        until [ "$(realpath "$gitroot" 2>/dev/null)" = "/.git" ] || \
-            [ "$(realpath "$gitroot" 2>/dev/null)" = "/" ] || \
-            [ -d "$gitroot" ]; do
-            gitroot="../${gitroot}";
-        done;
+        gitroot=".git"
+        until [[ "$(realpath "$gitroot" 2>/dev/null)" == "/.git" ]] || \
+              [[ "$(realpath "$gitroot" 2>/dev/null)" == "/" ]] || \
+              [[ -d "$gitroot" ]]; do
+            gitroot="../${gitroot}"
+        done
         GIT_ROOT="$(basename "$gitroot/..")"
     fi
 }
@@ -106,74 +106,75 @@ parse_arguments() {
 
 infer_lang() {
     local file="$1"
-    local base ext
-    
+    local base ext lang
+
     base="$(basename "$file")"
     ext="${base##*.}"
-    
+
     case "$base" in
-        Dockerfile) echo "dockerfile" ;;
-        Makefile|makefile|GNUmakefile) echo "makefile" ;;
-        CMakeLists.txt) echo "cmake" ;;
-        *) case "$ext" in
-                c) echo "c" ;;
-                h) echo "c" ;;
-                cc|cp|cpp|cxx|c++|hpp|hxx|hh|h++) echo "cpp" ;;
-                m) echo "objectivec" ;;
-                mm) echo "objective-cpp" ;;
-                rs) echo "rust" ;;
-                py|pyi) echo "python" ;;
-                sh|bash) echo "bash" ;;
-                zsh) echo "zsh" ;;
-                fish) echo "fish" ;;
-                nu) echo "nu" ;;
-                js|cjs|mjs) echo "javascript" ;;
-                ts|mts|cts) echo "typescript" ;;
-                jsx) echo "jsx" ;;
-                tsx) echo "tsx" ;;
-                java) echo "java" ;;
-                kt|kts) echo "kotlin" ;;
-                swift) echo "swift" ;;
-                go) echo "go" ;;
-                rb) echo "ruby" ;;
-                php) echo "php" ;;
-                lua) echo "lua" ;;
-                pl|pm) echo "perl" ;;
-                r) echo "r" ;;
-                scala) echo "scala" ;;
-                cs) echo "csharp" ;;
-                fs|fsx) echo "fsharp" ;;
-                vb) echo "vbnet" ;;
-                dart) echo "dart" ;;
-                ex|exs) echo "elixir" ;;
-                erl|hrl) echo "erlang" ;;
-                clj|cljs|cljc) echo "clojure" ;;
-                ml|mli) echo "ocaml" ;;
-                sql) echo "sql" ;;
-                html|htm) echo "html" ;;
-                css) echo "css" ;;
-                scss) echo "scss" ;;
-                sass) echo "sass" ;;
-                less) echo "less" ;;
-                xml) echo "xml" ;;
-                xsl|xslt) echo "xslt" ;;
-                svg) echo "svg" ;;
-                json) echo "json" ;;
-                jsonc) echo "jsonc" ;;
-                yaml|yml) echo "yaml" ;;
-                toml) echo "toml" ;;
-                ini|cfg|conf) echo "ini" ;;
-                env) echo "dotenv" ;;
-                md) echo "markdown" ;;
-                txt|log) echo "text" ;;
-                diff|patch) echo "diff" ;;
-                proto) echo "proto" ;;
-                asm|s|S) echo "asm" ;;
-                tex) echo "tex" ;;
-                vim) echo "vim" ;;
-                *) echo "text" ;;
-        esac ;;
+        Dockerfile) lang="dockerfile" ;;
+        Makefile|makefile|GNUmakefile) lang="makefile" ;;
+        CMakeLists.txt) lang="cmake" ;;
+        *)
+            case "$ext" in
+                c|h) lang="c" ;;
+                cc|cp|cpp|cxx|c++|hpp|hxx|hh|h++) lang="cpp" ;;
+                m) lang="objectivec" ;;
+                mm) lang="objective-cpp" ;;
+                rs) lang="rust" ;;
+                py|pyi) lang="python" ;;
+                sh|bash) lang="bash" ;;
+                zsh) lang="zsh" ;;
+                fish) lang="fish" ;;
+                nu) lang="nu" ;;
+                js|cjs|mjs) lang="javascript" ;;
+                ts|mts|cts) lang="typescript" ;;
+                jsx) lang="jsx" ;;
+                tsx) lang="tsx" ;;
+                java) lang="java" ;;
+                kt|kts) lang="kotlin" ;;
+                swift) lang="swift" ;;
+                go) lang="go" ;;
+                rb) lang="ruby" ;;
+                php) lang="php" ;;
+                lua) lang="lua" ;;
+                pl|pm) lang="perl" ;;
+                r) lang="r" ;;
+                scala) lang="scala" ;;
+                cs) lang="csharp" ;;
+                fs|fsx) lang="fsharp" ;;
+                vb) lang="vbnet" ;;
+                dart) lang="dart" ;;
+                ex|exs) lang="elixir" ;;
+                erl|hrl) lang="erlang" ;;
+                clj|cljs|cljc) lang="clojure" ;;
+                ml|mli) lang="ocaml" ;;
+                sql) lang="sql" ;;
+                html|htm) lang="html" ;;
+                css) lang="css" ;;
+                scss) lang="scss" ;;
+                sass) lang="sass" ;;
+                less) lang="less" ;;
+                xml) lang="xml" ;;
+                xsl|xslt) lang="xslt" ;;
+                svg) lang="svg" ;;
+                json) lang="json" ;;
+                jsonc) lang="jsonc" ;;
+                yaml|yml) lang="yaml" ;;
+                toml) lang="toml" ;;
+                ini|cfg|conf) lang="ini" ;;
+                env) lang="dotenv" ;;
+                md) lang="markdown" ;;
+                txt|log) lang="text" ;;
+                diff|patch) lang="diff" ;;
+                proto) lang="proto" ;;
+                asm|s|S) lang="asm" ;;
+                tex) lang="tex" ;;
+                vim) lang="vim" ;;
+                *) lang="text" ;;
+            esac ;;
     esac
+    printf '%s' "$lang"
 }
 
 select_files() {
@@ -199,9 +200,7 @@ select_files() {
         exit 0
     fi
 
-    while IFS= read -r file; do
-        [[ -n "$file" ]] && echo "$file"
-    done <<< "$selected"
+    printf '%s\n' "$selected"
 }
 
 resolve_input_file() {
@@ -220,6 +219,7 @@ resolve_input_file() {
     fi
 
     if command -v fzf >/dev/null; then
+        local selected=""
         if [[ -n "${GIT_ROOT:-}" ]]; then
             selected="$(
                 cd "$GIT_ROOT" &&
@@ -228,8 +228,8 @@ resolve_input_file() {
         else
             selected="$(rg --files 2>/dev/null || find . -type f | fzf -f "$file" | head -n 1)"
         fi
-        if [ -f "$selected" ]; then
-            echo "$selected"
+        if [[ -f "$selected" ]]; then
+            printf '%s\n' "$selected"
             return 0
         fi
     fi
@@ -246,15 +246,16 @@ common_behavior() {
 
 embed_file() {
     local path="$1"
-    local label="${2:-$(basename "$path")}"
+    local label="${2:-}"
+    local name
     
     if [[ ! -f "$path" ]]; then
         echo "Warning: context file not found: $path" >&2
         return 1
     fi
     
-    local name
     name="$(basename "$path")"
+    label="${label:-$name}"
     
     echo
     echo "File: $label"

@@ -21,12 +21,12 @@ Examples:
 EOF
 }
 
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     show_help
     exit 0
 fi
 
-if [ $# -lt 2 ]; then
+if [[ $# -lt 2 ]]; then
     echo "Error: Missing command and arguments." >&2
     echo "Use --help for usage." >&2
     exit 1
@@ -35,67 +35,62 @@ fi
 command="$1"
 shift
 
-function download() {
-    local source_dir=$1;
-    local compiler=$2;
-    local version=$3;
-    
-    if [ -z "$compiler" ]; then
-        echo "Please specify the compiler you want to download";
-        return;
-    fi;
+download() {
+    local compiler="$1" version="$2" source_dir="$3"
 
-    if [ -z "$version" ]; then
-        echo "Please specify the version";
-        return;
-    fi;
+    if [[ -z "$compiler" ]]; then
+        echo "Please specify the compiler you want to download" >&2
+        return 1
+    fi
 
-    if [ -z "$source_dir" ]; then
-        echo "Please specify the source directory";
-        return;
-    fi;
+    if [[ -z "$version" ]]; then
+        echo "Please specify the version" >&2
+        return 1
+    fi
 
-    wget -O "$source_dir/$compiler-$version.tar.gz" "${mirror}/gcc-${version}/gcc-$version.tar.gz";
+    if [[ -z "$source_dir" ]]; then
+        echo "Please specify the source directory" >&2
+        return 1
+    fi
+
+    mkdir -p "$source_dir"
+    wget -O "$source_dir/$compiler-$version.tar.gz" "${mirror}/gcc-${version}/gcc-$version.tar.gz"
 }
 
 
-function install() {
-    local source_dir=$1;
-    local compiler=$2;
-    local version=$3;
-    local install_dir=$4;
+install() {
+    local compiler="$1" version="$2" source_dir="$3" install_dir="${4:-/opt/compilers}"
 
-    if [ -z "$compiler" ]; then
-        echo "Please specify the compiler you want to install";
-        return;
-    fi;
+    if [[ -z "$compiler" ]]; then
+        echo "Please specify the compiler you want to install" >&2
+        return 1
+    fi
     
-    if [ -z "$version" ]; then
-        echo "Please specify the version";
-        return;
-    fi;
+    if [[ -z "$version" ]]; then
+        echo "Please specify the version" >&2
+        return 1
+    fi
 
-    if [ -z "$source_dir" ]; then
-        echo "Please specify the source directory";
-        return;
-    fi;
+    if [[ -z "$source_dir" ]]; then
+        echo "Please specify the source directory" >&2
+        return 1
+    fi
 
-    if [ -f "$source_dir/$compiler-$version.tar.xz" ]; then
-        file="$source_dir/$compiler-$version.tar.xz";
-    elif [ -f "$source_dir/$compiler-$version.tar.gz" ]; then
-        file="$source_dir/$compiler-$version.tar.gz";
+    local file=""
+    if [[ -f "$source_dir/$compiler-$version.tar.xz" ]]; then
+        file="$source_dir/$compiler-$version.tar.xz"
+    elif [[ -f "$source_dir/$compiler-$version.tar.gz" ]]; then
+        file="$source_dir/$compiler-$version.tar.gz"
     else
-        download "$source_dir" "$compiler" "$version"
-        install "$source_dir" "$compiler" "$version" "$install_dir"
-        return;
-    fi;
+        download "$compiler" "$version" "$source_dir"
+        install "$compiler" "$version" "$source_dir" "$install_dir"
+        return
+    fi
 
-    if [ -z "$install_dir" ]; then
-        install_dir=/opt/compilers
-    fi;
-
-    extracted_dir="$(mktemp -d)/"
-    real_source_dir="${extracted_dir}${compiler}-${version}"
+    local extracted_dir real_source_dir
+    extracted_dir="$(mktemp -d)"
+    real_source_dir="${extracted_dir}/${compiler}-${version}"
+    
     echo
     echo "---------------------------------------------------------------"
     echo "Compiler: $compiler-$version"
@@ -106,17 +101,16 @@ function install() {
     echo "---------------------------------------------------------------"
     echo
 
-    mkdir -p "$extracted_dir";
-    mkdir -p "$install_dir/$compiler-$version";
-    mkdir -p "$real_source_dir";
+    mkdir -p "$extracted_dir"
+    mkdir -p "$install_dir/$compiler-$version"
+    mkdir -p "$real_source_dir"
 
     tar xvf "$file" -C "$extracted_dir"
-    rpwd=$(pwd);
     cd "${real_source_dir}"
     ./configure --prefix="$install_dir/$compiler-$version/"
-    make -j $(nproc)
-    cd "$rpwd";
-    rm -rf "${extracted_dir}";
+    make -j "$(nproc)"
+    cd "$OLDPWD"
+    rm -rf "${extracted_dir}"
 }
 
 case "$command" in

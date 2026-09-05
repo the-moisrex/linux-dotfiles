@@ -1,20 +1,24 @@
 #!/bin/bash
 
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: $0"
-    echo
-    echo "  Download the Bing picture of the day and set it as the GNOME"
-    echo "  desktop wallpaper, with the current task list written on it."
-    echo "  Suitable for cron jobs; checks at most once per hour."
-    echo
-    echo "Options:"
-    echo "  -h, --help          Show this help message"
+    cat <<EOF
+Usage: $(basename "$0")
+
+  Download the Bing picture of the day and set it as the GNOME
+  desktop wallpaper, with the current task list written on it.
+  Suitable for cron jobs; checks at most once per hour.
+
+Options:
+  -h, --help          Show this help message
+EOF
     exit 0
 fi
 
 # export DBUS_SESSION_BUS_ADDRESS environment variable useful when the script is set as a cron job
-PID=$(pgrep gnome-session | head -n 1)
-export DBUS_SESSION_BUS_ADDRESS=$(grep -z DBUS_SESSION_BUS_ADDRESS /proc/$PID/environ | cut -f2- -d= | tr -d '\0')
+PID="$(pgrep -x gnome-session | head -n 1)"
+if [[ -n "$PID" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="$(grep -z DBUS_SESSION_BUS_ADDRESS "/proc/$PID/environ" | cut -f2- -d= | tr -d '\0')"
+fi
 
 # $bing is needed to form the fully qualified URL for
 # the Bing pic of the day
@@ -36,7 +40,7 @@ userAgent="User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebK
 # $saveDir is used to set the location where Bing pics of the day
 # are stored.  $HOME holds the path of the current user's home directory
 saveDir="$HOME/Pictures/BingWallpapers/"
-mkdir -p $saveDir;
+mkdir -p "$saveDir"
 
 # Set picture options
 # Valid options are: none,wallpaper,centered,scaled,stretched,zoom,spanned
@@ -52,89 +56,83 @@ picExt=".jpg"
 lastDownloadedFile="/tmp/wallpaper_download_time.txt"
 
 # the old wallpaper
-old=$(gsettings get org.gnome.desktop.background picture-uri | tr -d "'")
-cleanold="${old/file:\/\//}"
-lastWallpaper=$(ls -Art "$saveDir" | tail -n 1)
-lastWallpaperFilename=$(basename -- "$lastWallpaper")
+old="$(gsettings get org.gnome.desktop.background picture-uri | tr -d "'")"
+cleanold="${old#file://}"
+lastWallpaper="$(ls -Art "$saveDir" 2>/dev/null | tail -n 1)"
+lastWallpaperFilename="$(basename -- "$lastWallpaper")"
 
-function set_wallpaper {
-	picName=$1
-	fileurl=$(mktemp --suffix=$picName)
+set_wallpaper() {
+    local picName="$1"
+    local fileurl
+    fileurl="$(mktemp --suffix="$picName")"
 
-	# write the tasks
-	convert "$saveDir$picName" \
-		-font FreeMono \
-		-fill white \
-		-stroke black \
-		-pointsize 20 \
-		-gravity east \
-		-annotate +100+0 \
-		"$(task list)" \
-		"${fileurl}";
+    # write the tasks
+    convert "$saveDir$picName" \
+        -font FreeMono \
+        -fill white \
+        -stroke black \
+        -pointsize 20 \
+        -gravity east \
+        -annotate +100+0 \
+        "$(task list)" \
+        "${fileurl}"
 
-	# Set the GNOME3 wallpaper
-	gsettings set org.gnome.desktop.background picture-uri "file://$fileurl"
-	gsettings set org.gnome.desktop.background picture-uri-dark "file://$fileurl"
+    # Set the GNOME3 wallpaper
+    gsettings set org.gnome.desktop.background picture-uri "file://$fileurl"
+    gsettings set org.gnome.desktop.background picture-uri-dark "file://$fileurl"
 
-	# Set the GNOME 3 wallpaper picture options
-	gsettings set org.gnome.desktop.background picture-options $picOpts
-	
-	if [[ "$cleanold" == "/tmp/"* ]]; then
-		rm -f "$cleanold"
-	fi;
+    # Set the GNOME 3 wallpaper picture options
+    gsettings set org.gnome.desktop.background picture-options "$picOpts"
+
+    if [[ "$cleanold" == "/tmp/"* ]]; then
+        rm -f "$cleanold"
+    fi
 }
 
-# Create saveDir if it does not already exist
-mkdir -p $saveDir
-
 # setting the background image before it's loaded
-if [ -f "$saveDir$lastWallpaper" ] && [ ! -f "${cleanold}" ]; then
-	set_wallpaper $lastWallpaper
-fi;
-
+if [[ -f "$saveDir$lastWallpaper" && ! -f "${cleanold}" ]]; then
+    set_wallpaper "$lastWallpaper"
+fi
 
 # if 1 hour(s) has been passed since last download
-if [ ! -f "$saveDir$lastWallpaper" ] ||
-   [ ! -f "$lastDownloadedFile" ] ||
-   [ $(expr $(date +%s) - $(cat "$lastDownloadedFile")) -gt 3600 ]; then
+if [[ ! -f "$saveDir$lastWallpaper" ]] ||
+   [[ ! -f "$lastDownloadedFile" ]] ||
+   [[ $(( $(date +%s) - $(cat "$lastDownloadedFile") )) -gt 3600 ]]; then
 
-	# Extract the relative URL of the Bing pic of the day from
-	# the XML data retrieved from xmlURL, form the fully qualified
-	# URL for the pic of the day, and store it in $picURL
+    # Extract the relative URL of the Bing pic of the day from
+    # the XML data retrieved from xmlURL, form the fully qualified
+    # URL for the pic of the day, and store it in $picURL
 
-	# Form the URL for the desired pic resolution
-	desiredPicURL=$bing$(echo $(curl -L -H "$userAgent" -s $xmlURL) | grep -oP "<urlBase>(.*)</urlBase>" | cut -d ">" -f 2 | cut -d "<" -f 1)$desiredPicRes$picExt
+    # Form the URL for the desired pic resolution
+    local_urlBase="$(curl -L -H "$userAgent" -s "$xmlURL" | grep -oP "<urlBase>(.*)</urlBase>" | cut -d ">" -f 2 | cut -d "<" -f 1)"
+    desiredPicURL="${bing}${local_urlBase}${desiredPicRes}${picExt}"
 
-	# Form the URL for the default pic resolution
-	defaultPicURL=$bing$(echo $(curl -L -H "$userAgent" -s $xmlURL) | grep -oP "<url>(.*)</url>" | cut -d ">" -f 2 | cut -d "<" -f 1)
+    # Form the URL for the default pic resolution
+    local_url="$(curl -L -H "$userAgent" -s "$xmlURL" | grep -oP "<url>(.*)</url>" | cut -d ">" -f 2 | cut -d "<" -f 1)"
+    defaultPicURL="${bing}${local_url}"
 
-  if (wget --user-agent="$userAgent" --quiet --spider "$desiredPicURL")
-	then
+    if wget --user-agent="$userAgent" --quiet --spider "$desiredPicURL"; then
+        # Set picName to the desired picName
+        picName="${desiredPicURL##*/}"
+        # Download the Bing pic of the day at desired resolution
+        curl -L -H "$userAgent" -s -o "$saveDir$picName" "$desiredPicURL"
+    else
+        # Set picName to the default picName
+        picName="${defaultPicURL##*/}"
+        # Download the Bing pic of the day at default resolution
+        curl -L -H "$userAgent" -s -o "$saveDir$picName" "$defaultPicURL"
+    fi
 
-		# Set picName to the desired picName
-		picName=${desiredPicURL##*/}
-		# Download the Bing pic of the day at desired resolution
-		curl -L -H "$userAgent" -s -o "$saveDir$picName" "$desiredPicURL"
-	else
-		# Set picName to the default picName
-		picName=${defaultPicURL##*/}
-		# Download the Bing pic of the day at default resolution
-		curl -L -H "$userAgent" -s -o "$saveDir$picName" "$defaultPicURL"
-	fi
+    set_wallpaper "$picName"
 
-	set_wallpaper $picName;
-	
-	# Update last downloaded time
-	date +%s > "$lastDownloadedFile";
+    # Update last downloaded time
+    date +%s > "$lastDownloadedFile"
 
-	# Remove pictures older than 30 days
-	find "$saveDir" -atime +30 -delete
+    # Remove pictures older than 30 days
+    find "$saveDir" -atime +30 -delete
 
-## upldate the last image
+# update the last image
 else
-	set_wallpaper "$lastWallpaperFilename"
-fi;
-
-# Exit the script
-exit
+    set_wallpaper "$lastWallpaperFilename"
+fi
 

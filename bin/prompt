@@ -28,9 +28,8 @@ EXT_ORDER=(.sh .txt .md "")
 
 # helper: get script directory
 _script_dir() {
-    # works even if symlinked only roughly; use BASH_SOURCE for bash
     local src="${BASH_SOURCE[0]:-$0}"
-    printf "%s" "$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+    printf '%s' "$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
 }
 
 SCRIPT_DIR="$(_script_dir)"
@@ -108,37 +107,26 @@ _collect_prompts() {
 }
 
 cmd_list_prompts() {
-  local search_paths
-  search_paths="$(_search_paths)"
-  SEARCH_PATHS="$search_paths" python3 - <<'PY'
-import os
-from pathlib import Path
+  local dir ext name file base
+  local -A seen=()
 
-search_paths = [p for p in os.environ.get("SEARCH_PATHS", "").splitlines() if p]
-exts = [".sh", ".txt", ".md", ""]
-seen = set()
-rows = []
-
-for directory in search_paths:
-    path = Path(directory)
-    if not path.is_dir():
-        continue
-    for file in sorted(path.iterdir()):
-        if not file.is_file() or file.name.startswith('_'):
-            continue
-        name = file.name
-        for ext in exts[:-1]:
-            if name.endswith(ext):
-                name = name[: -len(ext)]
-                break
-        name = name.rstrip(".")
-        if name and name not in seen:
-            seen.add(name)
-            rows.append(name)
-
-for name in sorted(rows):
-    print(name)
-PY
+  while IFS= read -r dir; do
+    [[ -d "$dir" ]] || continue
+    while IFS= read -r file; do
+      [[ -f "$file" ]] || continue
+      base="$(basename "$file")"
+      [[ "$base" == _* ]] && continue
+      name="$base"
+      for ext in .sh .txt .md; do
+        name="${name%$ext}"
+      done
+      name="${name%.}"
+      if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
+        seen[$name]=1
+        printf '%s\n' "$name"
+      fi
+    done < <(find "$dir" -maxdepth 1 -type f -print 2>/dev/null)
+  done < <(_search_paths)
 }
 
 _print_prompt_table() {
@@ -159,72 +147,59 @@ _print_prompt_table() {
 # List available prompts, unique, one per line as:
 #   <name>\t<short help>
 cmd_list() {
-  local rows
-  local search_paths
-  search_paths="$(_search_paths)"
-  rows="$(
-    SEARCH_PATHS="$search_paths" python3 - <<'PY'
-import os
-import subprocess
-from pathlib import Path
+  local rows=""
+  local dir ext name file base
+  local -A seen=()
 
-search_paths = [p for p in os.environ.get("SEARCH_PATHS", "").splitlines() if p]
-exts = [".sh", ".txt", ".md", ""]
-seen = {}
+  while IFS= read -r dir; do
+    [[ -d "$dir" ]] || continue
+    while IFS= read -r file; do
+      [[ -f "$file" ]] || continue
+      base="$(basename "$file")"
+      [[ "$base" == _* ]] && continue
+      name="$base"
+      for ext in .sh .txt .md; do
+        name="${name%$ext}"
+      done
+      name="${name%.}"
+      if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
+        seen[$name]="$file"
+      fi
+    done < <(find "$dir" -maxdepth 1 -type f -print 2>/dev/null)
+  done < <(_search_paths)
 
-def short_help(file: Path) -> str:
-    if file.suffix != ".sh":
-        return "Prompt"
-    proc = subprocess.run(["bash", str(file), "--help"], capture_output=True, text=True)
-    for line in proc.stdout.splitlines():
-        if not line or line.startswith("Usage:") or line.startswith("       ") or line.startswith("Options:") or "| prompt " in line:
-            continue
-        return line
-    return "Prompt"
-
-for directory in search_paths:
-    path = Path(directory)
-    if not path.is_dir():
-        continue
-    for file in sorted(path.iterdir()):
-        if not file.is_file() or file.name.startswith('_'):
-            continue
-        name = file.name
-        for ext in exts[:-1]:
-            if name.endswith(ext):
-                name = name[: -len(ext)]
-                break
-        name = name.rstrip(".")
-        if name and name not in seen:
-            seen[name] = file
-
-for name in sorted(seen):
-    print(f"{name}\t{short_help(seen[name])}")
-PY
-  )"
+  for name in $(printf '%s\n' "${!seen[@]}" | sort); do
+    local desc
+    desc="$(_prompt_short_help "${seen[$name]}")"
+    if [[ -n "$rows" ]]; then
+      rows="$rows"$'\n'"${name}"$'\t'"${desc}"
+    else
+      rows="${name}"$'\t'"${desc}"
+    fi
+  done
 
   if [[ -t 1 ]]; then
     _print_prompt_table "$rows"
   else
-    printf "%s\n" "$rows"
+    printf '%s\n' "$rows"
   fi
 }
 
 _prompt_short_help() {
   local file="$1"
-  local type
+  local type line
 
   type="$(_file_type "$file")"
   if [[ "$type" == "bash" ]]; then
-    bash "$file" --help 2>/dev/null | awk '
-      NF == 0 { next }
-      /^Usage:/ { next }
-      /^       / { next }
-      /^Options:/ { next }
-      /\| prompt / { next }
-      { print; exit }
-    '
-    return 0
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      [[ "$line" == Usage:* ]] && continue
+      [[ "$line" == "       "* ]] && continue
+      [[ "$line" == Options:* ]] && continue
+      [[ "$line" == *"|"*" prompt "* ]] && continue
+      printf '%s' "$line"
+      return 0
+    done < <(bash "$file" --help 2>/dev/null)
   fi
 
   printf "Prompt"
@@ -310,8 +285,8 @@ fi
 # Function to copy output to clipboard and send notification
 copy_output_to_clipboard() {
   local output="$1"
-  printf "%s" "$output"
-  printf "%s" "$output" | "$SCRIPT_DIR/c.c"
+  printf '%s' "$output"
+  printf '%s' "$output" | "$SCRIPT_DIR/c.c"
   # Notification when output goes to terminal and not piped
   if command -v notify-send >/dev/null 2>&1; then
     notify-send "Prompt completed" "Output copied to clipboard" 2>/dev/null || true

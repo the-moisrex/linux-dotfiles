@@ -32,34 +32,34 @@ print_header() {
 # Find all pod directories with compose files
 find_pod_dirs() {
     local pods=()
+    local dir dirname
     for dir in "$PODS_ROOT"/*/; do
         if [[ -d "$dir" ]]; then
-            local dirname=$(basename "$dir")
+            dirname="$(basename "$dir")"
             # Look for common compose file names
-            if [[ -f "$dir/podman-compose.yml" ]] || [[ -f "$dir/podman-compose.yaml" ]] || [[ -f "$dir/docker-compose.yml" ]] || [[ -f "$dir/docker-compose.yaml" ]] || [[ -f "$dir/compose.yml" ]] || [[ -f "$dir/compose.yaml" ]]; then
+            if [[ -f "$dir/podman-compose.yml" || -f "$dir/podman-compose.yaml" || \
+                  -f "$dir/docker-compose.yml" || -f "$dir/docker-compose.yaml" || \
+                  -f "$dir/compose.yml" || -f "$dir/compose.yaml" ]]; then
                 pods+=("$dirname")
             fi
         fi
     done
-    echo "${pods[@]}"
+    printf '%s\n' "${pods[@]}"
 }
 
 # Get compose file for a pod
 get_compose_file() {
     local pod_name="$1"
     local pod_dir="$PODS_ROOT/$pod_name"
+    local f
 
-    if [[ -f "$pod_dir/podman-compose.yml" ]]; then
-        echo "$pod_dir/podman-compose.yml"
-    elif [[ -f "$pod_dir/docker-compose.yml" ]]; then
-        echo "$pod_dir/docker-compose.yml"
-    elif [[ -f "$pod_dir/compose.yml" ]]; then
-        echo "$pod_dir/compose.yml"
-    elif [[ -f "$pod_dir/compose.yaml" ]]; then
-        echo "$pod_dir/compose.yaml"
-    else
-        return 1
-    fi
+    for f in podman-compose.yml podman-compose.yaml docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+        if [[ -f "$pod_dir/$f" ]]; then
+            printf '%s' "$pod_dir/$f"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Pull latest images for specified pods
@@ -71,9 +71,9 @@ pull_latest_images() {
         return 0
     fi
 
+    local pod compose_file
     for pod in "${pods_to_update[@]}"; do
-        local compose_file=$(get_compose_file "$pod")
-        if [[ $? -ne 0 ]]; then
+        if ! compose_file="$(get_compose_file "$pod")"; then
             print_error "Compose file not found for pod: $pod"
             continue
         fi
@@ -84,15 +84,16 @@ pull_latest_images() {
         local latest_images=()
         if command -v yq &> /dev/null; then
             # Using yq to parse YAML properly
-            latest_images=($(yq '.services[] | select(.image) | .image' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true))
+            mapfile -t latest_images < <(yq '.services[] | select(.image) | .image' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true)
         else
             # Fallback to grep if yq is not available
-            latest_images=($(grep -oE '[^[:space:]]*:[^[:space:]]*' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true))
+            mapfile -t latest_images < <(grep -oE '[^[:space:]]*:[^[:space:]]*' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true)
         fi
         
         if [[ ${#latest_images[@]} -gt 0 ]]; then
             print_status "Found ${#latest_images[@]} 'latest' tagged images in pod $pod. Pulling updates..."
             
+            local image
             for image in "${latest_images[@]}"; do
                 print_status "Pulling latest image: $image"
                 if podman pull "$image"; then
@@ -126,8 +127,10 @@ update_pods() {
 
 # Show help message
 show_help() {
-    local available_pods=($(find_pod_dirs))
-    local pods_list=$(IFS=', '; echo "${available_pods[*]}")
+    local available_pods=()
+    mapfile -t available_pods < <(find_pod_dirs)
+    local pods_list
+    pods_list="$(IFS=', '; printf '%s' "${available_pods[*]}")"
 
     cat << EOF
 Multi-Pod Management Script
@@ -168,9 +171,11 @@ EOF
 # Validate pod names
 validate_pods() {
     local requested_pods=("$@")
-    local available_pods=($(find_pod_dirs))
+    local available_pods=()
+    mapfile -t available_pods < <(find_pod_dirs)
     local invalid_pods=()
     
+    local pod
     for pod in "${requested_pods[@]}"; do
         if [[ "$pod" != "all" ]] && [[ ! " ${available_pods[*]} " =~ " $pod " ]]; then
             invalid_pods+=("$pod")
@@ -193,10 +198,10 @@ get_target_pods() {
     
     if [[ ${#args[@]} -eq 0 ]]; then
         # No arguments specified, operate on all pods
-        target_pods=($(find_pod_dirs))
+        mapfile -t target_pods < <(find_pod_dirs)
     elif [[ " ${args[*]} " =~ " all " ]]; then
         # 'all' specified, operate on all pods
-        target_pods=($(find_pod_dirs))
+        mapfile -t target_pods < <(find_pod_dirs)
     else
         # Specific pods specified
         target_pods=("${args[@]}")
@@ -204,13 +209,14 @@ get_target_pods() {
     
     # Remove 'all' from the list if it was included with other pods
     local filtered_pods=()
+    local pod
     for pod in "${target_pods[@]}"; do
         if [[ "$pod" != "all" ]]; then
             filtered_pods+=("$pod")
         fi
     done
     
-    echo "${filtered_pods[@]}"
+    printf '%s\n' "${filtered_pods[@]}"
 }
 
 # Start specified pods
@@ -224,9 +230,9 @@ start_pods() {
 
     sudo sysctl net.ipv4.ip_unprivileged_port_start=80
     
+    local pod compose_file
     for pod in "${pods_to_start[@]}"; do
-        local compose_file=$(get_compose_file "$pod")
-        if [[ $? -ne 0 ]]; then
+        if ! compose_file="$(get_compose_file "$pod")"; then
             print_error "Compose file not found for pod: $pod"
             continue
         fi
@@ -275,9 +281,9 @@ stop_pods() {
         return 0
     fi
     
+    local pod compose_file
     for pod in "${pods_to_stop[@]}"; do
-        local compose_file=$(get_compose_file "$pod")
-        if [[ $? -ne 0 ]]; then
+        if ! compose_file="$(get_compose_file "$pod")"; then
             print_error "Compose file not found for pod: $pod"
             continue
         fi
@@ -305,7 +311,7 @@ clean_database_dir() {
     local force=false
     
     # Check if --force flag is provided
-    if [[ "$1" == "--force" ]]; then
+    if [[ "${1:-}" == "--force" ]]; then
         force=true
     fi
     
@@ -322,8 +328,8 @@ clean_database_dir() {
     print_status "Removing $DATABASE_DIR directory..."
     
     # Try to stop the databases pod if it's running
-    local compose_file=$(get_compose_file "databases")
-    if [[ -n "$compose_file" ]]; then
+    local compose_file
+    if compose_file="$(get_compose_file "databases")"; then
         podman-compose -f "$compose_file" down 2>/dev/null || true
     fi
     
@@ -338,19 +344,20 @@ clean_database_dir() {
 
 # Show status of all services
 show_status() {
-    local all_pods=($(find_pod_dirs))
+    local all_pods=()
+    mapfile -t all_pods < <(find_pod_dirs)
     
     if [[ ${#all_pods[@]} -eq 0 ]]; then
         print_warning "No pods found."
         return 0
     fi
     
+    local pod compose_file project_name
     for pod in "${all_pods[@]}"; do
         print_header "Pod: $pod"
-        local compose_file=$(get_compose_file "$pod")
-        if [[ -n "$compose_file" ]]; then
+        if compose_file="$(get_compose_file "$pod")"; then
             # Get the project name from the compose file directory
-            local project_name=$(basename "$(dirname "$compose_file")")
+            project_name="$(basename "$(dirname "$compose_file")")"
             if command -v podman &> /dev/null; then
                 # Show containers for this pod
                 podman ps --filter "label=io.podman.compose.project=$project_name" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
@@ -368,7 +375,8 @@ show_status() {
 
 # List all available pods
 list_pods() {
-    local available_pods=($(find_pod_dirs))
+    local available_pods=()
+    mapfile -t available_pods < <(find_pod_dirs)
     
     if [[ ${#available_pods[@]} -eq 0 ]]; then
         print_warning "No pods found."
@@ -376,6 +384,7 @@ list_pods() {
     fi
     
     print_status "Available pods:"
+    local pod
     for pod in "${available_pods[@]}"; do
         echo "  - $pod"
     done
@@ -390,28 +399,32 @@ case "$command" in
         if ! validate_pods "$@"; then
             exit 1
         fi
-        target_pods=($(get_target_pods "$@"))
+        target_pods=()
+        mapfile -t target_pods < <(get_target_pods "$@")
         start_pods "${target_pods[@]}"
         ;;
     stop)
         if ! validate_pods "$@"; then
             exit 1
         fi
-        target_pods=($(get_target_pods "$@"))
+        target_pods=()
+        mapfile -t target_pods < <(get_target_pods "$@")
         stop_pods "${target_pods[@]}"
         ;;
     restart)
         if ! validate_pods "$@"; then
             exit 1
         fi
-        target_pods=($(get_target_pods "$@"))
+        target_pods=()
+        mapfile -t target_pods < <(get_target_pods "$@")
         restart_pods "${target_pods[@]}"
         ;;
     update)
         if ! validate_pods "$@"; then
             exit 1
         fi
-        target_pods=($(get_target_pods "$@"))
+        target_pods=()
+        mapfile -t target_pods < <(get_target_pods "$@")
         update_pods "${target_pods[@]}"
         ;;
     clean)
