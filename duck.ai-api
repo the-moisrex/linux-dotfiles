@@ -83,7 +83,18 @@ _worker = _BrowserWorker()
 
 def ask_duck_threaded(prompt: str, timeout: float = 120.0) -> str:
     """Run _ask_duck on the dedicated browser thread."""
-    return _worker.call(_ask_duck, prompt, timeout)
+    # short = prompt[:80] + ("..." if len(prompt) > 80 else "")
+    print(f"[browser] asking: {prompt}", file=sys.stderr, flush=True)
+    t0 = time.time()
+    try:
+        answer = _worker.call(_ask_duck, prompt, timeout)
+        elapsed = time.time() - t0
+        print(f"[browser] got reply in {elapsed:.1f}s ({len(answer)} chars)", file=sys.stderr, flush=True)
+        return answer
+    except Exception as e:
+        elapsed = time.time() - t0
+        print(f"[browser] error after {elapsed:.1f}s: {e}", file=sys.stderr, flush=True)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +214,7 @@ def _make_response(model: str, content: str, prompt_tokens: int = 0) -> dict:
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        pass
+        print(f"[{self.log_date_time_string()}] {fmt % args}", file=sys.stderr, flush=True)
 
     def handle_one_request(self):
         """Handle one HTTP request, catching client disconnects gracefully."""
@@ -231,6 +242,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        print(f"[http] GET {self.path}", file=sys.stderr, flush=True)
         if self.path == "/health":
             self._respond(200, {"status": "ok"})
         elif self.path == "/v1/models":
@@ -245,6 +257,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path != "/v1/chat/completions":
+            print(f"[http] POST {self.path} (404)", file=sys.stderr, flush=True)
             self._respond(404, {"error": {"message": "Not found", "type": "invalid_request_error"}})
             return
 
@@ -260,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
         stream = body.get("stream", False)
         prompt = _messages_to_prompt(messages)
 
+        print(f"[http] POST /v1/chat/completions model={model} stream={stream} prompt_len={len(prompt)}", file=sys.stderr, flush=True)
+
         if not prompt:
             self._respond(400, {"error": {"message": "No prompt in messages", "type": "invalid_request_error"}})
             return
@@ -270,9 +285,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 answer = ask_duck_threaded(prompt, timeout=120)
             except SystemExit as e:
+                print(f"[error] {e}", file=sys.stderr, flush=True)
                 self._respond(502, {"error": {"message": str(e), "type": "server_error"}})
                 return
             except Exception as e:
+                print(f"[error] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
                 self._respond(502, {"error": {"message": f"{type(e).__name__}: {e}", "type": "server_error"}})
                 return
             self._respond(200, _make_response(model, answer))
@@ -303,6 +320,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             answer = ask_duck_threaded(prompt, timeout=120)
         except (SystemExit, Exception) as e:
+            print(f"[error] stream: {e}", file=sys.stderr, flush=True)
             _write(f"data: {json.dumps(_make_chunk(model, f'\n\n[Error: {e}]'))}\n\n".encode())
             _write(b"data: [DONE]\n\n")
             return
