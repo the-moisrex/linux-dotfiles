@@ -20,12 +20,13 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import queue
 import sys
 import time
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from threading import Lock
+from threading import Thread
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -42,6 +43,48 @@ _duck = importlib.util.module_from_spec(
 )
 _loader.exec_module(_duck)
 _ask_duck = _duck._ask_duck
+
+# ---------------------------------------------------------------------------
+# Browser worker — all Playwright calls run on this single thread
+# ---------------------------------------------------------------------------
+
+class _BrowserWorker:
+    """Marshal all Playwright calls onto one dedicated thread.
+
+    Playwright's sync API uses greenlets bound to the thread that created
+    the browser. This worker ensures all browser access happens on the
+    same thread, regardless of which HTTP handler thread calls it.
+    """
+
+    def __init__(self):
+        self._queue: queue.Queue[tuple] = queue.Queue()
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        while True:
+            func, args, kwargs, result_queue = self._queue.get()
+            try:
+                result_queue.put(("ok", func(*args, **kwargs)))
+            except Exception as e:
+                result_queue.put(("error", e))
+
+    def call(self, func, *args, **kwargs):
+        result_queue: queue.Queue = queue.Queue()
+        self._queue.put((func, args, kwargs, result_queue))
+        status, value = result_queue.get()
+        if status == "error":
+            raise value
+        return value
+
+
+_worker = _BrowserWorker()
+
+
+def ask_duck_threaded(prompt: str, timeout: float = 120.0) -> str:
+    """Run _ask_duck on the dedicated browser thread."""
+    return _worker.call(_ask_duck, prompt, timeout)
+
 
 # ---------------------------------------------------------------------------
 # Model catalog
@@ -86,8 +129,6 @@ MODEL_ALIASES = {
 }
 
 DEFAULT_MODEL = "gpt-5.6-luna"
-
-_lock = Lock()
 
 
 def resolve_model(name: str | None) -> str:
@@ -227,8 +268,7 @@ class Handler(BaseHTTPRequestHandler):
             self._stream_response(model, prompt)
         else:
             try:
-                with _lock:
-                    answer = _ask_duck(prompt, timeout=120)
+                answer = ask_duck_threaded(prompt, timeout=120)
             except SystemExit as e:
                 self._respond(502, {"error": {"message": str(e), "type": "server_error"}})
                 return
@@ -259,10 +299,9 @@ class Handler(BaseHTTPRequestHandler):
         if not _write(f"data: {json.dumps(chunk)}\n\n".encode()):
             return
 
-        # Run browser query
+        # Run browser query (via dedicated worker thread)
         try:
-            with _lock:
-                answer = _ask_duck(prompt, timeout=120)
+            answer = ask_duck_threaded(prompt, timeout=120)
         except (SystemExit, Exception) as e:
             _write(f"data: {json.dumps(_make_chunk(model, f'\n\n[Error: {e}]'))}\n\n".encode())
             _write(b"data: [DONE]\n\n")
