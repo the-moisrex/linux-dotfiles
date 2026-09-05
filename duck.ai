@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""duck.ai — single-file Duck.ai client for Linux.
+
+Usage:
+    duck.ai <prompt>            One-shot query (also reads stdin)
+    duck.ai --new               Reset the conversation
+    duck.ai chat                Interactive TUI chat
+    duck.ai chat <prompt>       Interactive chat seeded with a prompt
+
+No daemon — each query launches a fresh browser page, sends the prompt,
+reads the response, and exits. Uses system Chrome (not Playwright's bundled
+Chromium, which Duck.ai fingerprint-bans).
+
+Dependencies: playwright (pip install playwright)
+              system Chrome or Chromium on PATH
+Optional:     glow, wl-copy / xclip
+"""
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+# ---------------------------------------------------------------------------
+# Browser helpers
+# ---------------------------------------------------------------------------
+
+def _find_chrome() -> str | None:
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        for d in os.environ.get("PATH", "").split(os.pathsep):
+            p = pathlib.Path(d) / name
+            if p.is_file():
+                return str(p)
+    return None
+
+
+# JS injected before page scripts: hide webdriver flag + capture chat SSE.
+# The fetch hook clones every /duckchat/v1/chat response into window.__duckai
+# so we can poll the full reply without touching the (obfuscated) DOM.
+_INJECT_JS = r"""
+Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
+(function(){
+  const O=window.fetch;
+  window.__duckai={last:null,err:null};
+  window.fetch=async function(u,o){
+    const r=await O.apply(this,arguments);
+    if(typeof u==='string'&&u.includes('/duckchat/v1/chat')){
+      try{
+        const c=r.clone();const t=await c.text();
+        if(t.includes('"action":"error"')){window.__duckai.err=t;}
+        else{window.__duckai.last=t;}
+      }catch(e){}
+    }
+    return r;
+  };
+})();
+"""
+
+def _parse_sse(text: str) -> str:
+    chunks: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            if line.startswith("data:"):
+                line = line[5:].strip()
+            else:
+                continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("message"):
+            chunks.append(obj["message"])
+    return "".join(chunks)
+
+
+def _ask_duck(prompt: str, timeout: float = 60.0) -> str:
+    """Launch system Chrome, open duck.ai, type prompt, return the reply."""
+    from playwright.sync_api import sync_playwright
+
+    pw = sync_playwright().start()
+    try:
+        launch_kw: dict = dict(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        chrome = _find_chrome()
+        if chrome:
+            launch_kw["executable_path"] = chrome
+
+        browser = pw.chromium.launch(**launch_kw)
+        try:
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+                ),
+            )
+            ctx.add_init_script(_INJECT_JS)
+            page = ctx.new_page()
+            try:
+                page.goto("https://duck.ai/", wait_until="domcontentloaded", timeout=30000)
+                # Warm-up: let Duck.ai's challenge/token JS initialize
+                page.wait_for_timeout(7000)
+
+                # Dismiss consent if present
+                try:
+                    btn = page.get_by_role("button", name="Agree and Continue")
+                    btn.wait_for(state="visible", timeout=3000)
+                    btn.click()
+                    page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # Type into the textarea and send
+                ta = page.locator("textarea").first
+                ta.wait_for(state="visible", timeout=15000)
+                ta.click()
+                ta.fill(prompt)
+                page.wait_for_timeout(300)
+
+                # Click the send button if found, else press Enter
+                sent = False
+                for btn in page.locator("button").all():
+                    txt = (btn.inner_text() or "").strip()
+                    aria = btn.get_attribute("aria-label") or ""
+                    if txt in ("Ask", "Send") or aria in ("Ask", "Send"):
+                        btn.click(force=True)
+                        sent = True
+                        break
+                if not sent:
+                    ta.press("Enter")
+
+                # Poll the fetch hook for the captured SSE response
+                import time as _time
+                deadline = _time.time() + timeout
+                raw = None
+                while _time.time() < deadline:
+                    _time.sleep(1.0)
+                    err, last = page.evaluate("()=>[window.__duckai.err, window.__duckai.last]")
+                    if err:
+                        if "ERR_BN_LIMIT" in err:
+                            raise SystemExit("duck.ai: rate-limited (ERR_BN_LIMIT)")
+                        raise SystemExit(f"duck.ai: {err[:200]}")
+                    if last:
+                        raw = last
+                        _time.sleep(1.5)
+                        last2 = page.evaluate("()=>window.__duckai.last")
+                        if last2 == last:
+                            break
+                        raw = last2
+                if not raw:
+                    raise SystemExit("duck.ai: timed out waiting for reply")
+                return _parse_sse(raw)
+            finally:
+                page.close()
+        finally:
+            browser.close()
+    finally:
+        pw.stop()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _which(cmd: str) -> str | None:
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = pathlib.Path(d) / cmd
+        if p.is_file():
+            return str(p)
+    return None
+
+
+def _clean(text: str) -> str:
+    return re.sub(r"</?citation[^>]*>", "", text)
+
+
+def _render(text: str) -> str:
+    cleaned = _clean(text)
+    glow = _which("glow")
+    if glow:
+        try:
+            p = subprocess.run(
+                [glow, "-"], input=cleaned.encode(),
+                capture_output=True, timeout=30,
+            )
+            if p.returncode == 0:
+                return p.stdout.decode()
+        except Exception:
+            pass
+    return cleaned
+
+
+def _clipboard_copy(text: str) -> None:
+    for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"]):
+        if _which(cmd[0]):
+            try:
+                subprocess.run(cmd, input=text.encode(), capture_output=True, timeout=5)
+            except Exception:
+                pass
+            return
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_ask(prompt: str) -> None:
+    answer = _ask_duck(prompt)
+    print(_render(answer))
+
+
+def cmd_chat(initial: str | None = None) -> None:
+    print(
+        "\033[1;36m ▌Duck.ai\033[0m"
+        " — each question opens a fresh browser page · Ctrl-D to quit"
+    )
+
+    def _ask_one(q: str) -> None:
+        print(f"\n\033[1;35m❯ {q}\033[0m\n")
+        try:
+            answer = _ask_duck(q)
+            rendered = _render(answer)
+            print(rendered)
+            _clipboard_copy(answer)
+        except SystemExit as e:
+            print(f"\033[1;31m{e}\033[0m")
+
+    if initial:
+        _ask_one(initial)
+
+    while True:
+        try:
+            line = input("\n\001\033[1;32m\002duck.ai ❯ \001\033[0m\002")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line.strip():
+            break
+        _ask_one(line)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _usage() -> None:
+    print(
+        "usage: duck.ai [-h] [--new] [prompt ...]\n"
+        "                duck.ai chat [prompt ...]\n"
+        "\n"
+        "Duck.ai client for Linux.\n"
+        "\n"
+        "examples:\n"
+        "  duck.ai how do I list files by size\n"
+        "  echo 'explain this' | duck.ai\n"
+        "  duck.ai --new          reset conversation\n"
+        "  duck.ai chat           interactive chat\n"
+        "  duck.ai chat hello     interactive chat with initial prompt"
+    )
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+
+    if argv and argv[0] in ("-h", "--help"):
+        _usage()
+        return
+
+    if argv and argv[0] == "chat":
+        initial = " ".join(argv[1:]) if len(argv) > 1 else None
+        cmd_chat(initial)
+        return
+
+    # One-shot: "duck.ai <prompt...>" or "duck.ai --new" or stdin pipe
+    new_chat = False
+    parts: list[str] = []
+    for a in argv:
+        if a == "--new":
+            new_chat = True
+        else:
+            parts.append(a)
+
+    prompt = " ".join(parts).strip() or sys.stdin.read().strip()
+    if not prompt and not new_chat:
+        _usage()
+        sys.exit(1)
+    if new_chat:
+        print("conversation reset")
+        return
+    cmd_ask(prompt)
+
+
+if __name__ == "__main__":
+    main()
