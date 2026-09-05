@@ -7,9 +7,9 @@ Usage:
     duck.ai chat                Interactive TUI chat
     duck.ai chat <prompt>       Interactive chat seeded with a prompt
 
-No daemon — each query launches a fresh browser page, sends the prompt,
-reads the response, and exits. Uses system Chrome (not Playwright's bundled
-Chromium, which Duck.ai fingerprint-bans).
+A persistent headless Chrome stays alive in the background. Each query opens
+a fresh page, types the prompt, reads the response, and closes the page.
+Uses system Chrome (Playwright's bundled Chromium is fingerprint-banned).
 
 Dependencies: playwright (pip install playwright)
               system Chrome or Chromium on PATH
@@ -23,10 +23,17 @@ import pathlib
 import re
 import subprocess
 import sys
+import threading
+import time
 
 # ---------------------------------------------------------------------------
-# Browser helpers
+# Browser singleton — one Chrome instance, new page per query
 # ---------------------------------------------------------------------------
+
+_pw = None
+_browser = None
+_browser_lock = threading.Lock()
+
 
 def _find_chrome() -> str | None:
     for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
@@ -37,9 +44,6 @@ def _find_chrome() -> str | None:
     return None
 
 
-# JS injected before page scripts: hide webdriver flag + capture chat SSE.
-# The fetch hook clones every /duckchat/v1/chat response into window.__duckai
-# so we can poll the full reply without touching the (obfuscated) DOM.
 _INJECT_JS = r"""
 Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
 (function(){
@@ -58,6 +62,28 @@ Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
   };
 })();
 """
+
+
+def _ensure_browser():
+    """Lazily launch a persistent Chrome browser. Thread-safe."""
+    global _pw, _browser
+    if _browser is not None:
+        return
+    with _browser_lock:
+        if _browser is not None:
+            return
+        from playwright.sync_api import sync_playwright
+
+        _pw = sync_playwright().start()
+        launch_kw: dict = dict(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        chrome = _find_chrome()
+        if chrome:
+            launch_kw["executable_path"] = chrome
+        _browser = _pw.chromium.launch(**launch_kw)
+
 
 def _parse_sse(text: str) -> str:
     chunks: list[str] = []
@@ -78,89 +104,67 @@ def _parse_sse(text: str) -> str:
 
 
 def _ask_duck(prompt: str, timeout: float = 60.0) -> str:
-    """Launch system Chrome, open duck.ai, type prompt, return the reply."""
-    from playwright.sync_api import sync_playwright
-
-    pw = sync_playwright().start()
+    """Open a fresh page on the persistent browser, send prompt, return reply."""
+    _ensure_browser()
+    ctx = _browser.new_context(
+        user_agent=(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+        ),
+    )
+    ctx.add_init_script(_INJECT_JS)
+    page = ctx.new_page()
     try:
-        launch_kw: dict = dict(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        chrome = _find_chrome()
-        if chrome:
-            launch_kw["executable_path"] = chrome
+        page.goto("https://duck.ai/", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(7000)
 
-        browser = pw.chromium.launch(**launch_kw)
         try:
-            ctx = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
-                ),
-            )
-            ctx.add_init_script(_INJECT_JS)
-            page = ctx.new_page()
-            try:
-                page.goto("https://duck.ai/", wait_until="domcontentloaded", timeout=30000)
-                # Warm-up: let Duck.ai's challenge/token JS initialize
-                page.wait_for_timeout(7000)
+            btn = page.get_by_role("button", name="Agree and Continue")
+            btn.wait_for(state="visible", timeout=3000)
+            btn.click()
+            page.wait_for_timeout(1000)
+        except Exception:
+            pass
 
-                # Dismiss consent if present
-                try:
-                    btn = page.get_by_role("button", name="Agree and Continue")
-                    btn.wait_for(state="visible", timeout=3000)
-                    btn.click()
-                    page.wait_for_timeout(1000)
-                except Exception:
-                    pass
+        ta = page.locator("textarea").first
+        ta.wait_for(state="visible", timeout=15000)
+        ta.click()
+        ta.fill(prompt)
+        page.wait_for_timeout(300)
 
-                # Type into the textarea and send
-                ta = page.locator("textarea").first
-                ta.wait_for(state="visible", timeout=15000)
-                ta.click()
-                ta.fill(prompt)
-                page.wait_for_timeout(300)
+        sent = False
+        for btn in page.locator("button").all():
+            txt = (btn.inner_text() or "").strip()
+            aria = btn.get_attribute("aria-label") or ""
+            if txt in ("Ask", "Send") or aria in ("Ask", "Send"):
+                btn.click(force=True)
+                sent = True
+                break
+        if not sent:
+            ta.press("Enter")
 
-                # Click the send button if found, else press Enter
-                sent = False
-                for btn in page.locator("button").all():
-                    txt = (btn.inner_text() or "").strip()
-                    aria = btn.get_attribute("aria-label") or ""
-                    if txt in ("Ask", "Send") or aria in ("Ask", "Send"):
-                        btn.click(force=True)
-                        sent = True
-                        break
-                if not sent:
-                    ta.press("Enter")
-
-                # Poll the fetch hook for the captured SSE response
-                import time as _time
-                deadline = _time.time() + timeout
-                raw = None
-                while _time.time() < deadline:
-                    _time.sleep(1.0)
-                    err, last = page.evaluate("()=>[window.__duckai.err, window.__duckai.last]")
-                    if err:
-                        if "ERR_BN_LIMIT" in err:
-                            raise SystemExit("duck.ai: rate-limited (ERR_BN_LIMIT)")
-                        raise SystemExit(f"duck.ai: {err[:200]}")
-                    if last:
-                        raw = last
-                        _time.sleep(1.5)
-                        last2 = page.evaluate("()=>window.__duckai.last")
-                        if last2 == last:
-                            break
-                        raw = last2
-                if not raw:
-                    raise SystemExit("duck.ai: timed out waiting for reply")
-                return _parse_sse(raw)
-            finally:
-                page.close()
-        finally:
-            browser.close()
+        deadline = time.time() + timeout
+        raw = None
+        while time.time() < deadline:
+            time.sleep(1.0)
+            err, last = page.evaluate("()=>[window.__duckai.err, window.__duckai.last]")
+            if err:
+                if "ERR_BN_LIMIT" in err:
+                    raise SystemExit("duck.ai: rate-limited (ERR_BN_LIMIT)")
+                raise SystemExit(f"duck.ai: {err[:200]}")
+            if last:
+                raw = last
+                time.sleep(1.5)
+                last2 = page.evaluate("()=>window.__duckai.last")
+                if last2 == last:
+                    break
+                raw = last2
+        if not raw:
+            raise SystemExit("duck.ai: timed out waiting for reply")
+        return _parse_sse(raw)
     finally:
-        pw.stop()
+        page.close()
+        ctx.close()
 
 
 # ---------------------------------------------------------------------------

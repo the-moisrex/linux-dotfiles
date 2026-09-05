@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""duck.ai API — OpenAI-compatible HTTP server backed by Duck.ai.
+
+Usage:
+    duck.ai-api                        # listen on 0.0.0.0:8000
+    duck.ai-api --port 9000            # custom port
+    duck.ai-api --host 127.0.0.1       # bind to localhost only
+
+Endpoints:
+    GET  /v1/models                    list available models
+    POST /v1/chat/completions          OpenAI chat completions format
+    GET  /health                       health check
+
+Requires: playwright, system Chrome/Chromium (same as duck.ai).
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import sys
+import time
+import uuid
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from threading import Lock
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+# ---------------------------------------------------------------------------
+# Import browser logic from duck.ai (same directory)
+# ---------------------------------------------------------------------------
+
+_duck_ai_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "duck.ai")
+_loader = importlib.machinery.SourceFileLoader("_duck_ai", _duck_ai_path)
+_duck = importlib.util.module_from_spec(
+    importlib.util.spec_from_file_location("_duck_ai", _duck_ai_path, loader=_loader)
+)
+_loader.exec_module(_duck)
+_ask_duck = _duck._ask_duck
+
+# ---------------------------------------------------------------------------
+# Model catalog
+# ---------------------------------------------------------------------------
+
+MODEL_IDS = {
+    "gpt-5.6-luna",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-opus-4-8",
+    "mistral-small-2603",
+    "tinfoil/gpt-oss-120b",
+    "tinfoil/gemma4-31b",
+}
+
+MODEL_ALIASES = {
+    "gpt-4o": "gpt-5.4",
+    "gpt-4o-mini": "gpt-5.4-mini",
+    "gpt-5": "gpt-5.4",
+    "gpt-5.4": "gpt-5.4",
+    "gpt-5.4-mini": "gpt-5.4-mini",
+    "gpt-5.6": "gpt-5.6-luna",
+    "gpt-5.6-luna": "gpt-5.6-luna",
+    "gpt-5.6-sol": "gpt-5.6-luna",
+    "o3-mini": "gpt-5.4-mini",
+    "claude-3-5-sonnet": "claude-sonnet-4-6",
+    "claude-3.7-sonnet": "claude-sonnet-4-6",
+    "claude-sonnet": "claude-sonnet-4-6",
+    "claude-sonnet-4": "claude-sonnet-4-6",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-3-haiku": "claude-haiku-4-5",
+    "claude-haiku": "claude-haiku-4-5",
+    "claude-haiku-4-5": "claude-haiku-4-5",
+    "claude-3-opus": "claude-opus-4-8",
+    "claude-opus": "claude-opus-4-8",
+    "claude-opus-4-8": "claude-opus-4-8",
+    "mistral": "mistral-small-2603",
+    "mistral-small": "mistral-small-2603",
+    "mistral-small-2603": "mistral-small-2603",
+}
+
+DEFAULT_MODEL = "gpt-5.6-luna"
+
+_lock = Lock()
+
+
+def resolve_model(name: str | None) -> str:
+    if not name:
+        return DEFAULT_MODEL
+    n = name.strip()
+    if n in MODEL_IDS:
+        return n
+    return MODEL_ALIASES.get(n.lower(), DEFAULT_MODEL)
+
+
+# ---------------------------------------------------------------------------
+# Format conversion helpers
+# ---------------------------------------------------------------------------
+
+def _messages_to_prompt(messages: list[dict]) -> str:
+    parts: list[str] = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+            )
+        if not content:
+            continue
+        if role == "system":
+            parts.append(f"[System instruction: {content}]")
+        elif role == "assistant":
+            parts.append(f"[Previous assistant reply: {content}]")
+        else:
+            parts.append(content)
+    return "\n\n".join(parts) if parts else ""
+
+
+def _make_chunk(model: str, content: str, finish_reason: str | None = None) -> dict:
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {"content": content} if content else {},
+            "finish_reason": finish_reason,
+        }],
+    }
+
+
+def _make_response(model: str, content: str, prompt_tokens: int = 0) -> dict:
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": content},
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": len(content.split()),
+            "total_tokens": prompt_tokens + len(content.split()),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# HTTP handler
+# ---------------------------------------------------------------------------
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+
+    def handle_one_request(self):
+        """Handle one HTTP request, catching client disconnects gracefully."""
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+
+    def _respond(self, code: int, body: dict | str, content_type: str = "application/json") -> None:
+        data = json.dumps(body) if isinstance(body, dict) else body
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data.encode())))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+        self.wfile.write(data.encode())
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._respond(200, {"status": "ok"})
+        elif self.path == "/v1/models":
+            models = [
+                {"id": mid, "object": "model", "owned_by": "duck.ai",
+                 "created": 0, "permission": [], "root": mid, "parent": None}
+                for mid in sorted(MODEL_IDS)
+            ]
+            self._respond(200, {"object": "list", "data": models})
+        else:
+            self._respond(404, {"error": {"message": "Not found", "type": "invalid_request_error"}})
+
+    def do_POST(self):
+        if self.path != "/v1/chat/completions":
+            self._respond(404, {"error": {"message": "Not found", "type": "invalid_request_error"}})
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except json.JSONDecodeError:
+            self._respond(400, {"error": {"message": "Invalid JSON", "type": "invalid_request_error"}})
+            return
+
+        messages = body.get("messages", [])
+        model = resolve_model(body.get("model"))
+        stream = body.get("stream", False)
+        prompt = _messages_to_prompt(messages)
+
+        if not prompt:
+            self._respond(400, {"error": {"message": "No prompt in messages", "type": "invalid_request_error"}})
+            return
+
+        if stream:
+            self._stream_response(model, prompt)
+        else:
+            try:
+                with _lock:
+                    answer = _ask_duck(prompt, timeout=120)
+            except SystemExit as e:
+                self._respond(502, {"error": {"message": str(e), "type": "server_error"}})
+                return
+            except Exception as e:
+                self._respond(502, {"error": {"message": f"{type(e).__name__}: {e}", "type": "server_error"}})
+                return
+            self._respond(200, _make_response(model, answer))
+
+    def _stream_response(self, model: str, prompt: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def _write(data: bytes) -> bool:
+            try:
+                self.wfile.write(data)
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionResetError):
+                return False
+
+        # Role delta
+        chunk = _make_chunk(model, "", None)
+        chunk["choices"][0]["delta"] = {"role": "assistant"}
+        if not _write(f"data: {json.dumps(chunk)}\n\n".encode()):
+            return
+
+        # Run browser query
+        try:
+            with _lock:
+                answer = _ask_duck(prompt, timeout=120)
+        except (SystemExit, Exception) as e:
+            _write(f"data: {json.dumps(_make_chunk(model, f'\n\n[Error: {e}]'))}\n\n".encode())
+            _write(b"data: [DONE]\n\n")
+            return
+
+        # Stream answer
+        words = answer.split()
+        buffer = ""
+        for i, word in enumerate(words):
+            buffer += (" " if buffer else "") + word
+            if len(buffer) > 40 or i == len(words) - 1:
+                if not _write(f"data: {json.dumps(_make_chunk(model, buffer))}\n\n".encode()):
+                    return
+                buffer = ""
+
+        _write(f"data: {json.dumps(_make_chunk(model, '', 'stop'))}\n\n".encode())
+        _write(b"data: [DONE]\n\n")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="OpenAI-compatible API server backed by Duck.ai",
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="bind address (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8000, help="port (default: 8000)")
+    args = parser.parse_args()
+
+    server = ThreadedHTTPServer((args.host, args.port), Handler)
+    print(f"duck.ai API listening on http://{args.host}:{args.port}")
+    print(f"  POST /v1/chat/completions   (stream: true|false)")
+    print(f"  GET  /v1/models")
+    print(f"  GET  /health")
+    print()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nshutdown")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
