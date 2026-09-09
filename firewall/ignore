@@ -381,7 +381,8 @@ EOF
 function update_countries {
     if [ -d "$countries_repo" ]; then
         echo "Updateing the countries' IPs repository.";
-        git -C "$countries_repo" pull origin master --rebase=true --prune --force --depth=1 --progress --no-ff --no-edit --no-commit
+        git -C "$countries_repo" fetch origin master --depth=1 --prune --progress 2>/dev/null
+        git -C "$countries_repo" reset --hard origin/master
     else
         echo "Downloading the countries' IPs repository.";
         git clone --depth=1 -b master https://github.com/ipverse/country-ip-blocks.git "$countries_repo"
