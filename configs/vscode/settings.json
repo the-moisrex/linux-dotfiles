@@ -69,7 +69,7 @@
     "workbench.sideBar.location": "right",
     "workbench.settings.editor": "json",
     "workbench.startupEditor": "none",
-    "workbench.colorTheme": "Light 2026",
+    "workbench.colorTheme": "Quiet Light",
     "explorer.confirmDelete": false,
     // language specific settings:
     "C_Cpp.intelliSenseEngine": "disabled", // conflict with clangd
@@ -92,20 +92,7 @@
     ],
     "cmake.showNotAllDocumentsSavedQuestion": false,
     "extensions.autoUpdate": "off",
-    "roo-cline.debug": false,
-    "roo-cline.allowedCommands": [
-        "git log",
-        "git diff",
-        "git show",
-        "htmlq",
-        "head",
-        "content",
-        "./bin/content",
-        "bin/zarebin",
-        "bin/url",
-        "bin/content --no-curl",
-        "bin/url get",
-        "bin/url list"
-    ],
-    "roo-cline.deniedCommands": []
+    "indentRainbow.ignoreErrorLanguages": [
+        "*"
+    ]
 }
