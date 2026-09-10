@@ -1,7 +1,7 @@
 # Noctalia config — system monitor widgets on bar
 
 [bar.default]
-start = [ "launcher", "wallpaper", "workspaces",  "spacer1", "cpu", "spacer2", "ram", "spacer3", "network_rx", "network_tx" ]
+start = [ "launcher", "wallpaper", "workspaces",  "spacer1", "cpu", "spacer2", "ram", "spacer3", "gpu", "spacer4", "network_rx", "network_tx" ]
 center = [ "clock" ]
 end = [
     "media",
@@ -41,3 +41,10 @@ stat = "net_rx"
 [widget.network_tx]
 type = "sysmon"
 stat = "net_tx"
+
+[widget.gpu]
+type = "sysmon"
+stat = "gpu_usage"
+
+[widget.spacer4]
+type = "spacer"
