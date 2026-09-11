@@ -24,7 +24,6 @@ Components:
   firefox-userchrome setup/setup-firefox-userchrome.sh
   hyprland           setup/setup-hyprland.sh
   niri               setup/setup-niri.sh
-  noctalia           setup/setup-noctalia.sh
   desktop            setup/setup-desktop-configs.sh
 USAGE
 }
@@ -47,7 +46,7 @@ for arg in "$@"; do
 done
 
 if [[ "$ALL" == "true" || ${#COMPONENTS[@]} -eq 0 ]]; then
-    COMPONENTS=(packages sudo screen-lock auto-updates shells editors alacritty vscode chromium gdb firefox-userchrome hyprland niri noctalia desktop)
+    COMPONENTS=(packages sudo screen-lock auto-updates shells editors alacritty vscode chromium gdb firefox-userchrome hyprland niri desktop)
 fi
 
 EXTRA_ARGS=()
@@ -70,7 +69,6 @@ for component in "${COMPONENTS[@]}"; do
         firefox-userchrome) script="setup/setup-firefox-userchrome.sh" ;;
         hyprland) script="setup/setup-hyprland.sh" ;;
         niri) script="setup/setup-niri.sh" ;;
-        noctalia) script="setup/setup-noctalia.sh" ;;
         desktop) script="setup/setup-desktop-configs.sh" ;;
         *)
             echo "Unknown component: $component" >&2

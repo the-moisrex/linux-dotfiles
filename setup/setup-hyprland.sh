@@ -15,7 +15,7 @@ Usage: ./setup/setup-hyprland.sh [flags...]
 
 Install or remove Hyprland tiling compositor and related packages.
 
-Installs: hyprland, noctalia, fuzzel, slurp, hyprpaper, hypridle,
+Installs: hyprland, fuzzel, slurp, hyprpaper, hypridle,
 hyprlock, grim, xdg-desktop-portal-hyprland, hyprpolkitagent.
 
 Also symlinks ~/cmd/configs/hypr -> ~/.config/hypr.
@@ -31,7 +31,6 @@ fi
 
 PACKAGES=(
     hyprland
-    noctalia
     fuzzel
     slurp
     hyprpaper

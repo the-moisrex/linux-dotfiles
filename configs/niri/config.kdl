@@ -24,7 +24,13 @@ input {
 }
 
 layout {
-    gaps 16
+    gaps 8
+    struts {
+        left 0
+        right 0
+        top -8
+        bottom -8
+    }
     center-focused-column "never"
 
     preset-column-widths {
@@ -36,17 +42,16 @@ layout {
     default-column-width { proportion 0.5; }
 
     focus-ring {
-        width 4
-        active-color "#7fc8ff"
-        inactive-color "#505050"
+        width 2
+        active-color "#f38ba8"
+        inactive-color "#45475a"
     }
 
     border {
-        off
-        width 4
-        active-color "#ffc87f"
-        inactive-color "#505050"
-        urgent-color "#9b0000"
+        width 2
+        active-color "#f38ba8"
+        inactive-color "#45475a"
+        urgent-color "#f38ba8"
     }
 }
 
@@ -215,9 +220,9 @@ binds {
 
     Mod+V       { toggle-window-floating; }
     Mod+Shift+V { switch-focus-between-floating-and-tiling; }
-    Mod+W { toggle-column-tabbed-display; }
+    Mod+S { toggle-column-tabbed-display; }
 
-    Mod+O repeat=false { toggle-overview; }
+    Mod+W repeat=false { toggle-overview; }
 
     // Screenshots
     Print { screenshot; }
@@ -230,15 +235,15 @@ binds {
     Mod+Shift+P { power-off-monitors; }
 
     // Media keys
-    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.1+ -l 1.0"; }
-    XF86AudioLowerVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.1-"; }
-    XF86AudioMute        allow-when-locked=true { spawn-sh "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"; }
-    XF86AudioMicMute     allow-when-locked=true { spawn-sh "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"; }
-    XF86AudioPlay        allow-when-locked=true { spawn-sh "playerctl play-pause"; }
-    XF86AudioPause       allow-when-locked=true { spawn-sh "playerctl play-pause"; }
-    XF86AudioStop        allow-when-locked=true { spawn-sh "playerctl stop"; }
-    XF86AudioPrev        allow-when-locked=true { spawn-sh "playerctl previous"; }
-    XF86AudioNext        allow-when-locked=true { spawn-sh "playerctl next"; }
-    XF86MonBrightnessUp   allow-when-locked=true { spawn "brightnessctl" "--class=backlight" "set" "+10%"; }
-    XF86MonBrightnessDown allow-when-locked=true { spawn "brightnessctl" "--class=backlight" "set" "10%-"; }
+    XF86AudioRaiseVolume allow-when-locked=true { spawn "noctalia" "msg" "volume-up"; }
+    XF86AudioLowerVolume allow-when-locked=true { spawn "noctalia" "msg" "volume-down"; }
+    XF86AudioMute        allow-when-locked=true { spawn "noctalia" "msg" "volume-mute"; }
+    XF86AudioMicMute     allow-when-locked=true { spawn "noctalia" "msg" "mic-mute"; }
+    XF86AudioPlay        allow-when-locked=true { spawn "noctalia" "msg" "media" "play-pause"; }
+    XF86AudioPause       allow-when-locked=true { spawn "noctalia" "msg" "media" "play-pause"; }
+    XF86AudioStop        allow-when-locked=true { spawn "noctalia" "msg" "media" "stop"; }
+    XF86AudioPrev        allow-when-locked=true { spawn "noctalia" "msg" "media" "previous"; }
+    XF86AudioNext        allow-when-locked=true { spawn "noctalia" "msg" "media" "next"; }
+    XF86MonBrightnessUp   allow-when-locked=true { spawn "noctalia" "msg" "brightness-up"; }
+    XF86MonBrightnessDown allow-when-locked=true { spawn "noctalia" "msg" "brightness-down"; }
 }
