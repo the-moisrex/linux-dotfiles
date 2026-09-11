@@ -32,6 +32,7 @@ layout {
         bottom -8
     }
     center-focused-column "never"
+    always-center-single-column
 
     preset-column-widths {
         proportion 0.33333
@@ -228,6 +229,7 @@ binds {
     Print { screenshot; }
     Ctrl+Print { screenshot-screen; }
     Alt+Print { screenshot-window; }
+    Mod+Print { spawn "noctalia" "msg" "screenshot-annotate"; }
 
     // Session
     Mod+Shift+E { quit; }
