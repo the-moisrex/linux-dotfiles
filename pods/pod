@@ -112,7 +112,7 @@ pull_latest_images() {
     local failed_images=()
     for image in "${unique_images[@]}"; do
         print_status "Pulling: $image"
-        if podman pull --quiet "$image"; then
+        if podman pull "$image"; then
             print_status "Successfully pulled $image"
         else
             print_error "Failed to pull $image"
@@ -159,7 +159,7 @@ pull_latest_images() {
                 fi
 
                 print_status "Retrying: $final_image"
-                if podman pull --quiet "$final_image"; then
+                if podman pull "$final_image"; then
                     print_status "Successfully pulled $final_image"
                 else
                     print_error "Failed to pull $final_image"

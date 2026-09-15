@@ -3,9 +3,11 @@
 
 // Monitor positions — HDMI-A-2 on left, DP-1 on right
 output "HDMI-A-2" {
+    mode "1600x900"
     position x=0 y=0
 }
 output "DP-1" {
+    mode "2560x1440@74.971"
     position x=1600 y=0
 }
 
@@ -88,6 +90,7 @@ window-rule {
     match app-id="dev.noctalia.Noctalia"
     open-floating true
 }
+
 
 binds {
     Mod+Shift+Slash { show-hotkey-overlay; }
