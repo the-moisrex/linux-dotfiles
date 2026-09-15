@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   netdata:
-    image: netdata/netdata:latest
+    image: docker.io/netdata/netdata:latest
     container_name: netdata
     cap_add:
       - SYS_PTRACE
@@ -27,7 +27,7 @@ services:
       - nointernet
 
   prometheus:
-    image: prom/prometheus:latest
+    image: docker.io/prom/prometheus:latest
     container_name: prometheus
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
@@ -50,7 +50,7 @@ services:
       - nointernet
 
   grafana:
-    image: grafana/grafana:latest
+    image: docker.io/grafana/grafana:latest
     container_name: grafana
     volumes:
       - grafana_data:/var/lib/grafana

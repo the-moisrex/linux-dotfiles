@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   compiler-explorer:
-    image: madduci/docker-compiler-explorer
+    image: docker.io/madduci/docker-compiler-explorer
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.compiler.entrypoints=web"
@@ -16,7 +16,7 @@ services:
       - nointernet
 
   excalidraw:
-    image: excalidraw/excalidraw
+    image: docker.io/excalidraw/excalidraw
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.excalidraw.entrypoints=web"
@@ -100,7 +100,7 @@ services:
   #     - "5901:5901"
 
   jupyter:
-    image: jupyter/datascience-notebook
+    image: docker.io/jupyter/datascience-notebook
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=dev

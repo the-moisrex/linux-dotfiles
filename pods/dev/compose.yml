@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   it-tools:
-    image: corentinth/it-tools
+    image: docker.io/corentinth/it-tools
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ittools.entrypoints=web"
@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
 
   code-server:
-    image: codercom/code-server
+    image: docker.io/codercom/code-server
     environment:
       PASSWORD: dev
     volumes:
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   gitea:
-    image: gitea/gitea
+    image: docker.io/gitea/gitea
     environment:
       USER_UID: 1000
       USER_GID: 1000
@@ -56,9 +56,26 @@ services:
       - nointernet
     restart: unless-stopped
 
+  localstack:
+    image: docker.io/localstack/localstack:latest
+    environment:
+      SERVICES: s3,dynamodb,lambda,sqs,sns
+      DEBUG: 0
+    volumes:
+      - localstack-data:/var/lib/localstack
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.localstack.entrypoints=web"
+      - "traefik.http.routers.localstack.rule=Host(`aws.localhost`) || Host(`localstack.localhost`)"
+      - "traefik.http.services.localstack.loadbalancer.server.port=4566"
+      - "traefik.docker.network=nointernet"
+    networks:
+      - nointernet
+    restart: unless-stopped
+
   # Minimal Sentry services
   sentry-postgres:
-    image: postgres:15
+    image: docker.io/library/postgres:15
     environment:
       POSTGRES_USER: sentry
       POSTGRES_PASSWORD: sentry
@@ -70,13 +87,13 @@ services:
     restart: unless-stopped
 
   sentry-redis:
-    image: redis:alpine
+    image: docker.io/library/redis:alpine
     restart: unless-stopped
     networks:
       - nointernet
 
   sentry-web:
-    image: sentry:latest
+    image: docker.io/library/sentry:latest
     depends_on:
       - sentry-postgres
       - sentry-redis
@@ -107,6 +124,7 @@ services:
 volumes:
   code-data:
   gitea-data:
+  localstack-data:
   sentry-data:
   sentry-postgres-data:
 

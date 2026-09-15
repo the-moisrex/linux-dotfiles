@@ -71,6 +71,8 @@ pull_latest_images() {
         return 0
     fi
 
+    # Collect all latest images from all pods
+    local all_images=()
     local pod compose_file
     for pod in "${pods_to_update[@]}"; do
         if ! compose_file="$(get_compose_file "$pod")"; then
@@ -78,32 +80,71 @@ pull_latest_images() {
             continue
         fi
 
-        print_status "Checking for 'latest' tagged images in pod: $pod"
-        
-        # Extract image names from the compose file that use 'latest' tag
         local latest_images=()
         if command -v yq &> /dev/null; then
-            # Using yq to parse YAML properly
             mapfile -t latest_images < <(yq '.services[] | select(.image) | .image' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true)
         else
-            # Fallback to grep if yq is not available
             mapfile -t latest_images < <(grep -oE '[^[:space:]]*:[^[:space:]]*' "$compose_file" 2>/dev/null | grep ':latest$\|:latest[^a-zA-Z0-9]' || true)
         fi
-        
-        if [[ ${#latest_images[@]} -gt 0 ]]; then
-            print_status "Found ${#latest_images[@]} 'latest' tagged images in pod $pod. Pulling updates..."
-            
-            local image
-            for image in "${latest_images[@]}"; do
-                print_status "Pulling latest image: $image"
-                if podman pull "$image"; then
-                    print_status "Successfully pulled $image"
-                else
-                    print_error "Failed to pull $image"
-                fi
-            done
+
+        all_images+=("${latest_images[@]}")
+    done
+
+    if [[ ${#all_images[@]} -eq 0 ]]; then
+        print_status "No 'latest' tagged images found in any pod."
+        return 0
+    fi
+
+    # Deduplicate
+    local unique_images=()
+    local image
+    for image in "${all_images[@]}"; do
+        if [[ ! " ${unique_images[*]} " =~ " ${image} " ]]; then
+            unique_images+=("$image")
+        fi
+    done
+
+    # Show images and ask for registry once
+    print_status "Found ${#unique_images[@]} 'latest' tagged image(s) to pull:"
+    for image in "${unique_images[@]}"; do
+        echo "  - $image"
+    done
+    echo
+
+    local REGISTRY="docker.io"
+    echo -e "Select container registry:"
+    echo "  1) docker.io (default)"
+    echo "  2) ghcr.io"
+    echo "  3) quay.io"
+    echo "  4) Keep as-is (no rewriting)"
+    echo
+    read -r -p "Choice [1-4, default=1]: " registry_choice
+    case "${registry_choice:-1}" in
+        2) REGISTRY="ghcr.io" ;;
+        3) REGISTRY="quay.io" ;;
+        4) REGISTRY="" ;;
+        *) REGISTRY="docker.io" ;;
+    esac
+
+    # Pull all images
+    for image in "${unique_images[@]}"; do
+        local final_image="$image"
+        if [[ -n "$REGISTRY" ]]; then
+            # Skip if image already has an explicit registry (contains a dot before the first slash)
+            if [[ "$image" =~ ^[^/]*\.*[^/]*/ ]]; then
+                final_image="$image"
+            elif [[ "$image" == *"/"* ]]; then
+                final_image="$REGISTRY/$image"
+            else
+                final_image="$REGISTRY/library/$image"
+            fi
+        fi
+
+        print_status "Pulling: $final_image"
+        if podman pull --quiet "$final_image"; then
+            print_status "Successfully pulled $final_image"
         else
-            print_status "No 'latest' tagged images found in pod: $pod"
+            print_error "Failed to pull $final_image"
         fi
     done
 }

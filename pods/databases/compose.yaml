@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Neo4j graph database
   neo4j:
-    image: neo4j:latest
+    image: docker.io/library/neo4j:latest
     container_name: neo4j-db
     restart: unless-stopped
     environment:
@@ -29,7 +29,7 @@ services:
 
   # MariaDB (compatible with MySQL)
   mariadb:
-    image: mariadb:latest
+    image: docker.io/library/mariadb:latest
     container_name: mariadb-db
     restart: unless-stopped
     environment:
@@ -54,7 +54,7 @@ services:
 
   # phpMyAdmin for MariaDB/MySQL management
   phpmyadmin:
-    image: phpmyadmin:latest
+    image: docker.io/library/phpmyadmin:latest
     container_name: phpmyadmin-web
     restart: unless-stopped
     environment:
@@ -82,7 +82,7 @@ services:
 
   # SQLite Admin interface
   sqlite:
-    image: coleifer/sqlite-web:latest
+    image: docker.io/coleifer/sqlite-web:latest
     container_name: sqlite-admin
     restart: unless-stopped
     volumes:
@@ -103,7 +103,7 @@ services:
 
   # DuckDB - Using a Jupyter notebook container with DuckDB installed
   duckdb:
-    image: jupyter/scipy-notebook:latest
+    image: docker.io/jupyter/scipy-notebook:latest
     container_name: duckdb-jupyter
     restart: unless-stopped
     volumes:
@@ -130,7 +130,7 @@ services:
 
   # PostgreSQL database
   postgres:
-    image: postgres:15
+    image: docker.io/library/postgres:15
     container_name: postgres-db
     restart: unless-stopped
     environment:
@@ -153,7 +153,7 @@ services:
 
   # pgAdmin for PostgreSQL management
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: docker.io/dpage/pgadmin4:latest
     container_name: pgadmin-web
     restart: unless-stopped
     environment:
@@ -184,7 +184,7 @@ services:
 
   # Adminer - Universal database management tool
   adminer:
-    image: adminer:latest
+    image: docker.io/library/adminer:latest
     container_name: adminer-web
     restart: unless-stopped
     ports:
@@ -208,7 +208,7 @@ services:
 
   # Redis - In-memory data structure store
   redis:
-    image: redis:latest
+    image: docker.io/library/redis:latest
     container_name: redis-db
     restart: unless-stopped
     volumes:
@@ -227,7 +227,7 @@ services:
 
   # MongoDB - NoSQL document database
   mongodb:
-    image: mongo:latest
+    image: docker.io/library/mongo:latest
     container_name: mongodb-db
     restart: unless-stopped
     environment:
@@ -250,7 +250,7 @@ services:
   # Note: Full Supabase deployment requires additional services (auth, storage, etc.)
   # This is a simplified version focusing on the database layer
   supabase-db:
-    image: postgres:15
+    image: docker.io/library/postgres:15
     container_name: supabase-postgres
     restart: unless-stopped
     environment:
@@ -275,7 +275,7 @@ services:
 
   # Supabase Studio - Web-based interface for managing Supabase projects
   supabase-studio:
-    image: supabase/studio:latest
+    image: docker.io/supabase/studio:latest
     container_name: supabase-studio
     restart: unless-stopped
     environment:
@@ -300,7 +300,7 @@ services:
 
   # MinIO - Object storage compatible with Amazon S3
   minio:
-    image: minio/minio
+    image: docker.io/minio/minio
     container_name: minio-s3
     command: server /data --console-address ":9001" --address ":9000"
     environment:

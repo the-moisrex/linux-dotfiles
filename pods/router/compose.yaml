@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   traefik:
-    image: traefik:latest
+    image: docker.io/library/traefik:latest
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
