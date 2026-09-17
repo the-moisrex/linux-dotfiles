@@ -1,3 +1,6 @@
+[general]
+import = ["~/.config/alacritty/themes/noctalia.toml"]
+
 # [colors]
 # [colors.primary]
 # background = "0x282828"
@@ -24,8 +27,8 @@
 # white = "0xd4be98"
 
 # Themes from: https://github.com/alacritty/alacritty-theme
-general.import = [
-    "~/.config/alacritty/alacritty-theme/themes/github_light.toml"
+# general.import = [
+    # "~/.config/alacritty/alacritty-theme/themes/github_light.toml"
     # "~/.config/alacritty/alacritty-theme/themes/carbonfox.toml"
     # "~/.config/alacritty/alacritty-theme/themes/rose_pine.toml"
     # "~/.config/alacritty/alacritty-theme/themes/gruvbox_dark.toml"
@@ -33,7 +36,7 @@ general.import = [
     # "~/.config/alacritty/alacritty-theme/themes/konsole_linux.toml"
     # "~/.config/alacritty/alacritty-theme/themes/hyper.toml"
     # "~/.config/alacritty/alacritty-theme/themes/breeze.toml"
-]
+# ]
 
 [terminal]
 # shell = "/usr/bin/nu"
