@@ -334,15 +334,16 @@ if ! $STDIN_PIPED; then
     # For bash prompts, pipe clipboard content to the script and handle output
     if $STDOUT_TO_TERMINAL; then
       # Capture output when stdout goes to terminal
-      OUTPUT=$("$SCRIPT_DIR/c.p" | FROM_CLIPBOARD=1 bash "$PROMPT_FILE" "$@" | sanitize_output)
+      # c.p || true: clipboard failures must not kill the pipeline
+      OUTPUT=$(("$SCRIPT_DIR/c.p" || true) | FROM_CLIPBOARD=1 bash "$PROMPT_FILE" "$@" | sanitize_output)
       copy_output_to_clipboard "$OUTPUT"
     else
-      # Just pipe clipboard content to the script
-      exec "$SCRIPT_DIR/c.p" | FROM_CLIPBOARD=1 bash "$PROMPT_FILE" "$@" | sanitize_output
+      # Just pipe clipboard content to the script (no exec — clipboard failure is non-fatal)
+      ("$SCRIPT_DIR/c.p" || true) | FROM_CLIPBOARD=1 bash "$PROMPT_FILE" "$@" | sanitize_output
     fi
   else
     # For text prompts, output the file content first, then append clipboard content
-    OUTPUT=$( { cat -- "$PROMPT_FILE"; "$SCRIPT_DIR/c.p"; } | sanitize_output )
+    OUTPUT=$( { cat -- "$PROMPT_FILE"; ("$SCRIPT_DIR/c.p" || true); } | sanitize_output )
     handle_output "$OUTPUT"
   fi
 else
