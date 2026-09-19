@@ -110,6 +110,17 @@ def autocomplete(snippet):
         # Strictly one per line to stdout
         sys.stdout.write("\n".join(matches) + "\n")
 
+def expand_commands(text):
+    """Convert -cmd and .cmd to /cmd with newlines between commands.
+    
+    Words starting with - or . followed by a word character are treated as commands.
+    Each gets a newline before it and the prefix is replaced with /.
+    Example: "-man test .fix" -> "/man test\n/fix"
+    """
+    import re as _re
+    # Match words starting with - or . followed by word characters
+    return _re.sub(r'(?<!\S)([-.])(\w+)', lambda m: '\n/' + m.group(2), text)
+
 # --- MODE 2: MODIFICATION ---
 def process_modification(input_text):
     """Single-pass processing loop to resolve variables, commands, and files."""
@@ -197,37 +208,74 @@ def process_modification(input_text):
 def main():
     global VERBOSE
     
-    parser = argparse.ArgumentParser(description="Headless Prompt Modification Engine & Autocomplete Utility.")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging to stderr.")
-    parser.add_argument("-c", "--complete", type=str, help="Trigger Autocomplete Mode with the given snippet.")
-    parser.add_argument("-i", "--input", type=str, help="Input file for Modification Mode.")
-    parser.add_argument("input_text", nargs="?", default=None, help="Input text for Modification Mode.")
+    # Parse sys.argv manually to preserve arg order for -cmd/.cmd expansion.
+    # Known flags are extracted; everything else is input text.
+    argv = sys.argv[1:]
+    VERBOSE = False
+    complete = None
+    input_file = None
+    do_expand = False
+    input_parts = []
     
-    args = parser.parse_args()
-    VERBOSE = args.verbose
+    known_flags = {
+        '-v': ('verbose', 0), '--verbose': ('verbose', 0),
+        '-c': ('complete', 1), '--complete': ('complete', 1),
+        '-i': ('input', 1), '--input': ('input', 1),
+        '-e': ('expand', 0), '--expand': ('expand', 0),
+        '-h': ('help', 0), '--help': ('help', 0),
+    }
+    
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in known_flags:
+            flag_name, nargs = known_flags[arg]
+            if flag_name == 'help':
+                print("Usage: prompt-compiler [-v] [-c SNIPPET] [-i FILE] [-e] [TEXT]")
+                print("       command | prompt-compiler [-v] [-e]")
+                sys.exit(0)
+            elif nargs == 0:
+                if flag_name == 'verbose': VERBOSE = True
+                elif flag_name == 'expand': do_expand = True
+            elif nargs == 1:
+                i += 1
+                if flag_name == 'complete': complete = argv[i] if i < len(argv) else None
+                elif flag_name == 'input': input_file = argv[i] if i < len(argv) else None
+        else:
+            input_parts.append(arg)
+        i += 1
     
     # Initialize cache silently on startup
     init_cache()
 
-    if args.complete is not None:
+    if complete is not None:
         # MODE 1: Autocomplete
-        autocomplete(args.complete)
+        autocomplete(complete)
     else:
         # MODE 2: Modification
-        input_text = args.input_text
+        input_text = " ".join(input_parts) if input_parts else None
+        from_args = bool(input_parts)
         
-        if args.input:
+        if input_file:
             try:
-                with open(args.input, "r") as f:
+                with open(input_file, "r") as f:
                     input_text = f.read()
+                    from_args = False
             except IOError as e:
-                parser.error(f"Failed to read input file: {e}")
-        elif input_text is None:
+                print(f"prompt-compiler: error: Failed to read input file: {e}", file=sys.stderr)
+                sys.exit(2)
+        elif not input_text:
             # Read from stdin if no positional argument is provided
             if not sys.stdin.isatty():
                 input_text = sys.stdin.read()
+                from_args = False
             else:
-                parser.error("Modification mode requires input_text as an argument, -i/--input, or piped via stdin.")
+                print("prompt-compiler: error: Modification mode requires input_text as an argument, -i/--input, or piped via stdin.", file=sys.stderr)
+                sys.exit(2)
+        
+        # Expand -cmd/.cmd to /cmd: auto for args, only with -e for stdin
+        if input_text and (from_args or do_expand):
+            input_text = expand_commands(input_text)
                 
         result = process_modification(input_text)
         

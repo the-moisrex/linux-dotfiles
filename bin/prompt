@@ -244,6 +244,13 @@ if [[ "${1:-}" == "list-prompts" ]]; then
   exit 0
 fi
 
+# Shortcut: prompt -cmd args  →  prompt-compiler -cmd args
+# If first arg starts with - or ., treat all args as input for prompt-compiler
+if [[ "${1:-}" == -* || "${1:-}" == .* ]]; then
+  "$SCRIPT_DIR/prompt-compiler" "$@"
+  exit $?
+fi
+
 # If no args -> show usage (but user didn't request we print anything but errors; usage here is explicit)
 if [[ $# -lt 1 ]]; then
   # usage >&2
