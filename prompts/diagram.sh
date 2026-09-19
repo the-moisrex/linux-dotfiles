@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 diagram_type="mermaid"
 
@@ -54,7 +52,7 @@ echo
 echo "If the code is complex, produce multiple focused diagrams rather than one overwhelming diagram."
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

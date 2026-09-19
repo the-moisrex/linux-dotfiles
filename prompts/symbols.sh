@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
     cat <<'EOF'
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 
 echo "Review the symbols in this code and find bad names that should be renamed."
@@ -32,7 +30,7 @@ fi
 
 
 # Iterate through all the collected files
-for file_path in "$@"; do
+for file_path in "${ARGS[@]}"; do
     if [[ -f "$file_path" ]]; then
         file=$(basename "$file_path")
         echo

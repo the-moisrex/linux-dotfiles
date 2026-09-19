@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -14,8 +13,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 
 echo "Review this for security and safety issues."
@@ -25,7 +23,7 @@ echo "List findings by severity, explain the risk briefly, and suggest the small
 echo
 
 # Process all collected files
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

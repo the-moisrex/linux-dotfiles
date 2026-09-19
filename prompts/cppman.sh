@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 if ! command -v cppman >/dev/null 2>&1; then
     echo "Error: cppman is not installed. Please install it (e.g., pip install cppman or your package manager)." >&2
@@ -30,7 +28,7 @@ echo
 export PAGER=cat
 export MANPAGER=cat
 
-for page in "$@"; do
+for page in "${ARGS[@]}"; do
     echo "Topic: $page"
     echo "\`\`\`text"
     # col -bx strips the overstriking/backspace characters that `man` uses for bold and underline formatting

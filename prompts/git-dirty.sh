@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -172,8 +171,8 @@ if ! $has_content; then
 fi
 
 # --- AI instructions ---
-echo "You are reviewing changes in a Git repository."
-echo "Analyze the following file changes and provide insights, suggestions, or summaries as appropriate."
+# echo "You are reviewing changes in a Git repository."
+# echo "Analyze the following file changes and provide insights, suggestions, or summaries as appropriate."
 echo
 
 # --- Render output ---

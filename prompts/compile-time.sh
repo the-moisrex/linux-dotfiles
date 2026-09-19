@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -14,8 +13,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "Review this C++ code and identify easy fixes to reduce compile time."
 echo "Look for:"
@@ -32,7 +30,7 @@ echo "Call out which issues matter most in practice, and provide a git diff for 
 echo "Do not sacrifice correctness or introduce severe runtime performance regressions for minor compile-time wins."
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

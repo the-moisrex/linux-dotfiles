@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -16,8 +15,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
     GIT_ROOT="$(git rev-parse --show-toplevel)"
@@ -66,7 +64,7 @@ fi
 
 # Run clang-tidy
 command_str="clang-tidy ${CT_ARGS[*]} $*"
-run_output=$(clang-tidy "${CT_ARGS[@]}" "$@"  2>&1 || true)
+run_output=$(clang-tidy "${CT_ARGS[@]}" "${ARGS[@]}"  2>&1 || true)
 
 if [[ -n "$head_lines" ]]; then
     run_output="$(printf "%s" "$run_output" | head -n "$head_lines")"

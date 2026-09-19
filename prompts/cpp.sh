@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -34,10 +33,8 @@ is_compiler_output() {
 }
 
 
-NO_FILES=true
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt --no-files
 
 # If we captured stdin, inject it at the top of the context just like `print_stdin` would have
 if [[ -n "$stdin_content" ]]; then

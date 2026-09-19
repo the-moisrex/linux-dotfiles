@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "You are an expert debugger across all programming languages and runtimes."
 echo "Analyze the provided code, error messages, stack traces, or logs and identify the root cause of the issue."
@@ -36,7 +34,7 @@ echo "- Environmental issues (missing deps, wrong versions, path problems)"
 echo "- Race conditions, resource leaks, and off-by-one errors"
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -14,8 +13,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "Write a short GDB script to help debug the core function or algorithm in the provided code."
 echo "IMPORTANT: Do NOT provide a generic or generalized GDB template. You must specifically target the code provided below, using the actual function names, variable names, and logic present in these exact snippets."
@@ -55,7 +53,7 @@ gdb -q --nh -batch -ex "help" -ex "help data" -ex "help breakpoints" -ex "help t
 
 
 # Iterate through all collected file arguments
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

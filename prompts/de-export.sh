@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -16,8 +15,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 is_cpp_file() {
     local base ext
@@ -42,7 +40,7 @@ if [[ -n "$stdin_content" ]]; then
     all_content+="$stdin_content"$'\n'
 fi
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]] && is_cpp_file "$file"; then
         cpp_files+=("$file")
         all_content+="$(cat -- "$file")"$'\n'

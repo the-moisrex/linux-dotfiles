@@ -69,7 +69,6 @@
     "workbench.sideBar.location": "right",
     "workbench.settings.editor": "json",
     "workbench.startupEditor": "none",
-    "workbench.colorTheme": "Quiet Light",
     "explorer.confirmDelete": false,
     // language specific settings:
     "C_Cpp.intelliSenseEngine": "disabled", // conflict with clangd

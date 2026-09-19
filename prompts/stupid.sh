@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 
 show_help() {
@@ -16,8 +15,7 @@ EOF
 
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "Find the stupid mistakes in this code."
 echo "Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'."
@@ -25,7 +23,7 @@ echo "Be blunt but useful. List each issue with a short explanation and the smal
 echo "At the end, suggest small git patches."
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

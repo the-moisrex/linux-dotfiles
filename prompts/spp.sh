@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 if [[ $# -eq 0 ]]; then
     echo "Usage: prompt spp [--head N] <symbol> [symbol...]" >&2
@@ -26,7 +24,7 @@ fi
 echo "Additional C++ symbol context:"
 echo
 
-for symbol in "$@"; do
+for symbol in "${ARGS[@]}"; do
     echo "Symbol: $symbol"
     echo
     echo '```cpp'

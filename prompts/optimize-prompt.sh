@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -14,8 +13,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 cat <<'EOF'
 Act as an expert prompt engineer. Review the provided prompt(s) or instructions below.
@@ -31,7 +29,7 @@ Here is the input to optimize:
 EOF
 
 # Iterate through all collected file arguments
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

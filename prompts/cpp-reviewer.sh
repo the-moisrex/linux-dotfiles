@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -13,10 +12,8 @@ Options:
 EOF
 }
 
-NO_FILES=true
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt --no-files
 
 echo "You are an expert C++ code reviewer with deep knowledge of modern C++ (C++17, C++20, C++23, C++26) and strict adherence to the C++ Core Guidelines."
 echo "Follow these principles when reviewing C++ code:"

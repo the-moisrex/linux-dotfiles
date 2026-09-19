@@ -45,14 +45,14 @@ print_stdin() {
     if ! [ -t 0 ]; then
         stdin_piped=true
         stdin_content="$(cat)"
+        STDIN_CONSUMED=true
     fi
     
     if $NO_FILES; then
         return
     fi
 
-    if $stdin_piped && ! [ -v FROM_CLIPBOARD ] && [[ -n "$stdin_content" ]]; then
-        STDIN_CONSUMED=true
+    if $stdin_piped && [[ -n "$stdin_content" ]]; then
         printf '%s\n\n' "$stdin_content"
         # Check the length of the global ARGS array instead of $#
     elif [[ ${#ARGS[@]} -eq 0 ]]; then
@@ -240,6 +240,30 @@ resolve_input_file() {
 
 
 common_behavior() {
+    parse_arguments
+    print_stdin
+}
+
+# Read clipboard content. Scripts that need clipboard call this explicitly.
+# Returns empty string silently if clipboard is unavailable or empty.
+clipboard_content() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    "$script_dir/../bin/c.p" 2>/dev/null || true
+}
+
+# Initialize a prompt script. Replaces the common boilerplate:
+#   source "$(dirname "$0")/_common.sh"
+#   common_behavior
+#   set -- "${ARGS[@]}"
+#
+# Usage:
+#   init_prompt              # standard: parse args, consume stdin, set $@
+#   init_prompt --no-files   # same, but skip file selection/fallback
+init_prompt() {
+    if [[ "${1:-}" == "--no-files" ]]; then
+        NO_FILES=true
+    fi
     parse_arguments
     print_stdin
 }

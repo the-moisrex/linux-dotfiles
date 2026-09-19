@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "You are a technical documentation expert."
 echo "Generate or improve a comprehensive README.md based on the provided code and context."
@@ -51,7 +49,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo
 fi
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

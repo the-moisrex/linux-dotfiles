@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -20,10 +19,8 @@ Options:
 EOF
 }
 
-NO_FILES=true
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt --no-files
 
 find_git_root
 
@@ -42,21 +39,32 @@ agent_files=(
     ARCHITECTURE.md
 )
 
+# Embed a file using plain text to avoid nested markdown fences
+# (AGENTS.md often contains ``` blocks that break when wrapped in ```markdown)
+embed_agent_file() {
+    local path="$1"
+    local name
+    name="$(basename "$path")"
+    echo
+    echo "File: $name"
+    echo '```text'
+    trim_context "$(cat -- "$path")"
+    echo '```'
+}
+
 found=0
 
 for name in "${agent_files[@]}"; do
     path="$GIT_ROOT/$name"
     if [[ -f "$path" ]]; then
-        embed_file "$path"
-        echo
+        embed_agent_file "$path"
         found=1
     fi
 done
 
 if [[ -d "$GIT_ROOT/.opencode" ]]; then
     while IFS= read -r -d '' mdfile; do
-        embed_file "$mdfile"
-        echo
+        embed_agent_file "$mdfile"
         found=1
     done < <(find "$GIT_ROOT/.opencode" -maxdepth 1 -name '*.md' -print0 2>/dev/null || true)
 fi

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -14,8 +13,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "Add comprehensive docstrings to all functions, classes, and methods in the following code."
 echo "Ensure the docstrings clearly describe:"
@@ -28,7 +26,7 @@ echo "Adhere to standard documentation conventions for the specific language if 
 echo "Return the updated code with the newly added docstrings or write a patch file."
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if ! resolved_file="$(resolve_input_file "$file")"; then
         printf 'prompt docstring: file not found: %s\n' "$file" >&2
         continue

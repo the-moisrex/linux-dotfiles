@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -21,18 +20,15 @@ EOF
 }
 
 # Prevent _common.sh from triggering fzf when no files are passed
-NO_FILES=true
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt --no-files
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 
-# Manually handle stdin since we disabled print_stdin in _common.sh
-if ! [ -t 0 ]; then
-    cat
-    echo
+# Print stdin content as context for the AI
+if [[ -n "${stdin_content:-}" ]]; then
+    printf '%s\n\n' "$stdin_content"
 fi
 
 echo "Write a new bash prompt script for this repository."
@@ -42,10 +38,10 @@ echo "Create a complete, ready-to-use script under prompts/ that generates an AI
 echo "Match the style, structure, and helpers used by the existing prompt scripts."
 echo
 echo "Requirements for the generated script:"
-echo "- Start with a proper bash shebang and 'set -euo pipefail' unless there is a strong reason not to."
+echo "- Start with a proper bash shebang."
 echo "- Define a show_help function and support --help/-h via the shared argument parser."
 echo "- The script will be called using a wrapper script named 'prompt' (e.g., 'prompt my-script'). Ensure the help menu usage reflects this (e.g., 'Usage: prompt my-script')."
-echo "- Source prompts/_common.sh and call common_behavior, then 'set -- \"\${ARGS[@]}\"'."
+echo "- Source prompts/_common.sh and call init_prompt."
 echo "- Support optional file arguments and stdin the same way the other prompt scripts do."
 echo "- Use infer_lang and trim_context when embedding file contents."
 echo "- Print clear AI instructions first, then embed any needed context as fenced code blocks."
@@ -68,7 +64,7 @@ embed_file "$script_dir/fix.sh" "prompts/fix.sh (example)"
 embed_file "$script_dir/symbols.sh" "prompts/symbols.sh (example)"
 
 # Optional extra context from the caller
-for file_path in "$@"; do
+for file_path in "${ARGS[@]}"; do
     resolved="$(resolve_input_file "$file_path" 2>/dev/null || true)"
     if [[ -n "${resolved:-}" && -f "$resolved" ]]; then
         embed_file "$resolved"

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 curdir="$(realpath "$(dirname "$0")/../bin")"
 exact_args=()

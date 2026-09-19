@@ -2,8 +2,6 @@
 
 # Clipboard utility that works across Wayland/KDE/X11.
 
-set -euo pipefail
-
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "You are a code migration expert."
 echo "Help migrate the provided code from its current state to the target framework, API, or language version."
@@ -36,7 +34,7 @@ echo "- Flag any semantic changes that cannot be done automatically"
 echo "- Update imports, function signatures, and deprecated patterns"
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

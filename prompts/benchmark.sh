@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,8 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "You are a performance engineering expert."
 echo "Analyze the provided code and design meaningful benchmarks to measure its performance."
@@ -41,7 +39,7 @@ echo "- Measure what matters: p50, p95, p99 latency, not just averages"
 echo "- Compare against a baseline when possible"
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

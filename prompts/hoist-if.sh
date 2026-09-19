@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -14,8 +13,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "Analyze the code below and find opportunities to move if statements outside of for/while loops."
 echo "Focus on conditions that are loop-invariant: the condition's result does not change across iterations."
@@ -26,7 +24,7 @@ echo "  3. Note any caveats (readability trade-offs, cases where hoisting is inv
 echo "Do not hoist conditions that depend on the loop variable or mutate state inside the loop."
 echo
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"

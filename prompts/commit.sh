@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,9 +14,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-NO_FILES=true
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt --no-files
 
 # Ensure we are inside a git repository
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

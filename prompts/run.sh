@@ -21,8 +21,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 RUN_ARGS=()
 while [[ $# -gt 0 ]]; do

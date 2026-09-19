@@ -236,6 +236,9 @@ alias lms.prompt "xargs -0 lms chat --reasoning off -p"
 function prompt.watch
     inotifywait --format "%T %w%f" --timefmt "%s" -mrqe close_write ~/prompts/ | stdbuf -oL uniq | stdbuf -oL cut -d" " -f2 | stdbuf -oL grep -E "\.prompt.md\$" | xargs -rI {} fish -lic 'set -gx _ZO_EXCLUDE_DIRS "$HOME/prompts/*;$HOME/prompts/"; builtin cd $(zoxide query $(realpath $(dirname "{}") --relative-to="$HOME/prompts/")); prompt-compiler -i {} | asfile -p $(basename "{}" | sed "s/.prompt.md\$//") -s ".md" -t $(dirname "{}") -d -- gnome-text-editor --new-window'
 end
+abbr pro prompt
+abbr prom prompt
+abbr promp prompt
 
 function unsudo -d "un-sudo some commands"
     for arg in $argv

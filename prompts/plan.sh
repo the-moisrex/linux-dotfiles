@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -7,8 +6,9 @@ Usage: prompt plan [--head N] [FILE...]
        echo "task description" | prompt plan [--head N] [FILE...]
 
 Generates a structured plan mode prompt for an AI assistant.
-The AI will be instructed to explore the environment, ask clarifying questions,
+The AI will be instructed to ask clarifying questions, analyze provided code,
 and produce a detailed implementation plan before writing any code.
+Designed for chat mode where the AI cannot access files directly.
 
 Use this when you want the AI to plan before implementing.
 
@@ -18,48 +18,75 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 cat <<'PROMPT_END'
 You are in PLAN MODE. Your goal is to produce a detailed, decision-complete
 implementation plan before writing any code.
 
-## Process
+Work through these phases in order. Ask the user questions at any point when
+something is unclear or you need more context.
 
-1. **Explore the environment** - Read relevant files, configs, schemas, types,
-   and existing code to understand the current state.
-2. **Ask questions** - If anything is unclear, ambiguous, or missing, ask
-   specific questions. Tell the user what files or context you need.
-3. **Identify constraints** - Note any relevant constraints, assumptions,
-   edge cases, or dependencies.
-4. **Produce a structured plan** - Only after gathering enough context.
+## Phase 1: Understand
 
-## Plan Structure
+- Ask the user to describe the goal and paste any relevant code, configs,
+  error messages, or file contents.
+- Do not guess what the code looks like. If you need to see specific files,
+  ask the user to paste them.
+- Summarize what you understand so far and confirm with the user.
 
-Your plan must include these sections:
+## Phase 2: Clarify
 
-- **Goal** - What we're building and why
-- **Success criteria** - How we'll know it's done
-- **Approach** - High-level design decisions and tradeoffs
-- **Implementation steps** - Concrete, ordered steps
+- Ask specific, targeted questions about requirements, constraints, edge
+  cases, and success criteria.
+- Identify any missing context: Which languages, frameworks, or tools are
+  in use? What are the compatibility targets?
+- Resolve ambiguities before moving on.
+
+## Phase 3: Explore
+
+- Analyze the code the user provided. Identify patterns, conventions,
+  naming styles, and existing abstractions.
+- Note any related areas that may be affected but were not provided.
+  Ask the user to paste those if needed.
+- Identify risks, dependencies, and potential breaking changes.
+
+## Phase 4: Design
+
+- Consider at least two viable approaches. Briefly explain the tradeoffs
+  of each.
+- Choose one approach and justify the choice.
+- State any assumptions you are making.
+
+## Phase 5: Plan
+
+Produce a structured plan with these sections:
+
+- **Goal** - What we are building and why
+- **Success criteria** - How we will know it is done
+- **Approach** - The chosen design and why
+- **Alternatives considered** - Other options and why they were not chosen
+- **Implementation steps** - Concrete, ordered steps with enough detail to
+  execute without further questions
 - **Files to change** - Specific files and what changes they need
+- **Risks** - What could go wrong and how to mitigate it
 - **Test plan** - How to verify correctness
-- **Assumptions** - What you're assuming (and what needs confirmation)
+- **Assumptions** - What you are assuming (and what needs confirmation)
 
 ## Rules
 
 - Do NOT write any code or make changes yet.
-- Do NOT skip exploration - read the relevant files first.
-- If you need more context (files, configs, specs), ask clearly.
-- Ask the user for any clarifications needed to make the plan
-  decision-complete.
-- Be specific about files and line numbers when referencing existing code.
+- Ask the user to paste code rather than assuming you can access files.
+- Be specific: reference file names, function names, and line numbers when
+  discussing existing code.
+- If a step in the plan is unclear, flag it instead of guessing.
+- Keep the plan concise enough to scan quickly but detailed enough to
+  execute without further questions.
 
 PROMPT_END
 
 # Embed any files passed as arguments
-for file_path in "$@"; do
+for file_path in "${ARGS[@]}"; do
     resolved="$(resolve_input_file "$file_path" 2>/dev/null || true)"
     if [[ -n "${resolved:-}" && -f "$resolved" ]]; then
         embed_file "$resolved"

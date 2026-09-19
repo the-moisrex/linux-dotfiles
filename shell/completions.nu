@@ -144,7 +144,12 @@ def complete_prompt [spans: list<string>] {
         let prompt_names = try {
             prompt list-prompts 2>/dev/null
             | lines
-            | each {|name| {value: $name, description: "Prompt name"} }
+            | each {|name| [
+                {value: $name, description: "Prompt name"}
+                {value: $".$name", description: "Prompt name (dot shorthand)"}
+                {value: $"-"$name, description: "Prompt name (dash shorthand)"}
+            ]}
+            | flatten
         } catch { [] }
         filter_completions $word ($static ++ $prompt_names)
     }

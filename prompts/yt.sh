@@ -3,6 +3,7 @@ set -o nounset
 # don't enable -e globally because we use explicit if/else checks;
 # keep pipefail local where needed (we also set it inside transform_url)
 
+source "$(dirname "$0")/_common.sh"
 curdir="$(realpath "$(dirname "$0")/../bin")"
 
 show_help() {
@@ -49,7 +50,16 @@ transform_url() {
 process_stdin() {
   # Read all stdin into a variable while preserving newlines
   local input
-  input="$(cat -)"
+  if [ -t 0 ]; then
+    # No stdin piped — try clipboard as fallback
+    input="$(clipboard_content)"
+    if [[ -z "$input" ]]; then
+      echo "No input. Pipe a URL or clipboard content." >&2
+      exit 1
+    fi
+  else
+    input="$(cat -)"
+  fi
 
   # Trim leading and trailing whitespace while preserving internal newlines using sed
   local trimmed

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -16,8 +15,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 echo "Review the following sections from the WHATWG URL specification."
 echo "Ensure that any code, fixes, or analysis strictly adhere to these standard algorithms and definitions."
@@ -36,7 +34,7 @@ else
     echo '```markdown'
     # Run the whatwg-url-specs script with the given queries
     # We use trim_context in case the output needs to be truncated by --head
-    trim_context "$($SCRIPT_DIR/../bin/whatwg-url-specs "$@")"
+    trim_context "$($SCRIPT_DIR/../bin/whatwg-url-specs "${ARGS[@]}")"
     echo '```'
     echo
 fi

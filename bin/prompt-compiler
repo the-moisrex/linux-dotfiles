@@ -25,12 +25,11 @@ def run_shell(cmd_args):
             cmd_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
             check=True
         )
-        return result.stdout.strip()
+        return result.stdout.decode("utf-8", errors="replace").strip()
     except subprocess.CalledProcessError as e:
-        debug(f"Command failed: {cmd_args}\nError: {e.stderr.strip()}")
+        debug(f"Command failed: {cmd_args}\nError: {e.stderr.decode('utf-8', errors='replace').strip()}")
         return None
     except FileNotFoundError:
         debug(f"Command not found: {cmd_args[0]}")
@@ -71,12 +70,13 @@ def autocomplete(snippet):
                 else:
                     matches.append(f"${{{env_var}}}")
     
-    # 2. Slash Commands
-    elif target.startswith("/"):
+    # 2. Slash Commands (also . and - shorthands)
+    elif target.startswith(("/", ".", "-")):
         cmd_prefix = target[1:]
+        prefix_char = target[0]
         for cmd in PROMPT_COMMANDS_CACHE:
             if cmd.startswith(cmd_prefix):
-                matches.append(f"/{cmd}")
+                matches.append(f"{prefix_char}{cmd}")
                 
     # 3. Files
     elif target.startswith(("@", "./", "/", "~")):

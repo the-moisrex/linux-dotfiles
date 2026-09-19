@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -15,10 +14,8 @@ Options:
 EOF
 }
 
-NO_FILES=true
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt --no-files
 
 echo "Based on the input content, generate several high-quality tweet ideas."
 echo "Create a markdown table with columns: Tweet | Why this tweet | Expected impact"

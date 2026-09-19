@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -17,10 +16,8 @@ Options:
 EOF
 }
 
-NO_FILES=true
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt --no-files
 
 # Find the foresight repo root: look for AGENTS.md + mods/ directory
 find_foresight_root() {

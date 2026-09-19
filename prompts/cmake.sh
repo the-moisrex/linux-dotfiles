@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 exclude_patterns=()
 strip_lists=false
@@ -18,8 +17,7 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 # Parse custom arguments
 while [[ $# -gt 0 ]]; do

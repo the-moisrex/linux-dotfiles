@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 show_help() {
   cat <<'EOF'
@@ -18,8 +17,7 @@ EOF
 
 
 source "$(dirname "$0")/_common.sh"
-common_behavior
-set -- "${ARGS[@]}"
+init_prompt
 
 
 relative_path() {
@@ -40,7 +38,7 @@ if [ $# -eq 0 ]; then
     set -- $(select_files)
 fi
 
-for file in "$@"; do
+for file in "${ARGS[@]}"; do
     if ! resolved_file="$(resolve_input_file "$file")"; then
         printf 'prompt files: file not found: %s\n' "$file" >&2
         continue
