@@ -211,10 +211,24 @@ Usage:
   prompt --help
   prompt list
   prompt list-prompts
-  prompt <name> [-- arg1 arg2 ...]    # or prompt <name> arg1 arg2 ...
+  prompt <name> [args...]                # run a single prompt
+  prompt <name> [-- arg1 arg2 ...]       # explicit end of prompt flags
+
+Shorthand (chain multiple prompts with args):
+  prompt .note "Some details" .cli "pwd" .files src/main.cpp
+  prompt .agents .git-dirty .commit
+
+  Tokens starting with '.' or '-' that match a known prompt name are treated
+  as prompt invocations. Bare words between them become that prompt's arguments.
+  The first argument is also checked as a prompt name when no prompts have been
+  matched yet.
+
 Examples:
   cat file.cpp | prompt cpp-debug
   prompt cpp-debug --flag value
+  prompt .note "WIP: fixing parser bug" .files parser.h parser.cpp .cli "make test"
+  prompt .agents .files one two three .note "Some details" .cli "pwd"
+
 Notes:
   - Searches $XDG_CONFIG_DIRS/prompts and ../prompts (relative to this script) for prompt files.
   - Recognized extensions (in search order): .sh .txt .md then no extension.

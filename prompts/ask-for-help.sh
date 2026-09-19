@@ -8,9 +8,9 @@ Usage: prompt ask-for-help [--head N]
 Generates a ready-to-run `prompt` command line that bundles all the context
 needed to ask another AI for help with a coding problem.
 
-Describe your problem on stdin (or via clipboard). The AI will search the
-repository for relevant files and produce a single `prompt <name> <files...>`
-command you can run, take the output to a smarter AI, and bring back the answer.
+Describe your problem on stdin (or via clipboard). The AI will compose a
+`prompt` command using context-gathering prompts (.note, .cli, .files, etc.)
+that you can run, take the output to a smarter AI, and bring back the answer.
 
 Options:
   --head N   Keep only the first N lines of each embedded context file
@@ -20,29 +20,19 @@ EOF
 source "$(dirname "$0")/_common.sh"
 init_prompt --no-files
 
-read_stdin || true
-
-if [[ -n "${stdin_content:-}" ]]; then
-    printf '%s\n\n' "$stdin_content"
-fi
-
-echo "# Problem description"
+echo "# Available context-gathering prompts"
 echo
-if [[ -n "${stdin_content:-}" ]]; then
-    printf '%s\n' "$stdin_content"
-else
-    echo "(no description provided — read the clipboard or prompt the user)"
-fi
+echo "Use these with the shorthand syntax to compose your command:"
+echo "  .note \"text\"        Add a note or context description"
+echo "  .cli \"command\"      Run a shell command and embed its output"
+echo "  .files file1 file2  Embed file contents as fenced code blocks"
+echo "  .agents             Embed agent instruction files (AGENTS.md, etc.)"
+echo "  .git-dirty          Show uncommitted changes in the repo"
+echo "  .repo               Show the repository file structure"
+echo "  .clipboard          Embed clipboard content"
 echo
-echo "---"
-echo
-
-echo "# Available coding-related prompt scripts"
-echo
-prompt list 2>/dev/null | grep -v -E \
-    -e '^(ask-for-help|auto|plan|english|farsi|yt|tweets|note|summarize|man|cppman|metadata|optimize-prompt|skill|new|repo|files|paths)\b' \
-    || true
-
+echo "Example command:"
+echo "  prompt .note \"WIP: fixing parser bug\" .files parser.h parser.cpp .cli \"make test 2>&1\""
 echo
 echo "---"
 echo
@@ -68,34 +58,27 @@ echo
 echo "# Your task"
 echo
 cat <<'EOF'
-Given the problem description above:
+Given the problem description above, compose a `prompt` command that gathers
+all the context a smarter AI would need to solve the problem.
 
-1. Pick the best prompt script from the list above.
-   - `fix` for bugs/errors
-   - `review` for code quality
-   - `tests` for test generation
-   - `debug` for crashes/traces
-   - `explain` for understanding code
-   - `refactor` for restructuring
-   - `clang-tidy` for lint issues
-   - `cpp` / `cpp-reviewer` for C++ specific
-   - `docker` / `ci` for container/CI configs
-   - `commit` for git commit messages
-   - `gh.issue` to work on a GitHub issue
-   - `security` for security review
-   - `verify` to check correctness of changes
+Use the shorthand syntax:
+  prompt .note "problem description" .files <relevant files> .cli "command to reproduce"
 
-2. Output ONE command in a bash code block:
-   ```
-   prompt <script-name> <file1> <file2> ...
-   ```
-   For problems with terminal output (compiler errors, stack traces, etc.),
-   tell the user to pipe it:
-   ```
-   command 2>&1 | prompt <script> <files>
-   ```
+Guidelines:
+- Always start with .note describing the problem in detail.
+- Add .files for any source files, configs, or logs relevant to the problem.
+- Add .cli for commands that reproduce the error or show relevant state
+  (e.g., .cli "make 2>&1", .cli "git diff", .cli "ls -la src/").
+- Use .git-dirty if uncommitted changes are relevant.
+- Use .agents if the project has AGENTS.md or similar context files.
+- Use .repo if the AI needs to understand the project structure.
 
-3. If the problem is ambiguous, list 1-2 clarifying questions AFTER the command.
+Output ONE command in a bash code block:
+```
+prompt .note "..." .files ... .cli "..." ...
+```
+
+If the problem is ambiguous, list 1-2 clarifying questions AFTER the command.
 
 Do NOT:
 - Explain what the command does

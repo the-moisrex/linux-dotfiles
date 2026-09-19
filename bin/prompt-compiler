@@ -233,6 +233,20 @@ def main():
             if flag_name == 'help':
                 print("Usage: prompt-compiler [-v] [-c SNIPPET] [-i FILE] [-e] [TEXT]")
                 print("       command | prompt-compiler [-v] [-e]")
+                print()
+                print("Compile prompt templates with variable expansion, slash commands, and file embedding.")
+                print()
+                print("Shorthand syntax:")
+                print("  .cmd args / -cmd args   Equivalent to /cmd args (prompt commands)")
+                print("  /cmd args               Run 'prompt cmd args' and embed the output")
+                print("  @file                   Read file content inline (or embed via 'prompt files')")
+                print("  {{VAR}} / ${VAR}        Expand environment variables or prompt commands")
+                print()
+                print("Examples:")
+                print("  prompt-compiler '.note \"hello\" .files src/main.cpp'")
+                print("  prompt-compiler -e '.note \"hello\" .files src/main.cpp'")
+                print("  echo '.note hello .cli pwd' | prompt-compiler -e")
+                print("  prompt-compiler -c '.note {{MY_VAR}}'")
                 sys.exit(0)
             elif nargs == 0:
                 if flag_name == 'verbose': VERBOSE = True
