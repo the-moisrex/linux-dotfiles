@@ -26,6 +26,9 @@ init_prompt --no-files
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 
+# Read stdin content
+read_stdin || true
+
 # Print stdin content as context for the AI
 if [[ -n "${stdin_content:-}" ]]; then
     printf '%s\n\n' "$stdin_content"
@@ -41,8 +44,9 @@ echo "Requirements for the generated script:"
 echo "- Start with a proper bash shebang."
 echo "- Define a show_help function and support --help/-h via the shared argument parser."
 echo "- The script will be called using a wrapper script named 'prompt' (e.g., 'prompt my-script'). Ensure the help menu usage reflects this (e.g., 'Usage: prompt my-script')."
-echo "- Source prompts/_common.sh and call init_prompt."
-echo "- Support optional file arguments and stdin the same way the other prompt scripts do."
+echo "- Source prompts/_common.sh and call init_prompt (or init_prompt --no-files)."
+echo "- If files are needed, call get_files || true after init_prompt."
+echo "- If stdin content is needed, call embed_stdin || true (or read_stdin for raw access)."
 echo "- Use infer_lang and trim_context when embedding file contents."
 echo "- Print clear AI instructions first, then embed any needed context as fenced code blocks."
 echo "- Prefer actionable output from the AI (for example tables, checklists, or a git diff) when that fits the task."

@@ -14,6 +14,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "Add comprehensive docstrings to all functions, classes, and methods in the following code."
 echo "Ensure the docstrings clearly describe:"

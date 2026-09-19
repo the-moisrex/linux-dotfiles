@@ -36,33 +36,34 @@ trim_context() {
     fi
 }
 
-# Usage:
-#   print_stdin
-print_stdin() {
-    local stdin_piped=false
+# Read piped stdin into stdin_content without printing.
+# Sets STDIN_CONSUMED=true and stdin_content on success.
+# Returns 1 if stdin is not piped.
+read_stdin() {
     stdin_content=""
+    STDIN_CONSUMED=false
+    if [ -t 0 ]; then
+        return 1
+    fi
+    stdin_content="$(cat)"
+    STDIN_CONSUMED=true
+}
 
-    if ! [ -t 0 ]; then
-        stdin_piped=true
-        stdin_content="$(cat)"
-        STDIN_CONSUMED=true
-    fi
-    
-    if $NO_FILES; then
-        return
-    fi
+# Read piped stdin and print it as a fenced block.
+# Calls read_stdin internally, then prints the content.
+# Returns 1 if stdin is not piped.
+embed_stdin() {
+    read_stdin || return 1
+    printf '%s\n\n' "$stdin_content"
+}
 
-    if $stdin_piped && [[ -n "$stdin_content" ]]; then
-        printf '%s\n\n' "$stdin_content"
-        # Check the length of the global ARGS array instead of $#
-    elif [[ ${#ARGS[@]} -eq 0 ]]; then
-        if command -v fzf >/dev/null; then
-            mapfile -t ARGS < <(git ls-files | fzf -m)
-        else
-            echo "No input files and fzf is not installed." >&2
-            return 1
-        fi
+# Check if ARGS has files. Returns 1 if ARGS is empty.
+# Scripts that need interactive file selection should call select_files() directly.
+get_files() {
+    if [[ ${#ARGS[@]} -gt 0 ]]; then
+        return 0
     fi
+    return 1
 }
 
 # Usage:
@@ -98,10 +99,10 @@ parse_arguments() {
 }
 
 # --- Example of how the script flows ---
-# parse_arguments
-# print_stdin
-# set -- "${ARGS[@]}"
-# echo "Remaining files to process: $@"
+# init_prompt              # or: init_prompt --no-files
+# get_files || true        # if files are needed
+# embed_stdin || true      # if stdin content should be embedded
+# echo "Files: ${ARGS[*]}"
 
 
 infer_lang() {
@@ -239,11 +240,6 @@ resolve_input_file() {
 
 
 
-common_behavior() {
-    parse_arguments
-    print_stdin
-}
-
 # Read clipboard content. Scripts that need clipboard call this explicitly.
 # Returns empty string silently if clipboard is unavailable or empty.
 clipboard_content() {
@@ -254,18 +250,16 @@ clipboard_content() {
 
 # Initialize a prompt script. Replaces the common boilerplate:
 #   source "$(dirname "$0")/_common.sh"
-#   common_behavior
-#   set -- "${ARGS[@]}"
+#   parse_arguments
 #
 # Usage:
-#   init_prompt              # standard: parse args, consume stdin, set $@
-#   init_prompt --no-files   # same, but skip file selection/fallback
+#   init_prompt              # standard: parse args
+#   init_prompt --no-files   # same, skip file selection/fallback
 init_prompt() {
     if [[ "${1:-}" == "--no-files" ]]; then
         NO_FILES=true
     fi
     parse_arguments
-    print_stdin
 }
 
 embed_file() {

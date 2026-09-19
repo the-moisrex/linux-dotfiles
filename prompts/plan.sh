@@ -19,6 +19,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 cat <<'PROMPT_END'
 You are in PLAN MODE. Your goal is to produce a detailed, decision-complete

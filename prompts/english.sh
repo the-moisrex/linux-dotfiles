@@ -13,8 +13,8 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-init_prompt
+init_prompt --no-files
 
 echo "Translate to English; no explanations, no comments, no extra text, just the translation."
 echo
-cat
+embed_stdin

@@ -30,14 +30,17 @@ init_prompt --no-files
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 
-# Decide what to verify. print_stdin() consumes piped stdin even with
-# NO_FILES=true, and records the result via STDIN_CONSUMED/stdin_content.
+# Try to read stdin
+read_stdin || true
+
+# Decide what to verify. read_stdin() consumes piped stdin, and
+# records the result via STDIN_CONSUMED/stdin_content.
 context=""
 if [[ "${STDIN_CONSUMED:-false}" == "true" ]]; then
     context="$stdin_content"
 else
     git_dirty_args=("--full-diff")
-    if [[ $# -gt 0 ]]; then
+    if [[ ${#ARGS[@]} -gt 0 ]]; then
         git_dirty_args=("${ARGS[@]}")
     fi
     context="$(bash "$script_dir/git-dirty.sh" "${git_dirty_args[@]}" 2>/dev/null || true)"

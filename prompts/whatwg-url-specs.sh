@@ -21,7 +21,7 @@ echo "Review the following sections from the WHATWG URL specification."
 echo "Ensure that any code, fixes, or analysis strictly adhere to these standard algorithms and definitions."
 echo
 
-if [ $# -eq 0 ]; then
+if [[ ${#ARGS[@]} -eq 0 ]]; then
     echo "Warning: No queries provided. Use 'list' to see sections or provide specific keywords." >&2
     # Optionally, we can default to listing or showing help for the command
     echo '```text'
@@ -29,7 +29,7 @@ if [ $# -eq 0 ]; then
     echo '```'
     echo
 else
-    echo "Querying WHATWG URL specification for: $*"
+    echo "Querying WHATWG URL specification for: ${ARGS[*]}"
     echo
     echo '```markdown'
     # Run the whatwg-url-specs script with the given queries

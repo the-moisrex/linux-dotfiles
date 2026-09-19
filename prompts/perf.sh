@@ -15,6 +15,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 
 echo "Review this for performance issues."

@@ -14,6 +14,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "Calculate the Big O notation for the time and space complexity of the following algorithms."
 echo "Provide a clear step-by-step breakdown of your reasoning."

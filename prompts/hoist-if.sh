@@ -14,6 +14,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "Analyze the code below and find opportunities to move if statements outside of for/while loops."
 echo "Focus on conditions that are loop-invariant: the condition's result does not change across iterations."

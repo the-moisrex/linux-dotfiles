@@ -15,6 +15,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "You are a Docker and container infrastructure expert."
 echo "Review the provided Dockerfiles, docker-compose files, or container configurations."

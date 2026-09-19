@@ -316,10 +316,9 @@ case "${1:-}" in
   list|install|uninstall)
     # Subcommands don't need stdin or file context
     NO_FILES=true
-    common_behavior
-    set -- "${ARGS[@]}"
+    init_prompt --no-files
 
-    SUBCOMMAND="$1"; shift
+    SUBCOMMAND="${ARGS[0]:-}"; ARGS=("${ARGS[@]:1}")
     case "$SUBCOMMAND" in
       list)
         REMOTE_QUERY=""

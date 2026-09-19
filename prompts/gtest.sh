@@ -14,6 +14,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "Write comprehensive unit tests for the following C++ code using Google Test (gtest)."
 echo "This code is part of a C++ web framework named web++."
@@ -25,8 +26,7 @@ echo "- Standard gtest macros (EXPECT_EQ, ASSERT_TRUE, EXPECT_THROW, etc.)."
 echo "Provide the complete test code implementation."
 echo
 
-while [[ $# -gt 0 ]]; do
-    file="$1"
+for file in "${ARGS[@]}"; do
     if [[ -f "$file" ]]; then
         file_name="$(basename "$file")"
         echo "File: $file_name"
@@ -38,5 +38,4 @@ while [[ $# -gt 0 ]]; do
     else
         echo "Warning: File not found or not a regular file: $file" >&2
     fi
-    shift
 done

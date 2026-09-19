@@ -16,21 +16,21 @@ EOF
 source "$(dirname "$0")/_common.sh"
 init_prompt
 
-if [ $# -eq 0 ]; then
+if [[ ${#ARGS[@]} -eq 0 ]]; then
     printf 'prompt cli: no command provided\n' >&2
     show_help >&2
     exit 1
 fi
 
 # Reconstruct the command as a string for the description
-cmd_description="$*"
+cmd_description="${ARGS[*]}"
 
 # Temporarily disable exit on error so we can capture failed commands gracefully
 set +e
 # Execute the command; for simple commands, direct execution is safer than eval.
 # However, eval is needed to support pipes, redirects, and quotes in the command.
 # shellcheck disable=SC2294
-cmd_output="$(eval "$@" 2>&1)"
+cmd_output="$(eval "${ARGS[@]}" 2>&1)"
 cmd_status=$?
 set -e
 

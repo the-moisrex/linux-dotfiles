@@ -14,6 +14,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "Review this C++ code and identify easy fixes to reduce compile time."
 echo "Look for:"

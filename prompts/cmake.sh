@@ -19,23 +19,23 @@ EOF
 source "$(dirname "$0")/_common.sh"
 init_prompt
 
-# Parse custom arguments
-while [[ $# -gt 0 ]]; do
-    case "$1" in
+# Parse custom arguments from ARGS
+while [[ ${#ARGS[@]} -gt 0 ]]; do
+    case "${ARGS[0]}" in
         --exclude)
-            if [[ $# -lt 2 ]]; then
+            if [[ ${#ARGS[@]} -lt 2 ]]; then
                 echo "Missing value for --exclude" >&2
                 exit 2
             fi
-            exclude_patterns+=("$2")
-            shift 2
+            exclude_patterns+=("${ARGS[1]}")
+            ARGS=("${ARGS[@]:2}")
         ;;
         --strip-lists)
             strip_lists=true
-            shift
+            ARGS=("${ARGS[@]:1}")
         ;;
         *)
-            shift
+            ARGS=("${ARGS[@]:1}")
         ;;
     esac
 done

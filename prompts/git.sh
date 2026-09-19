@@ -15,6 +15,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "You are a git expert. Help with the following git-related task."
 echo

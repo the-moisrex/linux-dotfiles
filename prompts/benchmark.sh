@@ -15,6 +15,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "You are a performance engineering expert."
 echo "Analyze the provided code and design meaningful benchmarks to measure its performance."

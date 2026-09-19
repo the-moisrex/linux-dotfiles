@@ -16,6 +16,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 is_cpp_file() {
     local base ext

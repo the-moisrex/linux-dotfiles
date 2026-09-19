@@ -15,18 +15,12 @@ EOF
 }
 
 source "$(dirname "$0")/_common.sh"
-NO_FILES=true
+init_prompt --no-files
 
-# Capture stdin before common_behavior consumes it
-STDIN_CONTEXT=""
-if ! [ -t 0 ]; then
-    STDIN_CONTEXT="$(cat)"
-fi
+# Capture stdin
+read_stdin || true
 
-common_behavior
-set -- "${ARGS[@]}"
-
-ISSUE_NUMBER="${1:-}"
+ISSUE_NUMBER="${ARGS[0]:-}"
 ISSUE_TITLE=""
 ISSUE_BODY=""
 ISSUE_LABELS=""
@@ -42,7 +36,7 @@ if [[ -n "$ISSUE_NUMBER" ]]; then
         ISSUE_COMMENTS="$(gh issue view "$ISSUE_NUMBER" --json comments -q '.comments | map("**\(.author.login)**: \(.body)") | join("\n\n")' 2>/dev/null || true)"
     else
         echo "prompt gh.issue: Warning: 'gh' CLI is not installed. Falling back to stdin." >&2
-        if [[ -z "$STDIN_CONTEXT" ]]; then
+        if [[ -z "$stdin_content" ]]; then
             echo "prompt gh.issue: No issue data available. Pipe issue details or install gh CLI." >&2
             exit 1
         fi
@@ -86,14 +80,14 @@ if [[ -n "$ISSUE_TITLE" ]]; then
         echo
         echo "$ISSUE_COMMENTS"
     fi
-elif [[ -n "$STDIN_CONTEXT" ]]; then
+elif [[ -n "$stdin_content" ]]; then
     if [[ -n "$ISSUE_NUMBER" ]]; then
         echo "# Issue #$ISSUE_NUMBER (provided via stdin)"
     else
         echo "# Issue Description (provided via stdin)"
     fi
     echo
-    echo "$STDIN_CONTEXT"
+    echo "$stdin_content"
 else
     echo "No issue data available." >&2
     exit 1

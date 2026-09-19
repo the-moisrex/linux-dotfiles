@@ -36,9 +36,11 @@ is_compiler_output() {
 source "$(dirname "$0")/_common.sh"
 init_prompt --no-files
 
-# If we captured stdin, inject it at the top of the context just like `print_stdin` would have
+read_stdin || true
+
+# Print stdin content if present
 if [[ -n "$stdin_content" ]]; then
-    if [[ "$stdin_content" != *"\`\`\`"* ]]; then
+    if [[ "$stdin_content" != *'```'* ]]; then
         echo '```'
         printf '%s\n\n' "$stdin_content"
         echo '```'

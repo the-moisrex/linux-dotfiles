@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]}"
 
-print_stdin
+embed_stdin || true
 
 BIN_PATHS="$(dirname "$0")/../bin/paths"
 FILES_PROMPT="$(dirname "$0")/files.sh"

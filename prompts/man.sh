@@ -16,19 +16,19 @@ EOF
 source "$(dirname "$0")/_common.sh"
 init_prompt
 
-if [ $# -eq 0 ]; then
+if [[ ${#ARGS[@]} -eq 0 ]]; then
     printf 'prompt man: no manual page provided\n' >&2
     show_help >&2
     exit 1
 fi
 
 # Reconstruct the arguments for the description
-man_pages="$*"
+man_pages="${ARGS[*]}"
 
 # Temporarily disable exit on error to capture failed man lookups gracefully
 set +e
 # Use -P cat to output plain text instead of using a pager
-man_output="$(man -P cat "$@" 2>&1)"
+man_output="$(man -P cat "${ARGS[@]}" 2>&1)"
 man_status=$?
 set -e
 

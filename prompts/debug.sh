@@ -15,6 +15,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "You are an expert debugger across all programming languages and runtimes."
 echo "Analyze the provided code, error messages, stack traces, or logs and identify the root cause of the issue."

@@ -17,6 +17,8 @@ EOF
 source "$(dirname "$0")/_common.sh"
 init_prompt --no-files
 
+embed_stdin || true
+
 echo "Based on the input content, generate several high-quality tweet ideas."
 echo "Create a markdown table with columns: Tweet | Why this tweet | Expected impact"
 echo "Write clean, natural tweets only — no hashtags and no weird emojis."

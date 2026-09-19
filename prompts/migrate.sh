@@ -15,6 +15,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "You are a code migration expert."
 echo "Help migrate the provided code from its current state to the target framework, API, or language version."

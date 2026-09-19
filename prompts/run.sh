@@ -24,15 +24,15 @@ source "$(dirname "$0")/_common.sh"
 init_prompt
 
 RUN_ARGS=()
-while [[ $# -gt 0 ]]; do
-    case "$1" in
+while [[ ${#ARGS[@]} -gt 0 ]]; do
+    case "${ARGS[0]}" in
         --gtest)
             include_gtest_cases=true
-            shift
+            ARGS=("${ARGS[@]:1}")
         ;;
         *)
-            RUN_ARGS+=("$1")
-            shift
+            RUN_ARGS+=("${ARGS[0]}")
+            ARGS=("${ARGS[@]:1}")
         ;;
     esac
 done

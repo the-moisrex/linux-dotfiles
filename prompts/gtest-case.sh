@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]}"
 
-print_stdin
+embed_stdin || true
 
 if [[ $# -eq 0 ]]; then
     echo "Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]" >&2

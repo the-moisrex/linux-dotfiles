@@ -61,8 +61,8 @@ set -- "${ARGS[@]}"
 
 if $prepend; then
     print_note "$@"
-    print_stdin
+    embed_stdin || true
 else
-    print_stdin
+    embed_stdin || true
     print_note "$@"
 fi

@@ -15,6 +15,7 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
+get_files || true
 
 echo "You are a technical documentation expert."
 echo "Generate or improve a comprehensive README.md based on the provided code and context."

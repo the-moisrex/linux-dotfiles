@@ -15,6 +15,8 @@ EOF
 source "$(dirname "$0")/_common.sh"
 init_prompt --no-files
 
+embed_stdin || true
+
 echo "You are an expert C++ code reviewer with deep knowledge of modern C++ (C++17, C++20, C++23, C++26) and strict adherence to the C++ Core Guidelines."
 echo "Follow these principles when reviewing C++ code:"
 echo ""
