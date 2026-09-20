@@ -54,77 +54,85 @@ do_paste() {
     # Try Wayland clipboard utilities first (works for GNOME on Wayland)
     if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
         if command_exists wl-paste; then
-            wl-paste
-            return 0
+            timeout 2 wl-paste 2>/dev/null && return 0
+            echo "wl-paste failed" >&2
         fi
     fi
 
     # Try KDE klipper
     if command_exists qdbus; then
         if qdbus org.kde.klipper >/dev/null 2>&1; then
-            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents
-            return 0
+            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents && return 0
         fi
     fi
 
     # Fallback to X11 clipboard utilities
     if command_exists xclip; then
-        xclip -selection clipboard -o
+        xclip -selection clipboard -o && return 0
     elif command_exists xsel; then
-        xsel --clipboard --output
-    else
-        echo "No supported clipboard utility found for pasting." >&2
-        return 1
+        xsel --clipboard --output && return 0
     fi
+
+    echo "No supported clipboard utility found for pasting." >&2
+    return 1
 }
 
 do_copy() {
+    local content
+    content="$(cat)"
+
     # Try Wayland clipboard utilities first
     if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
         if command_exists wl-copy; then
-            wl-copy
-            return 0
+            local retries=3
+            local delay=0.2
+            local i
+            for (( i=0; i<retries; i++ )); do
+                if printf '%s' "$content" | timeout 2 wl-copy --type text/plain 2>/dev/null; then
+                    return 0
+                fi
+                sleep "$delay"
+            done
+            echo "wl-copy failed after $retries attempts" >&2
         fi
     fi
 
     # Try X11 clipboard utilities
     if command_exists xclip; then
-        xclip -selection clipboard -i
+        printf '%s' "$content" | xclip -selection clipboard -i && return 0
     elif command_exists xsel; then
-        xsel --clipboard --input
+        printf '%s' "$content" | xsel --clipboard --input && return 0
     # Fallback to KDE klipper for copy (with workaround)
     elif command_exists qdbus; then
         if qdbus org.kde.klipper >/dev/null 2>&1; then
-            xargs -0 -I{} qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {}
-            return 0
+            printf '%s' "$content" | xargs -0 -I{} qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {} && return 0
         fi
-    else
-        echo "No supported clipboard utility found for copying." >&2
-        return 1
     fi
+
+    echo "No supported clipboard utility found for copying." >&2
+    return 1
 }
 
 do_clear() {
     if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
         if command_exists wl-copy; then
-            wl-copy --clear
-            return 0
+            timeout 2 wl-copy --clear 2>/dev/null && return 0
+            echo "wl-copy --clear failed" >&2
         fi
     fi
 
     if command_exists xclip; then
-        echo -n "" | xclip -selection clipboard
+        echo -n "" | xclip -selection clipboard && return 0
     elif command_exists xsel; then
-        xsel --clipboard --delete
+        xsel --clipboard --delete && return 0
     elif command_exists qdbus; then
         if qdbus org.kde.klipper >/dev/null 2>&1; then
-            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.clearClipboardHistory
-            return 0
+            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.clearClipboardHistory && return 0
         fi
-    else
-        echo "No supported clipboard utility found for clearing." >&2
-        return 1
     fi
+
+    echo "No supported clipboard utility found for clearing." >&2
+    return 1
 }
 
 do_history() {
