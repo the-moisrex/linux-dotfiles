@@ -2,19 +2,17 @@
 
 show_help() {
   cat <<'EOF'
-Usage: prompt files [--head N] [FILE...]
-       some-command | prompt files [--head N] [FILE...]
+Usage: prompt git.files [--head N] [FILE...]
+       some-command | prompt git.files [--head N] [FILE...]
 
-Appends the given fuzzily found files as Markdown code blocks.
-If you're inside a Git repository, file headings are printed relative to the
-repository root.
-If no files are provided, `fzf -m` is used to choose them interactively.
+Embeds the given files as Markdown code blocks.
+File headings are printed relative to the Git repository root.
+If no files are provided, `fzf -m` is used to choose from tracked files.
 
 Options:
   --head N   Keep only the first N lines of each embedded file
 EOF
 }
-
 
 source "$(dirname "$0")/_common.sh"
 init_prompt
@@ -32,29 +30,27 @@ relative_path() {
 }
 
 
-# printf 'Additional file context:\n\n'
-
-if [ $# -eq 0 ]; then
+if [ ${#ARGS[@]} -eq 0 ]; then
     # shellcheck disable=SC2046
     set -- $(select_files)
 fi
 
 for file in "${ARGS[@]}"; do
     if ! resolved_file="$(resolve_input_file "$file")"; then
-        printf 'prompt files: file not found: %s\n' "$file" >&2
+        printf 'prompt git.files: file not found: %s\n' "$file" >&2
         continue
     fi
-    
+
     if [[ ! -r "$resolved_file" ]]; then
-        printf 'prompt files: file not readable: "%s"; resolved to "%s"\n' "$file" "$resolved_file" >&2
+        printf 'prompt git.files: file not readable: "%s"; resolved to "%s"\n' "$file" "$resolved_file" >&2
         continue
     fi
-    
+
     rel_file="$(relative_path "$resolved_file")"
     lang="$(infer_lang "$resolved_file")"
     content="$(cat -- "$resolved_file")"
-    
-    if [ ! -z "$content" ]; then
+
+    if [ -n "$content" ]; then
         if [[ -n "$head_lines" ]]; then
             printf 'File %s (first %s lines)\n\n' "$rel_file" "$head_lines"
         else

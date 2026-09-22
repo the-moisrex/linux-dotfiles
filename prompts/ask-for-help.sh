@@ -85,4 +85,7 @@ Do NOT:
 - Research how to solve the problem
 - Provide any solution or analysis
 - Do anything beyond generating the command
+
+Give the AI all the context and the files it needs; tell the AI about limitations, behavior requirements, any useful information or file it needs to figure it all out.
+
 EOF
