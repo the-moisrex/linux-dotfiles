@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# ctl - thin systemctl wrapper.
+#
+# Picks the right manager for you:
+#   * units that exist in the user manager  -> systemctl --user
+#   * everything else                       -> sudo systemctl
+#
+# Any flag other than ctl's own --dry-run is passed straight through.
+
+show_help() {
+    cat <<'EOF'
+Usage: ctl [OPTIONS] [COMMAND] [UNIT...]
+systemctl wrapper that picks the right manager:
+  * If a named unit exists in the user manager, run `systemctl --user`.
+  * Otherwise, run `sudo systemctl` (unless already root).
+
+Options:
+  -h, --help   Show this help and exit.
+  --dry-run    Print the command that would run, then exit.
+  --user       Force the user manager.
+  --system     Force the system manager (uses sudo).
+  --global     Like --system, for global unit files.
+
+Examples:
+  ctl status nginx         # -> sudo systemctl status nginx
+  ctl restart nginx        # -> sudo systemctl restart nginx
+  ctl --user status foo    # -> systemctl --user status foo
+  ctl daemon-reload        # -> sudo systemctl daemon-reload
+EOF
+}
+
+dry_run=false
+forced=""
+args=()
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) show_help; exit 0 ;;
+        --dry-run) dry_run=true ;;
+        --user)    forced=user ;;
+        --system)  forced=system ;;
+        --global)  forced=system; args+=("--global") ;;
+        *)         args+=("$arg") ;;
+    esac
+done
+
+run() {
+    if $dry_run; then
+        printf '%q ' "$@"
+        printf '\n'
+        exit 0
+    fi
+    exec "$@"
+}
+
+run_system() {
+    if [[ $EUID -eq 0 ]]; then
+        run systemctl "$@"
+    else
+        run sudo systemctl "$@"
+    fi
+}
+
+# An explicit scope wins immediately.
+case "$forced" in
+    user)   run systemctl --user "${args[@]}" ;;
+    system) run_system "${args[@]}" ;;
+esac
+
+# No arguments: plain listing.
+if (( ${#args[@]} == 0 )); then
+    run systemctl
+fi
+
+# If any positional argument names a user unit, use the user manager.
+for arg in "${args[@]}"; do
+    if [[ "$arg" == -* ]]; then continue; fi
+    if [[ "$arg" =~ ^[0-9]+$ ]]; then continue; fi
+    if systemctl --user cat "$arg" >/dev/null 2>&1; then
+        run systemctl --user "${args[@]}"
+    fi
+done
+
+# Otherwise fall back to the system manager.
+run_system "${args[@]}"

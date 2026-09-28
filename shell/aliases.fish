@@ -200,9 +200,10 @@ alias ggrep="git grep --heading --break -n"
 alias task-tui="taskwarrior-tui"
 alias tasktui="taskwarrior-tui"
 
-alias ctl="sudo systemctl"
+# alias ctl="sudo systemctl"
 # alias status="sudo systemctl status"
-alias restart="sudo systemctl restart"
+# alias restart="sudo systemctl restart"
+alias ctl.usr="systemctl --user"
 
 alias ip="ip -c"
 
