@@ -2,7 +2,7 @@
 
 show_help() {
   cat <<'EOF'
-Usage: prompt ai-said [--interval N] [--no-clear] [--head N]
+Usage: prompt ai-said [--interval N] [--timeout N] [--no-clear] [--head N]
 
 Collect multiple AI chat outputs via the clipboard and combine them
 into a single prompt.
@@ -19,6 +19,7 @@ Flow:
 
 Options:
   --interval N   Poll the clipboard every N seconds (default: 0.5)
+  --timeout N    Give up on a single clipboard read/write after N seconds (default: 3)
   --no-clear     Keep the existing clipboard content instead of clearing it
   --head N       Keep only the first N lines of each captured entry
 EOF
@@ -27,6 +28,7 @@ EOF
 source "$(dirname "$0")/_common.sh"
 
 interval="0.5"
+clip_timeout="3"
 clear_on_start=true
 
 parse_input_arguments() {
@@ -52,6 +54,14 @@ parse_input_arguments() {
                     exit 2
                 fi
                 interval="$2"
+                shift 2
+            ;;
+            --timeout)
+                if [[ $# -lt 2 ]]; then
+                    echo "prompt ai-said: Missing value for --timeout" >&2
+                    exit 2
+                fi
+                clip_timeout="$2"
                 shift 2
             ;;
             --no-clear)
@@ -80,6 +90,11 @@ fi
 
 if ! [[ "$interval" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$interval" == "0" ]]; then
     echo "prompt ai-said: --interval must be a positive number of seconds." >&2
+    exit 2
+fi
+
+if ! [[ "$clip_timeout" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$clip_timeout" == "0" ]]; then
+    echo "prompt ai-said: --timeout must be a positive number of seconds." >&2
     exit 2
 fi
 
@@ -131,12 +146,28 @@ hash_content() {
     fi
 }
 
+# Run the clipboard helper with a timeout so a stuck backend (e.g. an
+# unresponsive X11 selection owner blocking xclip, or a wedged
+# qdbus/klipper call, neither of which has its own timeout) can never
+# hang the watch loop forever. Exit 124 means the timeout fired.
+run_clipboard() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$clip_timeout" "$CLIPBOARD" "$@"
+    else
+        "$CLIPBOARD" "$@"
+    fi
+}
+
 paste_clipboard() {
-    "$CLIPBOARD" paste 2>/dev/null
+    run_clipboard paste 2>/dev/null
 }
 
 copy_clipboard() {
-    printf '%s' "$1" | "$CLIPBOARD" copy 2>/dev/null
+    printf '%s' "$1" | run_clipboard copy 2>/dev/null
+}
+
+clear_clipboard() {
+    run_clipboard clear 2>/dev/null
 }
 
 entries=()
@@ -175,18 +206,23 @@ trap finalize EXIT
 trap 'exit 130' INT TERM
 
 if "$clear_on_start"; then
-    "$CLIPBOARD" clear 2>/dev/null || true
+    clear_clipboard || true
     # Give the clipboard daemon a moment to settle, then check.
     sleep 0.2
-    baseline_raw="$(paste_clipboard || true)"
-    if [[ -n "${baseline_raw//[[:space:]]/}" ]]; then
+    if ! baseline_raw="$(paste_clipboard)"; then
+        printf 'Warning: could not read clipboard (backend not responding); starting with an empty baseline.\n' >&2
+        baseline_raw=""
+    elif [[ -n "${baseline_raw//[[:space:]]/}" ]]; then
         printf 'Warning: clipboard still holds %d chars after clear; that content will be ignored.\n' "${#baseline_raw}" >&2
     else
         printf 'Clipboard cleared.\n' >&2
     fi
 else
     printf 'Keeping existing clipboard content.\n' >&2
-    baseline_raw="$(paste_clipboard || true)"
+    if ! baseline_raw="$(paste_clipboard)"; then
+        printf 'Warning: could not read clipboard (backend not responding); starting with an empty baseline.\n' >&2
+        baseline_raw=""
+    fi
 fi
 
 # Baseline so pre-existing/stale content is not captured as entry #1.
@@ -200,8 +236,21 @@ last_wrote_hash=""
 printf 'Watching clipboard every %ss. Copy AI outputs one by one;\n' "$interval" >&2
 printf 'each change is collected and re-copied. Press Ctrl+C to finish.\n' >&2
 
+paste_fails=0
+
 while true; do
-    raw="$(paste_clipboard || true)"
+    # On read failure (including timeout) skip the iteration WITHOUT
+    # touching last_raw_hash, so a later successful read of unchanged
+    # content is not mistaken for a new copy.
+    if ! raw="$(paste_clipboard)"; then
+        paste_fails=$(( paste_fails + 1 ))
+        if [[ "$paste_fails" == 1 || "$(( paste_fails % 20 ))" == 0 ]]; then
+            printf '[ai-said] Warning: clipboard not responding (%d failed read(s)); still watching...\n' "$paste_fails" >&2
+        fi
+        sleep "$interval"
+        continue
+    fi
+    paste_fails=0
     raw_hash="$(printf '%s' "$raw" | hash_content)"
     
     if [[ "$raw_hash" == "$last_raw_hash" ]]; then

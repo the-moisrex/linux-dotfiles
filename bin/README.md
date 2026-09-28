@@ -174,6 +174,7 @@ whether the whole system needs to be restarted.
 
 - __actorun__ — daemon that runs commands on KDE Plasma activity changes (e.g., CPU governor, sig stop/cont of apps)
 - __bluetooth.battery__ — print connected Bluetooth headphones' battery level (optionally follow)
+- __ctl__ — smart systemctl wrapper: picks the user or system manager for the unit you name and only uses sudo for mutating system commands (`ctl --help`)
 - __cpu-limit__ — limit CPU usage of processes matching a name via `cpulimit`
 - __cpu-priority__ — set nice priority (renice) of processes matching a name
 - __keep-cpu-priority__ — loop keeping cpu-priority applied to the given processes every 5s

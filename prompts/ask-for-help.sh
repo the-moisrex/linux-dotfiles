@@ -87,5 +87,6 @@ Do NOT:
 - Do anything beyond generating the command
 
 Give the AI all the context and the files it needs; tell the AI about limitations, behavior requirements, any useful information or file it needs to figure it all out.
+Add enough details; the AI has no access to any files or assets because it's a Chatbot AI not agentic AI; so be careful about what the AI needs.
 
 EOF
