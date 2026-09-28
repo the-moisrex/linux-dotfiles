@@ -205,6 +205,18 @@ alias tasktui="taskwarrior-tui"
 # alias restart="sudo systemctl restart"
 alias ctl.usr="systemctl --user"
 
+function interlude.ctl --description 'Run a command with a service stopped and restarted around it'
+    if test (count $argv) -lt 2
+        printf 'usage: with-restart SERVICE COMMAND [ARG...]\n' >&2
+        return 2
+    end
+
+    set -l svc $argv[1]
+    set -l cmd $argv[2..-1]
+
+    interlude --down ctl stop $svc --up ctl start $svc -- $cmd
+end
+
 alias ip="ip -c"
 
 if command -v firefox-developer-edition >/dev/null

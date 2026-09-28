@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+#
+# interlude - run a command between a "down" and an "up" action.
+#
+# For one-shot jobs that need another service temporarily stopped. The
+# "up" action is armed for SIGINT, SIGTERM and EXIT, so Ctrl-C and
+# crashes never leave the underlying service stopped.
+
+set -u
+
+prog=${0##*/}
+always=0
+dry_run=0
+quiet=0
+declare -a down=() up=() cmd=()
+
+usage_error() {
+    printf '%s: %s\n' "$prog" "$*" >&2
+    printf "Try '%s --help' for more information.\n" "$prog" >&2
+    exit 2
+}
+
+show_help() {
+    cat <<EOF
+Usage: $prog [OPTIONS] --down CMD… --up CMD… -- COMMAND [ARG…]
+       $prog --help
+
+Run COMMAND after executing the "down" action, then execute the "up"
+action depending on the outcome. Intended for one-shot jobs that need
+another service temporarily stopped:
+
+    $prog --down ctl stop pen2mice --up ctl start pen2mice -- ./pen2mice
+
+The "up" action is guaranteed to run at most once. It is armed for
+SIGINT, SIGTERM and EXIT, so Ctrl-C and crashes never leave the
+underlying service stopped.
+
+Options:
+  -a, --always       Run "up" even if COMMAND succeeds.
+                     (Default: only on failure or on a signal.)
+  -n, --dry-run      Print what would run, then exit.
+  -q, --quiet        Suppress the "down:"/"run:"/"up:" banners.
+  -h, --help         Show this help and exit.
+
+Actions:
+  --down CMD [ARG…]  The teardown action to run first.
+  --up   CMD [ARG…]  The setup action to run afterwards.
+  --                 End of $prog options; COMMAND follows.
+
+Exit status:
+  COMMAND's status, unless "up" runs and fails — then that of "up".
+  If "down" fails, COMMAND is skipped and "down"'s status is returned.
+
+Examples:
+  # Stop pen2mice, run it under a debugger, restart on failure.
+  $prog --down ctl stop pen2mice --up ctl start pen2mice -- \\
+      gdb --args ./pen2mice
+
+  # Always bring the service back, success or not.
+  $prog --always --down ctl stop pen2mice --up ctl start pen2mice -- \\
+      ./pen2mice --selftest
+
+  # Non-systemctl actions work just as well.
+  $prog --down 'ip link set eth0 down' --up 'ip link set eth0 up' -- \\
+      ./network-selftest
+
+  # A short shell wrapper is easy:
+  #   with-restart() { local s=\$1; shift
+  #       $prog --down ctl stop "\$s" --up ctl start "\$s" -- "\$@"; }
+  #   with-restart pen2mice ./pen2mice
+EOF
+}
+
+# A word that ends a --down / --up action list.
+is_wrapper_flag() {
+    case $1 in
+        --down|--up|--|--always|-a|--dry-run|-n|--quiet|-q|--help|-h)
+            return 0 ;;
+    esac
+    return 1
+}
+
+while (( $# )); do
+    case $1 in
+        -h|--help)     show_help; exit 0 ;;
+        -a|--always)   always=1; shift ;;
+        -n|--dry-run)  dry_run=1; shift ;;
+        -q|--quiet)    quiet=1; shift ;;
+        --down)
+            shift
+            while (( $# )) && ! is_wrapper_flag "$1"; do
+                down+=("$1"); shift
+            done
+            ;;
+        --up)
+            shift
+            while (( $# )) && ! is_wrapper_flag "$1"; do
+                up+=("$1"); shift
+            done
+            ;;
+        --)
+            shift
+            cmd=("$@")
+            break
+            ;;
+        -*)
+            usage_error "unknown option: $1"
+            ;;
+        *)
+            usage_error "unexpected argument: $1 (use -- before COMMAND)"
+            ;;
+    esac
+done
+
+(( ${#down[@]} )) || usage_error "missing --down action"
+(( ${#up[@]}   )) || usage_error "missing --up action"
+(( ${#cmd[@]}  )) || usage_error "missing COMMAND after --"
+
+banner() {
+    (( quiet )) && return 0
+    printf '%s: %s\n' "$prog" "$*" >&2
+}
+
+print_cmd() {
+    local first=1 a
+    for a in "$@"; do
+        (( first )) || printf ' '
+        printf '%q' "$a"
+        first=0
+    done
+    printf '\n'
+}
+
+if (( dry_run )); then
+    printf 'down: '; print_cmd "${down[@]}"
+    printf 'run:  '; print_cmd "${cmd[@]}"
+    printf 'up:   '; print_cmd "${up[@]}"
+    exit 0
+fi
+
+# Run "up" at most once, no matter how many times we're called.
+restored=0
+run_up() {
+    (( restored )) && return 0
+    restored=1
+    trap - INT TERM EXIT
+    banner "up:   ${up[*]}"
+    "${up[@]}"
+}
+
+# Trap handler: preserve the status of whatever got us here, restore,
+# and exit with that status. (If "up" fails we still report the
+# original signal/exit status — the wrapped command was the headline.)
+on_signal_or_exit() {
+    local st=$?
+    run_up
+    exit "$st"
+}
+
+banner "down: ${down[*]}"
+if ! "${down[@]}"; then
+    st=$?
+    banner "down failed ($st); not running command"
+    exit "$st"
+fi
+
+trap on_signal_or_exit INT TERM EXIT
+
+banner "run:  ${cmd[*]}"
+"${cmd[@]}"
+st=$?
+
+# COMMAND returned without a signal; disarm before deciding.
+trap - INT TERM EXIT
+
+if (( always )) || (( st != 0 )); then
+    run_up || exit $?
+fi
+exit "$st"
