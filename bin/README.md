@@ -216,7 +216,7 @@ Remove colors from an input; use it like `software-that-prints-color | strip-col
 ### Other Text tools
 
 - __c.c__ / __c.p__ — clipboard **copy**/**paste** wrappers around the `clipboard` script
-- __clipboard__ — copy/paste across Wayland/KDE/X11 clipboard tools
+- __clipboard__ — byte-exact copy/paste/clear across Wayland (`wl-clipboard`), X11 (`xclip`/`xsel`) and KDE (Klipper); stays within one clipboard family per session (Wayland and X11 clipboards are different clipboards), reports failures via exit codes, adds `history --clear` (Klipper), and guards every backend with `CLIPBOARD_TIMEOUT` (default 3s)
 - __comment__ — add a comment line (begin/end, per-line) to stdin
 - __dedup__ — deduplicate stdin lines via a persistent hash cache file
 - __markdownify__ — wrap stdin/files in Markdown code blocks, inferring language from a git repo

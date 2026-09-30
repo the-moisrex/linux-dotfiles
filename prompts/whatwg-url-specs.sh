@@ -4,10 +4,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 show_help() {
   cat <<'EOF'
-Usage: prompt url-spec [--head N] [QUERIES...]
-       some-command | prompt url-spec [--head N] [QUERIES...]
+Usage: prompt whatwg-url-specs [--head N] [SECTIONS...]
+       some-command | prompt whatwg-url-specs [--head N] [SECTIONS...]
 
 Fetches relevant sections of the WHATWG URL specification using `whatwg-url-specs` and adds them to the prompt context.
+
+Several sections can be requested in a single call:
+       prompt whatwg-url-specs path-state authority-state host-state path-start-state
 
 Options:
   --head N   Keep only the first N lines of the embedded context

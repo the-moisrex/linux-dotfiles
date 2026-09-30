@@ -1,6 +1,15 @@
 #!/bin/bash
 
 # Clipboard utility that works across Wayland/KDE/X11.
+#
+# Only one clipboard "family" is used per session: Wayland sessions talk
+# to wl-clipboard, X11 sessions talk to xclip/xsel.  Falling back across
+# families is wrong -- on compositors that do not bridge XWayland (sway,
+# niri, ...) the X11 clipboard is a *different, empty* clipboard, so a
+# silent fallback would report success while reading/writing something
+# the session never uses.  Klipper (KDE) is the session clipboard
+# manager: it is used as a fallback on either family, and first for
+# `clear` (which it would otherwise undo from its history).
 
 # Function to check if a command exists
 command_exists() {
@@ -13,7 +22,7 @@ detect_desktop_environment() {
         echo "kde"
     elif [[ -n "${GNOME_DESKTOP_SESSION_ID:-}" ]] || [[ "${XDG_CURRENT_DESKTOP:-}" == *"GNOME"* ]] || [[ "${XDG_SESSION_DESKTOP:-}" == *"gnome"* ]]; then
         echo "gnome"
-    elif [[ "${XDG_CURRENT_DESKTOP:-}" == *"SWAY"* ]] || [[ "${XDG_SESSION_DESKTOP:-}" == *"sway"* ]]; then
+    elif [[ "${XDG_CURRENT_DESKTOP:-}" == *"SWAY"* ]] || [[ "${XDG_CURRENT_DESKTOP:-}" == *"sway"* ]] || [[ "${XDG_SESSION_DESKTOP:-}" == *"sway"* ]]; then
         echo "wayland"
     elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
         echo "wayland"
@@ -22,10 +31,233 @@ detect_desktop_environment() {
     fi
 }
 
+# Which clipboard family the session actually owns.
+detect_session_family() {
+    case "${XDG_SESSION_TYPE:-}" in
+        wayland) printf 'wayland' ;;
+        x11|tty) printf 'x11' ;;
+        *)
+            if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+                printf 'wayland'
+            else
+                printf 'x11'
+            fi
+        ;;
+    esac
+}
+
+# Klipper is reachable over D-Bus through several client tools.
+qdbus_bin() {
+    local name
+    for name in qdbus6 qdbus qdbus-qt5; do
+        if command_exists "$name"; then
+            printf '%s' "$name"
+            return 0
+        fi
+    done
+    return 1
+}
+
 desktop_env=$(detect_desktop_environment)
+session_family=$(detect_session_family)
+
+# Klipper calls (and any X11 selection owner) can block forever; give
+# every backend the same deadline so callers like `c.p` never hang.
+clipboard_timeout="${CLIPBOARD_TIMEOUT:-3}"
+if ! [[ "$clipboard_timeout" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$clipboard_timeout" == "0" ]]; then
+    echo "clipboard: CLIPBOARD_TIMEOUT must be a positive number of seconds." >&2
+    exit 2
+fi
+
+run_tool() {
+    if command_exists timeout; then
+        timeout "$clipboard_timeout" "$@"
+    else
+        "$@"
+    fi
+}
+
+err_file="$(mktemp)" || exit 1
+trap 'rm -f "$err_file"' EXIT
+
+last_label=""
+last_status=0
+last_err=""
+tried_any=false
+captured=""
+
+# Run a command for its stdout, letting stdout pass straight through to
+# the caller.  Stderr is captured for the final error message.
+attempt() {
+    local label="$1"
+    shift
+    tried_any=true
+    last_label="$label"
+    run_tool "$@" 2>"$err_file"
+    last_status=$?
+    last_err="$(<"$err_file")"
+    return "$last_status"
+}
+
+# Like attempt(), but captures stdout byte-exactly (trailing newlines
+# included) into $captured.  The status is smuggled out with a marker so
+# command substitution cannot eat it.
+capture() {
+    local label="$1" raw
+    shift
+    tried_any=true
+    last_label="$label"
+    raw="$({ run_tool "$@"; printf '\034%d' "$?"; } 2>"$err_file")"
+    last_status="${raw##*$'\034'}"
+    captured="${raw%$'\034'*}"
+    last_err="$(<"$err_file")"
+    return "$last_status"
+}
+
+# Some backends report "the clipboard holds no text" as an error; that is
+# a successful paste of nothing, not a failure.
+is_empty_selection() {
+    case "$last_label" in
+        wl-paste) [[ "$last_status" -eq 1 && "$last_err" == *"Nothing is copied"* ]] ;;
+        xclip)    [[ "$last_err" == *"not available"* ]] ;;
+        *)        return 1 ;;
+    esac
+}
+
+report_failure() {
+    local what="$1"
+    if [[ "$tried_any" == "false" ]]; then
+        if [[ "$session_family" == "wayland" ]]; then
+            printf 'clipboard: %s: no wayland clipboard utility found (install wl-clipboard)\n' "$what" >&2
+        else
+            printf 'clipboard: %s: no x11 clipboard utility found (install xclip or xsel)\n' "$what" >&2
+        fi
+        return 1
+    fi
+    if [[ "$last_status" -eq 124 ]]; then
+        printf 'clipboard: %s: %s timed out after %ss\n' "$what" "$last_label" "$clipboard_timeout" >&2
+    elif [[ -n "$last_err" ]]; then
+        printf 'clipboard: %s: %s failed (exit %d)\n%s\n' \
+            "$what" "$last_label" "$last_status" "$last_err" >&2
+    else
+        printf 'clipboard: %s: %s failed (exit %d)\n' \
+            "$what" "$last_label" "$last_status" >&2
+    fi
+    return 1
+}
+
+# A single execve argument is capped at 128 KB by the kernel, so the
+# python client (payload over stdin) is preferred over any qdbus argv.
+KLIPPER_PY=$(cat <<'EOF'
+import sys
+try:
+    import dbus
+except ImportError:
+    sys.exit(3)
+try:
+    iface = dbus.Interface(
+        dbus.SessionBus().get_object("org.kde.klipper", "/klipper"),
+        "org.kde.klipper.klipper",
+    )
+    op = sys.argv[1]
+    if op == "get":
+        sys.stdout.write(str(iface.getClipboardContents()))
+    elif op == "set":
+        iface.setClipboardContents(
+            sys.stdin.buffer.read().decode("utf-8", "replace")
+        )
+    elif op == "clear":
+        iface.clearClipboardContents()
+    elif op == "clear-history":
+        iface.clearClipboardHistory()
+    elif op == "history":
+        for item in iface.getClipboardHistoryMenu():
+            sys.stdout.write(str(item) + "\n")
+    else:
+        sys.exit(2)
+except dbus.exceptions.DBusException as exc:
+    sys.stderr.write("klipper: %s\n" % exc)
+    sys.exit(1)
+EOF
+)
+
+python_dbus_ok=""
+
+have_python_dbus() {
+    if [[ -z "$python_dbus_ok" ]]; then
+        if command_exists python3 && python3 -c 'import dbus' >/dev/null 2>&1; then
+            python_dbus_ok=true
+        else
+            python_dbus_ok=false
+        fi
+    fi
+    [[ "$python_dbus_ok" == "true" ]]
+}
+
+# Klipper helpers.  Return 0 on success, non-zero otherwise.
+klipper_get() {
+    local qdb
+    if have_python_dbus; then
+        capture "klipper(get)" python3 -c "$KLIPPER_PY" get && { printf '%s' "$captured"; return 0; }
+    fi
+    if qdb="$(qdbus_bin)"; then
+        # qdbus appends exactly one newline to a string reply; strip it.
+        if capture "klipper($qdb)" "$qdb" org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents; then
+            printf '%s' "${captured%$'\n'}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+klipper_set() {
+    local content="$1" qdb
+    if have_python_dbus; then
+        if capture "klipper(set)" python3 -c "$KLIPPER_PY" set < <(printf '%s' "$content"); then
+            return 0
+        fi
+    fi
+    if qdb="$(qdbus_bin)"; then
+        attempt "klipper($qdb)" "$qdb" org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents "$content" </dev/null >/dev/null && return 0
+    fi
+    return 1
+}
+
+klipper_clear() {
+    local qdb
+    if have_python_dbus; then
+        capture "klipper(clear)" python3 -c "$KLIPPER_PY" clear </dev/null && return 0
+    fi
+    if qdb="$(qdbus_bin)"; then
+        attempt "klipper($qdb)" "$qdb" org.kde.klipper /klipper org.kde.klipper.klipper.clearClipboardContents </dev/null >/dev/null && return 0
+    fi
+    return 1
+}
+
+klipper_clear_history() {
+    local qdb
+    if have_python_dbus; then
+        capture "klipper(clear-history)" python3 -c "$KLIPPER_PY" clear-history </dev/null && return 0
+    fi
+    if qdb="$(qdbus_bin)"; then
+        attempt "klipper($qdb)" "$qdb" org.kde.klipper /klipper org.kde.klipper.klipper.clearClipboardHistory </dev/null >/dev/null && return 0
+    fi
+    return 1
+}
+
+klipper_history() {
+    local qdb
+    if have_python_dbus; then
+        capture "klipper(history)" python3 -c "$KLIPPER_PY" history && return 0
+    fi
+    if qdb="$(qdbus_bin)"; then
+        attempt "klipper($qdb)" "$qdb" org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardHistoryMenu && return 0
+    fi
+    return 1
+}
 
 show_help() {
-    cat <<'EOF'
+    cat <<EOF
 Usage: clipboard COMMAND
 
 Copy/paste across Wayland/KDE/X11 clipboard tools.
@@ -35,7 +267,20 @@ Commands:
   copy, --copy, cp, c   Copy stdin to clipboard
   clear, --clear        Clear the clipboard
   history, --history    Show clipboard history (Klipper only)
+  history --clear       Clear the clipboard history (Klipper only)
   -h, --help            Show this help message
+
+Environment:
+  CLIPBOARD_TIMEOUT     Seconds to wait on any backend before giving up
+                        (default: 3)
+
+Behavior:
+  Only one clipboard family is used per session: Wayland sessions use
+  wl-clipboard, X11 sessions use xclip/xsel, and neither ever falls back
+  to the other (they are different clipboards on most compositors).
+  Klipper is used when KDE is detected.  Copy and paste are byte-exact:
+  no newline is added or removed.  Empty clipboard is success with empty
+  output; failures exit non-zero with an error on stderr.
 
 Examples:
   echo "hello" | clipboard copy     # Copy text to clipboard
@@ -45,105 +290,117 @@ Examples:
 
 Supported backends:
   - Wayland: wl-copy, wl-paste
-  - KDE: qdbus (klipper)
+  - KDE: qdbus6/qdbus (klipper), or python3 + dbus
   - X11: xclip, xsel
 EOF
 }
 
 do_paste() {
-    # Try Wayland clipboard utilities first (works for GNOME on Wayland)
-    if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
+    if [[ "$session_family" == "wayland" ]]; then
         if command_exists wl-paste; then
-            timeout 2 wl-paste 2>/dev/null && return 0
-            echo "wl-paste failed" >&2
+            attempt "wl-paste" wl-paste --no-newline && return 0
+            is_empty_selection && return 0
+        fi
+    else
+        if command_exists xclip; then
+            attempt "xclip" xclip -selection clipboard -o && return 0
+            is_empty_selection && return 0
+        fi
+        if command_exists xsel; then
+            attempt "xsel" xsel --clipboard --output && return 0
+            is_empty_selection && return 0
         fi
     fi
 
-    # Try KDE klipper
-    if command_exists qdbus; then
-        if qdbus org.kde.klipper >/dev/null 2>&1; then
-            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents && return 0
-        fi
+    # Klipper returns history item 0, which is why it is only a fallback.
+    if [[ "$desktop_env" == "kde" ]] && klipper_get; then
+        return 0
     fi
-
-    # Fallback to X11 clipboard utilities
-    if command_exists xclip; then
-        xclip -selection clipboard -o && return 0
-    elif command_exists xsel; then
-        xsel --clipboard --output && return 0
-    fi
-
-    echo "No supported clipboard utility found for pasting." >&2
-    return 1
+    report_failure paste
 }
 
 do_copy() {
-    local content
-    content="$(cat)"
+    local content i
+    if [[ -t 0 ]]; then
+        printf 'clipboard: reading from stdin (press Ctrl-D when done)\n' >&2
+    fi
 
-    # Try Wayland clipboard utilities first
-    if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
+    # Buffer stdin preserving trailing newlines (plain $(cat) strips them).
+    content="$(cat; printf '\001')"
+    content="${content%$'\001'}"
+
+    if [[ "$session_family" == "wayland" ]]; then
         if command_exists wl-copy; then
-            local retries=3
-            local delay=0.2
-            local i
-            for (( i=0; i<retries; i++ )); do
-                if printf '%s' "$content" | timeout 2 wl-copy --type text/plain 2>/dev/null; then
-                    return 0
-                fi
-                sleep "$delay"
+            for i in 1 2 3; do
+                attempt "wl-copy" wl-copy --type text/plain < <(printf '%s' "$content") >/dev/null && return 0
+                [[ "$last_status" -eq 124 ]] && break
+                [[ "$i" -lt 3 ]] && sleep 0.2
             done
-            echo "wl-copy failed after $retries attempts" >&2
+        fi
+    else
+        if command_exists xclip; then
+            attempt "xclip" xclip -selection clipboard -i < <(printf '%s' "$content") >/dev/null && return 0
+        fi
+        if command_exists xsel; then
+            attempt "xsel" xsel --clipboard --input < <(printf '%s' "$content") >/dev/null && return 0
         fi
     fi
 
-    # Try X11 clipboard utilities
-    if command_exists xclip; then
-        printf '%s' "$content" | xclip -selection clipboard -i && return 0
-    elif command_exists xsel; then
-        printf '%s' "$content" | xsel --clipboard --input && return 0
-    # Fallback to KDE klipper for copy (with workaround)
-    elif command_exists qdbus; then
-        if qdbus org.kde.klipper >/dev/null 2>&1; then
-            printf '%s' "$content" | xargs -0 -I{} qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents {} && return 0
-        fi
+    if [[ "$desktop_env" == "kde" ]] && klipper_set "$content"; then
+        return 0
     fi
-
-    echo "No supported clipboard utility found for copying." >&2
-    return 1
+    report_failure copy
 }
 
 do_clear() {
-    if [[ "$desktop_env" == "wayland" ]] || [[ "$desktop_env" == "gnome" ]]; then
+    # Klipper first: it repopulates the clipboard from history right
+    # after a plain X11/Wayland clear otherwise.
+    if [[ "$desktop_env" == "kde" ]] && klipper_clear; then
+        return 0
+    fi
+
+    if [[ "$session_family" == "wayland" ]]; then
         if command_exists wl-copy; then
-            timeout 2 wl-copy --clear 2>/dev/null && return 0
-            echo "wl-copy --clear failed" >&2
+            attempt "wl-copy --clear" wl-copy --clear </dev/null >/dev/null && return 0
+        fi
+    else
+        if command_exists xclip; then
+            attempt "xclip" xclip -selection clipboard -i </dev/null >/dev/null && return 0
+        fi
+        if command_exists xsel; then
+            attempt "xsel" xsel --clipboard --delete </dev/null >/dev/null && return 0
         fi
     fi
-
-    if command_exists xclip; then
-        echo -n "" | xclip -selection clipboard && return 0
-    elif command_exists xsel; then
-        xsel --clipboard --delete && return 0
-    elif command_exists qdbus; then
-        if qdbus org.kde.klipper >/dev/null 2>&1; then
-            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.clearClipboardHistory && return 0
-        fi
-    fi
-
-    echo "No supported clipboard utility found for clearing." >&2
-    return 1
+    report_failure clear
 }
 
 do_history() {
-    if command_exists qdbus; then
-        if qdbus org.kde.klipper >/dev/null 2>&1; then
-            qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardHistoryMenu
-            return 0
-        fi
+    if [[ $# -gt 1 ]]; then
+        printf 'clipboard: history: too many arguments\n' >&2
+        return 2
     fi
-    echo "Clipboard history is only supported with klipper." >&2
-    return 1
+    case "${1:-}" in
+        "")
+            if klipper_history; then
+                return 0
+            fi
+        ;;
+        --clear)
+            if klipper_clear_history; then
+                return 0
+            fi
+        ;;
+        *)
+            printf 'clipboard: history: unknown option: %s\n' "$1" >&2
+            return 2
+        ;;
+    esac
+
+    if [[ "$tried_any" == "false" ]]; then
+        printf 'clipboard: history: clipboard history is only supported with klipper.\n' >&2
+        return 1
+    fi
+    report_failure history
 }
 
 case "${1:-}" in
@@ -161,7 +418,8 @@ case "${1:-}" in
         do_clear
     ;;
     history|--history)
-        do_history
+        shift
+        do_history "$@"
     ;;
     *)
         echo "Usage: $0 {paste|copy|clear|history}" >&2
@@ -169,4 +427,4 @@ case "${1:-}" in
     ;;
 esac
 
-exit 0
+exit $?

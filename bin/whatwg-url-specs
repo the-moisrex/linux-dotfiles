@@ -104,7 +104,19 @@ def get_html_for_item(item, soup):
         dt = item['element'].find_parent('dt')
         if dt:
             dd = dt.find_next_sibling('dd')
-            return f"<dl>\n{str(dt)}\n{str(dd) if dd else ''}\n</dl>"
+            dts = [dt]
+            prev = dt.find_previous_sibling()
+            while prev is not None and (getattr(prev, 'name', None) == 'dt' or (isinstance(prev, str) and not prev.strip())):
+                if getattr(prev, 'name', None) == 'dt':
+                    dts.insert(0, prev)
+                prev = prev.find_previous_sibling()
+            nxt = dt.find_next_sibling()
+            while nxt is not None and (getattr(nxt, 'name', None) == 'dt' or (isinstance(nxt, str) and not nxt.strip())):
+                if getattr(nxt, 'name', None) == 'dt':
+                    dts.append(nxt)
+                nxt = nxt.find_next_sibling()
+            labels = "\n".join(str(d) for d in dts)
+            return f"<dl>\n{labels}\n{str(dd) if dd else ''}\n</dl>"
         
         parent = item['element'].find_parent(['p', 'li', 'div'])
         if parent:
@@ -150,7 +162,7 @@ def main():
 
     log("Parsing HTML...", args.verbose)
     with open(SPEC_FILE, 'r', encoding='utf-8') as f:
-        soup = BeautifulSoup(f, 'html.parser')
+        soup = BeautifulSoup(f, 'html5lib')
 
     if args.all:
         html_output = str(soup.find('main') or soup.find('body'))
@@ -204,7 +216,9 @@ def main():
 
     html_parts = []
     for item in unique_items:
-        html_parts.append(get_html_for_item(item, soup))
+        part = get_html_for_item(item, soup)
+        if part and part not in html_parts:
+            html_parts.append(part)
 
     html_output = "\n".join(html_parts)
     output_result(html_output, args.html)
@@ -234,7 +248,18 @@ def output_result(html_output, use_html):
         # Re-serialize through html5lib to fix malformed HTML (e.g. missing </li> closing tags)
         soup = BeautifulSoup(html_output, 'html5lib')
         body = soup.find('body')
-        html_output = ''.join(str(child) for child in body.children)
+        merged = []
+        for child in body.children:
+            if getattr(child, 'name', None) == 'dl':
+                j = len(merged) - 1
+                while j >= 0 and isinstance(merged[j], str) and not merged[j].strip():
+                    j -= 1
+                if j >= 0 and getattr(merged[j], 'name', None) == 'dl':
+                    for sub in list(child.contents):
+                        merged[j].append(sub)
+                    continue
+            merged.append(child)
+        html_output = ''.join(str(child) for child in merged)
         # Define the Lua filter that strips links and keeps their inner text
         lua_filter_content = "function Link(el) return el.content end\nfunction Span(el) return el.content end"
         

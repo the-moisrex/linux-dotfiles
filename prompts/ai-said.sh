@@ -212,7 +212,7 @@ if "$clear_on_start"; then
     if ! baseline_raw="$(paste_clipboard)"; then
         printf 'Warning: could not read clipboard (backend not responding); starting with an empty baseline.\n' >&2
         baseline_raw=""
-    elif [[ -n "${baseline_raw//[[:space:]]/}" ]]; then
+    elif [[ "$baseline_raw" =~ [^[:space:]] ]]; then
         printf 'Warning: clipboard still holds %d chars after clear; that content will be ignored.\n' "${#baseline_raw}" >&2
     else
         printf 'Clipboard cleared.\n' >&2
@@ -260,7 +260,7 @@ while true; do
     last_raw_hash="$raw_hash"
     
     # Skip empty clipboard and our own combined output (loop guard).
-    if [[ -z "${raw//[[:space:]]/}" ]]; then
+    if ! [[ "$raw" =~ [^[:space:]] ]]; then
         sleep "$interval"
         continue
     fi

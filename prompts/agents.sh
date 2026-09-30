@@ -52,19 +52,34 @@ embed_agent_file() {
     echo '```'
 }
 
+# Dedup by target inode: names that resolve to the same file (symlinks like
+# CLAUDE.md -> AGENTS.md, hardlinks, .opencode/AGENTS.md -> ../AGENTS.md)
+# are embedded only once, silently.  Also skips broken symlinks and
+# non-regular files so `cat` never runs on them.
+declare -A seen_files=()
+
+maybe_embed() {
+    local path="$1" key
+    [[ -f "$path" ]] || return 1
+    key="$(stat -Lc '%d:%i' -- "$path" 2>/dev/null)" || return 1
+    [[ -n "${seen_files[$key]:-}" ]] && return 1
+    seen_files["$key"]=1
+    embed_agent_file "$path"
+}
+
 found=0
 
 for name in "${agent_files[@]}"; do
     path="$GIT_ROOT/$name"
-    if [[ -f "$path" ]]; then
-        embed_agent_file "$path"
+    if maybe_embed "$path"; then
         found=1
     fi
 done
 
 if [[ -d "$GIT_ROOT/.opencode" ]]; then
     while IFS= read -r -d '' mdfile; do
-        embed_agent_file "$mdfile"
-        found=1
-    done < <(find "$GIT_ROOT/.opencode" -maxdepth 1 -name '*.md' -print0 2>/dev/null || true)
+        if maybe_embed "$mdfile"; then
+            found=1
+        fi
+    done < <(find -L "$GIT_ROOT/.opencode" -maxdepth 1 -name '*.md' -type f -print0 2>/dev/null | sort -z || true)
 fi
