@@ -8,7 +8,7 @@ curdir="$(realpath "$(dirname "$0")/../bin")"
 
 show_help() {
   cat <<'EOF'
-Usage: prompt yt-article
+Usage: prompt yt
 
 Builds an article-writing prompt from stdin.
 If stdin is a single YouTube URL, it tries to fetch subtitles/text first.

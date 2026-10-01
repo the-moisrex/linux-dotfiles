@@ -4,9 +4,8 @@ show_help() {
   cat <<'EOF'
 Usage: prompt agents [--head N]
 
-Find and embed agent instruction files (AGENTS.md, CLAUDE.md, etc.) from
-the current Git repository root.  This gives the AI project conventions,
-coding standards, and architectural context before it answers a question.
+Find and embed agent instruction files (AGENTS.md, CLAUDE.md, etc.) from the current Git repository root.
+This gives the AI project conventions, coding standards, and architectural context before it answers a question.
 
 Searches the git root for any of these files:
   AGENTS.md, CLAUDE.md, COPILOT.md, .cursorrules,

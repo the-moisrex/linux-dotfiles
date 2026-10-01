@@ -4,8 +4,7 @@ show_help() {
   cat <<'EOF'
 Usage: prompt ai-said [--interval N] [--timeout N] [--no-clear] [--head N]
 
-Collect multiple AI chat outputs via the clipboard and combine them
-into a single prompt.
+Collect multiple AI chat outputs via the clipboard and combine them into a single prompt.
 
 Flow:
   1. Run `prompt ai-said` (clears the clipboard by default).

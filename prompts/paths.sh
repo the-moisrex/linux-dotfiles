@@ -5,8 +5,7 @@ show_help() {
 Usage: prompt paths [--context N] [--full] [--head N] [FILE...]
        make 2>&1 | prompt paths [--context N] [--full] [--head N]
 
-Extracts file paths from stdin (via bin/paths) and/or arguments,
-resolves each, and embeds only Git-tracked files.
+Extracts file paths from stdin (via bin/paths) and/or arguments, resolves each, and embeds only Git-tracked files.
 
 Modes:
   (default)   Show N lines of context around each file:line:col hit

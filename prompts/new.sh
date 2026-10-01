@@ -5,8 +5,7 @@ show_help() {
 Usage: prompt new [--head N] [FILE...]
        echo "what the prompt should do" | prompt new [--head N] [FILE...]
 
-Builds a prompt that asks an AI to write a new bash prompt script
-following this repository's prompt conventions.
+Builds a prompt that asks an AI to write a new bash prompt script following this repository's prompt conventions.
 
 Always embeds shared infrastructure and example prompt scripts so the AI
 has enough context to generate a good, consistent prompt script.
@@ -43,6 +42,7 @@ echo
 echo "Requirements for the generated script:"
 echo "- Start with a proper bash shebang."
 echo "- Define a show_help function and support --help/-h via the shared argument parser."
+echo "- The first paragraph of show_help must be a complete standalone summary: it is what 'prompt list' shows."
 echo "- The script will be called using a wrapper script named 'prompt' (e.g., 'prompt my-script'). Ensure the help menu usage reflects this (e.g., 'Usage: prompt my-script')."
 echo "- Source prompts/_common.sh and call init_prompt (or init_prompt --no-files)."
 echo "- If files are needed, call get_files || true after init_prompt."

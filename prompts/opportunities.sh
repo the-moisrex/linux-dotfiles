@@ -7,7 +7,10 @@ Usage: prompt opportunities [CATEGORY] [EXTRA...]
        prompt opportunities cpp "backend development"
        prompt opportunities open-source "compilers"
 
-Find opportunities in a specific category. Categories:
+Find opportunities in a specific category such as money, tech, cpp, career, or business.
+Use the category `all` for a brief overview of every category.
+
+Categories:
   money        Find ways to make money (freelancing, products, services)
   tech         Technology trends and opportunities
   cpp          C++ ecosystem opportunities (libraries, tools, jobs)

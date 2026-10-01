@@ -5,12 +5,11 @@ show_help() {
 Usage: prompt verify [--head N] [GIT-DIRTY OPTIONS...]
        some-command | prompt verify [--head N] [GIT-DIRTY OPTIONS...]
 
-Verify uncommitted changes in the current Git repository for correctness,
-or verify whatever is piped in on stdin (e.g. from a clipboard, a saved
-diff, or the output of `git show`).
+Verify uncommitted changes in the current Git repository for correctness.
 
 When stdin is piped, that content is used as the context instead of
-git-dirty. Otherwise the full diff context (files + diffs) is embedded
+git-dirty (e.g. from a clipboard, a saved diff, or the output of
+`git show`). Otherwise the full diff context (files + diffs) is embedded
 via git-dirty and the AI is asked to validate correctness, catch bugs,
 regressions, and missing edge cases.
 

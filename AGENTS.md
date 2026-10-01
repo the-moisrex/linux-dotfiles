@@ -10,18 +10,21 @@ Personal Linux dotfiles repo: shell utilities, AI prompt scripts, firewall confi
 
 ## The Prompt System (`prompts/`)
 
-The `prompt` dispatcher (`bin/prompt`) searches `$XDG_CONFIG_DIRS/prompts` and `prompts/` for prompt files (`.sh`, `.txt`, `.md`). It auto-copies output to clipboard when stdout is a terminal.
+The `prompt` dispatcher (`bin/prompt`) searches `$XDG_CONFIG_DIRS/prompts` and `prompts/` for prompt files (`.sh`, `.txt`, `.md`). It auto-copies output to clipboard (a prompt script opts out by writing `no-clipboard` to `$PROMPT_NO_CLIPBOARD_FILE`).
 
 ```bash
 prompt <name> [-- args...]       # run a prompt
-prompt list                      # list available prompts with descriptions
+prompt list                      # list prompts + short descriptions (--names for bare names)
+prompt list-prompts              # print the full help of every prompt
 cat file.cpp | prompt fix        # pipe input to a prompt
 echo "task" | prompt auto        # auto-detect best prompt from input
 ```
 
+`list` and `list-prompts` are ordinary prompt scripts (`prompts/list.sh`, `prompts/list-prompts.sh`), not special cases in the dispatcher.
+
 **Prompt script conventions** (follow these when adding/editing prompts):
-- Source `prompts/_common.sh` and call `common_behavior`, then `set -- "${ARGS[@]}"`
-- Define `show_help()` with a `Usage: prompt <name>` line
+- Source `prompts/_common.sh` and call `init_prompt` (or `init_prompt --no-files`), then `set -- "${ARGS[@]}"`
+- Define `show_help()` with a `Usage: prompt <name>` line; its first paragraph must be a complete standalone summary (it is what `prompt list` shows)
 - Use `infer_lang` for code block language tags, `trim_context` for `--head N` support
 - Accept files as args and/or stdin; embed as fenced code blocks
 - Print clear AI instructions first, then context
@@ -36,17 +39,18 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 - `spp` — C++ symbol expansion via `bin/spp`
 - `commit` — git commit message from staged/unstaged diff
 - `new` — meta-prompt that generates new prompt scripts (embeds `_common.sh` as reference)
+- `list` / `list-prompts` — prompt catalog: short descriptions / full help
 - `prompt-compiler` — autocomplete/compiles prompts with `{{var}}` expansion and `/slash-commands`
 
 **`prompts/_common.sh` shared API:**
-- `common_behavior` = `parse_arguments` + `print_stdin`
-- `print_stdin` — reads stdin or uses fzf for file selection
-- `parse_arguments` — handles `--head N`, `--help`; remaining args go to `ARGS` array
+- `parse_arguments` — handles `--head N`, `--help`; remaining args go to `ARGS` array (`init_prompt` wraps it)
 - `infer_lang <file>` — returns language name for syntax highlighting
 - `trim_context <text>` — truncates to `$head_lines` if set
 - `embed_file <path> [label]` — prints a fenced code block with language inference
 - `resolve_input_file <name>` — resolves a filename via git root or fzf
 - `select_files` — fzf multi-select from git-tracked files
+- `collect_prompts` — prints `name<TAB>file` for every available prompt
+- `prompt_search_dirs` — prints the directories searched for prompt files
 
 ## `bin/` Utilities (150+)
 
@@ -91,9 +95,9 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 ## Gotchas
 
 - `bin/` scripts have varying external dependencies — always check `--help` or header comments
-- `prompt` auto-copies to clipboard when stdout is a terminal; pipe to something to avoid this
+- `prompt` auto-copies output to the clipboard; a prompt script opts out by writing `no-clipboard` to `$PROMPT_NO_CLIPBOARD_FILE`
 - Prompt scripts are not executable (run via `bash`); the dispatcher handles this
-- `prompt-compiler` needs Python 3 and shells out to `prompt list-prompts` for autocomplete
+- `prompt-compiler` needs Python 3 and shells out to `prompt list --names` for autocomplete
 - `spp` needs `clang` and reads `.clang`/`.clangd` from the git root
 - `pods/pod start` sets `net.ipv4.ip_unprivileged_port_start=80` via sudo
 - Firewall scripts need root and use nftables

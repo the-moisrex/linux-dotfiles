@@ -282,3 +282,45 @@ embed_file() {
     echo '```'
 }
 
+# --- Prompt discovery -------------------------------------------------
+# Mirrors the search order used by the `prompt` dispatcher:
+# $XDG_CONFIG_DIRS/prompts first, then this prompts directory.
+
+COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+prompt_search_dirs() {
+    local dirs="${XDG_CONFIG_DIRS:-/etc/xdg}" d
+    local -a xdg=()
+    IFS=':' read -r -a xdg <<< "$dirs"
+    for d in "${xdg[@]}"; do
+        [[ -z "$d" ]] && continue
+        printf '%s\n' "${d%/}/prompts"
+    done
+    printf '%s\n' "$COMMON_DIR"
+}
+
+# Enumerate available prompts. Prints unique "name<TAB>file" lines in
+# search order (first match wins), skipping _-prefixed files and
+# stripping known extensions.
+collect_prompts() {
+    local dir file base name ext
+    local -A seen=()
+    while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r file; do
+            [[ -f "$file" ]] || continue
+            base="$(basename "$file")"
+            [[ "$base" == _* ]] && continue
+            name="$base"
+            for ext in .sh .txt .md; do
+                name="${name%$ext}"
+            done
+            name="${name%.}"
+            if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
+                seen[$name]=1
+                printf '%s\t%s\n' "$name" "$file"
+            fi
+        done < <(find "$dir" -maxdepth 1 -type f -print 2>/dev/null)
+    done < <(prompt_search_dirs)
+}
+

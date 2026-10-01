@@ -39,8 +39,8 @@ def run_shell(cmd_args):
         return None
 
 def init_cache():
-    """Populate the PROMPT_COMMANDS_CACHE by running 'prompt list-prompts'."""
-    output = run_shell(["prompt", "list-prompts"])
+    """Populate the PROMPT_COMMANDS_CACHE by running 'prompt list --names'."""
+    output = run_shell(["prompt", "list", "--names"])
     if output:
         for line in output.splitlines():
             cmd = line.strip()

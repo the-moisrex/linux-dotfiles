@@ -2,8 +2,8 @@
 
 show_help() {
   cat <<'EOF'
-Usage: prompt farsi [--head N]...
-       some-command | prompt farsi [--head N]...
+Usage: prompt farsi [--head N]
+       some-command | prompt farsi [--head N]
 
 Translate to Farsi.
 

@@ -2,8 +2,8 @@
 
 show_help() {
   cat <<'EOF'
-Usage: prompt english [--head N]...
-       some-command | prompt english [--head N]...
+Usage: prompt english [--head N]
+       some-command | prompt english [--head N]
 
 Translate to English.
 

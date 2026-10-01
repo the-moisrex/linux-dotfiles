@@ -10,8 +10,8 @@ show_help() {
 Usage: prompt run [--head N] [--gtest] [run-args...]
        run target | prompt run [--head N] [--gtest]
 
-Runs `bin/run` with the provided arguments and builds a debugging prompt
-from its output. If stdin is piped in, it debugs the piped run output instead.
+Runs `bin/run` with the provided arguments and builds a debugging prompt from its output.
+If stdin is piped in, it debugs the piped run output instead.
 
 Options:
   --head N   Keep only the first N lines of run output

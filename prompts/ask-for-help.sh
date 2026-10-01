@@ -5,8 +5,7 @@ show_help() {
 Usage: prompt ask-for-help [--head N]
        echo "I'm stuck on this problem..." | prompt ask-for-help [--head N]
 
-Generates a ready-to-run `prompt` command line that bundles all the context
-needed to ask another AI for help with a coding problem.
+Generates a ready-to-run `prompt` command line that bundles all the context needed to ask another AI for help with a coding problem.
 
 Describe your problem on stdin (or via clipboard). The AI will compose a
 `prompt` command using context-gathering prompts (.note, .cli, .files, etc.)
@@ -85,6 +84,7 @@ Do NOT:
 - Research how to solve the problem
 - Provide any solution or analysis
 - Do anything beyond generating the command
+- Give details to the AI about how to run test and build project, they don't have access to the repo
 
 Give the AI all the context and the files it needs; tell the AI about limitations, behavior requirements, any useful information or file it needs to figure it all out.
 Add enough details; the AI has no access to any files or assets because it's a Chatbot AI not agentic AI; so be careful about what the AI needs.

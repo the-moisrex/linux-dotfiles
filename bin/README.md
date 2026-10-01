@@ -229,7 +229,7 @@ Remove colors from an input; use it like `software-that-prints-color | strip-col
 - __ai-save__ — sync AI chat histories (gapgpt.app) to local Markdown and commit them to git
 - __commit__ — suggest/format git commit messages from staged diffs, issue context and templates
 - __content__ — fetch news/article URLs and extract clean, filtered article text (pandoc) — a content feed for prompts/AI
-- __prompt__ — manage and run prompt files (`.sh/.txt/.md`) from XDG dirs; `prompt list`, stdin piped to prompt
+- __prompt__ — manage and run prompt files (`.sh/.txt/.md`) from XDG dirs; `prompt list` (short descriptions), `prompt list-prompts` (full help), stdin piped to prompt
 - __prompt-compiler__ — autocomplete/compile prompts: slash-commands, `{{env}}`/`${var}` expansion, snippets
 - __suggest__ — fetch search suggestions from Google, Zarebin, DuckDuckGo, Bing
 

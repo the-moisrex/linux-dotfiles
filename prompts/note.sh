@@ -7,7 +7,10 @@ show_help() {
 Usage: prompt note [--head N] [NOTE...]
        some-command | prompt note [--head N] [NOTE...]
 
-Add note to the prompt
+Add a note to the prompt.
+
+The note is placed after the embedded context by default; use --prepend
+to place it before everything.
 
 Options:
   --head N      Keep only the first N lines of the embedded context

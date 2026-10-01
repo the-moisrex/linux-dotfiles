@@ -6,7 +6,7 @@ Usage: prompt symbols [--head N] [file...]
 
 Builds a prompt that reviews symbol names.
 If file paths are given, it reads those files; otherwise it reads stdin.
-Usage: `prompt symbols $(fzf)`
+Example: `prompt symbols $(fzf)`
 
 Options:
   --head N   Keep only the first N lines of the embedded context

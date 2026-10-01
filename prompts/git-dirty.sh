@@ -5,6 +5,8 @@ show_help() {
 Usage: prompt git-dirty [OPTIONS]
 
 Show uncommitted/changed files in the current Git repository.
+By default it lists all staged and unstaged changes (--all --files);
+the options below switch to diffs or full file contents.
 
 FILTER OPTIONS (what to show):
   --staged, -s           Only staged (cached) changes

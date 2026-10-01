@@ -11,6 +11,7 @@ Usage: prompt skill <name> [--head N] [FILE...]
 Loads a cached skill and outputs its content as an AI prompt.
 If the skill is not cached, it is downloaded automatically.
 Piped stdin and file arguments are embedded as context.
+It also manages skills: list, install, and uninstall (see below).
 
 Subcommands:
   list              List locally cached skills
