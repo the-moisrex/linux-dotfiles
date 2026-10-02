@@ -74,10 +74,10 @@ Guidelines:
 
 Output ONE command in a bash code block:
 ```
-prompt .note "..." .files ... .cli "..." ...
+prompt .note "..." .files ... .note "..." .cli "..." .agents .repo
 ```
 
-If the problem is ambiguous, list 1-2 clarifying questions AFTER the command.
+If the problem is ambiguous, list 1-2 clarifying questions INSIDE the command for the AI.
 
 Do NOT:
 - Explain what the command does

@@ -324,3 +324,21 @@ collect_prompts() {
     done < <(prompt_search_dirs)
 }
 
+# Statically extract show_help() text from prompt scripts with
+# _extract-help.awk — one awk run replaces running `bash file --help` for
+# every prompt (the dominant cost of `prompt list`).
+#   extract_help para <file>...  one line per file:
+#                                <file>\x1f<first paragraph> when a static
+#                                heredoc exists (paragraph may be empty),
+#                                a bare <file> line otherwise (no static
+#                                help — caller falls back to `bash --help`).
+#   extract_help full <file>...  records: \x1c<file> header line (ASCII 28)
+#                                followed by the help body; an empty body
+#                                means fall back to `bash --help`.
+extract_help() {
+    local mode="$1"
+    shift
+    (($#)) || return 0
+    awk -v mode="$mode" -f "$COMMON_DIR/_extract-help.awk" "$@"
+}
+

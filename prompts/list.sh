@@ -58,18 +58,46 @@ short_help() {
 }
 
 rows=""
+names_arr=()
+files_arr=()
 while IFS=$'\t' read -r name file; do
     [[ -z "$name" ]] && continue
     if $names_only; then
         printf '%s\n' "$name"
         continue
     fi
-    rows+="${name}"$'\t'"$(short_help "$file")"$'\n'
+    names_arr+=("$name")
+    files_arr+=("$file")
 done < <(collect_prompts | sort)
 
 if $names_only; then
     exit 0
 fi
+
+# One awk run extracts the first help paragraph of every .sh prompt;
+# prompts without a static show_help heredoc fall back to running --help.
+declare -A static_para=()
+sh_files=()
+for file in "${files_arr[@]}"; do
+    [[ "$file" == *.sh ]] && sh_files+=("$file")
+done
+if ((${#sh_files[@]})); then
+    while IFS= read -r line; do
+        [[ "$line" == *$'\x1f'* ]] || continue
+        static_para["${line%%$'\x1f'*}"]="${line#*$'\x1f'}"
+    done < <(extract_help para "${sh_files[@]}")
+fi
+
+for i in "${!names_arr[@]}"; do
+    name="${names_arr[i]}"
+    file="${files_arr[i]}"
+    if [[ -n "${static_para[$file]+set}" ]]; then
+        desc="${static_para[$file]}"
+    else
+        desc="$(short_help "$file")"
+    fi
+    rows+="${name}"$'\t'"${desc}"$'\n'
+done
 
 if [[ -n "${PROMPT_OUTPUT_TTY:-}" && -n "$rows" ]]; then
     printf '%-18s  %s\n' "Prompt" "Description"

@@ -83,12 +83,12 @@ end
 
 complete -c prompt -f -n __fish_prompt_needs_name -s h -l help -d "Show help message"
 complete -c prompt -f -n __fish_prompt_needs_name -xa list -d "List available prompts"
-complete -c prompt -f -n __fish_prompt_needs_name -xa list-prompts -d "List prompt names only"
+complete -c prompt -f -n __fish_prompt_needs_name -xa list-prompts -d "Print full help of every prompt"
 # Complete prompt names for the first argument and for subsequent . or - prefixed tokens.
 # Include .name and -name shorthands (expanded by prompt-compiler).
 # -f suppresses fish's default file completion so . and - prefixes match prompt names.
-complete -c prompt -f -n __fish_prompt_needs_name -xa '(prompt list-prompts 2>/dev/null | awk \'{print $0; print "."$0; print "-"$0}\')' -d "Prompt name"
-complete -c prompt -f -n __fish_prompt_token_is_shorthand -xa '(prompt list-prompts 2>/dev/null | awk \'{print "."$0; print "-"$0}\')' -d "Prompt name"
+complete -c prompt -f -n __fish_prompt_needs_name -xa '(prompt list --names 2>/dev/null | awk \'{print $0; print "."$0; print "-"$0}\')' -d "Prompt name"
+complete -c prompt -f -n __fish_prompt_token_is_shorthand -xa '(prompt list --names 2>/dev/null | awk \'{print "."$0; print "-"$0}\')' -d "Prompt name"
 complete -c prompt -n __fish_prompt_has_name -s h -l help -d "Show help for the selected prompt"
 complete -c prompt -n __fish_prompt_supports_head -l head -x -d "Keep only the first N lines of embedded context"
 complete -c prompt -n __fish_prompt_is_run -l head -x -d "Trim run output with head"

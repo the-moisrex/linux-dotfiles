@@ -51,6 +51,7 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 - `select_files` — fzf multi-select from git-tracked files
 - `collect_prompts` — prints `name<TAB>file` for every available prompt
 - `prompt_search_dirs` — prints the directories searched for prompt files
+- `extract_help para|full <files>` — statically extracts `show_help()` text via `prompts/_extract-help.awk` (used by `list`/`list-prompts` to avoid running `bash --help` per prompt)
 
 ## `bin/` Utilities (150+)
 

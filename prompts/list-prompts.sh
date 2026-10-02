@@ -25,17 +25,48 @@ if [[ ${#ARGS[@]} -gt 0 ]]; then
     exit 2
 fi
 
+pairs=()
+sh_files=()
 while IFS=$'\t' read -r name file; do
     [[ -z "$name" ]] && continue
+    pairs+=("${name}"$'\t'"${file}")
+    [[ "$file" == *.sh ]] && sh_files+=("$file")
+done < <(collect_prompts | sort)
+
+# One awk run extracts every .sh prompt's full help text; prompts without
+# a static show_help heredoc fall back to running --help.
+declare -A static_help=()
+if ((${#sh_files[@]})); then
+    cur_file=""
+    cur_body=""
+    while IFS= read -r line; do
+        if [[ "$line" == $'\x1c'* ]]; then
+            [[ -n "$cur_file" ]] && static_help["$cur_file"]="$cur_body"
+            cur_file="${line#$'\x1c'}"
+            cur_body=""
+        else
+            cur_body+="$line"$'\n'
+        fi
+    done < <(extract_help full "${sh_files[@]}")
+    [[ -n "$cur_file" ]] && static_help["$cur_file"]="$cur_body"
+fi
+
+for pair in "${pairs[@]}"; do
+    name="${pair%%$'\t'*}"
+    file="${pair#*$'\t'}"
     printf '=== %s ===\n' "$name"
     if [[ "$file" == *.sh ]]; then
-        text="$(bash "$file" --help </dev/null 2>/dev/null)"
-        if [[ -z "$text" ]]; then
-            text="(no --help output)"
+        if [[ -n "${static_help[$file]:-}" ]]; then
+            printf '%s' "${static_help[$file]}"
+        else
+            text="$(bash "$file" --help </dev/null 2>/dev/null)"
+            if [[ -z "$text" ]]; then
+                text="(no --help output)"
+            fi
+            printf '%s\n' "$text"
         fi
-        printf '%s\n' "$text"
     else
         cat -- "$file"
     fi
     printf '\n'
-done < <(collect_prompts | sort)
+done

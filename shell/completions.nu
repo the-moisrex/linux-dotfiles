@@ -139,10 +139,10 @@ def complete_prompt [spans: list<string>] {
             {value: "-h", description: "Show help"},
             {value: "--help", description: "Show help"},
             {value: "list", description: "List available prompts"},
-            {value: "list-prompts", description: "List prompt names only"}
+            {value: "list-prompts", description: "Print full help of every prompt"}
         ]
         let prompt_names = try {
-            prompt list-prompts 2>/dev/null
+            prompt list --names 2>/dev/null
             | lines
             | each {|name| [
                 {value: $name, description: "Prompt name"}
