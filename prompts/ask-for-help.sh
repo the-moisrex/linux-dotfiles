@@ -10,6 +10,8 @@ Generates a ready-to-run `prompt` command line that bundles all the context need
 Describe your problem on stdin (or via clipboard). The AI will compose a
 `prompt` command using context-gathering prompts (.note, .cli, .files, etc.)
 that you can run, take the output to a smarter AI, and bring back the answer.
+The output also embeds the list of other available prompts (minus translation,
+summarization, and meta ones) so the AI can chain whatever context it needs.
 
 Options:
   --head N   Keep only the first N lines of each embedded context file
@@ -18,6 +20,10 @@ EOF
 
 source "$(dirname "$0")/_common.sh"
 init_prompt --no-files
+
+# Prompts the local AI can handle itself (translation, summarization, simple
+# analysis) or meta prompts — no need to ask the bigger AI about these.
+excluded='^(english|farsi|auto|summarize|metadata|tweets|diagram|explain|list|list-prompts|ask-for-help|ai-said|yt)$'
 
 echo "# Available context-gathering prompts"
 echo
@@ -32,6 +38,14 @@ echo "  .clipboard          Embed clipboard content"
 echo
 echo "Example command:"
 echo "  prompt .note \"WIP: fixing parser bug\" .files parser.h parser.cpp .cli \"make test 2>&1\""
+echo
+echo "# Other available prompts"
+echo
+echo "Besides the shorthand above, every prompt below can also be chained into"
+echo "the command (prefix it with '.', e.g. '.man ls') to add more context:"
+echo
+PROMPT_OUTPUT_TTY= PROMPT_NO_CLIPBOARD_FILE=/dev/null bash "$COMMON_DIR/list.sh" \
+| awk -F'\t' -v excl="$excluded" '$1 !~ excl { printf "- `%s` — %s\n", $1, $2 }'
 echo
 echo "---"
 echo
