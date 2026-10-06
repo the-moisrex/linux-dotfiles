@@ -1,0 +1,210 @@
+#!/bin/bash
+# oc - Run the opencode AI agent in a container.
+# In a project (Dockerfile or dockerfile.gen-able): uses the project's dev
+# container via bin/pod (fragment "oc"). Anywhere else: the agents image.
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+AGENT_DIR="$ROOT_DIR/pods/agents/opencode"
+IMAGE="localhost/agents-opencode:local"
+
+show_help() {
+    cat << EOF
+Usage: oc [OPTIONS] [--] [opencode args...]
+
+Run the opencode AI coding agent in a container. Two modes:
+
+  project mode   \$PWD is a project (has a Dockerfile, or dockerfile.gen can
+                 generate one from CMakeLists.txt/package.json/Cargo.toml/...)
+                 -> runs opencode inside that project's dev container (bin/pod),
+                    building the project image and layering the "oc" fragment
+                    on top. Auth/config/sessions live in the profile volume,
+                    seeded on the host with the same recorded rules as below.
+  agents mode    anywhere else -> the standalone agents image (pods/agents/)
+                 with its own entrypoint-based seeding.
+
+OPTIONS:
+  -p, --profile NAME   Profile volume to use (default: \$OC_PROFILE or "default")
+  -b, --build          Rebuild the image before running
+      --seed           Seed this profile from ~/.local/share/opencode/auth.json
+                       and ~/.config/opencode (fills what is missing, never
+                       overwrites a real config; profiles are unseeded by default)
+      --reseed         Overwrite the profile's auth/config from the host
+                       (sessions are kept; clobbers in-container config edits)
+      --no-seed        Do not seed (the default, kept for explicitness)
+      --with FRAGS     project mode: extra dev-container fragments (comma
+                       separated), e.g. --with vscode,ssh
+      --pod NAME       project mode: put the container in a shared pod
+      --verbose        project mode: pass --verbose to pod (keep build logs)
+      --agents         force agents mode even inside a project
+      --no-git         Do not mount ~/.gitconfig into the container
+      --no-ssh         Do not mount ~/.ssh into the container
+  -h, --help           Show this help
+
+Anything after -- is passed to opencode unchanged (oc -- --version).
+
+EXAMPLES:
+  oc                          # interactive TUI (project mode if in a project)
+  oc --seed                   # one-shot: seed this profile from the host
+  oc -p work --seed           # new profile, seeded from the host
+  oc --with vscode,ssh        # project mode: code-server + sshd around opencode
+  oc run "fix the tests"      # one-shot headless prompt
+  oc -- --version             # run opencode with its own flags
+  oc -b -- -s <session-id>    # rebuild image, resume a session
+
+Inspect a profile's state:     oc-seed --print oc-profile-<name>
+Dev containers:                 pod list / pod prune (see pod --help)
+The web UI service is started with: pods/stack start agents
+Host-side attach to it:         opencode attach http://opencode.localhost
+EOF
+}
+
+profile="${OC_PROFILE:-default}"
+build=0
+seed=0
+reseed=0
+mount_git=1
+mount_ssh=1
+agents_force=0
+with_frags=""
+shared_pod=""
+passthrough=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help; exit 0 ;;
+        -p|--profile) profile="${2:?--profile needs a name}"; shift 2 ;;
+        --profile=*) profile="${1#*=}"; shift ;;
+        -b|--build) build=1; shift ;;
+        --seed) seed=1; shift ;;
+        --reseed) reseed=1; seed=1; shift ;;
+        --no-seed) seed=0; reseed=0; shift ;;
+        --with) with_frags="${2:?--with needs fragments}"; shift 2 ;;
+        --with=*) with_frags="${1#*=}"; shift ;;
+        --pod) shared_pod="${2:?--pod needs a name}"; shift 2 ;;
+        --pod=*) shared_pod="${1#*=}"; shift ;;
+        --agents) agents_force=1; shift ;;
+        --verbose) verbose=1; shift ;;
+        --no-git) mount_git=0; shift ;;
+        --no-ssh) mount_ssh=0; shift ;;
+        --) shift; passthrough=("$@"); break ;;
+        *) passthrough+=("$1"); shift ;;
+    esac
+done
+
+if ! command -v podman >/dev/null 2>&1; then
+    echo -e "${RED}[ERROR]${NC} podman is not installed." >&2
+    exit 1
+fi
+
+# ------------------------------------------------------------- mode detect ---
+project_root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$project_root" ]] || project_root="$PWD"
+
+is_project() { # $1=root
+    local root="$1" m
+    [[ -f "$root/Dockerfile" ]] && return 0
+    for m in CMakeLists.txt package.json Cargo.toml go.mod \
+             pyproject.toml requirements.txt setup.py Makefile makefile; do
+        [[ -f "$root/$m" ]] && return 0
+    done
+    return 1
+}
+
+if [[ "$agents_force" == 0 ]] && is_project "$project_root"; then
+    # ------------------------------------------------------- project mode ---
+    pod_args=(ensure --profile "$profile")
+    if [[ "${verbose:-0}" == 1 ]]; then
+        pod_args+=(--verbose)   # keep pod's build logs + detail (drops --quiet)
+    else
+        pod_args+=(--quiet)
+    fi
+    [[ "$build" == 1 ]] && pod_args+=(--rebuild)
+    [[ "$mount_git" == 0 ]] && pod_args+=(--no-git)
+    [[ "$mount_ssh" == 0 ]] && pod_args+=(--no-ssh)
+    [[ -n "$shared_pod" ]] && pod_args+=(--pod "$shared_pod")
+    [[ -n "$with_frags" ]] && pod_args+=(-w "$with_frags")
+    [[ "${verbose:-0}" == 1 ]] && pod_args+=(--verbose)
+
+    container="$("$SCRIPT_DIR/pod" "${pod_args[@]}" oc)" || exit $?
+
+    # host-side seeding, same recorded rules as the agents entrypoint
+    seed_args=()
+    [[ "$reseed" == 1 ]] && seed_args=(--reseed)
+    [[ "$seed" == 1 && "$reseed" == 0 ]] && seed_args=(--seed)
+    "$SCRIPT_DIR/oc-seed" ${seed_args[@]+"${seed_args[@]}"} "oc-profile-$profile"
+
+    tty_args=(-i)
+    [[ -t 0 && -t 1 ]] && tty_args+=(-t)
+    exec_env=()
+    for var in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_GENERATIVE_AI_API_KEY \
+               XAI_API_KEY GROQ_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY \
+               OPENCODE_API_KEY TERM COLORTERM LANG; do
+        [[ -n "${!var:-}" ]] && exec_env+=(-e "$var")
+    done
+
+    exec podman exec "${tty_args[@]}" ${exec_env[@]+"${exec_env[@]}"} \
+        "$container" opencode "${passthrough[@]}"
+fi
+
+# ------------------------------------------------------------ agents mode ---
+if [[ "$build" == 1 ]] || ! podman image exists "$IMAGE" 2>/dev/null; then
+    echo -e "${GREEN}[INFO]${NC} Building $IMAGE ..."
+    podman build -t "$IMAGE" "$AGENT_DIR" || {
+        echo -e "${RED}[ERROR]${NC} Image build failed." >&2
+        exit 1
+    }
+fi
+
+if ! podman volume exists "oc-profile-$profile" 2>/dev/null; then
+    podman volume create "oc-profile-$profile" >/dev/null
+fi
+
+if podman container exists "oc-$profile" 2>/dev/null; then
+    if [[ "$(podman container inspect -f '{{.State.Running}}' "oc-$profile" 2>/dev/null)" == "true" ]]; then
+        echo -e "${RED}[ERROR]${NC} A container named oc-$profile is already running." >&2
+        exit 1
+    fi
+    podman container rm "oc-$profile" >/dev/null
+fi
+
+tty_flags=(-i)
+[[ -t 0 && -t 1 ]] && tty_flags=(-it)
+
+run_args=(
+    run "${tty_flags[@]}"
+    --rm
+    --name "oc-$profile"
+    --userns=keep-id
+    --add-host=host.containers.internal:host-gateway
+    -e "OC_SEED=$seed"
+    -e "OC_RESEED=$reseed"
+    -v "oc-profile-$profile:/profile"
+    -v "$PWD:/workspace"
+    -w /workspace
+)
+
+# Forward common provider API keys and terminal/locale settings when set.
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_GENERATIVE_AI_API_KEY \
+           XAI_API_KEY GROQ_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY \
+           OPENCODE_API_KEY TERM COLORTERM LANG; do
+    [[ -n "${!var:-}" ]] && run_args+=(-e "$var")
+done
+
+# Host auth/config are only mounted when seeding was actually asked for.
+if [[ "$seed" == 1 || "$reseed" == 1 ]]; then
+    [[ -f "$HOME/.local/share/opencode/auth.json" ]] && \
+        run_args+=(-v "$HOME/.local/share/opencode/auth.json:/seed/auth.json:ro")
+    [[ -d "$HOME/.config/opencode" ]] && \
+        run_args+=(-v "$HOME/.config/opencode:/seed/config:ro")
+fi
+[[ "$mount_git" == 1 && -f "$HOME/.gitconfig" ]] && \
+    run_args+=(-v "$HOME/.gitconfig:/home/agent/.gitconfig:ro")
+[[ "$mount_ssh" == 1 && -d "$HOME/.ssh" ]] && \
+    run_args+=(-v "$HOME/.ssh:/home/agent/.ssh:ro")
+
+exec podman "${run_args[@]}" "$IMAGE" opencode "${passthrough[@]}"

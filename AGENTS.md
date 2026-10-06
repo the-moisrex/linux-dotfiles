@@ -65,6 +65,11 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 - `clang.deps` — list a C++ file's dependencies
 - `llvm.run` — run clang/LLVM plugins with project flags
 
+**Dev containers:**
+- `pod` — project dev containers: builds the project image (own Dockerfile or `dockerfile.gen`), layers `pods/dockerfiles/*.Dockerfile` fragments (`oc`, `vscode`, `ssh`), runs labeled containers (bind/`--copy`/worktree workspaces)
+- `dockerfile.gen` — standalone Dockerfile generator matching the host OS (used by `pod` when no Dockerfile exists)
+- `oc` — opencode agent in a container (project mode delegates to `pod ensure` + `oc-seed`, otherwise the `pods/agents` image); `oc-seed` records/applies profile seeding on the host
+
 **Prompt infrastructure:**
 - `prompt` — the prompt dispatcher (searches XDG + repo prompts dir)
 - `prompt-compiler` — autocomplete and `{{var}}`/`/cmd` expansion engine
@@ -84,7 +89,7 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 | `bin/` | 150+ standalone shell utilities |
 | `prompts/` | AI prompt scripts (`.sh`), all source `_common.sh` |
 | `firewall/` | nftables/iptables scripts and configs |
-| `pods/` | Containerized services (podman-compose), managed by `pods/pod` |
+| `pods/` | Containerized services (podman-compose, managed by `pods/stack`) + dev-container fragments (`dockerfiles/`) |
 | `pkgs/` | Package lists (`pacman-core.txt`, `pacman-all.txt`, `dnf-core.txt`) |
 | `setup/` | Modular setup scripts, all support `--uninstall --verbose --help` |
 | `services/` | Systemd service files (system/ and user/) |
@@ -100,6 +105,6 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 - Prompt scripts are not executable (run via `bash`); the dispatcher handles this
 - `prompt-compiler` needs Python 3 and shells out to `prompt list --names` for autocomplete
 - `spp` needs `clang` and reads `.clang`/`.clangd` from the git root
-- `pods/pod start` sets `net.ipv4.ip_unprivileged_port_start=80` via sudo
+- `pods/stack start` sets `net.ipv4.ip_unprivileged_port_start=80` via sudo
 - Firewall scripts need root and use nftables
 - `transfer` service (transfer.sh) is currently down

@@ -1,0 +1,201 @@
+#!/bin/bash
+# oc-seed - apply/record an opencode profile's seed decision on the host.
+# Works directly on a profile volume's mountpoint, so containers that use the
+# profile (bin/pod dev containers, bin/oc) don't need an entrypoint hook.
+set -euo pipefail
+
+TOOL="oc-seed"
+
+show_help() {
+    cat << EOF
+Usage: $TOOL [OPTIONS] VOLUME_OR_DIR
+
+Record (and, when asked, apply) whether an opencode profile was seeded from
+the host. VOLUME_OR_DIR is a podman volume name (e.g. oc-profile-default) or
+the directory holding .profile, config/ and data/.
+
+The decision is written to <dir>/.profile exactly like
+pods/agents/opencode/entrypoint.sh does, so a profile's state never depends
+on which flags ran first:
+
+  seeded=yes|no        host config has (not) been applied
+  seeded_auth=...      host auth.json has (not) been copied
+  seeded_config=...    host opencode.jsonc has (not) been copied
+  seeded_at=<utc ts>
+
+OPTIONS:
+      --seed        fill in what the marker says is missing; never overwrites
+                    a real (non-trivial, >200 byte) opencode.jsonc
+      --reseed      overwrite auth.json + opencode.jsonc from the host
+                    (sessions are kept; clobbers in-container config edits)
+      --no-seed     never seed (default): only record existing state when the
+                    profile has no marker yet
+      --print       print the resulting .profile to stdout
+  -h, --help        Show this help
+
+SEED SOURCES (host side):
+  ~/.local/share/opencode/auth.json
+  ~/.config/opencode/{opencode.jsonc,opencode.json,package*.json,themes/}
+  http(s)://localhost: and 127.0.0.1: URLs in a freshly copied opencode.jsonc
+  are rewritten to http(s)://host.containers.internal: (container networking).
+
+EXAMPLES:
+  $TOOL oc-profile-default --seed
+  $TOOL --reseed ~/.local/share/podman/volumes/oc-profile-work/_data
+  $TOOL --print oc-profile-one
+EOF
+}
+
+die() { printf '%s: error: %s\n' "$TOOL" "$*" >&2; exit 1; }
+log() { printf '%s\n' "$*" >&2; }
+
+mode="record"
+print_marker=0
+arg=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help; exit 0 ;;
+        --seed) mode="seed"; shift ;;
+        --reseed) mode="reseed"; shift ;;
+        --no-seed) mode="record"; shift ;;
+        --print) print_marker=1; shift ;;
+        -*) die "unknown option: $1 (see --help)" ;;
+        *) arg="$1"; shift ;;
+    esac
+done
+
+[[ -n "$arg" ]] || die "a volume name or profile directory is required (see --help)"
+command -v podman >/dev/null 2>&1 || die "podman is not installed"
+
+resolve_dir() {
+    if [[ "$arg" == */* ]]; then
+        [[ -d "$arg" ]] || die "no such directory: $arg"
+        printf '%s' "$(cd "$arg" && pwd)"
+        return 0
+    fi
+    if [[ -d "$arg" && ( -e "$arg/.profile" || -d "$arg/config" || -d "$arg/data" ) ]]; then
+        printf '%s' "$(cd "$arg" && pwd)"
+        return 0
+    fi
+    if podman volume exists "$arg" 2>/dev/null; then
+        podman volume inspect "$arg" --format '{{.Mountpoint}}'
+        return 0
+    fi
+    die "not a directory and not a podman volume: $arg"
+}
+
+mp="$(resolve_dir)"
+[[ -d "$mp" ]] || die "profile directory missing: $mp"
+
+config_dir="$mp/config/opencode"
+data_dir="$mp/data/opencode"
+marker="$mp/.profile"
+seed_auth_src="$HOME/.local/share/opencode/auth.json"
+seed_config_src="$HOME/.config/opencode"
+
+mkdir -p "$config_dir" "$data_dir"
+
+write_marker() { # $1=seeded $2=seeded_auth $3=seeded_config
+    local tmp="$marker.tmp.$$"
+    {
+        printf 'seeded=%s\n' "$1"
+        printf 'seeded_auth=%s\n' "$2"
+        printf 'seeded_config=%s\n' "$3"
+        printf 'seeded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } >"$tmp"
+    mv -f "$tmp" "$marker"
+}
+
+host_has_seed_sources() {
+    [[ -f "$seed_auth_src" ]] || [[ -f "$seed_config_src/opencode.jsonc" ]]
+}
+
+config_is_trivial() {
+    [[ -f "$config_dir/opencode.jsonc" ]] || return 0
+    [[ "$(wc -c <"$config_dir/opencode.jsonc")" -lt 200 ]]
+}
+
+seed_auth() { # $1=force(0|1); prints yes|no
+    if [[ -f "$seed_auth_src" ]]; then
+        if [[ ! -f "$data_dir/auth.json" || "$1" == "1" ]]; then
+            cp -a "$seed_auth_src" "$data_dir/auth.json"
+        fi
+    fi
+    if [[ -f "$data_dir/auth.json" ]]; then echo yes; else echo no; fi
+}
+
+seed_config() { # $1=force(0|1); prints yes|no
+    local copied=0 f
+    if [[ -d "$seed_config_src" ]]; then
+        if [[ "$1" == "1" ]] || config_is_trivial; then
+            if [[ -f "$seed_config_src/opencode.jsonc" ]]; then
+                cp -a "$seed_config_src/opencode.jsonc" "$config_dir/opencode.jsonc"
+                copied=1
+            fi
+        fi
+        for f in opencode.json package.json package-lock.json; do
+            if [[ -f "$seed_config_src/$f" ]] && { [[ "$1" == "1" ]] || [[ ! -e "$config_dir/$f" ]]; }; then
+                cp -a "$seed_config_src/$f" "$config_dir/$f"
+            fi
+        done
+        if [[ -d "$seed_config_src/themes" ]] && { [[ "$1" == "1" ]] || [[ ! -e "$config_dir/themes" ]]; }; then
+            rm -rf "$config_dir/themes"
+            cp -a "$seed_config_src/themes" "$config_dir/themes"
+        fi
+    fi
+
+    if [[ "$copied" == "1" ]]; then
+        sed -i -e 's#http://localhost:#http://host.containers.internal:#g' \
+               -e 's#https://localhost:#https://host.containers.internal:#g' \
+               -e 's#http://127.0.0.1:#http://host.containers.internal:#g' \
+               -e 's#https://127.0.0.1:#https://host.containers.internal:#g' \
+               "$config_dir/opencode.jsonc" 2>/dev/null || true
+    fi
+
+    if [[ -f "$config_dir/opencode.jsonc" ]] && ! config_is_trivial; then
+        echo yes
+    else
+        echo no
+    fi
+}
+
+if [[ "$mode" == "reseed" ]]; then
+    if host_has_seed_sources; then
+        a="$(seed_auth 1)"
+        c="$(seed_config 1)"
+        write_marker yes "$a" "$c"
+        log "[oc-seed] reseeded $mp (auth=$a config=$c)"
+    else
+        log "[oc-seed] no seed sources found ($seed_auth_src, $seed_config_src); profile unchanged"
+        [[ -f "$marker" ]] || write_marker no no no
+    fi
+elif [[ "$mode" == "seed" ]]; then
+    if host_has_seed_sources; then
+        a="$(seed_auth 0)"
+        c="$(seed_config 0)"
+        write_marker yes "$a" "$c"
+        log "[oc-seed] seeded $mp (auth=$a config=$c)"
+    else
+        log "[oc-seed] no seed sources found; profile left unseeded"
+        [[ -f "$marker" ]] || write_marker no no no
+    fi
+elif [[ ! -f "$marker" ]]; then
+    a=no
+    c=no
+    [[ -f "$data_dir/auth.json" ]] && a=yes
+    if [[ -f "$config_dir/opencode.jsonc" ]] && ! config_is_trivial; then
+        c=yes
+    fi
+    if [[ "$a" == "yes" || "$c" == "yes" ]]; then
+        write_marker yes "$a" "$c"
+        log "[oc-seed] existing profile recorded (auth=$a config=$c)"
+    else
+        write_marker no no no
+        log "[oc-seed] profile $mp recorded as unseeded (use --seed to seed it)"
+    fi
+fi
+
+if [[ "$print_marker" == 1 ]]; then
+    cat "$marker"
+fi

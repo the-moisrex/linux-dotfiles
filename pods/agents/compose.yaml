@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  opencode:
+    build: ./opencode
+    image: localhost/agents-opencode:local
+    environment:
+      # The web service opts into seeding here; `bin/oc` is unseeded by default
+      # (seeding is recorded per profile in <volume>/.profile).
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:-}
+      OC_SEED: "1"
+    userns_mode: keep-id
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
+    volumes:
+      - oc-profile:/profile
+      - ${OC_WORKSPACE:-../../../Projects}:/workspace
+      - ${HOME}/.config/opencode:/seed/config:ro
+      - ${HOME}/.local/share/opencode/auth.json:/seed/auth.json:ro
+      - ${HOME}/.gitconfig:/home/agent/.gitconfig:ro
+      - ${HOME}/.ssh:/home/agent/.ssh:ro
+    ports:
+      - "127.0.0.1:${OC_PORT:-4096}:4096"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.opencode.entrypoints=web"
+      - "traefik.http.routers.opencode.rule=Host(`${OC_HOST:-opencode.localhost}`)"
+      - "traefik.http.services.opencode.loadbalancer.server.port=4096"
+      - "traefik.docker.network=router_frontend"
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4096/global/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  oc-profile:
+    name: oc-profile-${OC_PROFILE:-default}
+
+networks:
+  # Shared with the router pod's traefik: gives the agent internet egress and
+  # lets traefik route opencode.localhost to it. Declared (not external) so
+  # `pods/stack start` works even when the router pod hasn't created it yet.
+  frontend:
+    name: router_frontend
+    driver: bridge

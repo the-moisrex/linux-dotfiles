@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Pod management script for multiple services
+# Compose stack manager for the service stacks under pods/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PODS_ROOT="$SCRIPT_DIR"
 DATABASE_DIR="$HOME/databases"
@@ -50,7 +50,7 @@ find_pod_dirs() {
     printf '%s\n' "${pods[@]}"
 }
 
-# Get compose file for a pod
+# Get compose file for a stack
 get_compose_file() {
     local pod_name="$1"
     local pod_dir="$PODS_ROOT/$pod_name"
@@ -70,7 +70,7 @@ pull_latest_images() {
     local pods_to_update=("$@")
 
     if [[ ${#pods_to_update[@]} -eq 0 ]]; then
-        print_warning "No pods found to update."
+        print_warning "No stacks found to update."
         return 0
     fi
 
@@ -79,7 +79,7 @@ pull_latest_images() {
     local pod compose_file
     for pod in "${pods_to_update[@]}"; do
         if ! compose_file="$(get_compose_file "$pod")"; then
-            print_error "Compose file not found for pod: $pod"
+            print_error "Compose file not found for stack: $pod"
             continue
         fi
 
@@ -95,7 +95,7 @@ pull_latest_images() {
     done
 
     if [[ ${#all_images[@]} -eq 0 ]]; then
-        print_status "No 'latest' tagged images found in any pod."
+        print_status "No 'latest' tagged images found in any stack."
         return 0
     fi
 
@@ -174,7 +174,7 @@ update_pods() {
     local pods_to_update=("$@")
     
     if [[ ${#pods_to_update[@]} -eq 0 ]]; then
-        print_warning "No pods found to update."
+        print_warning "No stacks found to update."
         return 0
     fi
     
@@ -182,7 +182,7 @@ update_pods() {
     pull_latest_images "${pods_to_update[@]}"
     
     # Then restart the pods to use the updated images
-    print_status "Restarting pods to use updated images..."
+    print_status "Restarting stacks to use updated images..."
     restart_pods "${pods_to_update[@]}"
 }
 
@@ -194,42 +194,43 @@ show_help() {
     pods_list="$(IFS=', '; printf '%s' "${available_pods[*]}")"
 
     cat << EOF
-Multi-Pod Management Script
+Compose Stack Manager
 
 USAGE:
-    $0 [COMMAND] [POD_NAMES...] [OPTIONS]
+    $0 [COMMAND] [STACK_NAMES...] [OPTIONS]
 
 COMMANDS:
-    start       Start specified pods (or all if none specified)
-    stop        Stop specified pods (or all if none specified)
-    restart     Restart specified pods (or all if none specified)
-    update      Update specified pods (pull latest images and restart)
+    start       Start specified stacks (or all if none specified)
+    stop        Stop specified stacks (or all if none specified)
+    restart     Restart specified stacks (or all if none specified)
+    update      Update specified stacks (pull latest images and restart)
     clean       Remove $DATABASE_DIR directory (requires confirmation)
-    status      Show status of all pods
-    list        List all available pods
+    status      Show status of all stacks
+    list        List all available stacks
     --help      Show this help message
 
-POD NAMES:
-    Specify one or more pod names to operate on. Use 'all' to operate on all pods.
-    Available pods: ${pods_list:-None found}
+STACK NAMES:
+    A stack is a directory under $PODS_ROOT with a compose file.
+    Specify one or more stack names to operate on. Use 'all' for all stacks.
+    Available stacks: ${pods_list:-None found}
 
 EXAMPLES:
-    $0 start all                    # Start all pods
-    $0 start database               # Start only the database pod
-    $0 start database dev           # Start database and dev pods
-    $0 stop                         # Stop all pods
-    $0 restart dev main             # Restart dev and main pods
-    $0 update all                   # Update all pods (pull latest images and restart)
-    $0 update database              # Update only the database pod
-    $0 update database dev          # Update database and dev pods
+    $0 start all                    # Start all stacks
+    $0 start database               # Start only the database stack
+    $0 start database dev           # Start database and dev stacks
+    $0 stop                         # Stop all stacks
+    $0 restart dev main             # Restart dev and main stacks
+    $0 update all                   # Update all stacks (pull latest images and restart)
+    $0 update database              # Update only the database stack
+    $0 update database dev          # Update database and dev stacks
     $0 clean                        # Remove database directory with confirmation
     $0 clean --force                # Remove database directory without confirmation
     $0 status                       # Show status of all services
-    $0 list                         # List all available pods
+    $0 list                         # List all available stacks
 EOF
 }
 
-# Validate pod names
+# Validate stack names
 validate_pods() {
     local requested_pods=("$@")
     local available_pods=()
@@ -244,8 +245,8 @@ validate_pods() {
     done
     
     if [[ ${#invalid_pods[@]} -gt 0 ]]; then
-        print_error "Invalid pod names: ${invalid_pods[*]}"
-        print_status "Available pods: ${available_pods[*]}"
+        print_error "Invalid stack names: ${invalid_pods[*]}"
+        print_status "Available stacks: ${available_pods[*]}"
         return 1
     fi
     
@@ -285,7 +286,7 @@ start_pods() {
     local pods_to_start=("$@")
     
     if [[ ${#pods_to_start[@]} -eq 0 ]]; then
-        print_warning "No pods found to start."
+        print_warning "No stacks found to start."
         return 0
     fi
 
@@ -294,15 +295,15 @@ start_pods() {
     local pod compose_file
     for pod in "${pods_to_start[@]}"; do
         if ! compose_file="$(get_compose_file "$pod")"; then
-            print_error "Compose file not found for pod: $pod"
+            print_error "Compose file not found for stack: $pod"
             continue
         fi
         
-        print_status "Starting pod: $pod"
+        print_status "Starting stack: $pod"
         if podman-compose -f "$compose_file" up -d; then
-            print_status "Pod $pod started successfully."
+            print_status "Stack $pod started successfully."
             
-            # Special handling for database pod to configure pgAdmin
+            # Special handling for the database stack to configure pgAdmin
             if [[ "$pod" == "databases" ]]; then
                 # Wait for pgAdmin to initialize
                 if podman ps | grep -q pgadmin-web; then
@@ -328,7 +329,7 @@ start_pods() {
                 fi
             fi
         else
-            print_error "Failed to start pod: $pod"
+            print_error "Failed to start stack: $pod"
         fi
     done
 }
@@ -338,22 +339,22 @@ stop_pods() {
     local pods_to_stop=("$@")
     
     if [[ ${#pods_to_stop[@]} -eq 0 ]]; then
-        print_warning "No pods found to stop."
+        print_warning "No stacks found to stop."
         return 0
     fi
     
     local pod compose_file
     for pod in "${pods_to_stop[@]}"; do
         if ! compose_file="$(get_compose_file "$pod")"; then
-            print_error "Compose file not found for pod: $pod"
+            print_error "Compose file not found for stack: $pod"
             continue
         fi
         
-        print_status "Stopping pod: $pod"
+        print_status "Stopping stack: $pod"
         if podman-compose -f "$compose_file" down; then
-            print_status "Pod $pod stopped successfully."
+            print_status "Stack $pod stopped successfully."
         else
-            print_error "Failed to stop pod: $pod"
+            print_error "Failed to stop stack: $pod"
         fi
     done
 }
@@ -388,7 +389,7 @@ clean_database_dir() {
     
     print_status "Removing $DATABASE_DIR directory..."
     
-    # Try to stop the databases pod if it's running
+    # Try to stop the database stack if it's running
     local compose_file
     if compose_file="$(get_compose_file "databases")"; then
         podman-compose -f "$compose_file" down 2>/dev/null || true
@@ -409,18 +410,18 @@ show_status() {
     mapfile -t all_pods < <(find_pod_dirs)
     
     if [[ ${#all_pods[@]} -eq 0 ]]; then
-        print_warning "No pods found."
+        print_warning "No stacks found."
         return 0
     fi
     
     local pod compose_file project_name
     for pod in "${all_pods[@]}"; do
-        print_header "Pod: $pod"
+        print_header "Stack: $pod"
         if compose_file="$(get_compose_file "$pod")"; then
             # Get the project name from the compose file directory
             project_name="$(basename "$(dirname "$compose_file")")"
             if command -v podman &> /dev/null; then
-                # Show containers for this pod
+                # Show containers for this stack
                 podman ps --filter "label=io.podman.compose.project=$project_name" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
                 podman ps --filter "name=${project_name}_" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
                 echo "No running containers found for pod: $pod"
@@ -428,7 +429,7 @@ show_status() {
                 print_error "Podman is not installed or not in PATH."
             fi
         else
-            print_error "Compose file not found for pod: $pod"
+            print_error "Compose file not found for stack: $pod"
         fi
         echo
     done
@@ -440,11 +441,11 @@ list_pods() {
     mapfile -t available_pods < <(find_pod_dirs)
     
     if [[ ${#available_pods[@]} -eq 0 ]]; then
-        print_warning "No pods found."
+        print_warning "No stacks found."
         return 0
     fi
     
-    print_status "Available pods:"
+    print_status "Available stacks:"
     local pod
     for pod in "${available_pods[@]}"; do
         echo "  - $pod"

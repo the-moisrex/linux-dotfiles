@@ -1,0 +1,241 @@
+#!/bin/bash
+# dockerfile.gen - Generate a development Dockerfile for a project, matched to the host OS
+set -euo pipefail
+
+TOOL="dockerfile.gen"
+
+show_help() {
+    cat << EOF
+Usage: $TOOL [OPTIONS] [PROJECT_DIR]
+
+Generate a development Dockerfile for PROJECT_DIR (default: .) based on what
+the project is (CMake, node, cargo, go, python, make) and the OS this host
+runs (from /etc/os-release: arch -> archlinux, debian/ubuntu -> debian/ubuntu,
+fedora -> fedora). The result is a self-contained Dockerfile with the
+toolchain the project needs.
+
+OUTPUT:
+  Default is a stable temp path (\$TMPDIR/dockerfile.gen/<project>/Dockerfile),
+  so tools like "pod" can build it without touching your repo. Regenerating is
+  cheap: build layers are content-cached.
+
+OPTIONS:
+  -o, --output PATH   Write the Dockerfile to PATH instead of the temp default
+      --print         Print the Dockerfile to stdout (no file is written)
+      --info          Print the detection rationale (type, markers, base OS)
+      --force         Generate even if the project already has a Dockerfile
+  -h, --help          Show this help
+
+DETECTED PROJECT TYPES (first match wins):
+  CMakeLists.txt                cmake   gcc/clang/cmake/ninja/gdb (+qt6 if Qt is used)
+  package.json                  node    nodejs/npm
+  Cargo.toml                    rust    rust/cargo
+  go.mod                        go      golang
+  pyproject.toml, setup.py,
+  requirements.txt              python  python/pip
+  Makefile                      make    build tools only
+  anything else                 generic git + build tools
+
+EXAMPLES:
+  dockerfile.gen --info ~/Projects/foresight
+  dockerfile.gen --print .devcontainer/Dockerfile-gen
+  dockerfile.gen -o ./Dockerfile.ci --force .
+EOF
+}
+
+die() { printf '%s: error: %s\n' "$TOOL" "$*" >&2; exit 1; }
+
+output=""
+print=0
+info=0
+force=0
+project_dir="."
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help; exit 0 ;;
+        -o|--output) output="${2:?$1 needs a path}"; shift 2 ;;
+        --output=*) output="${1#*=}"; shift ;;
+        --print) print=1; shift ;;
+        --info) info=1; shift ;;
+        --force) force=1; shift ;;
+        -*) die "unknown option: $1 (see --help)" ;;
+        *) project_dir="$1"; shift ;;
+    esac
+done
+
+[[ -d "$project_dir" ]] || die "no such directory: $project_dir"
+project_dir="$(cd "$project_dir" && pwd)"
+project_name="$(basename "$project_dir")"
+
+# ---------------------------------------------------------------- detection --
+ptype="generic"
+ptype_why="no known markers, falling back to generic build tools"
+
+if [[ -f "$project_dir/CMakeLists.txt" ]]; then
+    ptype="cmake"
+    ptype_why="marker: CMakeLists.txt"
+    if grep -rqiE 'find_package[[:space:]]*\([[:space:]]*Qt' \
+            "$project_dir/CMakeLists.txt" "$project_dir"/*.cmake "$project_dir"/cmake 2>/dev/null; then
+        ptype_why="$ptype_why, Qt detected via find_package(Qt...)"
+        want_qt=1
+    fi
+elif [[ -f "$project_dir/package.json" ]]; then
+    ptype="node"
+    ptype_why="marker: package.json"
+elif [[ -f "$project_dir/Cargo.toml" ]]; then
+    ptype="rust"
+    ptype_why="marker: Cargo.toml"
+elif [[ -f "$project_dir/go.mod" ]]; then
+    ptype="go"
+    ptype_why="marker: go.mod"
+elif [[ -f "$project_dir/pyproject.toml" || -f "$project_dir/setup.py" || -f "$project_dir/requirements.txt" ]]; then
+    ptype="python"
+    ptype_why="marker: pyproject.toml/setup.py/requirements.txt"
+elif [[ -f "$project_dir/Makefile" || -f "$project_dir/makefile" ]]; then
+    ptype="make"
+    ptype_why="marker: Makefile"
+fi
+want_qt="${want_qt:-0}"
+
+# ------------------------------------------------------------------- host OS --
+os_id=""
+os_like=""
+os_pretty=""
+# /etc/os-release is the canonical source; shellcheck may flag SC1091.
+# shellcheck disable=SC1091
+source /etc/os-release
+os_id="${ID:-}"
+os_like="${ID_LIKE:-}"
+os_pretty="${PRETTY_NAME:-$os_id}"
+
+case "$os_id" in
+    arch)              pkg_os="arch" ;;
+    debian)            pkg_os="debian" ;;
+    ubuntu)            pkg_os="ubuntu" ;;
+    fedora)            pkg_os="fedora" ;;
+    *)
+        case " $os_like " in
+            *arch*)   pkg_os="arch" ;;
+            *debian*) pkg_os="debian" ;;
+            *ubuntu*) pkg_os="ubuntu" ;;
+            *fedora*) pkg_os="fedora" ;;
+            *)        pkg_os="debian" ;;
+        esac
+        ;;
+esac
+
+base_image_for() {
+    case "$1" in
+        arch)   echo "docker.io/library/archlinux:base-devel" ;;
+        debian) echo "docker.io/library/debian:stable" ;;
+        ubuntu) echo "docker.io/library/ubuntu:24.04" ;;
+        fedora) echo "docker.io/library/fedora:latest" ;;
+    esac
+}
+
+packages_for() { # $1=pkg_os $2=ptype $3=want_qt
+    local pkgs=""
+    case "$1" in
+        arch)
+            case "$2" in
+                cmake)  pkgs="git cmake ninja gcc clang gdb pkgconf ccache"
+                        [[ "$3" == 1 ]] && pkgs="$pkgs qt6-base qt6-declarative" ;;
+                node)   pkgs="git nodejs npm" ;;
+                rust)   pkgs="git rust" ;;
+                go)     pkgs="git go" ;;
+                python) pkgs="git python python-pip" ;;
+                make)   pkgs="git make" ;;
+                *)      pkgs="git make gcc" ;;
+            esac
+            ;;
+        debian|ubuntu)
+            case "$2" in
+                cmake)  pkgs="git build-essential cmake ninja-build clang gdb pkg-config ccache"
+                        [[ "$3" == 1 ]] && pkgs="$pkgs qt6-base-dev qt6-declarative-dev" ;;
+                node)   pkgs="git nodejs npm" ;;
+                rust)   pkgs="git rustc cargo" ;;
+                go)     pkgs="git golang-go" ;;
+                python) pkgs="git python3 python3-pip python3-venv" ;;
+                make)   pkgs="git build-essential" ;;
+                *)      pkgs="git build-essential" ;;
+            esac
+            ;;
+        fedora)
+            case "$2" in
+                cmake)  pkgs="git gcc clang cmake ninja-build gdb make pkgconf-pkg-config ccache"
+                        [[ "$3" == 1 ]] && pkgs="$pkgs qt6-qtbase-devel qt6-qtdeclarative-devel" ;;
+                node)   pkgs="git nodejs npm" ;;
+                rust)   pkgs="git rust cargo" ;;
+                go)     pkgs="git golang" ;;
+                python) pkgs="git python3 python3-pip" ;;
+                make)   pkgs="git make gcc" ;;
+                *)      pkgs="git make gcc" ;;
+            esac
+            ;;
+    esac
+    echo "$pkgs"
+}
+
+# shellcheck disable=SC2016 # generated sh code must keep $i literal
+install_cmd_for() { # $1=pkg_os $2=packages
+    case "$1" in
+        arch)   printf 'for i in 1 2 3; do \\\n        pacman -Syu --noconfirm --disable-download-timeout --needed %s \\\n            && break; \\\n        [ "$i" = 3 ] && exit 1; \\\n        sleep 5; \\\n    done \\\n    && pacman -Scc --noconfirm' "$2" ;;
+        debian|ubuntu) printf 'apt-get update \\\n    && apt-get install -y --no-install-recommends %s \\\n    && rm -rf /var/lib/apt/lists/*' "$2" ;;
+        fedora) printf 'dnf install -y %s \\\n    && dnf clean all' "$2" ;;
+    esac
+}
+
+base_image="$(base_image_for "$pkg_os")"
+packages="$(packages_for "$pkg_os" "$ptype" "$want_qt")"
+install_cmd="$(install_cmd_for "$pkg_os" "$packages")"
+
+# ------------------------------------------------------------------ render ---
+generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+dockerfile="$(cat << EOF
+# Generated by $TOOL on $generated_at for host OS: $os_pretty
+# project: $project_name
+# type:    $ptype ($ptype_why)
+# base:    $base_image
+# Regenerate: $TOOL $project_dir   (edit the result freely, or use -o <path>)
+FROM $base_image
+
+RUN $install_cmd
+
+WORKDIR /workspace
+CMD ["bash"]
+EOF
+)"
+
+if [[ "$info" == 1 ]]; then
+    {
+        printf 'project:  %s\n' "$project_dir"
+        printf 'type:     %s (%s)\n' "$ptype" "$ptype_why"
+        printf 'host OS:  %s (ID=%s ID_LIKE=%s)\n' "$os_pretty" "$os_id" "$os_like"
+        printf 'base:     %s\n' "$base_image"
+        printf 'packages: %s\n' "$packages"
+    } >&2
+fi
+
+if [[ "$print" == 1 ]]; then
+    printf '%s\n' "$dockerfile"
+    exit 0
+fi
+
+existing="$project_dir/Dockerfile"
+if [[ -f "$existing" && "$force" == 0 && -z "$output" ]]; then
+    printf '%s: %s already has a Dockerfile (%s); nothing generated (use --force or -o <path>)\n' \
+        "$TOOL" "$project_name" "$existing" >&2
+    exit 0
+fi
+
+if [[ -z "$output" ]]; then
+    slug="$(printf '%s' "$project_name" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-*$//;s/^-*//')"
+    [[ -n "$slug" ]] || slug="project"
+    output="${TMPDIR:-/tmp}/dockerfile.gen/$slug/Dockerfile"
+fi
+
+mkdir -p "$(dirname "$output")"
+printf '%s\n' "$dockerfile" >"$output"
+[[ "$info" == 1 ]] && printf 'output:   %s\n' "$output" >&2
+printf '%s\n' "$output"
