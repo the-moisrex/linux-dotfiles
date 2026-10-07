@@ -264,6 +264,7 @@ The pod's web UI service is managed with `pods/stack start agents`
 - __content__ — fetch news/article URLs and extract clean, filtered article text (pandoc) — a content feed for prompts/AI
 - __prompt__ — manage and run prompt files (`.sh/.txt/.md`) from XDG dirs; `prompt list` (short descriptions), `prompt list-prompts` (full help), stdin piped to prompt
 - __prompt-compiler__ — autocomplete/compile prompts: slash-commands, `{{env}}`/`${var}` expansion, snippets
+- __tse__ — fetch TSETMC quotes, order book, حقیقی/حقوقی flows, history, fundamentals, and Codal filings/financial statements for `prompt saham`; requires Python 3.9+ and an Iranian IP. Run `bin/tse all فولاد` for JSON, or `prompt saham فولاد` for an AI prompt. Successful Codal statements are cached for one hour in `$XDG_CACHE_HOME/tse` (`--refresh-codal` bypasses the cache); stale fallbacks show the cache timestamp. Financial-statement units depend on Codal's report format; unavailable sources are marked as missing.
 - __suggest__ — fetch search suggestions from Google, Zarebin, DuckDuckGo, Bing
 
 ## Programming / Compiler / Dev Tools

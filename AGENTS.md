@@ -35,6 +35,7 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 - `fix` / `review` / `tests` / `refactor` — general code analysis
 - `cpp` / `cpp-reviewer` — C++ specific (auto-detects compiler errors)
 - `run` — runs `bin/run`, embeds output for debugging
+- `saham` — gathers TSETMC and Codal data via `bin/tse` for Iranian stock analysis (`prompt saham فولاد`)
 - `gtest-case` / `gtest` — Google Test case source embedding
 - `spp` — C++ symbol expansion via `bin/spp`
 - `commit` — git commit message from staged/unstaged diff
