@@ -1,0 +1,84 @@
+#!/bin/bash
+# oc - layer the opencode AI agent into a dev container (what bin/oc runs in
+#      project mode). The one option is the profile: an oc-profile-<name>
+#      volume mounted at /profile with the XDG_* dirs pointing into it; the
+#      same name also becomes a container-name suffix via selection opts.
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    cat <<'EOF'
+Usage: pod .oc [PROFILE]
+
+Layer the opencode AI agent into the dev container (this is what bin/oc
+runs in project mode).
+
+Options (bare words after .oc):
+  PROFILE        profile name (default: "default"): mounts the
+                 oc-profile-PROFILE volume at /profile with the XDG_*
+                 config/data/cache/state dirs pointing into it; the name
+                 also becomes a container-name suffix (dish "...-oc-PROFILE").
+                 bin/oc passes -p/--profile through as this option.
+
+Build args (--build-arg K=V, or K in the environment):
+  OPENCODE_VERSION   pin the opencode release (default: 1.18.34)
+
+Examples:
+  pod .oc                      # opencode, default profile
+  pod .base .oc work           # profile "work" on the project image
+  pod .base .oc work .vscode   # + code-server in the same container
+  pod build .base .oc          # images only
+EOF
+    exit 0
+fi
+
+profile="${1:-default}"
+
+desc="opencode agent"
+[ "$profile" = "default" ] || desc="opencode agent (profile: $profile)"
+
+printf '# POD_DESC %s\n' "$desc"
+printf '# POD_VOLUME oc-profile-%s:/profile\n' "$profile"
+cat <<'EOF'
+# POD_ENV XDG_CONFIG_HOME=/profile/config
+# POD_ENV XDG_DATA_HOME=/profile/data
+# POD_ENV XDG_CACHE_HOME=/profile/cache
+# POD_ENV XDG_STATE_HOME=/profile/state
+# POD_ENV ANTHROPIC_API_KEY
+# POD_ENV OPENAI_API_KEY
+# POD_ENV GOOGLE_GENERATIVE_AI_API_KEY
+# POD_ENV XAI_API_KEY
+# POD_ENV GROQ_API_KEY
+# POD_ENV OPENROUTER_API_KEY
+# POD_ENV DEEPSEEK_API_KEY
+# POD_ENV OPENCODE_API_KEY
+ARG BASE
+FROM ${BASE}
+
+USER root
+
+ARG OPENCODE_VERSION=1.18.34
+
+RUN set -eux; \
+    if command -v pacman >/dev/null 2>&1; then \
+        pacman -Sy --noconfirm --needed \
+            ca-certificates curl git ripgrep fzf jq openssh; \
+        pacman -Scc --noconfirm; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends \
+            ca-certificates curl git ripgrep fzf jq openssh-client; \
+        rm -rf /var/lib/apt/lists/*; \
+    elif command -v dnf >/dev/null 2>&1; then \
+        dnf install -y ca-certificates curl git ripgrep fzf jq openssh-clients; \
+        dnf clean all; \
+    fi; \
+    command -v curl >/dev/null; \
+    command -v git >/dev/null
+
+# Standalone opencode binary; /profile (config, auth, sessions) is a volume
+# mounted by pod and selected through XDG_* at exec time.
+RUN curl -fsSL https://opencode.ai/install \
+        | HOME=/root bash -s -- --version "$OPENCODE_VERSION" --no-modify-path \
+    && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && opencode --version
+EOF

@@ -66,9 +66,9 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 - `llvm.run` — run clang/LLVM plugins with project flags
 
 **Dev containers:**
-- `pod` — project dev containers: builds the project image (own Dockerfile or `dockerfile.gen`), layers `pods/dockerfiles/*.Dockerfile` fragments (`oc`, `vscode`, `ssh`), runs labeled containers (bind/`--copy`/worktree workspaces)
-- `dockerfile.gen` — standalone Dockerfile generator matching the host OS (used by `pod` when no Dockerfile exists)
-- `oc` — opencode agent in a container (project mode delegates to `pod ensure` + `oc-seed`, otherwise the `pods/agents` image); `oc-seed` records/applies profile seeding on the host
+- `pod` — project dev containers: builds recipe-chained images from `pods/recipes/<name>` scripts (`base`, `oc`, `vscode`, `ssh`; each executable, prints a Dockerfile to stdout), runs labeled containers (bind/`--copy`/worktree workspaces) named `pod-<workspace>-<dish>`
+- `dockerfile.gen` — standalone Dockerfile generator matching the host OS (used by `pod`'s `base` recipe when no Dockerfile exists)
+- `oc` — opencode agent in a container (project mode delegates to `pod name` + `oc-seed`, otherwise the `pods/agents` image); `oc-seed` records/applies profile seeding on the host
 
 **Prompt infrastructure:**
 - `prompt` — the prompt dispatcher (searches XDG + repo prompts dir)
@@ -89,7 +89,7 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 | `bin/` | 150+ standalone shell utilities |
 | `prompts/` | AI prompt scripts (`.sh`), all source `_common.sh` |
 | `firewall/` | nftables/iptables scripts and configs |
-| `pods/` | Containerized services (podman-compose, managed by `pods/stack`) + dev-container fragments (`dockerfiles/`) |
+| `pods/` | Containerized services (podman-compose, managed by `pods/stack`) + dev-container recipes (`recipes/`) |
 | `pkgs/` | Package lists (`pacman-core.txt`, `pacman-all.txt`, `dnf-core.txt`) |
 | `setup/` | Modular setup scripts, all support `--uninstall --verbose --help` |
 | `services/` | Systemd service files (system/ and user/) |

@@ -1,0 +1,60 @@
+#!/bin/bash
+# base - the project's image: its own Dockerfile, else one generated for this
+#        host OS by dockerfile.gen (CMake+Qt -> qt packages, nodejs, rust...).
+#        Also the dev-environment recipe: binds ~/.gitconfig and ~/.ssh
+#        read-only by default (opts: no-git, no-ssh).
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    cat <<'EOF'
+Usage: pod .base [no-git] [no-ssh]
+
+The project's own image: uses the project's Dockerfile when present,
+otherwise generates one for this host OS with bin/dockerfile.gen
+(CMake+Qt -> Qt packages, Node.js, Rust, ...).
+
+Options (bare words after .base):
+  no-git       do not mount ~/.gitconfig
+  no-ssh       do not mount ~/.ssh
+
+By default ~/.gitconfig and ~/.ssh are bind-mounted read-only at /root
+(when they exist on the host).
+
+Examples:
+  pod .base                 # project image + shell
+  pod .base no-ssh          # ... without ~/.ssh
+  pod .base .vscode         # layer code-server on top
+  pod build .base           # image only
+EOF
+    exit 0
+fi
+
+no_git=0
+no_ssh=0
+for opt in "$@"; do
+    case "$opt" in
+        no-git) no_git=1 ;;
+        no-ssh) no_ssh=1 ;;
+        *)
+            echo "base recipe: unknown option: $opt (see: pod .base --help)" >&2
+            exit 1
+            ;;
+    esac
+done
+
+dir="${POD_PROJECT_DIR:-.}"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$here/../../bin:$PATH"
+
+printf '# POD_DESC project image: its own Dockerfile if present, else dockerfile.gen output\n'
+if [ "$no_git" = 0 ] && [ -f "$HOME/.gitconfig" ]; then
+    printf '# POD_VOLUME ~/.gitconfig:/root/.gitconfig:ro\n'
+fi
+if [ "$no_ssh" = 0 ] && [ -d "$HOME/.ssh" ]; then
+    printf '# POD_VOLUME ~/.ssh:/root/.ssh:ro\n'
+fi
+if [ -f "$dir/Dockerfile" ]; then
+    cat "$dir/Dockerfile"
+else
+    exec dockerfile.gen --print "$dir"
+fi

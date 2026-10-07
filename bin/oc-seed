@@ -12,7 +12,10 @@ Usage: $TOOL [OPTIONS] VOLUME_OR_DIR
 
 Record (and, when asked, apply) whether an opencode profile was seeded from
 the host. VOLUME_OR_DIR is a podman volume name (e.g. oc-profile-default) or
-the directory holding .profile, config/ and data/.
+the directory holding .profile, config/ and data/. The config/ and data/
+directories are pre-created on the host, so later in-container writes land in
+host-owned dirs (pod's oc recipe mounts the volume; this tool owns its
+skeleton).
 
 The decision is written to <dir>/.profile exactly like
 pods/agents/opencode/entrypoint.sh does, so a profile's state never depends

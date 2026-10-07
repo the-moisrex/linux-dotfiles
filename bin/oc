@@ -1,7 +1,8 @@
 #!/bin/bash
 # oc - Run the opencode AI agent in a container.
 # In a project (Dockerfile or dockerfile.gen-able): uses the project's dev
-# container via bin/pod (fragment "oc"). Anywhere else: the agents image.
+# container via bin/pod (selection ".base .oc [<profile>]"). Anywhere else:
+# the agents image.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,9 +22,10 @@ Run the opencode AI coding agent in a container. Two modes:
   project mode   \$PWD is a project (has a Dockerfile, or dockerfile.gen can
                  generate one from CMakeLists.txt/package.json/Cargo.toml/...)
                  -> runs opencode inside that project's dev container (bin/pod),
-                    building the project image and layering the "oc" fragment
-                    on top. Auth/config/sessions live in the profile volume,
-                    seeded on the host with the same recorded rules as below.
+                    building the selection ".base .oc [<profile>]" (add more
+                    recipes with --with). Auth/config/sessions live in the
+                    profile volume, seeded on the host with the same recorded
+                    rules as below.
   agents mode    anywhere else -> the standalone agents image (pods/agents/)
                  with its own entrypoint-based seeding.
 
@@ -36,8 +38,8 @@ OPTIONS:
       --reseed         Overwrite the profile's auth/config from the host
                        (sessions are kept; clobbers in-container config edits)
       --no-seed        Do not seed (the default, kept for explicitness)
-      --with FRAGS     project mode: extra dev-container fragments (comma
-                       separated), e.g. --with vscode,ssh
+      --with RECIPES   project mode: extra dev-container recipes to layer on
+                       top (comma separated), e.g. --with vscode,ssh
       --pod NAME       project mode: put the container in a shared pod
       --verbose        project mode: pass --verbose to pod (keep build logs)
       --agents         force agents mode even inside a project
@@ -117,20 +119,30 @@ is_project() { # $1=root
 
 if [[ "$agents_force" == 0 ]] && is_project "$project_root"; then
     # ------------------------------------------------------- project mode ---
-    pod_args=(ensure --profile "$profile")
+    # selection: the project image, opencode on top, profile as recipe opt
+    sel=(.base)
+    [[ "$mount_git" == 0 ]] && sel+=(no-git)
+    [[ "$mount_ssh" == 0 ]] && sel+=(no-ssh)
+    sel+=(.oc)
+    [[ "$profile" != "default" ]] && sel+=("$profile")
+    if [[ -n "$with_frags" ]]; then
+        IFS=',' read -ra extra_recipes <<<"$with_frags"
+        for r in "${extra_recipes[@]}"; do
+            [[ -n "$r" ]] || continue
+            if [[ "$r" == .* ]]; then sel+=("$r"); else sel+=(".$r"); fi
+        done
+    fi
+
+    pod_args=(name)
     if [[ "${verbose:-0}" == 1 ]]; then
         pod_args+=(--verbose)   # keep pod's build logs + detail (drops --quiet)
     else
         pod_args+=(--quiet)
     fi
     [[ "$build" == 1 ]] && pod_args+=(--rebuild)
-    [[ "$mount_git" == 0 ]] && pod_args+=(--no-git)
-    [[ "$mount_ssh" == 0 ]] && pod_args+=(--no-ssh)
     [[ -n "$shared_pod" ]] && pod_args+=(--pod "$shared_pod")
-    [[ -n "$with_frags" ]] && pod_args+=(-w "$with_frags")
-    [[ "${verbose:-0}" == 1 ]] && pod_args+=(--verbose)
 
-    container="$("$SCRIPT_DIR/pod" "${pod_args[@]}" oc)" || exit $?
+    container="$("$SCRIPT_DIR/pod" "${pod_args[@]}" "${sel[@]}")" || exit $?
 
     # host-side seeding, same recorded rules as the agents entrypoint
     seed_args=()

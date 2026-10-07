@@ -1,9 +1,38 @@
+#!/bin/bash
+# vscode - full VS Code (code-server) inside the dev container: opens
+#          /workspace directly, never asks for workspace trust, and installs
+#          Open VSX extensions for the languages detected in /workspace
+#          (C/C++, Bash, ...).
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    cat <<'EOF'
+Usage: pod .vscode
+
+Full VS Code (code-server) inside the dev container: opens /workspace
+directly, never asks for workspace trust, and installs Open VSX
+extensions for the languages detected in /workspace (C/C++, Bash, ...).
+
+Options: none
+
+Declares:
+  port 8080            published at 127.0.0.1:8080
+  service code-server  "pod service code-server" starts it and prints
+                       the URL (first start installs extensions, ~1 min)
+
+Examples:
+  pod .base .vscode          # project image + code-server
+  pod .vscode .ssh           # layered the other way around
+  pod service code-server    # start it later, print the hint
+EOF
+    exit 0
+fi
+
+cat <<'DOCKER'
+# POD_DESC full VS Code (code-server) on /workspace, language-aware extensions
 # POD_PORT 8080
 # POD_SERVICE code-server=/usr/local/bin/vscode.start
-# vscode - full VS Code (code-server) inside the project dev container: opens
-# /workspace directly, never asks for workspace trust, and installs Open VSX
-# extensions for the languages detected in /workspace (C/C++, Bash, ...).
-# Requires a bash-capable base with tar/gzip (dockerfile.gen bases qualify).
+# POD_HINT service=code-server VS Code: http://127.0.0.1:{port}/  (workspace /workspace)
 ARG BASE
 FROM ${BASE}
 
@@ -41,7 +70,7 @@ RUN <<'EOF'
 set -eux
 cat > /usr/local/bin/vscode.start <<'SCRIPT'
 #!/usr/bin/env bash
-# vscode.start - code-server launcher for the "vscode" pod fragment.
+# vscode.start - code-server launcher for the "vscode" pod recipe.
 #
 # - re-execs with its own argv[0] so `pod service code-server` can detect it:
 #   service_running matches the first word of the service command against
@@ -156,3 +185,4 @@ fi
 SCRIPT
 chmod 755 /usr/local/bin/vscode.start
 EOF
+DOCKER

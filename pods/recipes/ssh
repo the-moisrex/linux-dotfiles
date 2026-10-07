@@ -1,0 +1,82 @@
+#!/bin/bash
+# ssh - SSH into the dev container (CLion, Remote-SSH, scp). The host's
+#       public keys from ~/.ssh/*.pub are baked in at recipe time; sshd
+#       reads them from /etc/ssh/authorized_keys (the read-only ~/.ssh mount
+#       shadows /root/.ssh, so AuthorizedKeysFile points elsewhere).
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    cat <<'EOF'
+Usage: pod .ssh
+
+SSH into the dev container (CLion, Remote-SSH, scp). The host's public
+keys from ~/.ssh/*.pub are baked in at build time; sshd reads them from
+/etc/ssh/authorized_keys (the read-only ~/.ssh mount shadows /root/.ssh,
+so sshd's AuthorizedKeysFile points elsewhere).
+
+Options: none
+
+Declares:
+  port 2222:22  published at 127.0.0.1:2222 -> container port 22
+  service sshd  "pod service sshd" starts sshd in the container
+
+Examples:
+  pod .base .ssh              # project image + sshd
+  pod service sshd            # start it, print the hint
+  ssh -p 2222 root@127.0.0.1  # then connect
+EOF
+    exit 0
+fi
+
+cat <<'DOCKER'
+# POD_DESC sshd in the container; host public keys baked from ~/.ssh/*.pub
+# POD_PORT 2222:22
+# POD_SERVICE sshd=/usr/sbin/sshd -D -e
+# POD_HINT service=sshd ssh -p {port} root@127.0.0.1
+# POD_HINT service=sshd scp -P {port} file root@127.0.0.1:/workspace/
+ARG BASE
+FROM ${BASE}
+
+USER root
+
+RUN set -eux; \
+    if command -v pacman >/dev/null 2>&1; then \
+        pacman -Sy --noconfirm --needed openssh ca-certificates; \
+        pacman -Scc --noconfirm; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends openssh-server ca-certificates; \
+        rm -rf /var/lib/apt/lists/*; \
+    elif command -v dnf >/dev/null 2>&1; then \
+        dnf install -y openssh-server ca-certificates; \
+        dnf clean all; \
+    fi; \
+    command -v sshd >/dev/null; \
+    ssh-keygen -A; \
+    mkdir -p /run/sshd; \
+    set_conf() { \
+        if grep -qE "^[#[:space:]]*$1 " /etc/ssh/sshd_config; then \
+            sed -i -E "s|^[#[:space:]]*$1 .*|$1 $2|" /etc/ssh/sshd_config; \
+        else \
+            printf '%s %s\n' "$1" "$2" >> /etc/ssh/sshd_config; \
+        fi; \
+    }; \
+    set_conf PermitRootLogin without-password; \
+    set_conf PasswordAuthentication no; \
+    set_conf PubkeyAuthentication yes; \
+    set_conf StrictModes no; \
+    set_conf AuthorizedKeysFile /etc/ssh/authorized_keys/%u; \
+    sshd -t
+DOCKER
+
+keys="$(cat "$HOME"/.ssh/*.pub 2>/dev/null || true)"
+if [[ -n "${keys//[[:space:]]/}" ]]; then
+    printf '%s\n' "RUN mkdir -p /etc/ssh/authorized_keys && chmod 755 /etc/ssh/authorized_keys"
+    printf '%s\n' "RUN cat > /etc/ssh/authorized_keys/root <<'POD_PUBKEYS'"
+    printf '%s\n' "$keys"
+    printf '%s\n' "POD_PUBKEYS"
+    printf '%s\n' "RUN chmod 600 /etc/ssh/authorized_keys/root"
+else
+    printf '%s\n' "# no public keys found in ~/.ssh/*.pub -- nothing baked"
+    echo "ssh recipe: no ~/.ssh/*.pub found; the container will have no authorized keys" >&2
+fi
