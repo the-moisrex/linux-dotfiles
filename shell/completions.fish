@@ -3,7 +3,7 @@ complete -c codeshell -s n -l name -d "Name of the subject"
 complete -c codeshell -s t -l template -d "The tempalte to use"
 complete -c codeshell -s g -s G -d "The Build System to use in cmake"
 complete -x -c codeshell -d Project -a "(find \$HOME/codeshells/ -maxdepth 1 -type d -printf \"%P\n\")"
-complete -x -c codeshell -d Template -a "(find \$HOME/cmd/code-templates/ -maxdepth 1 -type d -printf \"%P\n\")"
+complete -x -c codeshell -d Template -a "(test -d \$cmddir/code-templates; and find \$cmddir/code-templates/ -maxdepth 1 -type d -printf \"%P\n\")"
 
 # run
 complete -x -c run -a "(run print-targets)"
@@ -217,3 +217,56 @@ complete -c bookmarks -f -n "__bm_is_subcommand edit" -l folder -r -a "(__bm_fol
 
 # move options
 complete -c bookmarks -f -n "__bm_is_subcommand move" -l to -r -a "(__bm_folders)" -d "Target folder"
+
+# pod
+function __fish_pod_commands
+    printf '%s\t%s\n' \
+        run 'Build if needed, recreate, shell in' \
+        name 'Build + create + start; print container name' \
+        build 'Build images only' \
+        recipes 'List recipes with ports/services/volumes' \
+        frags 'Alias of recipes' \
+        info 'Container labels, or the planned chain' \
+        services 'Services the container recipes declare' \
+        service 'Start a service, print its hint' \
+        shell 'Shell into the container' \
+        exec 'Run a command in the container' \
+        logs 'Container logs' \
+        ide 'Print or run the VS Code attach command' \
+        wt 'Git worktree under ~/wt + run' \
+        list 'All managed dev containers' \
+        ps 'Alias of list' \
+        down 'Stop containers' \
+        rm 'Remove this project containers' \
+        prune 'GC stopped dev containers' \
+        help 'Show help'
+end
+
+function __fish_pod_recipes
+    pod recipes --porcelain 2>/dev/null | string replace -r '^([^\t]+)' '.$1'
+end
+
+complete -c pod -f -n '__fish_use_subcommand' -a '(__fish_pod_commands)'
+complete -c pod -f -a '(__fish_pod_recipes)'
+complete -c pod -f -s h -l help -d 'Show help'
+complete -c pod -f -s c -l copy -d 'Workspace = rsync copy of the project'
+complete -c pod -f -s t -l worktree -r -d 'Workspace = git worktree NAME'
+complete -c pod -f -l src -r -d 'Workspace = PATH'
+complete -c pod -f -l as -r -d 'Override the dish name'
+complete -c pod -f -l pod -r -d 'Share a pod with other containers'
+complete -c pod -f -l dish -r -d 'Pick the container (exec)'
+complete -c pod -f -s p -l publish -r -d 'Publish a port, docker style'
+complete -c pod -f -l build-arg -r -d 'Forward K=V to recipes declaring ARG'
+complete -c pod -f -l rebuild -d 'Rebuild with --no-cache'
+complete -c pod -f -l recreate -d 'Recreate the container'
+complete -c pod -f -l verbose -d 'Keep build logs + debug detail'
+complete -c pod -f -l quiet -d 'No info output (what oc uses)'
+complete -c pod -f -l dry-run -d 'Print actions instead of running them'
+complete -c pod -f -l images -d 'Also prune images (prune)'
+complete -c pod -f -l fg -d 'Run the service in the foreground'
+complete -c pod -f -l run -d 'Run after printing (ide)'
+complete -c pod -f -s b -l build -d 'No-op: builds always run and are cache-checked'
+complete -c pod -f -l names -d 'Bare recipe names, one per line (recipes)'
+complete -c pod -f -l porcelain -d 'name + TAB + description (recipes)'
+complete -c pod -f -s f -d 'Follow logs (logs)'
+complete -c pod -f -s e -r -d 'Set env var K=V (exec)'

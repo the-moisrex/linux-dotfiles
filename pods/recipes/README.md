@@ -42,6 +42,9 @@ logs are streamed and erased again on success, `--verbose` keeps them).
 # POD_PORT <H:C>          2-part: 127.0.0.1:H:C (host:container)
 # POD_PORT <ip:H:C>       3-part: used as-is
 # POD_SERVICE name=cmd    `pod service name` runs cmd (detached; --fg for fg)
+# POD_AUTOSTART name      run service `name` synchronously once, right when
+                          the container is created (restarts skip it via a
+                          marker file; a recreated container runs it again)
 # POD_VOLUME vol:/path    bind host path vol (~ expands) at /path, or
                           create the named volume vol when vol has no slash
 # POD_ENV K[=V]           pass K through from the host when set, else set K=V
@@ -55,12 +58,19 @@ logs are streamed and erased again on success, `--verbose` keeps them).
 | script | adds | ports / services / volumes |
 |---|---|---|
 | `base` | the project's image: its own `Dockerfile`, else `dockerfile.gen` output | mounts `~/.gitconfig` + `~/.ssh` read-only (opts: `no-git`, `no-ssh`) |
+| `dotfiles` | this dotfiles repo linked read-only at `/dotfiles` + an `install.sh` runner (opts: components, default `shells`); fish installed as root's default shell | volume `<repo>:/dotfiles:ro`, service `setup` (runs automatically at container creation via `POD_AUTOSTART`) |
 | `oc` | opencode (pinned) | volume `oc-profile-<name>:/profile` + XDG env; `--with`-style API keys pass through |
 | `vscode` | code-server (opens `/workspace`, trust off, language-aware extensions) | port 8080, service `code-server` |
 | `ssh` | OpenSSH server, host public keys baked from `~/.ssh/*.pub` | port 2222→container 22, service `sshd` |
 
 ## Notes
 
+- **`POD_AUTOSTART` installs configs at creation**: the declared service runs
+  synchronously inside `pod` before it returns (so `pod run`/`shell` attach
+  only afterwards) and touches `/tmp/.pod-autostart-done` on success —
+  restarts skip it, a recreated container runs it again. Failure only warns;
+  rerun with `pod service <name>`. Changing the header recreates the
+  container (like a changed mount set).
 - **Host binds are declared by recipes** (`POD_VOLUME ~/...`), never hardwired
   in pod: `base` binds `~/.gitconfig` and `~/.ssh` read-only unless its
   `no-git`/`no-ssh` options say otherwise (`pod .base no-git`). A changed

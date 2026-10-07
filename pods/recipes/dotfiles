@@ -1,0 +1,87 @@
+#!/bin/bash
+# dotfiles - link this dotfiles repository into the dev container read-only
+#            (/dotfiles) and provide a setup runner that calls its install.sh
+#            (default component: shells). The image gets fish installed and
+#            set as root's default shell.
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    cat <<'EOF'
+Usage: pod .dotfiles [COMPONENT...]
+
+Link this dotfiles repository into the container read-only at /dotfiles and
+provide a setup service that calls its install.sh (the setup/ scripts). The
+shell configs are installed automatically when the container is created
+(POD_AUTOSTART setup); every later pod run reuses them.
+
+Options (bare words after .dotfiles):
+  COMPONENT...  install.sh components to run (default: shells); "all" runs
+                every component. See: install.sh --help
+
+The image gets fish installed, and fish becomes root's default shell
+("pod shell" starts it).
+
+Services:
+  setup         /dotfiles/install.sh <components...> -- runs once at
+                container creation (marker-guarded), or rerun with:
+                pod service setup --fg
+
+Examples:
+  pod .base .dotfiles            # configs install at creation (default)
+  pod .base .dotfiles editors    # + editor configs instead
+  pod .base .dotfiles all        # every component
+  pod service setup --fg         # rerun the config install, show output
+EOF
+    exit 0
+fi
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+
+# components for install.sh; none = shells, "all" = --all
+comps=("$@")
+if [ "${#comps[@]}" -eq 0 ]; then
+    comps=(shells)
+fi
+args=()
+for c in "${comps[@]}"; do
+    [ "$c" = "all" ] && c="--all"
+    args+=("$c")
+done
+
+printf '# POD_DESC dotfiles repo (RO /dotfiles) + setup service; fish shell\n'
+printf '# POD_VOLUME %s:/dotfiles:ro\n' "$repo"
+printf '# POD_SERVICE setup=/dotfiles/install.sh %s\n' "${args[*]}"
+printf '# POD_AUTOSTART setup\n'
+printf '# POD_HINT service=setup configs linked -- start a session: pod shell (fish)\n'
+printf '# POD_HINT this dotfiles repo is mounted read-only at /dotfiles\n'
+
+cat <<'DOCKER'
+ARG BASE
+FROM ${BASE}
+
+USER root
+
+RUN set -eux; \
+    if command -v pacman >/dev/null 2>&1; then \
+        pacman -Sy --noconfirm --needed fish zoxide && pacman -Scc --noconfirm; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends fish zoxide \
+        && rm -rf /var/lib/apt/lists/*; \
+    elif command -v dnf >/dev/null 2>&1; then \
+        dnf install -y fish zoxide; \
+    else \
+        echo "no supported package manager for fish/zoxide" >&2; exit 1; \
+    fi; \
+    command -v fish >/dev/null && command -v zoxide >/dev/null
+
+RUN set -eux; \
+    f="$(command -v fish)"; \
+    grep -qx "$f" /etc/shells || echo "$f" >> /etc/shells; \
+    if command -v usermod >/dev/null 2>&1; then \
+        usermod -s "$f" root; \
+    else \
+        chsh -s "$f" root; \
+    fi
+DOCKER

@@ -5,9 +5,13 @@
 # Set EDITOR (equivalent to: set -gx EDITOR "nvim")
 $env.EDITOR = "nvim"
 
-# Define custom command directory (equivalent to: set -gx cmddir "$HOME/cmd")
+# Custom command directory: resolve this config chain's own symlink
+# (~/.config/nushell/config.nu -> <repo>/shell/config.nu) so it works
+# wherever the repo lives (e.g. /dotfiles mounted in a pod container);
+# ~/cmd as fallback
 let home_dir = $env.HOME
-$env.cmddir = $"($home_dir)/cmd"
+let repo_root = ($nu.config-path | path expand | path dirname | path dirname)
+$env.cmddir = (if ($repo_root | path join "bin" | path exists) { $repo_root } else { $"($home_dir)/cmd" })
 
 # Set GPG_TTY (equivalent to: set -gx GPG_TTY "$(tty)")
 $env.GPG_TTY = (tty)

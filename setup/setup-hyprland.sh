@@ -18,7 +18,7 @@ Install or remove Hyprland tiling compositor and related packages.
 Installs: hyprland, fuzzel, slurp, hyprpaper, hypridle,
 hyprlock, grim, xdg-desktop-portal-hyprland, hyprpolkitagent.
 
-Also symlinks ~/cmd/configs/hypr -> ~/.config/hypr.
+Also symlinks <repo>/configs/hypr -> ~/.config/hypr.
 
 Options:
   --offline    Skip online checks.

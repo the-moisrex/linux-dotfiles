@@ -24,7 +24,14 @@ if status is-interactive
     # Disable fish greeting
     set -gx fish_greeting
 
-    set -gx cmddir "$HOME/cmd"
+    # repo dir: resolve this config's own symlink (~/.config/fish/config.fish
+    # -> <repo>/shell/config.fish) so it works wherever the repo lives (e.g.
+    # /dotfiles mounted in a pod container); ~/cmd as fallback
+    set -l repo_root (path resolve (status filename) | path dirname | path dirname)
+    if test -z "$repo_root"; or not test -d "$repo_root/bin"
+        set repo_root "$HOME/cmd"
+    end
+    set -gx cmddir "$repo_root"
 
     # set -gx TERM=alacritty
     # set -gx TERM=kitty

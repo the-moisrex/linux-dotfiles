@@ -67,7 +67,7 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 - `llvm.run` — run clang/LLVM plugins with project flags
 
 **Dev containers:**
-- `pod` — project dev containers: builds recipe-chained images from `pods/recipes/<name>` scripts (`base`, `oc`, `vscode`, `ssh`; each executable, prints a Dockerfile to stdout), runs labeled containers (bind/`--copy`/worktree workspaces) named `pod-<workspace>-<dish>`
+- `pod` — project dev containers: builds recipe-chained images from `pods/recipes/<name>` scripts (`base`, `dotfiles`, `oc`, `vscode`, `ssh`; each executable, prints a Dockerfile to stdout), runs labeled containers (bind/`--copy`/worktree workspaces) named `pod-<workspace>-<dish>`
 - `dockerfile.gen` — standalone Dockerfile generator matching the host OS (used by `pod`'s `base` recipe when no Dockerfile exists)
 - `oc` — opencode agent in a container (project mode delegates to `pod name` + `oc-seed`, otherwise the `pods/agents` image); `oc-seed` records/applies profile seeding on the host
 

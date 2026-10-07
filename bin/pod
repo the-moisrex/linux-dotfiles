@@ -37,7 +37,7 @@ CONCEPTS:
   recipe     executable script in pods/recipes/<name> that prints a complete
              Dockerfile to stdout. Its argv = the recipe's options, and
              POD_PROJECT_DIR=<project> is set; the host environment is
-             inherited. Bundled: base, oc, vscode, ssh
+             inherited. Bundled: base, dotfiles, oc, ssh, vscode
              (each prints its own help: $TOOL .<name> --help).
   selection  ".recipe [opts ...] ..." tokens applied in order; a bare word is
              an existing image to start FROM (a project dish like base-oc, or
@@ -61,7 +61,7 @@ COMMANDS (first non-option arg; bare "$TOOL [SELECTION...]" = run):
                         (this is what bin/oc calls)
   build   [SELECTION]   images only; --rebuild = --no-cache
   recipes               list recipes with their ports/services/build args
-                        ("frags" is an alias)
+                        ("frags" is an alias; --names/--porcelain for scripts)
   info    [DISH|SELECTION]
                         show a container's labels, or the planned chain
   services [DISH]       services the container's recipes declare
@@ -107,6 +107,9 @@ RECIPE CONTRACT (stdout = one complete Dockerfile, headers are comment lines):
                        environment, --build-arg wins over it.
   # POD_PORT P         publish 127.0.0.1:P:P (also H:C and ip:H:C)
   # POD_SERVICE n=cmd  "pod service n" runs cmd in the container
+  # POD_AUTOSTART n    run service n synchronously once, right when the
+                       container is created or recreated (marker-guarded:
+                       restarts skip it, a new container runs it again)
   # POD_VOLUME v:/p    bind host path v (~ expands) at /p, or create the
                        named volume v when v has no slash
   # POD_ENV K[=V]      pass K through from the host when set, or set K=V
@@ -120,6 +123,7 @@ EXAMPLES:
   pod                        # project image (.base) + shell
   pod .base .vscode .ssh     # code-server + sshd on the project image
   pod .base .oc work         # opencode agent + option "work" (pod .oc --help)
+  pod .base .dotfiles        # this dotfiles repo RO + setup service (fish)
   pod build .base .oc        # images only
   pod base-oc .vscode        # fork: start FROM an earlier dish, add vscode
   pod .base .vscode --as dev # name the dish yourself
@@ -155,6 +159,7 @@ quiet=0
 verbose=0
 follow=0
 run_flag=0
+recipes_mode=""
 
 known_commands="run name build recipes frags info services service shell exec logs ide wt list ps down rm prune help"
 removed_commands="up ensure oc vscode ssh"
@@ -210,6 +215,8 @@ while [[ $# -gt 0 ]]; do
         --quiet) quiet=1; shift ;;
         --verbose) verbose=1; shift ;;
         --run) run_flag=1; shift ;;
+        --names) recipes_mode="names"; shift ;;
+        --porcelain) recipes_mode="porcelain"; shift ;;
         -f) follow=1; shift ;;
         -e)
             exec_env+=("${2:?--exec-env needs K=V}"); shift 2 ;;
@@ -253,6 +260,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 cmd="${cmd:-run}"
+if [[ -n "$recipes_mode" && "$cmd" != "recipes" && "$cmd" != "frags" ]]; then
+    die "--names/--porcelain are options of '$TOOL recipes'"
+fi
 
 command -v podman >/dev/null 2>&1 || die "podman is not installed"
 
@@ -535,6 +545,7 @@ v_envs=()
 v_hints=()
 v_build_args=()
 v_nametag=""
+v_autostart=""
 
 collect_meta() { # $1=df file
     local f="$1" line
@@ -552,6 +563,12 @@ collect_meta() { # $1=df file
         line="$(df_header "$f" NAMETAG | head -n1)"
         if [[ -n "$line" ]]; then
             v_nametag="$(slugify "$line")"
+        fi
+    fi
+    if [[ -z "$v_autostart" ]]; then
+        line="$(df_header "$f" AUTOSTART | head -n1)"
+        if [[ -n "$line" ]]; then
+            v_autostart="$line"
         fi
     fi
 }
@@ -658,9 +675,39 @@ plan_only=0       # 1 = compute the chain without building (pod info)
 final_image=""
 final_id=""
 chain_lines=()
+stage_df=()       # preflight: generated Dockerfile path per recipe stage
+
+# generate every stage's Dockerfile and validate the chain up front, so a
+# broken selection fails before any stage is built
+preflight_chain() {
+    local i kind name p disp
+    local prev_kind="" prev_name=""
+    stage_df=()
+    for i in "${!sel_kind[@]}"; do
+        kind="${sel_kind[$i]}"
+        name="${sel_name[$i]}"
+        if [[ "$kind" == "image" ]]; then
+            p="$(image_ref_for "$name")"
+            if [[ "$plan_only" == 0 ]] && ! podman image exists "$p" 2>/dev/null; then
+                die "image not found: $p (build it with: $TOOL build <selection>, or podman pull it)"
+            fi
+            prev_kind="image"
+            prev_name="$name"
+            continue
+        fi
+        stage_df[i]="$(gen_df "$kind" "$name" "${sel_opts[$i]}" "$i")"
+        if [[ -n "$prev_kind" ]] \
+            && ! grep -qE '^ARG[[:space:]]+BASE([[:space:]=]|$)' "${stage_df[$i]}"; then
+            if [[ "$prev_kind" == "image" ]]; then disp="$prev_name"; else disp=".$prev_name"; fi
+            die "recipe '$name' does not accept a base image (no ARG BASE), so it cannot follow $disp (only the first stage may omit ARG BASE)"
+        fi
+        prev_kind="recipe"
+        prev_name="$name"
+    done
+}
 
 build_chain() {
-    local i kind name opts df prev="" tag has_base a v kv h key
+    local i kind name opts df prev="" tag has_base a v kv h key found
     local -a args nocache=()
     [[ "$rebuild" == 1 ]] && nocache=(--no-cache)
 
@@ -671,8 +718,10 @@ build_chain() {
     v_hints=()
     v_build_args=()
     v_nametag=""
+    v_autostart=""
     chain_lines=()
     work_dir >/dev/null
+    preflight_chain
 
     for i in "${!sel_kind[@]}"; do
         kind="${sel_kind[$i]}"
@@ -692,7 +741,8 @@ build_chain() {
             continue
         fi
 
-        df="$(gen_df "$kind" "$name" "$opts" "$i")"
+        df="${stage_df[$i]:-}"
+        [[ -n "$df" ]] || df="$(gen_df "$kind" "$name" "$opts" "$i")"
         collect_meta "$df"
 
         has_base=0
@@ -703,8 +753,6 @@ build_chain() {
                 chain_lines+=("start FROM $DEFAULT_BASE (default base; POD_DEFAULT_BASE overrides)")
             fi
             args+=(--build-arg "BASE=${prev:-$DEFAULT_BASE}")
-        elif [[ -n "$prev" ]]; then
-            die "recipe '$name' does not accept a base image (no ARG BASE), so it cannot be chained after another stage"
         fi
 
         # declared ARGs: --build-arg wins, else the host environment, else skip
@@ -741,6 +789,15 @@ build_chain() {
             || die "build failed: .$name (log above)"
         prev="$tag"
     done
+
+    if [[ -n "$v_autostart" ]]; then
+        found=0
+        for h in ${v_services[@]+"${v_services[@]}"}; do
+            [[ "${h%%=*}" == "$v_autostart" ]] && found=1
+        done
+        [[ "$found" == 1 ]] \
+            || die "POD_AUTOSTART: service '$v_autostart' is not declared by any selected recipe (add: # POD_SERVICE $v_autostart=...)"
+    fi
 
     final_image="$prev"
     if [[ "$plan_only" == 1 ]]; then
@@ -828,6 +885,7 @@ create_container() { # $1=name
     [[ ${#v_volumes[@]} -gt 0 ]] && run_args+=(--label "pod.volumes=$(printf '%s\n' "${v_volumes[@]}")")
     [[ ${#v_envs[@]} -gt 0 ]] && run_args+=(--label "pod.env=$(join_by , "${v_envs[@]}")")
     [[ ${#v_hints[@]} -gt 0 ]] && run_args+=(--label "pod.hints=$(printf '%s\n' "${v_hints[@]}")")
+    [[ -n "$v_autostart" ]] && run_args+=(--label "pod.autostart=$v_autostart")
 
     local specs=()
     while IFS= read -r p; do
@@ -881,17 +939,35 @@ create_container() { # $1=name
     podman "${run_args[@]}" "$final_image" -c 'exec sleep infinity' >/dev/null \
         || die "container create failed"
     container="$name"
+    run_autostart "$name"
 }
 
-start_if_needed() { # $1=container
+start_if_needed() { # $1=container; sets started_now=1 when it had to start it
+    started_now=0
     if [[ "$(podman container inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" != "true" ]]; then
         info "starting $1"
         podman start "$1" >/dev/null
+        started_now=1
+    fi
+}
+
+run_autostart() { # $1=container — run POD_AUTOSTART service, once per container
+    local cmd
+    [[ -n "$v_autostart" ]] || return 0
+    podman exec "$1" test -e /tmp/.pod-autostart-done 2>/dev/null && return 0
+    cmd="$(service_cmd "$1" "$v_autostart")" \
+        || die "POD_AUTOSTART: service '$v_autostart' is not declared by $1"
+    info "running startup service '$v_autostart' (once per container)"
+    if podman exec "$1" /bin/sh -c "$cmd"; then
+        podman exec "$1" touch /tmp/.pod-autostart-done
+        info "startup service '$v_autostart' done"
+    else
+        warn "startup service '$v_autostart' failed — rerun: $TOOL service $v_autostart"
     fi
 }
 
 ensure_container() {
-    local c_image c_vols want_vols
+    local c_image c_vols want_vols c_auto
     container="$(container_name)"
     if podman container exists "$container" 2>/dev/null; then
         if [[ "$recreate" == 1 ]]; then
@@ -916,6 +992,13 @@ ensure_container() {
             create_container "$container"
             return 0
         fi
+        c_auto="$(podman container inspect -f '{{index .Config.Labels "pod.autostart"}}' "$container" 2>/dev/null || true)"
+        if [[ "$c_auto" != "$v_autostart" ]]; then
+            info "startup service changed: recreating $container"
+            podman rm -f "$container" >/dev/null
+            create_container "$container"
+            return 0
+        fi
         debug "reusing container $container"
         if [[ -n "$shared_pod" ]]; then
             local want have
@@ -926,6 +1009,9 @@ ensure_container() {
             fi
         fi
         start_if_needed "$container"
+        if [[ "$started_now" == 1 ]]; then
+            run_autostart "$container"
+        fi
     else
         create_container "$container"
     fi
@@ -1110,7 +1196,13 @@ print_hints_plan() { # planned: no container yet (stdout)
 # ---------------------------------------------------------------- commands ---
 attach_shell() { # $1=container
     if [[ -t 0 && -t 1 ]]; then
-        podman exec -it "$1" /bin/sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'
+        # start the container user's default shell (e.g. fish from the
+        # dotfiles recipe), falling back to bash/sh
+        podman exec -it "$1" /bin/sh -c \
+            's=$(grep "^root:" /etc/passwd | cut -d: -f7 2>/dev/null || true)
+             case "$s" in ""|/sbin/nologin|/usr/sbin/nologin|/bin/false) s="" ;; esac
+             if [ -n "$s" ] && [ -x "$s" ]; then exec "$s"; fi
+             command -v bash >/dev/null 2>&1 && exec bash || exec sh'
     else
         info "container $1 is up; not a TTY -- run: $TOOL exec <cmd>"
         printf '%s\n' "$1"
@@ -1149,12 +1241,39 @@ cmd_build() {
 }
 
 cmd_recipes() {
-    local f n desc markstr ports snames sl bargs vols out
-    printf 'RECIPES (%s):\n' "$RECIPES_DIR"
-    printf 'use: pod .<name> [opts...] | pod .base .<name> | --as NAME\n\n'
+    local mode="${recipes_mode:-table}" arg="${positional[0]:-}" f n desc markstr ports snames sl bargs vols out
+    [[ -z "$arg" ]] || die "recipes: unexpected argument: $arg (modes: --names, --porcelain; see '$TOOL --help')"
     shopt -s nullglob
     local -a files=("$RECIPES_DIR"/*)
     shopt -u nullglob
+
+    if [[ "$mode" == "names" ]]; then        # bare list, recipes are not run
+        for f in ${files[@]+"${files[@]}"}; do
+            [[ -f "$f" && -x "$f" ]] || continue
+            printf '%s\n' "${f##*/}"
+        done
+        return 0
+    fi
+    if [[ "$mode" == "porcelain" ]]; then    # name<TAB>description, for scripts
+        for f in ${files[@]+"${files[@]}"}; do
+            [[ -f "$f" && -x "$f" ]] || continue
+            n="${f##*/}"
+            desc=""
+            if out="$(POD_PROJECT_DIR="$PWD" "$f" 2>/dev/null)"; then
+                desc="$(printf '%s\n' "$out" | sed -n -E 's/^# POD_DESC[[:space:]]+//p' | head -n1)"
+            fi
+            desc="${desc//$'\t'/}"
+            if [[ -n "$desc" ]]; then
+                printf '%s\t%s\n' "$n" "$desc"
+            else
+                printf '%s\n' "$n"
+            fi
+        done
+        return 0
+    fi
+
+    printf 'RECIPES (%s):\n' "$RECIPES_DIR"
+    printf 'use: pod .<name> [opts...] | pod .base .<name> | --as NAME\n\n'
     if [[ ${#files[@]} -eq 0 ]]; then
         printf '  (none)\n'
         return 0
@@ -1187,7 +1306,7 @@ cmd_recipes() {
 }
 
 print_info_container() { # $1=container
-    local c="$1" state dish_l sel_l img imgid ports svc vol env hints pub
+    local c="$1" state dish_l sel_l img imgid ports svc vol env hints pub auto
     state="$(podman container inspect -f '{{.State.Status}}' "$c" 2>/dev/null || true)"
     dish_l="$(podman container inspect -f '{{index .Config.Labels "pod.dish"}}' "$c" 2>/dev/null || true)"
     sel_l="$(podman container inspect -f '{{index .Config.Labels "pod.selection"}}' "$c" 2>/dev/null || true)"
@@ -1198,6 +1317,7 @@ print_info_container() { # $1=container
     vol="$(podman container inspect -f '{{index .Config.Labels "pod.volumes"}}' "$c" 2>/dev/null || true)"
     env="$(podman container inspect -f '{{index .Config.Labels "pod.env"}}' "$c" 2>/dev/null || true)"
     hints="$(podman container inspect -f '{{index .Config.Labels "pod.hints"}}' "$c" 2>/dev/null || true)"
+    auto="$(podman container inspect -f '{{index .Config.Labels "pod.autostart"}}' "$c" 2>/dev/null || true)"
     pub="$(podman port "$c" 2>/dev/null | paste -sd'; ' - || true)"
 
     printf 'project:    %s\n' "$project_path"
@@ -1209,6 +1329,7 @@ print_info_container() { # $1=container
     printf 'ports:      %s\n' "${ports:-(none)}"
     [[ -n "$pub" ]] && printf 'published:  %s\n' "$pub"
     printf 'services:   %s\n' "${svc:-(none)}"
+    [[ -n "$auto" ]] && printf 'startup:    %s\n' "$auto"
     [[ -n "$vol" ]] && printf 'volumes:    %s\n' "$(printf '%s' "$vol" | paste -sd'; ' -)"
     [[ -n "$env" ]] && printf 'env:        %s\n' "$env"
     if [[ -n "$hints" ]]; then
@@ -1255,6 +1376,7 @@ print_info_plan() {
         svc_out+="${svc_out:+, }${s%%=*}"
     done
     printf 'services:   %s\n' "${svc_out:-(none)}"
+    [[ -n "$v_autostart" ]] && printf 'startup:    %s\n' "$v_autostart"
     [[ ${#v_volumes[@]} -gt 0 ]] && printf 'volumes:    %s\n' "$(printf '%s\n' "${v_volumes[@]}" | paste -sd'; ' -)"
     [[ ${#v_envs[@]} -gt 0 ]] && printf 'env:        %s\n' "$(join_by , "${v_envs[@]}")"
     if [[ ${#v_hints[@]} -gt 0 ]]; then

@@ -1,7 +1,9 @@
 #export TERM=alacritty
 export TERM=kitty
 
-cmddir="$HOME/cmd"
+# repo dir: resolve this file's own path (symlink-safe); ~/cmd as fallback
+cmddir="${${(%):-%x}:A:h:h}"
+[[ -d "$cmddir/bin" ]] || cmddir="$HOME/cmd"
 
 detect_distro() {
   if [[ "$OSTYPE" == linux-android* ]]; then

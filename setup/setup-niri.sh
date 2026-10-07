@@ -17,7 +17,7 @@ Install or remove Niri scrollable tiling compositor and related packages.
 
 Installs: niri, xwayland-satellite.
 
-Also symlinks ~/cmd/configs/niri -> ~/.config/niri.
+Also symlinks <repo>/configs/niri -> ~/.config/niri.
 
 Options:
   --offline    Skip online checks.
