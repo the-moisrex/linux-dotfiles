@@ -2,19 +2,18 @@
 
 import argparse
 import csv
-import hashlib
 import io
 import json
-import os
+import queue
 import re
 import sys
-import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -22,9 +21,36 @@ TSETMC = "https://cdn.tsetmc.com/api"
 CODAL_SEARCH = "https://search.codal.ir/api/search/v2/q"
 CODAL_REPORT = "https://www.codal.ir"
 WEBGW = "https://webgw.tse.ir/InstrumentProvider/api/v1/Instrument/LiveInstrumentByIdQuery/fa"
-CODAL_CACHE_SECONDS = 3600
+TASNIM_CURRENCY = "/home/moisrex/cmd/bin/tasnim-currency"
+WORLD_BANK = "https://api.worldbank.org/v2/country/IRN/indicator/{}?format=json&per_page=4"
+CODAL_SPACING_SECONDS = 4.0
+MAX_ANNOUNCEMENTS = 20
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+ISIN_RE = re.compile(r"IR[A-Z0-9]{10}")
+INDEX_COMPONENTS = (
+    ("46348559193224090", "فولاد"),
+    ("7745894403636165", "شپنا"),
+    ("51617145873056483", "شتران"),
+    ("65883838195688438", "خودرو"),
+    ("44891482026867833", "خساپا"),
+    ("69143674941561637", "پترول"),
+    ("25244329144808274", "فارس"),
+    ("35425587644337450", "فملی"),
+    ("18027801615184692", "کچاد"),
+    ("35700344742885862", "کگل"),
+    ("778253364357513", "وبملت"),
+    ("63917421733088077", "وتجارت"),
+    ("22811176775480091", "اخابر"),
+    ("32357363984168442", "جم"),
+    ("27922860956133067", "مبین"),
+)
+
+
+def marketwatch_url():
+    params = {"market": 0, "withBestLimits": "false", "hEven": 0, "RefID": 0}
+    params.update({f"paperTypes[{i}]": i + 1 for i in range(9)})
+    return TSETMC + "/ClosingPrice/GetMarketWatch?" + urllib.parse.urlencode(params)
 
 
 class DataError(Exception):
@@ -91,36 +117,63 @@ def unwrap(payload, key):
     return result
 
 
+VERIFICATION_MARKERS = ("تأیید کاربر", "تایید کاربر")
+BLOCK_MARKERS = ("دسترسی شما", "مسدود", "General Error Detected")
+
+
+def marker_hit(text, markers):
+    if any(marker in text for marker in markers):
+        return True
+    fixed = text.encode("cp1252", errors="ignore").decode("utf-8", errors="ignore")
+    return any(marker in fixed for marker in markers)
+
+
+def verification_page(html):
+    if marker_hit(html, VERIFICATION_MARKERS):
+        return True
+    lowered = html.lower()
+    return "captcha" in lowered or "verify" in lowered
+
+
 class Client:
     def __init__(self):
-        self.last_codal_request = 0.0
+        self.codal_last = {}
+        self.codal_lock = threading.Lock()
         self.blocked_hosts = set()
 
     def get(self, url, *, accept="application/json", codal=False):
         host = urllib.parse.urlsplit(url).hostname
         if host in self.blocked_hosts:
             raise DataError(f"{host} requires browser verification; try again later")
-        if codal and self.last_codal_request:
-            time.sleep(max(0, 4.0 - (time.monotonic() - self.last_codal_request)))
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
+        verification_retried = False
         for attempt in range(3):
             if codal:
-                self.last_codal_request = time.monotonic()
+                with self.codal_lock:
+                    last = self.codal_last.get(host, 0.0)
+                    wait = max(0.0, CODAL_SPACING_SECONDS - (time.monotonic() - last))
+                    self.codal_last[host] = time.monotonic() + wait
+                if wait:
+                    time.sleep(wait)
             try:
                 with urllib.request.urlopen(request, timeout=12) as response:
                     body = response.read(6_000_001)
                 if len(body) > 6_000_000:
                     raise DataError(f"Response too large: {url}")
                 text = body.decode("utf-8-sig", errors="replace")
-                if "تأیید کاربر" in text or "تایید کاربر" in text:
+                if marker_hit(text, VERIFICATION_MARKERS):
+                    if not verification_retried:
+                        verification_retried = True
+                        time.sleep(12)
+                        continue
                     self.blocked_hosts.add(host)
                     raise DataError(f"{host} requires browser verification; try again later")
-                if any(word in text for word in ("دسترسی شما", "مسدود", "General Error Detected")):
+                if marker_hit(text, BLOCK_MARKERS):
                     raise DataError(f"Access blocked by {host}; try an Iranian IP without a VPN")
                 return text
             except urllib.error.HTTPError as exc:
                 if exc.code == 429:
-                    raise DataError(f"Rate limited by {host} (HTTP 429)") from exc
+                    raise DataError(f"Rate limited by {host} (HTTP 429); wait a few minutes and rerun") from exc
                 if exc.code == 403:
                     raise DataError(f"Access denied by {host} (HTTP 403); check your Iranian IP and VPN") from exc
                 if exc.code not in (500, 502, 503, 504) or attempt == 2:
@@ -142,7 +195,31 @@ class Client:
         return unwrap(self.json(f"{TSETMC}/{path}"), key)
 
 
+def resolve_isin(client, isin):
+    rows = unwrap(client.json(marketwatch_url()), "marketwatch")
+    if not isinstance(rows, list):
+        raise DataError("Unexpected market watch result")
+    for row in rows:
+        if isinstance(row, dict) and normal(pick(row, "insID", "instrumentID")).upper() == isin:
+            ins_code = str(pick(row, "insCode") or "")
+            if not ins_code:
+                break
+            return {
+                "ins_code": ins_code,
+                "symbol": normal(pick(row, "lva", "lVal18AFC")),
+                "name": normal(pick(row, "lvc", "lVal30")),
+                "isin": isin,
+                "flow": None,
+                "market": None,
+            }
+    return None
+
+
 def search(client, query):
+    query = normalize_input(query)
+    if query.isascii() and ISIN_RE.fullmatch(query):
+        found = resolve_isin(client, query)
+        return [found] if found else []
     rows = client.api(f"Instrument/GetInstrumentSearch/{urllib.parse.quote(query, safe='')}", "instrumentSearch")
     if not isinstance(rows, list):
         raise DataError("Unexpected instrument search result")
@@ -159,10 +236,34 @@ def search(client, query):
     ]
 
 
+def normalize_input(symbol):
+    s = str(symbol or "").strip()
+    if not s:
+        return s
+    m = re.search(r"easytrader\.ir/(?:easy-chart|stock-details)/([A-Za-z]{2}[A-Za-z0-9]{10})", s)
+    if m:
+        return m.group(1).upper()
+    m = re.search(r"tsetmc\.com/instInfo/(\d{15,})", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"codal\.ir/ReportList\.aspx\?[^#]*?\bSymbol=([^&#]+)", s, re.IGNORECASE)
+    if m:
+        return urllib.parse.unquote_plus(m.group(1))
+    if re.fullmatch(r"[A-Za-z]{2}[A-Za-z0-9]{10}", s):
+        return s.upper()
+    return s
+
+
 def resolve(client, symbol):
+    symbol = normalize_input(symbol)
     code = normal(symbol)
     if code.isascii() and code.isdigit():
         return {"ins_code": code, "symbol": "", "name": "", "isin": None, "flow": None, "market": None}
+    if code.isascii() and ISIN_RE.fullmatch(code):
+        found = resolve_isin(client, code)
+        if found is None:
+            raise DataError(f"ISIN {code} not found on TSETMC")
+        return found
     matches = search(client, symbol)
     exact = [row for row in matches if normal(row["symbol"]) == code]
     if len(exact) != 1:
@@ -274,7 +375,15 @@ def history(client, code, days):
             "value_rial": value(row, "qTotCap"),
             "trade_count": value(row, "zTotTran"),
         })
-    return sorted(result, key=lambda row: row["date"] or "")[-days:]
+    result.sort(key=lambda row: row["date"] or "")
+    return result if days == 0 else result[-days:]
+
+
+def detect_fund(isin, industry, sub_industry, units=None):
+    label = normal(industry) + " " + normal(sub_industry)
+    if not isinstance(isin, str) and not units and "صندوق" not in label:
+        return None
+    return bool((isinstance(isin, str) and isin.startswith("IRT")) or units or "صندوق" in label)
 
 
 def info(client, code, ident, current, errors):
@@ -291,6 +400,19 @@ def info(client, code, ident, current, errors):
         "market_cap_rial": None,
         "market_cap_source": None,
         "free_float_pct": None,
+        "week_range_rial": None,
+        "year_range_rial": None,
+        "avg_volume_5d_shares": None,
+        "psr_raw": None,
+        "daily_price_limits_rial": None,
+        "fund_units": None,
+        "is_fund": None,
+        "nav_issuance_rial": None,
+        "nav_redemption_rial": None,
+        "nav_as_of": None,
+        "nav_as_of_time": None,
+        "nav_premium_pct": None,
+        "derived_ratios": None,
     }
     try:
         row = client.api(f"Instrument/GetInstrumentInfo/{code}", "instrumentInfo")
@@ -316,17 +438,52 @@ def info(client, code, ident, current, errors):
                 result["eps_rial"] = actual
                 result["eps_source"] = "TSETMC epsValue"
             result["sector_pe"] = value(earnings, "sectorPE") or result["sector_pe"]
+            psr = value(earnings, "psr")
+            if psr is not None:
+                result["psr_raw"] = psr
         elif value(row, "estimatedEPS", "eps") is not None:
             result["eps_rial"] = value(row, "estimatedEPS", "eps")
             result["eps_source"] = "TSETMC instrumentInfo"
+        if result["psr_raw"] is None:
+            result["psr_raw"] = value(row, "psr")
         result["market_cap_rial"] = value(row, "marketValue", "marketCap")
         if result["market_cap_rial"] is not None:
             result["market_cap_source"] = "TSETMC instrumentInfo"
         result["industry"] = pick(pick(row, "sector"), "lSecVal") or result["industry"]
         result["board"] = pick(row, "cgrValCotTitle") or result["board"]
+        low_week, high_week = value(row, "minWeek"), value(row, "maxWeek")
+        if low_week is not None or high_week is not None:
+            result["week_range_rial"] = {"low": low_week, "high": high_week}
+        low_year, high_year = value(row, "minYear"), value(row, "maxYear")
+        if low_year is not None or high_year is not None:
+            result["year_range_rial"] = {"low": low_year, "high": high_year}
+        result["avg_volume_5d_shares"] = value(row, "qTotTran5JAvg")
+        threshold = pick(row, "staticThreshold")
+        if isinstance(threshold, dict):
+            low_limit, high_limit = value(threshold, "psGelStaMin"), value(threshold, "psGelStaMax")
+            if low_limit is not None or high_limit is not None:
+                result["daily_price_limits_rial"] = {"low": low_limit, "high": high_limit}
+        units = value(row, "etfIssuedUnit")
+        if units:
+            result["fund_units"] = {"units": units, "date": trade_date(pick(row, "etfUnitDeven"))}
     except DataError as exc:
         errors["instrument_info"] = str(exc)
     closing = current.get("closing_rial")
+    result["is_fund"] = detect_fund(ident.get("isin"), result.get("industry"), result.get("sub_industry"), result.get("fund_units"))
+    if result["is_fund"]:
+        try:
+            fund = client.api(f"Fund/GetETFByInsCode/{code}", "etf")
+            if not isinstance(fund, dict):
+                raise DataError("No fund NAV data")
+            result["nav_issuance_rial"] = value(fund, "pSubTran")
+            result["nav_redemption_rial"] = value(fund, "pRedTran")
+            result["nav_as_of"] = trade_date(pick(fund, "deven"))
+            result["nav_as_of_time"] = trade_time(pick(fund, "hEven"))
+            redemption = result["nav_redemption_rial"]
+            if closing and redemption:
+                result["nav_premium_pct"] = round((closing / redemption - 1) * 100, 2)
+        except DataError as exc:
+            errors["fund_nav"] = str(exc)
     if ident.get("isin") and (result["share_count"] is None or (result["market_cap_rial"] is None and closing is None)):
         try:
             url = WEBGW + "?" + urllib.parse.urlencode({"InstrumentId": ident["isin"]})
@@ -450,6 +607,8 @@ def statement(client, metadata):
             html = client.get(page, accept="text/html", codal=True)
             match = re.search(r"\bvar\s+datasource\s*=\s*", html)
             if not match:
+                if verification_page(html):
+                    raise DataError("Report page requires browser verification; try again later")
                 raise DataError("Report has no embedded financial datasource")
             data, _ = json.JSONDecoder().raw_decode(html, match.end())
             if not isinstance(data, dict):
@@ -470,38 +629,77 @@ def statement(client, metadata):
     }
 
 
-def codal(client, symbol, top, errors):
-    result = {"announcements": [], "statements": []}
-    try:
-        result["announcements"] = [codal_meta(row) for row in codal_search(client, symbol, -1, -1)[:top]]
-    except DataError as exc:
-        errors["codal_announcements"] = str(exc)
-    try:
-        rows = codal_search(client, symbol, 6, 1)
-        seen_reports = set()
-        seen_periods = set()
-        for row in rows[:6]:
-            metadata = codal_meta(row)
-            if not metadata["url"] or not metadata["title"]:
-                continue
-            key = pick(row, "TracingNo")
-            if key in seen_reports:
-                continue
-            seen_reports.add(key)
-            report = statement(client, metadata)
-            period = report.get("period") or {}
-            period_key = (period.get("periodEndToDate"), period.get("isConsolidated"))
-            if period_key[0] and period_key in seen_periods:
-                continue
-            seen_periods.add(period_key)
-            result["statements"].append(report)
-            if report.get("reason") and any(word in report["reason"] for word in ("requires browser verification", "Rate limited")):
-                errors["codal_financials"] = report["reason"]
-                break
-            if len(result["statements"]) >= 2:
-                break
-    except DataError as exc:
-        errors["codal_financials"] = str(exc)
+def codal(client, symbol, errors, fund=False):
+    rows_queue = queue.Queue(maxsize=1)
+
+    def search_worker():
+        found = {}
+        found_errors = {}
+        try:
+            try:
+                found["statement_rows"] = codal_search(client, symbol, 6, 1)
+            except DataError as exc:
+                found_errors["codal_financials"] = str(exc)
+        finally:
+            rows_queue.put(found.get("statement_rows"))
+        try:
+            found["announcements"] = [codal_meta(row) for row in codal_search(client, symbol, -1, -1)[:MAX_ANNOUNCEMENTS]]
+        except DataError as exc:
+            found_errors["codal_announcements"] = str(exc)
+        if fund:
+            try:
+                found["portfolio_reports"] = [codal_meta(row) for row in codal_search(client, symbol, -1, 3)[:3]]
+            except DataError as exc:
+                found_errors["codal_portfolio"] = str(exc)
+        return found, found_errors
+
+    def page_worker():
+        statements = []
+        found_errors = {}
+        rows = rows_queue.get()
+        if rows:
+            try:
+                seen_reports = set()
+                seen_periods = set()
+                for row in rows[:6]:
+                    metadata = codal_meta(row)
+                    if not metadata["url"] or not metadata["title"]:
+                        continue
+                    key = pick(row, "TracingNo")
+                    if key in seen_reports:
+                        continue
+                    seen_reports.add(key)
+                    report = statement(client, metadata)
+                    period = report.get("period") or {}
+                    period_key = (period.get("periodEndToDate"), period.get("isConsolidated"))
+                    if period_key[0] and period_key in seen_periods:
+                        continue
+                    seen_periods.add(period_key)
+                    statements.append(report)
+                    if report.get("reason") and any(word in report["reason"] for word in ("requires browser verification", "Rate limited")):
+                        found_errors["codal_financials"] = report["reason"]
+                        break
+                    if len(statements) >= 2:
+                        break
+            except DataError as exc:
+                found_errors["codal_financials"] = str(exc)
+        return {"statements": statements}, found_errors
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        search_future = pool.submit(search_worker)
+        page_future = pool.submit(page_worker)
+        found, search_errors = search_future.result()
+        page_found, page_errors = page_future.result()
+    result = {
+        "announcements": found.get("announcements") or [],
+        "statements": page_found["statements"],
+        "portfolio_reports": found.get("portfolio_reports") or [],
+    }
+    for key in ("codal_announcements", "codal_portfolio", "codal_financials"):
+        if key in search_errors:
+            errors[key] = search_errors[key]
+        if key in page_errors:
+            errors[key] = page_errors[key]
     if not result["statements"] and "codal_financials" not in errors:
         errors["codal_financials"] = "No matching Codal financial statements found"
     elif result["statements"] and not any(report.get("financials") and any(report["financials"].values()) for report in result["statements"]):
@@ -509,60 +707,18 @@ def codal(client, symbol, top, errors):
     return result
 
 
-def codal_cache_path(symbol, top):
-    directory = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "tse"
-    key = hashlib.sha256(f"{normal(symbol)}:{top}".encode("utf-8")).hexdigest()
-    return directory / f"codal-{key}.json"
+def trim_announcements(data, top):
+    out = {**data}
+    announcements = data.get("announcements")
+    if isinstance(announcements, list):
+        out["announcements"] = announcements[:top]
+    out.setdefault("portfolio_reports", [])
+    return out
 
 
-def load_codal_cache(path):
-    try:
-        if path.stat().st_size > 500_000:
-            return None
-        entry = json.loads(path.read_text(encoding="utf-8"))
-        saved_at = datetime.fromisoformat(entry["saved_at"])
-        if saved_at.tzinfo is None or not isinstance(entry["data"]["statements"], list):
-            return None
-        return entry
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-        return None
-
-
-def save_codal_cache(path, data):
-    temporary = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=".codal-", delete=False) as handle:
-            temporary = handle.name
-            json.dump({"saved_at": tehran_now().isoformat(timespec="seconds"), "data": data}, handle, ensure_ascii=False)
-        os.replace(temporary, path)
-        return None
-    except OSError as exc:
-        return str(exc)
-    finally:
-        if temporary and os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def codal_snapshot(client, symbol, top, errors, refresh=False):
-    path = codal_cache_path(symbol, top)
-    cached = load_codal_cache(path)
-    if cached:
-        age = (tehran_now() - datetime.fromisoformat(cached["saved_at"])).total_seconds()
-        if not refresh and 0 <= age < CODAL_CACHE_SECONDS:
-            return {**cached["data"], "retrieved_at": cached["saved_at"], "cache_status": "cached"}
-    result = codal(client, symbol, top, errors)
-    failed = any(key in errors for key in ("codal_announcements", "codal_financials"))
-    if failed and cached:
-        errors["codal_cache"] = f"Live Codal request failed; using cached data from {cached['saved_at']}"
-        return {**cached["data"], "retrieved_at": cached["saved_at"], "cache_status": "stale_fallback"}
-    retrieved_at = tehran_now().isoformat(timespec="seconds")
-    usable = any(report.get("financials") and any(report["financials"].values()) for report in result["statements"])
-    if not failed and usable:
-        cache_error = save_codal_cache(path, result)
-        if cache_error:
-            errors["codal_cache"] = f"Could not save Codal cache: {cache_error}"
-    return {**result, "retrieved_at": retrieved_at, "cache_status": "partial" if failed else "live"}
+def codal_snapshot(client, symbol, top, errors, fund=False):
+    result = codal(client, symbol, errors, fund=fund)
+    return {**trim_announcements(result, top), "retrieved_at": tehran_now().isoformat(timespec="seconds")}
 
 
 def tehran_now():
@@ -577,7 +733,237 @@ def market_session_open(now):
     return now.weekday() in (5, 6, 0, 1, 2) and (9, 0) <= (now.hour, now.minute) < (12, 30)
 
 
-def collect(client, symbol, days, top, with_codal, refresh_codal=False):
+UNIT_NAMES = {1: "rial", 1000: "thousand_rial", 1_000_000: "million_rial", 1_000_000_000: "billion_rial", 1_000_000_000_000: "trillion_rial"}
+
+
+def statement_row(rows, *labels):
+    if not rows:
+        return None
+    wanted = {normal(label).replace(" ", "") for label in labels}
+    for row in rows:
+        if normal(row.get("item")).replace(" ", "") in wanted:
+            return number(row.get("current_period"))
+    return None
+
+
+def unit_factor(shares, capital):
+    if not shares or not capital or capital <= 0:
+        return None
+    factor = shares * 1000 / capital
+    for candidate in UNIT_NAMES:
+        if 0.9 <= factor / candidate <= 1.1:
+            return candidate
+    return None
+
+
+def derive_fundamentals(fundamentals, codal, closing):
+    if not isinstance(fundamentals, dict) or not isinstance(codal, dict):
+        return
+    balance_rows = income_rows = None
+    period = None
+    for report in codal.get("statements") or []:
+        financials = report.get("financials") or {}
+        balance = financials.get("balance_sheet") or {}
+        income = financials.get("income_statement") or {}
+        if balance.get("rows"):
+            balance_rows = balance["rows"]
+        if income.get("rows"):
+            income_rows = income["rows"]
+        period = report.get("period") or period
+        if balance_rows or income_rows:
+            break
+    if not balance_rows and not income_rows:
+        return
+    derived = {"source": "Codal extracted statement rows (derived, not as-reported ratios)"}
+    equity = statement_row(balance_rows, "جمع حقوق مالکانه", "جمع حقوق صاحبان سهام", "جمع کل حقوق مالکانه")
+    liabilities = statement_row(balance_rows, "جمع بدهی ها", "جمع کل بدهی ها")
+    capital = statement_row(balance_rows, "سرمایه")
+    if capital is None:
+        capital = statement_row(income_rows, "سرمایه")
+    revenue = statement_row(
+        income_rows,
+        "درآمدهای عملیاتی",
+        "جمع درآمدهای عملیاتی",
+        "فروش کالا",
+        "فروش کالا و خدمات",
+        "فروش کالاها و خدمات",
+    )
+    net_income = statement_row(income_rows, "سود(زیان) خالص", "سود (زیان) خالص", "سودوزیان خالص", "سود خالص")
+    shares = fundamentals.get("share_count")
+    if equity and net_income:
+        derived["roe_pct"] = round(net_income / equity * 100, 2)
+    if net_income and revenue:
+        derived["net_margin_pct"] = round(net_income / revenue * 100, 2)
+    if liabilities and equity:
+        derived["debt_to_equity"] = round(liabilities / equity, 2)
+    factor = unit_factor(shares, capital)
+    if factor:
+        derived["unit_detection"] = UNIT_NAMES[factor]
+        if equity:
+            book_value = equity * factor / shares
+            derived["book_value_per_share_rial"] = round(book_value)
+            if closing and book_value > 0:
+                derived["pb"] = round(closing / book_value, 2)
+    else:
+        derived["unit_detection"] = "failed"
+    if period:
+        derived["period"] = period
+    fundamentals["derived_ratios"] = derived
+
+
+def plain(text):
+    return normal(re.sub(r"<[^>]+>", "", str(text or "")))
+
+
+def market_currencies(client):
+    """Fetch currency, gold, and coin prices from Tasnim News via tasnim-currency script."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [TASNIM_CURRENCY, "--json", "--currencies", "--gold", "--coins"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            raise DataError(f"tasnim-currency failed: {result.stderr.strip()}")
+        items = json.loads(result.stdout)
+        if not isinstance(items, list):
+            raise DataError("Unexpected tasnim-currency JSON output")
+    except json.JSONDecodeError as exc:
+        raise DataError(f"Non-JSON output from tasnim-currency: {exc}") from exc
+    except subprocess.TimeoutExpired:
+        raise DataError("tasnim-currency timed out") from None
+    except FileNotFoundError:
+        raise DataError("tasnim-currency script not found") from None
+
+    # Categorize items
+    categories = {
+        "currencies": [],
+        "gold": [],
+        "coins": [],
+    }
+    currency_titles = {
+        "price_dollar_rl", "price_eur", "price_gbp", "price_aed", "price_try",
+        "price_cny", "price_jpy", "price_cad", "price_aud", "price_chf",
+        "price_sar", "price_kwd", "price_qar", "price_omr", "price_iqd",
+        "price_afn", "price_sek", "price_dkk", "price_nok", "price_hkd",
+        "price_krw", "price_myr", "price_thb", "price_rub", "price_azn",
+        "price_bhd",
+    }
+    gold_titles = {"geram18", "geram24", "silver_999"}
+    coin_titles = {"sekee", "sekeb", "nim", "rob", "gerami",
+                   "retail_sekee", "retail_sekeb", "retail_nim", "retail_rob", "retail_gerami"}
+
+    for item in items:
+        title = item.get("title", "")
+        if title in currency_titles:
+            categories["currencies"].append(item)
+        elif title in gold_titles:
+            categories["gold"].append(item)
+        elif title in coin_titles:
+            categories["coins"].append(item)
+
+    return {
+        "source": "tasnimnews.ir/fa/currency",
+        "categories": categories,
+    }
+
+
+def world_bank_series(client, indicator):
+    payload = client.json(WORLD_BANK.format(indicator))
+    if not isinstance(payload, list) or not payload:
+        raise DataError(f"Unexpected World Bank response for {indicator}")
+    if isinstance(payload[0], dict) and payload[0].get("message"):
+        raise DataError(f"World Bank: {payload[0]['message']}")
+    if len(payload) < 2:
+        raise DataError(f"Unexpected World Bank response for {indicator}")
+    rows = payload[1] if isinstance(payload[1], list) else []
+    series = [
+        {"year": number(row.get("date")), "pct": round(float(row["value"]), 2)}
+        for row in rows
+        if isinstance(row, dict) and row.get("date") and row.get("value") is not None
+    ]
+    if not series:
+        raise DataError(f"No World Bank data for {indicator}")
+    return series
+
+
+def economy(client):
+    return {
+        "source": "World Bank (annual data)",
+        "inflation_cpi_annual_pct": world_bank_series(client, "FP.CPI.TOTL.ZG"),
+        "gdp_growth_annual_pct": world_bank_series(client, "NY.GDP.MKTP.KD.ZG"),
+    }
+
+
+def market_breadth(client):
+    results = []
+    failures = []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [(symbol, pool.submit(quote, client, code)) for code, symbol in INDEX_COMPONENTS]
+        for symbol, future in futures:
+            try:
+                results.append((symbol, future.result()))
+            except DataError as exc:
+                failures.append({"symbol": symbol, "error": str(exc)})
+    components = []
+    for symbol, quote_data in results:
+        last = quote_data.get("last_rial") or quote_data.get("closing_rial")
+        yesterday = quote_data.get("yesterday_rial")
+        volume = quote_data.get("volume_shares")
+        components.append(
+            {
+                "symbol": symbol,
+                "last_rial": last,
+                "change_pct": round((last / yesterday - 1) * 100, 2) if volume and last and yesterday else None,
+                "volume_shares": volume,
+                "value_rial": quote_data.get("value_rial"),
+                "state": quote_data.get("state"),
+            }
+        )
+    traded = [row for row in components if row["volume_shares"]]
+    changes = [row["change_pct"] for row in traded if row["change_pct"] is not None]
+    ranked = sorted((row for row in traded if row["change_pct"] is not None), key=lambda row: row["change_pct"], reverse=True)
+    return {
+        "scope": "tracked large-cap index components only, not the whole market",
+        "tracked": len(INDEX_COMPONENTS),
+        "traded": len(traded),
+        "advancers": sum(1 for pct in changes if pct > 0.01),
+        "decliners": sum(1 for pct in changes if pct < -0.01),
+        "unchanged": sum(1 for pct in changes if -0.01 <= pct <= 0.01),
+        "avg_change_pct": round(sum(changes) / len(changes), 2) if changes else None,
+        "total_volume_shares": sum(row["volume_shares"] or 0 for row in traded) or None,
+        "total_value_rial": sum(row["value_rial"] or 0 for row in traded) or None,
+        "top_gainers": [
+            {"symbol": row["symbol"], "change_pct": row["change_pct"]} for row in ranked if row["change_pct"] > 0.01
+        ][:3],
+        "top_losers": [
+            {"symbol": row["symbol"], "change_pct": row["change_pct"]} for row in reversed(ranked) if row["change_pct"] < -0.01
+        ][:3],
+        "non_trading": [{"symbol": row["symbol"], "state": row["state"]} for row in components if not row["volume_shares"]],
+        "components": components,
+        "failures": failures,
+    }
+
+
+def indexes(client):
+    rows = client.api("Index/GetIndexB1LastAll/SelectedIndexes/1", "indexB1")
+    if not isinstance(rows, list):
+        raise DataError("Unexpected market index result")
+    return [
+        {
+            "name_fa": pick(row, "lVal30"),
+            "value": value(row, "xDrNivJIdx004"),
+            "change_pct": value(row, "xVarIdxJRfV"),
+            "change": value(row, "indexChange"),
+            "time": trade_time(pick(row, "hEven")),
+        }
+        for row in rows if isinstance(row, dict)
+    ]
+
+
+def collect(client, symbol, days, top, with_codal):
     instrument = resolve(client, symbol)
     code = instrument["ins_code"]
     now = tehran_now()
@@ -589,29 +975,58 @@ def collect(client, symbol, days, top, with_codal, refresh_codal=False):
         "quote": None,
         "order_book": None,
         "client_type": None,
+        "indexes": None,
+        "market_context": None,
         "history": None,
         "fundamentals": None,
         "codal": None,
         "errors": errors,
     }
     ident = {"isin": instrument["isin"], "industry": None, "sub_industry": None, "board": None, "share_count": None}
-    try:
-        ident.update(identity(client, code))
-        for field in ("symbol", "name", "isin"):
-            instrument[field] = instrument[field] or ident[field]
-    except DataError as exc:
-        errors["identity"] = str(exc)
-    for field, func in (("quote", lambda: quote(client, code)), ("order_book", lambda: book(client, code)), ("client_type", lambda: flow(client, code)), ("history", lambda: history(client, code, days))):
-        try:
-            output[field] = func()
-        except DataError as exc:
-            errors[field] = str(exc)
-    output["fundamentals"] = info(client, code, ident, output["quote"] or {}, errors)
-    if with_codal:
-        if instrument["symbol"]:
-            output["codal"] = codal_snapshot(client, instrument["symbol"], top, errors, refresh=refresh_codal)
-        else:
-            errors["codal"] = "No symbol found for Codal search"
+    codal_errors = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {
+            "identity": pool.submit(identity, client, code),
+            "quote": pool.submit(quote, client, code),
+            "order_book": pool.submit(book, client, code),
+            "client_type": pool.submit(flow, client, code),
+            "indexes": pool.submit(indexes, client),
+            "history": pool.submit(history, client, code, days),
+            "currencies": pool.submit(market_currencies, client),
+            "economy": pool.submit(economy, client),
+            "breadth": pool.submit(market_breadth, client),
+        }
+
+        def take(key):
+            try:
+                return futures.pop(key).result()
+            except DataError as exc:
+                errors[key] = str(exc)
+                return None
+
+        updated = take("identity")
+        if updated:
+            ident.update(updated)
+            for field in ("symbol", "name", "isin"):
+                instrument[field] = instrument[field] or ident[field]
+        output["quote"] = take("quote")
+        codal_future = None
+        if with_codal:
+            if instrument["symbol"]:
+                fund = bool(detect_fund(ident.get("isin"), ident.get("industry"), ident.get("sub_industry")))
+                codal_future = pool.submit(codal_snapshot, client, instrument["symbol"], top, codal_errors, fund=fund)
+            else:
+                errors["codal"] = "No symbol found for Codal search"
+        output["fundamentals"] = info(client, code, ident, output["quote"] or {}, errors)
+        for key in ("order_book", "client_type", "indexes", "history"):
+            output[key] = take(key)
+        context = {key: take(key) for key in ("currencies", "economy", "breadth")}
+        output["market_context"] = {key: value for key, value in context.items() if value is not None} or None
+        if codal_future is not None:
+            output["codal"] = codal_future.result()
+            errors.update(codal_errors)
+            if output["codal"] and output["fundamentals"]:
+                derive_fundamentals(output["fundamentals"], output["codal"], (output["quote"] or {}).get("closing_rial"))
     if output["quote"] is None and not output["history"]:
         raise DataError("No price data available: " + "; ".join(errors.values()))
     return output
@@ -628,6 +1043,8 @@ def markdown(data):
         ("Live quote / قیمت و وضعیت", "quote"),
         ("Order book / صف خرید و فروش", "order_book"),
         ("Money flow / حقیقی و حقوقی", "client_type"),
+        ("Market benchmarks / شاخص‌های بازار", "indexes"),
+        ("Market context / دلار، اقتصاد و عمق بازار", "market_context"),
         ("Fundamentals / اطلاعات بنیادی", "fundamentals"),
         ("Codal / اطلاعیه‌ها و صورت‌های مالی", "codal"),
     )
@@ -655,37 +1072,56 @@ def main():
         epilog="""Examples:
   tse search فولاد
   tse quote فولاد --json
+  tse info اهرم
   tse history فولاد --days 30
   tse codal فولاد --top 3
+  tse all فولاد --markdown
   tse all فولاد --days 90 --markdown
-  tse all فولاد --refresh-codal
-  prompt saham فولاد""",
+  tse all IRT1DARA0001 --markdown
+  tse all https://d.easytrader.ir/easy-chart/IRT1DARA0001 --markdown
+  prompt stock فولاد
+History options: --full (all records) is the default; --days N overrides it.""",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("search", "quote", "book", "flow", "history", "info", "codal", "all"):
-        command = sub.add_parser(name)
-        command.add_argument("symbol", help="Persian stock symbol (e.g. فولاد) or TSETMC insCode")
+    sub = parser.add_subparsers(title="commands", metavar="COMMAND", dest="command", required=True)
+    commands = {
+        "search": "Search symbols and company names; output matching instruments as JSON",
+        "quote": "Show the latest price, trading activity, and instrument state",
+        "book": "Show the five best bid and ask levels (صف خرید/فروش)",
+        "flow": "Show individual/legal buyer and seller activity (حقیقی/حقوقی)",
+        "history": "Show unadjusted daily prices and trading volume",
+        "info": "Show industry, EPS, P/E, share count, market cap, price ranges, and fund NAV",
+        "codal": "Show recent Codal announcements and extracted financial statements",
+        "all": "Collect all available data as JSON or Markdown for an AI prompt",
+    }
+    for name, description in commands.items():
+        command = sub.add_parser(name, help=description, description=description)
+        if name == "search":
+            command.add_argument("symbol", metavar="QUERY", help="Persian symbol, ISIN, insCode, URL, or company-name text to search")
+        else:
+            command.add_argument("symbol", metavar="SYMBOL", help="Persian symbol (e.g. فولاد), ISIN, TSETMC insCode, or easytrader/tsetmc/codal URL")
         if name not in ("search", "all"):
-            command.add_argument("--json", action="store_true", help="Output JSON instead of readable text")
+            command.add_argument("--json", action="store_true", help="Output JSON instead of Markdown")
         if name in ("history", "all"):
-            command.add_argument("--days", type=int, default=90, metavar="N", help="Trading days (default: 90)")
+            history_options = command.add_mutually_exclusive_group()
+            history_options.add_argument("--days", type=int, default=None, metavar="N", help="Number of trading days (1–365; overrides the default full history)")
+            history_options.add_argument("--full", action="store_true", help="Fetch all available daily records (default; unadjusted, may be large)")
         if name in ("codal", "all"):
-            command.add_argument("--top", type=int, default=5, metavar="N", help="Maximum Codal announcements (default: 5)")
-            command.add_argument("--refresh-codal", action="store_true", help="Refresh Codal instead of using a recent cached report")
+            command.add_argument("--top", type=int, default=5, metavar="N", help="Maximum recent Codal announcements (1–20; default: 5)")
         if name == "all":
-            command.add_argument("--no-codal", action="store_true", help="Skip Codal requests")
-            command.add_argument("--markdown", action="store_true", help="Format the collected data for a prompt")
+            command.add_argument("--no-codal", action="store_true", help="Skip Codal announcements and financial statements")
+            command.add_argument("--markdown", action="store_true", help="Output prompt-ready Markdown instead of JSON")
     args = parser.parse_args()
-    if hasattr(args, "days") and not 1 <= args.days <= 365:
+    if hasattr(args, "days") and args.days is not None and not 1 <= args.days <= 365:
         parser.error("--days must be between 1 and 365")
     if hasattr(args, "top") and not 1 <= args.top <= 20:
         parser.error("--top must be between 1 and 20")
+    history_days = 0 if getattr(args, "days", None) is None else args.days
     client = Client()
     try:
         if args.command == "search":
             result = search(client, args.symbol)
         elif args.command == "all":
-            result = collect(client, args.symbol, args.days, args.top, not args.no_codal, refresh_codal=args.refresh_codal)
+            result = collect(client, args.symbol, history_days, args.top, not args.no_codal)
         else:
             instrument = resolve(client, args.symbol)
             code = instrument["ins_code"]
@@ -696,7 +1132,7 @@ def main():
             elif args.command == "flow":
                 result = flow(client, code)
             elif args.command == "history":
-                result = history(client, code, args.days)
+                result = history(client, code, history_days)
             elif args.command == "info":
                 errors = {}
                 try:
@@ -714,13 +1150,22 @@ def main():
                     result["errors"] = errors
             else:
                 errors = {}
-                symbol = instrument["symbol"] or identity(client, code)["symbol"]
+                ident = {}
+                try:
+                    ident = identity(client, code)
+                except DataError as exc:
+                    if not instrument["symbol"]:
+                        raise
+                    errors["identity"] = str(exc)
+                symbol = instrument["symbol"] or ident.get("symbol")
                 if not symbol:
                     raise DataError("No symbol found for Codal search")
-                result = codal_snapshot(client, symbol, args.top, errors, refresh=args.refresh_codal)
+                isin = ident.get("isin") or instrument.get("isin")
+                fund = isinstance(isin, str) and isin.startswith("IRT")
+                result = codal_snapshot(client, symbol, args.top, errors, fund=fund)
                 if errors:
                     result["errors"] = errors
-                if not result["announcements"] and not result["statements"] and errors:
+                if not result["announcements"] and not result["statements"] and not result.get("portfolio_reports") and errors:
                     raise DataError("No Codal data available: " + "; ".join(errors.values()))
     except DataError as exc:
         print(f"tse: {exc}", file=sys.stderr)
@@ -738,6 +1183,8 @@ def main():
             "quote": result if args.command == "quote" else None,
             "order_book": result if args.command == "book" else None,
             "client_type": result if args.command == "flow" else None,
+            "indexes": None,
+            "market_context": None,
             "history": result if args.command == "history" else None,
             "fundamentals": result if args.command == "info" else None,
             "codal": result if args.command == "codal" else None,

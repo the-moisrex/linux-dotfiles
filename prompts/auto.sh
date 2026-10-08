@@ -8,6 +8,7 @@ Usage: prompt auto [FILE...]
 Automatically chooses and executes the most appropriate prompt script based on the input.
 For example, if it detects YouTube URLs, it delegates to the 'yt' prompt.
 If it detects C++ files, it delegates to 'cpp-reviewer'.
+A bare stock identifier (ISIN, insCode, or easytrader/tsetmc/codal URL) delegates to 'stock'.
 Defaults to 'summarize' for English and Farsi text, or 'english' (translate) for other languages like Arabic.
 
 Options:
@@ -27,6 +28,7 @@ done
 target_script="summarize.sh"
 input_buffer=""
 has_stdin=false
+stock_identifier=""
 
 
 # Re-usable function to check if a given string looks like C++ compiler/linker output
@@ -49,10 +51,55 @@ is_compiler_output() {
 }
 
 
+# Check whether the content is a single Iranian stock identifier:
+# an ISIN (IR + 10 alphanumerics), a TSETMC insCode (15+ digits), or an
+# easytrader/tsetmc/codal URL (matching bin/tse normalize_input patterns).
+# The whole buffer must be exactly that one identifier (trimmed); on
+# success the trimmed value is stored in $stock_identifier.
+is_stock_identifier() {
+    local content="$1"
+    local re_isin='^IR[A-Za-z0-9]{10}$'
+    local re_inscode='^[0-9]{15,}$'
+    local re_easytrader='^https?://d\.easytrader\.ir/(easy-chart|stock-details)/[A-Za-z0-9]{12}(/|\?|$)'
+    local re_tsetmc='^https?://(www\.)?tsetmc\.com/instInfo/[0-9]{15,}(/|\?|$)'
+    local re_codal='^https?://(www\.)?codal\.ir/ReportList\.aspx\?([^[:space:]]*&)?Symbol=[^&[:space:]]'
+    content="${content#"${content%%[![:space:]]*}"}"
+    content="${content%"${content##*[![:space:]]}"}"
+    [[ -z "$content" || "$content" == *$'\n'* ]] && return 1
+    if [[ "$content" =~ $re_isin ]] ||
+       [[ "$content" =~ $re_inscode ]] ||
+       [[ "$content" =~ $re_easytrader ]] ||
+       [[ "$content" =~ $re_tsetmc ]] ||
+       [[ "$content" =~ $re_codal ]]; then
+        stock_identifier="$content"
+        return 0
+    fi
+    return 1
+}
+
+# Extract the first stock identifier found anywhere in the input (multi-line ok).
+extract_stock_identifier() {
+    local content="$1"
+    local re_isin='IR[A-Za-z0-9]{10}'
+    local re_inscode='[0-9]{15,}'
+    local re_easytrader='https?://d\.easytrader\.ir/(easy-chart|stock-details)/[A-Za-z0-9]{12}'
+    local re_tsetmc='https?://(www\.)?tsetmc\.com/instInfo/[0-9]{15,}'
+    local re_codal='https?://(www\.)?codal\.ir/ReportList\.aspx\?([^[:space:]]*&)?Symbol=[^&[:space:]]+'
+    local match
+    if match=$(echo "$content" | grep -oE "$re_easytrader|$re_tsetmc|$re_codal|$re_isin|$re_inscode" | head -1); then
+        stock_identifier="$match"
+        return 0
+    fi
+    return 1
+}
+
+
 # Buffer stdin if it is provided via pipe
 if ! [ -t 0 ]; then
     has_stdin=true
     input_buffer="$(cat)"
+    input_buffer="${input_buffer%%$'\n'}"
+    input_buffer="${input_buffer%%$'\r'}"
 fi
 
 # Heuristic 1: Check stdin buffer for clues
@@ -67,6 +114,10 @@ if $has_stdin; then
         target_script="ci.sh"
         elif echo "$input_buffer" | grep -qiE 'Traceback \(most recent call last\)|File ".*", line|Fatal error|panic:|Segmentation fault|stack trace|Exception in'; then
         target_script="debug.sh"
+        elif is_stock_identifier "$input_buffer"; then
+        target_script="stock.sh"
+        elif extract_stock_identifier "$input_buffer"; then
+        target_script="stock.sh"
         elif echo "$input_buffer" | grep -qE 'class |struct |#include <'; then
         target_script="cpp-reviewer.sh"
     else
@@ -105,11 +156,22 @@ if $has_stdin; then
             target_script="summarize.sh"
         fi
     fi
+
+# If running interactively (no stdin piped), check clipboard for stock identifier
+if ! $has_stdin; then
+    if clipboard_identifier >/dev/null 2>&1; then
+        target_script="stock.sh"
+    fi
+fi
 fi
 
 # Heuristic 2: Check arguments for file extensions or direct URLs (overrides stdin)
 for arg in "$@"; do
-    if [[ "$arg" == *"youtube.com"* || "$arg" == *"youtu.be"* ]]; then
+    if is_stock_identifier "$arg"; then
+        target_script="stock.sh"
+        stock_identifier=""
+        break
+    elif [[ "$arg" == *"youtube.com"* || "$arg" == *"youtu.be"* ]]; then
         target_script="yt.sh"
         break
     elif [[ -f "$arg" ]]; then
@@ -166,11 +228,20 @@ target_path="$script_dir/$target_script"
 if [[ ! -x "$target_path" && ! -f "$target_path" ]]; then
     # Fallback if the chosen script doesn't exist
     target_path="$script_dir/review.sh"
+    stock_identifier=""
+fi
+
+# A stock identifier detected from stdin is handed to stock.sh as an
+# argument (stock.sh does not read stdin); skip it when the target
+# changed or the identifier already came from the arguments.
+extra_args=()
+if [[ "$target_script" == "stock.sh" && -n "$stock_identifier" ]]; then
+    extra_args=("$stock_identifier")
 fi
 
 # Execute the chosen script, passing along the buffered stdin and all arguments
 if $has_stdin; then
-    printf '%s\n' "$input_buffer" | bash "$target_path" "$@"
+    printf '%s\n' "$input_buffer" | bash "$target_path" "${extra_args[@]}" "$@"
 else
     exec bash "$target_path" "$@"
 fi

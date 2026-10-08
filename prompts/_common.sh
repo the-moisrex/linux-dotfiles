@@ -248,6 +248,46 @@ clipboard_content() {
     "$script_dir/../bin/c.p" 2>/dev/null || true
 }
 
+# Print the first stock identifier found in the clipboard: an easytrader/
+# tsetmc/codal URL, an ISIN (12 chars), a TSETMC insCode (15+ digits), or a
+# plain non-Latin symbol (e.g. فولاد). Used by prompts that fall back to
+# the clipboard when no symbol argument is given. Returns 1 when the
+# clipboard holds no recognizable identifier.
+clipboard_identifier() {
+    local text tok
+    local -a toks
+    text="$(clipboard_content)"
+    text="${text//$'\r'/ }"
+    text="${text//$'\n'/ }"
+    [[ -z "${text//[[:space:]]/}" ]] && return 1
+    read -r -a toks <<< "$text"
+    for tok in "${toks[@]}"; do
+        tok="${tok//\"/}"
+        tok="${tok//\'/}"
+        [[ -z "$tok" ]] && continue
+        case "$tok" in
+            http://*|https://*)
+                if [[ "$tok" =~ (easytrader\.ir|tsetmc\.com|codal\.ir)/ ]]; then
+                    printf '%s\n' "$tok"
+                    return 0
+                fi
+                continue
+            ;;
+        esac
+        if [[ "$tok" =~ ^[A-Za-z]{2}[A-Za-z0-9]{10}$ ]] || [[ "$tok" =~ ^[0-9]{15,}$ ]]; then
+            printf '%s\n' "$tok"
+            return 0
+        fi
+    done
+    text="${text#"${text%%[![:space:]]*}"}"
+    text="${text%"${text##*[![:space:]]}"}"
+    if [[ -n "$text" && ${#text} -le 64 && ! "$text" =~ [A-Za-z0-9] ]]; then
+        printf '%s\n' "$text"
+        return 0
+    fi
+    return 1
+}
+
 # Initialize a prompt script. Replaces the common boilerplate:
 #   source "$(dirname "$0")/_common.sh"
 #   parse_arguments

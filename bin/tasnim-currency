@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+"""Fetch currency and commodity prices from Tasnim News (tasnimnews.ir/fa/currency)."""
+
+import argparse
+import csv
+import io
+import json
+import re
+import sys
+import urllib.request
+
+
+API_URL = "https://www.tasnimnews.ir/common/CurrencyTable"
+
+# Comprehensive English name mapping for all known tasnim currency/gold items
+ENGLISH_NAMES = {
+    # Currencies (USD, EUR, etc. against IRR)
+    "price_dollar_rl": "US Dollar",
+    "price_eur": "Euro",
+    "price_gbp": "British Pound",
+    "price_aed": "UAE Dirham",
+    "price_try": "Turkish Lira",
+    "price_cny": "Chinese Yuan",
+    "price_jpy": "Japanese Yen",
+    "price_cad": "Canadian Dollar",
+    "price_aud": "Australian Dollar",
+    "price_chf": "Swiss Franc",
+    "price_sa": "Saudi Riyal",
+    "price_kwd": "Kuwaiti Dinar",
+    "price_sar": "Saudi Riyal",
+    "price_qar": "Qatari Riyal",
+    "price_omr": "Omani Rial",
+    "price_iqd": "Iraqi Dinar",
+    "price_afn": "Afghani",
+    "price_sek": "Swedish Krona",
+    "price_dkk": "Danish Krone",
+    "price_nok": "Norwegian Krone",
+    "price_hkd": "Hong Kong Dollar",
+    "price_krw": "South Korean Won",
+    "price_myr": "Malaysian Ringgit",
+    "price_thb": "Thai Baht",
+    "price_rub": "Russian Ruble",
+    "price_azn": "Azerbaijani Manat",
+    "price_bhd": "Bahraini Dinar",
+
+    # Gold (per gram)
+    "geram18": "18K Gold (gram)",
+    "geram24": "24K Gold (gram)",
+    "silver_999": "999 Silver (gram)",
+
+    # Coins
+    "sekee": "Imami Coin",
+    "sekeb": "Bahar Azadi Coin",
+    "nim": "Half Coin",
+    "rob": "Quarter Coin",
+    "gerami": "Grami Coin",
+
+    # Retail coins
+    "retail_sekee": "Retail Imami",
+    "retail_sekeb": "Retail Bahar Azadi",
+    "retail_nim": "Retail Half",
+    "retail_rob": "Retail Quarter",
+    "retail_gerami": "Retail Grami",
+
+    # Global metals
+    "base_global_gold": "Global Gold",
+    "base_global_silver": "Global Silver",
+    "base_global_platinum": "Global Platinum",
+    "base_global_palladium": "Global Palladium",
+    "base_global_copper": "Global Copper",
+    "base_global_silver_10oz": "Global Silver 10oz",
+    "base_global_gold_10oz": "Global Gold 10oz",
+
+    # Exchange rates from various Iranian exchanges
+    "sarafiroyal_usd_sell": "Sarafiroyal USD",
+    "sarafiroyal_eur_sell": "Sarafiroyal EUR",
+    "sarafiroyal_gbp_sell": "Sarafiroyal GBP",
+    "sarafiroyal_aed_sell": "Sarafiroyal AED",
+    "namdarex_usd_sell": "Namdarex USD",
+    "namdarex_eur_sell": "Namdarex EUR",
+    "namdarex_gbp_sell": "Namdarex GBP",
+    "namdarex_aed_sell": "Namdarex AED",
+    "sabaexchange_usd_sell": "Sabaexchange USD",
+    "sabaexchange_eur_sell": "Sabaexchange EUR",
+    "sabaexchange_gbp_sell": "Sabaexchange GBP",
+    "sabaexchange_aed_sell": "Sabaexchange AED",
+    "shahrexchange_usd_sell": "Shahrexchange USD",
+    "ice_exchange_exusd_sell": "Ice Exchange USD",
+    "mex_exchange_usd_sell": "Mex Exchange USD",
+
+    # Some other important items
+    "afghan_usd": "Afghan USD",
+}
+
+# ANSI color codes (only used when stdout is a TTY)
+is_tty = sys.stdout.isatty()
+
+if is_tty:
+    C_RESET = "\033[0m"
+    C_BOLD = "\033[1m"
+    C_HEADER = "\033[36m"  # Cyan
+    C_POSITIVE = "\033[32m"  # Green
+    C_NEGATIVE = "\033[31m"  # Red for negative
+    C_GRAY = "\033[90m"  # Gray for no change
+    C_PRICE = "\033[36m"  # Cyan for prices
+    C_NAME = ""  # No special color for names
+else:
+    C_RESET = ""
+    C_BOLD = ""
+    C_HEADER = ""
+    C_POSITIVE = ""
+    C_NEGATIVE = ""
+    C_GRAY = ""
+    C_PRICE = ""
+    C_NAME = ""
+
+
+def colorize(text, code):
+    """Apply ANSI color code if stdout is a TTY."""
+    return f"{code}{text}{C_RESET}" if is_tty else text
+
+
+def format_change_color(change_str, change_pct, direction):
+    """Format a change value with a color based on its sign/direction."""
+    try:
+        text = str(change_str).strip()
+        if not text:
+            return colorize("0", C_GRAY)
+        first = text.split(maxsplit=1)[0]
+        if first.startswith("+"):
+            code = C_POSITIVE
+        elif first.startswith("-"):
+            code = C_NEGATIVE
+        elif direction == "▲":
+            code = C_POSITIVE
+        elif direction == "▼":
+            code = C_NEGATIVE
+        else:
+            code = C_GRAY
+        return colorize(text, code)
+    except (AttributeError, TypeError, ValueError):
+        return colorize(str(change_str), C_GRAY)
+
+
+def format_price(price):
+    """Format a price with thousands separators and optional decimals."""
+    try:
+        p = str(price).replace(",", "").strip()
+        if not p:
+            return colorize("-", C_GRAY)
+        negative = p.startswith("-")
+        if negative:
+            p = p[1:]
+        parts = p.split(".", 1)
+        int_part = int(parts[0])
+        formatted = f"{int_part:,}"
+        if len(parts) == 2:
+            formatted += "." + parts[1]
+        if negative:
+            formatted = "-" + formatted
+        return colorize(formatted, C_PRICE)
+    except (ValueError, TypeError):
+        return colorize(str(price), C_GRAY)
+
+
+def _visible_width(value):
+    """Return terminal display width without counting ANSI escape sequences."""
+    import unicodedata
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", str(value))
+    width = 0
+    for char in plain:
+        if unicodedata.combining(char):
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+    return width
+
+
+def _pad(value, width, align="left"):
+    """Pad a possibly colorized value to a terminal display width."""
+    value = str(value)
+    padding = max(0, width - _visible_width(value))
+    return (" " * padding + value) if align == "right" else (value + " " * padding)
+
+
+def format_table(items):
+    """Format items as a compact, correctly aligned Unicode table."""
+    headers = ["English Name", "Price (Rial)", "Change", "Time"]
+    rows = []
+
+    for item in items:
+        name = str(item.get("english_name", "") or "")
+        price_raw = str(item.get("price", "") or "")
+        change_raw = str(item.get("change", "0") or "0")
+        change_pct = str(item.get("change_pct", "0.0") or "0.0")
+        direction = item.get("direction", "•") or "•"
+        time_val = str(item.get("time_en", item.get("time", "")) or "")
+        change_text = f"{direction} {change_raw} ({change_pct}%)"
+        rows.append({
+            "name": name,
+            "price": format_price(price_raw),
+            "change": format_change_color(change_text, change_pct, direction),
+            "time": time_val,
+        })
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        widths[0] = max(widths[0], _visible_width(row["name"]))
+        widths[1] = max(widths[1], _visible_width(row["price"]))
+        widths[2] = max(widths[2], _visible_width(row["change"]))
+        widths[3] = max(widths[3], _visible_width(row["time"]))
+
+    widths[0] = min(max(widths[0], 18), 32)
+    widths[1] = min(max(widths[1], 14), 20)
+    widths[2] = min(max(widths[2], 16), 22)
+    widths[3] = min(max(widths[3], 12), 20)
+
+    def truncate(value, width):
+        value = str(value)
+        if _visible_width(value) <= width:
+            return value
+        if width <= 1:
+            return "…"[:width]
+        out = ""
+        used = 0
+        for char in value:
+            char_width = _visible_width(char)
+            if used + char_width + 1 > width:
+                break
+            out += char
+            used += char_width
+        return out + "…"
+
+    tl, tr, bl, br = "┌", "┐", "└", "┘"
+    h, v = "─", "│"
+    ml, mr, mm, mt = "├", "┤", "┼", "┬"
+
+    def border(left, middle, right):
+        return (
+            f"{left}{h * (widths[0] + 2)}{middle}"
+            f"{h * (widths[1] + 2)}{middle}"
+            f"{h * (widths[2] + 2)}{middle}"
+            f"{h * (widths[3] + 2)}{right}"
+        )
+
+    lines = [border(tl, mt, tr)]
+    header_cells = [
+        colorize(_pad(headers[0], widths[0]), C_HEADER),
+        colorize(_pad(headers[1], widths[1]), C_HEADER),
+        colorize(_pad(headers[2], widths[2]), C_HEADER),
+        colorize(_pad(headers[3], widths[3]), C_HEADER),
+    ]
+    lines.append(f"{v} " + f" {v} ".join(header_cells) + f" {v}")
+    lines.append(border(ml, mm, mr))
+
+    for row in rows:
+        name = _pad(truncate(row["name"], widths[0]), widths[0])
+        price = _pad(row["price"], widths[1], "right")
+        change = _pad(row["change"], widths[2], "right")
+        time_val = _pad(truncate(row["time"], widths[3]), widths[3])
+        lines.append(f"{v} {name} {v} {price} {v} {change} {v} {time_val} {v}")
+
+    lines.append(border(bl, "┴", br))
+    return "\n".join(lines)
+
+
+def format_json(items):
+    """Format items as JSON string."""
+    output = []
+    for item in items:
+        output.append({
+            "english_name": item["english_name"],
+            "title": item["title"],
+            "price": item["price"],
+            "change": item["change"],
+            "change_pct": item["change_pct"],
+            "time": item["time_en"] or item["time"],
+        })
+    return json.dumps(output, ensure_ascii=False, indent=2)
+
+
+def format_csv(items):
+    """Format items as CSV."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["English Name", "Title", "Price", "Change", "Change %", "Time"])
+    for item in items:
+        writer.writerow([
+            item["english_name"],
+            item["title"],
+            item["price"],
+            item["change"],
+            item["change_pct"],
+            item["time_en"] or item["time"],
+        ])
+    return output.getvalue()
+
+
+def filter_items(items, categories=None, pattern=None):
+    """Filter items by category or pattern."""
+    filtered = items[:]
+
+    if categories:
+        category_items = set()
+        category_map = {
+            "currencies": [
+                "price_dollar_rl", "price_eur", "price_gbp", "price_aed", "price_try",
+                "price_cny", "price_jpy", "price_cad", "price_aud", "price_chf",
+                "price_sar", "price_kwd", "price_qar", "price_omr", "price_iqd",
+                "price_afn", "price_sek", "price_dkk", "price_nok",
+                "price_hkd", "price_krw", "price_myr", "price_thb", "price_rub",
+                "price_azn", "price_bhd",
+            ],
+            "gold": ["geram18", "geram24", "silver_999"],
+            "coins": ["sekee", "sekeb", "nim", "rob", "gerami", "retail_sekee", "retail_sekeb",
+                      "retail_nim", "retail_rob", "retail_gerami"],
+            "global": ["base_global_gold", "base_global_silver", "base_global_platinum",
+                       "base_global_palladium", "base_global_copper"],
+            "exchanges": ["sarafiroyal", "namdarex", "sabaexchange", "shahrexchange", "ice_exchange",
+                          "mex_exchange"],
+        }
+
+        for cat in categories:
+            if cat in category_map:
+                category_items.update(category_map[cat])
+
+        filtered = [i for i in filtered if i["title"] in category_items]
+
+    if pattern:
+        pat = pattern.lower()
+        filtered = [i for i in filtered if pat in i["english_name"].lower() or pat in i["title"].lower()]
+
+    return filtered
+
+
+def fetch_data():
+    """Fetch currency data from the Tasnim News API."""
+    try:
+        req = urllib.request.Request(API_URL, data=b'{}', method='POST')
+        req.add_header('Content-Type', 'application/json; charset=utf-8')
+        with urllib.request.urlopen(req, timeout=15) as response:
+            raw = response.read().decode('utf-8')
+            # The API returns a JSON string containing another JSON object
+            outer = json.loads(raw)
+            if isinstance(outer, str):
+                inner = json.loads(outer)
+            else:
+                inner = outer
+            # Return the currency list (the API wraps it under 'currency' key)
+            return inner.get("currency", [])
+    except Exception as e:
+        print(f"Error fetching data: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def parse_item(item):
+    """Parse a single API item into a dict with English name and price info."""
+    title = item.get("title", "")
+    desc = item.get("desc", "")
+    price = item.get("p", "0")
+    high = item.get("h", "-")
+    low = item.get("l", "-")
+    change = item.get("d", "0")
+    change_pct = item.get("dp", "0.0")
+    time = item.get("t", "")
+    time_en = item.get("t_en", "")
+    timestamp = item.get("ts", "")
+
+    # Get English name from mapping, fall back to title processing
+    english_name = ENGLISH_NAMES.get(title, title)
+
+    # Clean the price - remove commas for display
+    price_clean = price.replace(",", "")
+
+    # Format change with sign
+    try:
+        change_float = float(change) if change not in ("-", "") else 0.0
+        change_str = f"{change_float:+.2f} ({change_pct}%)" if change_pct else f"{change_float:+.2f}"
+    except (ValueError, TypeError):
+        change_str = change or "0"
+
+    # Determine direction
+    dt = item.get("dt", "")
+    if dt == "high":
+        direction = "▲"
+    elif dt == "low":
+        direction = "▼"
+    else:
+        direction = "•"
+
+    return {
+        "title": title,
+        "english_name": english_name,
+        "persian_desc": desc,
+        "price": price,
+        "price_clean": price_clean,
+        "high": high,
+        "low": low,
+        "change": change,
+        "change_pct": change_pct,
+        "direction": direction,
+        "time": time,
+        "time_en": time_en,
+        "timestamp": timestamp,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fetch currency and commodity prices from Tasnim News",
+        epilog="Data source: tasnimnews.ir/fa/currency",
+    )
+    parser.add_argument("--currencies", action="store_true",
+                        help="Show only major currencies")
+    parser.add_argument("--gold", action="store_true",
+                        help="Show gold prices (18K, 24K, silver)")
+    parser.add_argument("--coins", action="store_true",
+                        help="Show coin prices (Imami, Bahar Azadi, half, quarter, grami)")
+    parser.add_argument("--global", dest="global_items", action="store_true",
+                        help="Show global metals (gold, silver, platinum, palladium, copper)")
+    parser.add_argument("--exchanges", action="store_true",
+                        help="Show exchange rates from various Iranian exchanges")
+    parser.add_argument("--filter", "-f", metavar="PATTERN",
+                        help="Filter results by name pattern")
+    parser.add_argument("--json", action="store_true",
+                        help="Output as JSON instead of table")
+    parser.add_argument("--csv", action="store_true",
+                        help="Output as CSV")
+    parser.add_argument("--sort", metavar="FIELD",
+                        help="Sort by field: price, change, time")
+    parser.add_argument("--version", action="version", version="%(prog)s 1.0")
+
+    args = parser.parse_args()
+
+    # Fetch data from API
+    raw_data = fetch_data()
+
+    # Parse all items
+    items = [parse_item(item) for item in raw_data]
+
+    # Apply filters
+    categories = []
+    if args.currencies: categories.append("currencies")
+    if args.gold: categories.append("gold")
+    if args.coins: categories.append("coins")
+    if args.global_items: categories.append("global")
+    if args.exchanges: categories.append("exchanges")
+
+    items = filter_items(items, categories=categories if categories else None,
+                         pattern=args.filter)
+
+    # Apply sorting
+    if args.sort:
+        reverse = args.sort.startswith("-")
+        field = args.sort.lstrip("-")
+        def sort_key(x):
+            val = x.get(field, "0") or "0"
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return 0.0
+        items.sort(key=sort_key, reverse=reverse)
+
+    # Output format
+    if args.json:
+        print(format_json(items))
+    elif args.csv:
+        print(format_csv(items))
+    else:
+        print(format_table(items))
+
+
+if __name__ == "__main__":
+    main()
