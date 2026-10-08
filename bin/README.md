@@ -283,7 +283,7 @@ default, `--copy` (rsync into `~/wt`), `--worktree`, or a `git worktree`
 pod                       # project image (.base) + shell in its container
 pod .base .vscode .ssh    # selection: project image + code-server + sshd
 pod .base .oc work        # opencode with profile "work" (what oc runs)
-pod .base .dotfiles       # this repo RO at /dotfiles; configs install at creation
+pod .base .dotfiles       # RO /dotfiles + mapped core pkgs; configs at creation
 pod build .base .oc       # images only; --as NAME names the dish yourself
 pod recipes               # list recipes with ports/services/volumes
 pod recipes --porcelain   # name<TAB>description (drives fish completions)

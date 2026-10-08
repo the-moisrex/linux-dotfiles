@@ -91,7 +91,7 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 | `prompts/` | AI prompt scripts (`.sh`), all source `_common.sh` |
 | `firewall/` | nftables/iptables scripts and configs |
 | `pods/` | Containerized services (podman-compose, managed by `pods/stack`) + dev-container recipes (`recipes/`) |
-| `pkgs/` | Package lists (`pacman-core.txt`, `pacman-all.txt`, `dnf-core.txt`) |
+| `pkgs/` | Package lists (`pacman-core.txt`, `pacman-all.txt`, `dnf-core.txt`) + `core-map.txt`/`all-map.txt` (distro names with `NONE` placeholders for the dotfiles recipe and apt installs) |
 | `setup/` | Modular setup scripts, all support `--uninstall --verbose --help` |
 | `services/` | Systemd service files (system/ and user/) |
 | `code-templates/` | Templates for `codeshell` (C, C++, Python, Assembly, etc.) |

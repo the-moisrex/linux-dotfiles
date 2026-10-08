@@ -58,7 +58,7 @@ logs are streamed and erased again on success, `--verbose` keeps them).
 | script | adds | ports / services / volumes |
 |---|---|---|
 | `base` | the project's image: its own `Dockerfile`, else `dockerfile.gen` output | mounts `~/.gitconfig` + `~/.ssh` read-only (opts: `no-git`, `no-ssh`) |
-| `dotfiles` | this dotfiles repo linked read-only at `/dotfiles` + an `install.sh` runner (opts: components, default `shells`); fish installed as root's default shell | volume `<repo>:/dotfiles:ro`, service `setup` (runs automatically at container creation via `POD_AUTOSTART`) |
+| `dotfiles` | this dotfiles repo linked read-only at `/dotfiles` + an `install.sh` runner (opts: components, default `shells`); fish installed as root's default shell; installs `pkgs/pacman-core.txt` core packages via `pkgs/core-map.txt` names (Arch/Debian/Ubuntu/Fedora), `NONE` placeholders and unshipped names reported in the build output | volume `<repo>:/dotfiles:ro`, service `setup` (runs automatically at container creation via `POD_AUTOSTART`) |
 | `oc` | opencode (pinned) | volume `oc-profile-<name>:/profile` + XDG env; `--with`-style API keys pass through |
 | `vscode` | code-server (opens `/workspace`, trust off, language-aware extensions) | port 8080, service `code-server` |
 | `ssh` | OpenSSH server, host public keys baked from `~/.ssh/*.pub` | port 2222→container 22, service `sshd` |

@@ -1,6 +1,7 @@
 #!/bin/bash
 # dotfiles - link this dotfiles repository into the dev container read-only
-#            (/dotfiles) and provide a setup runner that calls its install.sh
+#            (/dotfiles), install the mapped pkgs/pacman-core.txt core
+#            packages, and provide a setup runner that calls its install.sh
 #            (default component: shells). The image gets fish installed and
 #            set as root's default shell.
 set -euo pipefail
@@ -14,12 +15,16 @@ provide a setup service that calls its install.sh (the setup/ scripts). The
 shell configs are installed automatically when the container is created
 (POD_AUTOSTART setup); every later pod run reuses them.
 
+The image also gets the core packages from pkgs/pacman-core.txt, mapped to
+this image's distro by pkgs/core-map.txt (Arch, Debian/Ubuntu, Fedora):
+packages that distro does not ship carry a NONE placeholder in the map and
+are reported in the build output, as are names the repositories lack.
+fish and zoxide are always installed, and fish becomes root's default
+shell ("pod shell" starts it).
+
 Options (bare words after .dotfiles):
   COMPONENT...  install.sh components to run (default: shells); "all" runs
                 every component. See: install.sh --help
-
-The image gets fish installed, and fish becomes root's default shell
-("pod shell" starts it).
 
 Services:
   setup         /dotfiles/install.sh <components...> -- runs once at
@@ -49,14 +54,54 @@ for c in "${comps[@]}"; do
     args+=("$c")
 done
 
-printf '# POD_DESC dotfiles repo (RO /dotfiles) + setup service; fish shell\n'
+# core packages: every pkgs/pacman-core.txt name, mapped per distro
+list="$repo/pkgs/pacman-core.txt"
+map="$repo/pkgs/core-map.txt"
+if [ ! -f "$list" ] || [ ! -f "$map" ]; then
+    echo "dotfiles recipe: missing $list or $map" >&2
+    exit 1
+fi
+declare -A map_apt=() map_dnf=()
+while read -r a d f _rest; do
+    case "$a" in ''|'#'*) continue ;; esac
+    map_apt["$a"]="$d"
+    map_dnf["$a"]="$f"
+done < "$map"
+arch_pkgs="" apt_pkgs="" dnf_pkgs="" apt_ph="" dnf_ph=""
+declare -A seen=()
+while read -r p; do
+    if [ -n "${seen[$p]:-}" ]; then continue; fi
+    seen["$p"]=1
+    d="${map_apt[$p]:-}"
+    f="${map_dnf[$p]:-}"
+    if [ -z "$d" ] || [ -z "$f" ]; then
+        echo "dotfiles recipe: no core-map.txt entry for '$p' (keep it in sync with $list)" >&2
+        exit 1
+    fi
+    arch_pkgs+=" $p"
+    case "$p" in
+        '$'*)
+            apt_ph+=" $p"
+            dnf_ph+=" $p"
+            continue
+            ;;
+    esac
+    if [ "$d" = "NONE" ]; then apt_ph+=" $p"; else apt_pkgs+=" $d"; fi
+    if [ "$f" = "NONE" ]; then dnf_ph+=" $p"; else dnf_pkgs+=" $f"; fi
+done < <(grep -v '^[[:space:]]*#' "$list" | awk 'NF{print $1}')
+if [ -z "$arch_pkgs" ] || [ -z "$apt_pkgs" ] || [ -z "$dnf_pkgs" ]; then
+    echo "dotfiles recipe: empty package list after mapping" >&2
+    exit 1
+fi
+
+printf '# POD_DESC dotfiles repo (RO /dotfiles) + core pkgs + setup; fish shell\n'
 printf '# POD_VOLUME %s:/dotfiles:ro\n' "$repo"
 printf '# POD_SERVICE setup=/dotfiles/install.sh %s\n' "${args[*]}"
 printf '# POD_AUTOSTART setup\n'
 printf '# POD_HINT service=setup configs linked -- start a session: pod shell (fish)\n'
 printf '# POD_HINT this dotfiles repo is mounted read-only at /dotfiles\n'
 
-cat <<'DOCKER'
+df="$(cat <<'DOCKER'
 ARG BASE
 FROM ${BASE}
 
@@ -77,6 +122,31 @@ RUN set -eux; \
     command -v fish >/dev/null && command -v zoxide >/dev/null
 
 RUN set -eux; \
+    if command -v pacman >/dev/null 2>&1; then \
+        pacman -Sy --noconfirm --needed @ARCH@ && pacman -Scc --noconfirm; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update; \
+        avail=""; skipped="@APT_PH@"; \
+        for p in @APT@; do \
+            if apt-cache show "$p" >/dev/null 2>&1; then avail="$avail $p"; else skipped="$skipped $p"; fi; \
+        done; \
+        if [ -n "$skipped" ]; then echo "dotfiles: not installable here, skipped:$skipped"; fi; \
+        if [ -n "$avail" ]; then apt-get install -y --no-install-recommends $avail; fi; \
+        rm -rf /var/lib/apt/lists/*; \
+    elif command -v dnf >/dev/null 2>&1; then \
+        skipped="@DNF_PH@"; \
+        if ! dnf -y install @DNF@; then \
+            for p in @DNF@; do \
+                if ! dnf -y install "$p"; then skipped="$skipped $p"; fi; \
+            done; \
+        fi; \
+        if [ -n "$skipped" ]; then echo "dotfiles: not installable here, skipped:$skipped"; fi; \
+        dnf clean all; \
+    else \
+        echo "no supported package manager for core packages" >&2; exit 1; \
+    fi
+
+RUN set -eux; \
     f="$(command -v fish)"; \
     grep -qx "$f" /etc/shells || echo "$f" >> /etc/shells; \
     if command -v usermod >/dev/null 2>&1; then \
@@ -85,3 +155,10 @@ RUN set -eux; \
         chsh -s "$f" root; \
     fi
 DOCKER
+)"
+df="${df//@ARCH@/${arch_pkgs# }}"
+df="${df//@APT@/${apt_pkgs# }}"
+df="${df//@DNF@/${dnf_pkgs# }}"
+df="${df//@APT_PH@/${apt_ph# }}"
+df="${df//@DNF_PH@/${dnf_ph# }}"
+printf '%s\n' "$df"

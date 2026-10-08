@@ -1,0 +1,76 @@
+# pkgs/pacman-core.txt mapped to distro package names.
+# columns:  <arch>  <debian/ubuntu>  <fedora>
+#
+# Consumers: pods/recipes/dotfiles (image build) and setup/install-packages.sh
+# (apt hosts). col1 is looked up for every pacman-core package; the recipe
+# dies when an entry is missing, keep the files in sync.
+#
+#   NONE   placeholder: not packaged there -- consumers report it as
+#          skipped instead of silently dropping it
+#   $name  special entry: not a repo package at all (manual install)
+#
+# Names verified against Debian trixie, Ubuntu resolute and Fedora 44
+# repository metadata; trailing comments carry pacman-core's reasons.
+
+# CMD requirements:
+lsof                 lsof                lsof                # needed for should-restart
+nftables             nftables            nftables            # for firewall
+python               python3             python3
+dialog               dialog              dialog
+entr                 entr                entr                # needed for codeshell
+python-pydbus        python3-pydbus      python3-pydbus      # for sig-gui.py
+
+# Utilities
+xclip                xclip               xclip               # for X system
+wl-clipboard         wl-clipboard        wl-clipboard        # for wayland
+which                which               which
+tree                 tree                tree
+sudo                 sudo                sudo
+neovim               neovim              neovim
+vim                  vim                 vim
+cpupower             linux-cpupower      kernel-tools
+criu                 criu                criu                # Utilities to checkpoint and restore processes in userspace
+whois                whois               whois
+parallel             parallel            parallel
+htop                 htop                htop
+lshw                 lshw                lshw
+ripgrep              ripgrep             ripgrep             # grep foo . -R (rg foo)
+ripgrep-all          ripgrep-all         NONE                # Ubuntu only (not in Debian or Fedora)
+fd                   fd-find             fd-find             # find . -name '*foo*'
+jq                   jq                  jq                  # JSON processor
+fzf                  fzf                 fzf                 # Fuzzy file picker
+zoxide               zoxide              zoxide              # z command (alternative to cd)
+patchutils           patchutils          patchutils          # contains recountdiff which allows for fixing patches
+expect               expect              expect              # unbuffer command
+
+# Shells
+zsh                  zsh                 zsh
+zsh-completions      NONE                NONE                # not packaged on Debian/Ubuntu/Fedora
+fish                 fish                fish
+nushell              NONE                nushell             # not packaged on Debian/Ubuntu
+bash-completion      bash-completion     bash-completion
+
+# Networking
+nethogs              nethogs             nethogs
+wget                 wget                wget
+ethtool              ethtool             ethtool             # Utility for controlling network drivers and hardware
+dhclient             isc-dhcp-client     dhcp-client         # for ./bin/net and ./bin/net.ns
+
+# Coding
+git                  git                 git
+curl                 curl                curl
+ninja                ninja-build         ninja-build
+cmake                cmake               cmake
+boost                libboost-dev        boost-devel
+autoconf             autoconf            autoconf
+automake             automake            automake
+google-glog          libgoogle-glog-dev  glog
+gtest                libgtest-dev        gtest
+fmt                  libfmt-dev          fmt
+indent               indent              indent              # C language source code formatting program
+strace               strace              strace
+distcc               distcc              distcc
+ccache               ccache              ccache
+check                check               check
+perf                 linux-perf          perf
+lldb                 lldb                lldb

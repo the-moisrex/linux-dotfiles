@@ -5,7 +5,7 @@ Modular scripts for configuring this Linux dotfiles repository.
 ## Scripts
 
 - `configure-sudo.sh`: Configure/remove passwordless sudo for the current user.
-- `install-packages.sh`: Install/remove packages from distro-specific lists in `pkgs/`.
+- `install-packages.sh`: Install/remove packages from distro-specific lists in `pkgs/` (Arch/pacman, Fedora/dnf, Debian/Ubuntu/apt via `pkgs/core-map.txt`; NONE placeholders reported and skipped).
 - `disable-screen-lock.sh`: Disable/restore lock and display sleep settings.
 - `disable-auto-updates.sh`: Disable/re-enable automatic update mechanisms.
 - `setup-ntp.sh`: Configure NTP servers for systemd timesyncd.

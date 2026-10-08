@@ -1,0 +1,166 @@
+# pkgs/pacman-all.txt mapped to distro package names.
+# columns:  <arch>  <debian/ubuntu>  <fedora>
+#
+# Mirror of pacman-all.txt: same sections, same order, same trailing
+# reasons -- every entry keeps its details here.
+#
+#   NONE   placeholder: not packaged there -- consumers report it as
+#          skipped instead of silently dropping it
+#   $name  special entry: not a repo package at all (manual install)
+#
+# Names verified against Debian trixie, Ubuntu resolute and Fedora 44
+# repository metadata (exact name or dnf/apt-resolvable provides).
+
+# CMD requirements:
+lsof                 lsof                lsof                # needed for should-restart
+nftables             nftables            nftables            # for firewall
+python               python3             python3
+dialog               dialog              dialog
+entr                 entr                entr
+python-pydbus        python3-pydbus      python3-pydbus      # for sig-gui.py
+
+# Media software
+vlc                  vlc                 vlc
+smplayer             smplayer            smplayer
+gimp                 gimp                gimp
+opera                NONE                NONE                # proprietary; download from opera.com
+opera-ffmpeg-codecs  NONE                NONE                # Arch extra codecs for opera
+firefox-developer-edition NONE            NONE                # Mozilla download, not in any repo
+chromium             chromium            chromium
+obs-studio           obs-studio          obs-studio
+obsidian             NONE                NONE                # GitHub .deb/.rpm, not in repos
+obsidian-icon-theme  obsidian-icon-theme NONE                # not in Fedora
+
+# Virtualization
+virtualbox           virtualbox          NONE                # Ubuntu universe only (not in Debian or Fedora)
+virtualbox-guest-iso NONE                NONE                # Arch extra (Oracle guest ISO)
+virtualbox-sdk       NONE                NONE                # Arch extra (Oracle SDK)
+wine                 wine                wine
+wine-mono            NONE                wine-mono           # not in Debian/Ubuntu; wine downloads it
+
+# DNS
+dnsmasq              dnsmasq             dnsmasq
+dnscrypt-proxy       dnscrypt-proxy      dnscrypt-proxy
+bind                 bind9               bind                # Debian/Ubuntu package: bind9
+
+# Utilities
+xclip                xclip               xclip               # for X system
+wl-clipboard         wl-clipboard        wl-clipboard        # for wayland
+which                which               which
+tree                 tree                tree
+sudo                 sudo                sudo
+ntfs-3g              ntfs-3g             ntfs-3g             # handling NTFS partitions
+neovim               neovim              neovim
+vim                  vim                 vim
+cpupower             linux-cpupower      kernel-tools
+cpupower-gui         cpupower-gui        NONE                # not in Fedora
+criu                 criu                criu                # Utilities to checkpoint and restore processes in userspace
+gpart                gpart               gpart
+gparted              gparted             gparted
+man-pages            manpages            man-pages           # Debian/Ubuntu package: manpages
+nano                 nano                nano
+p7zip                p7zip               p7zip               # Fedora resolves it via provides (7zip-standalone)
+pass                 pass                pass                # password manager
+pigz                 pigz                pigz
+xorg-twm             twm                 NONE                # Debian/Ubuntu package: twm; not in Fedora
+xterm                xterm               xterm
+whois                whois               whois
+parallel             parallel            parallel
+htop                 htop                htop
+unrar                unrar               unrar
+lshw                 lshw                lshw
+ripgrep              ripgrep             ripgrep             # grep foo . -R (rg foo)
+ripgrep-all          ripgrep-all         NONE                # Ubuntu only (not in Debian or Fedora)
+fd                   fd-find             fd-find             # find . -name '*foo*'
+jq                   jq                  jq                  # JSON processor
+glow                 glow                glow                # Markdown prettifier
+jless                NONE                NONE                # View JSON/Yaml (not in Debian/Ubuntu/Fedora)
+
+# Shells
+kitty                kitty               kitty
+zsh                  zsh                 zsh
+zsh-completions      NONE                NONE                # not packaged on Debian/Ubuntu/Fedora
+fish                 fish                fish
+bash-completion      bash-completion     bash-completion
+
+# Networking
+nethogs              nethogs             nethogs
+wget                 wget                wget
+wireshark-cli        tshark              wireshark-cli       # Debian/Ubuntu package: tshark
+wireshark-qt         wireshark           wireshark           # GUI package name outside Arch
+kdeconnect           kdeconnect          kdeconnectd         # Fedora ships the daemon as kdeconnectd
+aria2                aria2               aria2
+v2ray                v2ray               NONE                # not in Fedora
+v2ray-domain-list-community NONE         NONE                # Arch only (v2ray geo assets)
+v2ray-geoip          NONE                NONE                # Arch only (v2ray geo assets)
+$winbox              $winbox             $winbox             # special: not a repo package (manual install)
+ethtool              ethtool             ethtool             # Utility for controlling network drivers and hardware
+wol                  wakeonlan           wol                 # Debian/Ubuntu package: wakeonlan
+nmap                 nmap                nmap
+dhclient             isc-dhcp-client     dhcp-client         # for ./bin/net and ./bin/net.ns
+inetutils            NONE                NONE                # telnet; not in Debian/Ubuntu/Fedora repos
+
+# Fonts
+ttf-anonymous-pro    fonts-anonymous-pro NONE                # not in Fedora
+ttf-cascadia-code    fonts-cascadia-code cascadia-code-fonts
+ttf-dejavu           fonts-dejavu        dejavu-sans-fonts
+ttf-fira-code        NONE                fira-code-fonts     # not in Debian/Ubuntu
+ttf-fira-mono        NONE                NONE                # not in Debian/Ubuntu/Fedora
+ttf-fira-sans        NONE                NONE                # not in Debian/Ubuntu/Fedora
+ttf-jetbrains-mono   fonts-jetbrains-mono jetbrains-mono-fonts
+ttf-jetbrains-mono-nerd NONE             NONE                # nerd variant not in Debian/Ubuntu/Fedora
+ttf-ms-win11         NONE                NONE                # MS fonts: manual/AUR install
+ttf-ms-win11-japanese NONE               NONE                # MS fonts: manual/AUR install
+ttf-ms-win11-korean  NONE                NONE                # MS fonts: manual/AUR install
+ttf-ms-win11-other   NONE                NONE                # MS fonts: manual/AUR install
+ttf-ms-win11-sea     NONE                NONE                # MS fonts: manual/AUR install
+ttf-ms-win11-thai    NONE                NONE                # MS fonts: manual/AUR install
+ttf-ms-win11-zh_cn   NONE                NONE                # MS fonts: manual/AUR install
+ttf-ms-win11-zh_tw   NONE                NONE                # MS fonts: manual/AUR install
+ttf-roboto           fonts-roboto        google-roboto-fonts
+ttf-roboto-mono      NONE                google-roboto-mono-fonts  # not in Debian/Ubuntu
+$persian-fonts       $persian-fonts      $persian-fonts      # special: not a repo package (manual fonts)
+
+
+# Coding
+git                  git                 git
+curl                 curl                curl
+gedit                gedit               gedit
+gedit-plugins        gedit-plugins       gedit-plugins
+qtcreator            qtcreator           qtcreator           # Fedora resolves it via provides (qt-creator)
+zeal                 zeal                zeal
+npm                  npm                 npm                 # Fedora resolves it via provides (nodejs*-npm)
+nodejs               nodejs              nodejs              # Fedora resolves it via provides (nodejsXX)
+ninja                ninja-build         ninja-build
+cmake                cmake               cmake
+mold                 mold                mold                # requires additional steps (replacing the /usr/bin/ld with mold)
+kdevelop             kdevelop            kdevelop
+code                 NONE                NONE                # VS Code: Microsoft repo, not in any distro repo
+boost                libboost-dev        boost-devel
+autoconf             autoconf            autoconf
+automake             automake            automake
+google-glog          libgoogle-glog-dev  glog
+gtest                libgtest-dev        gtest
+fmt                  libfmt-dev          fmt
+indent               indent              indent              # C language source code formatting program
+octave               octave              octave
+typescript           node-typescript     typescript
+$miniconda3          $miniconda3         $miniconda3         # special: not a repo package (manual install)
+strace               strace              strace
+distcc               distcc              distcc
+ccache               ccache              ccache
+check                check               check
+perf                 linux-perf          perf
+lldb                 lldb                lldb
+typescript-language-server NONE           NONE                # not in repos (install via npm -g)
+
+# Sound
+pavucontrol          pavucontrol         pavucontrol
+pipewire-alsa        pipewire-alsa       pipewire-alsa
+pipewire-pulse       pipewire-pulse      pipewire-pulseaudio
+pipewire-zeroconf    NONE                NONE                # not packaged (Avahi covers discovery)
+bluez-utils          bluez               bluez               # bluetooth tools ship in 'bluez' outside Arch
+
+# Cool
+neofetch             fastfetch           fastfetch           # neofetch archived upstream; fastfetch is its maintained equivalent
+chafa                chafa               chafa               # convert images to ascii
