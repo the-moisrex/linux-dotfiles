@@ -62,15 +62,15 @@ is_stock_identifier() {
     local re_inscode='^[0-9]{15,}$'
     local re_easytrader='^https?://d\.easytrader\.ir/(easy-chart|stock-details)/[A-Za-z0-9]{12}(/|\?|$)'
     local re_tsetmc='^https?://(www\.)?tsetmc\.com/instInfo/[0-9]{15,}(/|\?|$)'
-    local re_codal='^https?://(www\.)?codal\.ir/ReportList\.aspx\?([^[:space:]]*&)?Symbol=[^&[:space:]]'
+    local re_codal='^https?://(www\.)?codal\.ir/ReportList\.aspx\?([^[:space:]]*&)?Symbol=[^&[:space:]]+'
     content="${content#"${content%%[![:space:]]*}"}"
     content="${content%"${content##*[![:space:]]}"}"
     [[ -z "$content" || "$content" == *$'\n'* ]] && return 1
     if [[ "$content" =~ $re_isin ]] ||
-       [[ "$content" =~ $re_inscode ]] ||
-       [[ "$content" =~ $re_easytrader ]] ||
-       [[ "$content" =~ $re_tsetmc ]] ||
-       [[ "$content" =~ $re_codal ]]; then
+    [[ "$content" =~ $re_inscode ]] ||
+    [[ "$content" =~ $re_easytrader ]] ||
+    [[ "$content" =~ $re_tsetmc ]] ||
+    [[ "$content" =~ $re_codal ]]; then
         stock_identifier="$content"
         return 0
     fi
@@ -93,6 +93,7 @@ extract_stock_identifier() {
     return 1
 }
 
+source "$(dirname "$0")/_common.sh"
 
 # Buffer stdin if it is provided via pipe
 if ! [ -t 0 ]; then
@@ -102,8 +103,14 @@ if ! [ -t 0 ]; then
     input_buffer="${input_buffer%%$'\r'}"
 fi
 
+if [ -z "$input_buffer" ]; then
+    input_buffer="$(clipboard_content)";
+fi
+
+echo "$input_buffer"
+
 # Heuristic 1: Check stdin buffer for clues
-if $has_stdin; then
+if [ ! -z "$input_buffer" ]; then
     if is_compiler_output "$input_buffer"; then
         target_script="cpp.sh"
         elif echo "$input_buffer" | grep -qE 'youtube\.com|youtu\.be'; then
@@ -156,13 +163,13 @@ if $has_stdin; then
             target_script="summarize.sh"
         fi
     fi
-
-# If running interactively (no stdin piped), check clipboard for stock identifier
-if ! $has_stdin; then
-    if clipboard_identifier >/dev/null 2>&1; then
-        target_script="stock.sh"
+    
+    # If running interactively (no stdin piped), check clipboard for stock identifier
+    if ! $has_stdin; then
+        if clipboard_identifier >/dev/null 2>&1; then
+            target_script="stock.sh"
+        fi
     fi
-fi
 fi
 
 # Heuristic 2: Check arguments for file extensions or direct URLs (overrides stdin)
@@ -171,10 +178,10 @@ for arg in "$@"; do
         target_script="stock.sh"
         stock_identifier=""
         break
-    elif [[ "$arg" == *"youtube.com"* || "$arg" == *"youtu.be"* ]]; then
+        elif [[ "$arg" == *"youtube.com"* || "$arg" == *"youtu.be"* ]]; then
         target_script="yt.sh"
         break
-    elif [[ -f "$arg" ]]; then
+        elif [[ -f "$arg" ]]; then
         base="$(basename "$arg")"
         ext="${arg##*.}"
         case "$ext" in
