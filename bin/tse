@@ -428,26 +428,30 @@ def dps_history(symbol):
 
 
 def adjust_history(unadjusted_history, price_adjustments, share_changes):
+    """Backward-adjust prices using official GetPriceAdjustList ratios only.
+
+    Share-change (old/new) ratios are NOT multiplied into the factor: for cash
+    rights issues they diverge from TSETMC's TERP-based official chart, and the
+    subscription price / cash-bonus mix is not available from the public APIs.
+    Share changes are still used for corporate_action labels and the events
+    table so callers can see capital increases that lack a price_adjust row.
+    """
     if not unadjusted_history:
         return []
     price_adj_by_date = {a["date"]: a["adj_ratio"] for a in price_adjustments}
     sc_by_date = {s["date"]: s["ratio"] for s in share_changes}
-    merged = {}
-    for d, r in price_adj_by_date.items():
-        merged[d] = merged.get(d, 1.0) * r
-    sc_dates = set(sc_by_date.keys())
-    for d, r in sc_by_date.items():
-        if any(abs(int(d.replace("-", "")) - int(ad.replace("-", ""))) <= 7 for ad in sc_dates if ad != d):
-            continue
-        merged[d] = merged.get(d, 1.0) * r
-    merged_dates = sorted(merged.keys(), reverse=True)
+
+    # Official factors only — never invent a ratio from old/new shares alone.
+    factor_by_date = dict(price_adj_by_date)
+    factor_dates = sorted(factor_by_date.keys(), reverse=True)
+
     adjusted = []
     for row in unadjusted_history:
         date = row["date"]
         factor = 1.0
-        for ev_date in merged_dates:
+        for ev_date in factor_dates:
             if date < ev_date:
-                factor *= merged[ev_date]
+                factor *= factor_by_date[ev_date]
         adj_row = {**row}
         for field in ("first_rial", "high_rial", "low_rial", "closing_rial", "last_rial"):
             val = row.get(field)
@@ -1169,37 +1173,25 @@ def markdown(data):
     if data["history"] is not None:
         hist = data["history"]
         if isinstance(hist, dict) and "unadjusted" in hist:
-            u_rows = hist["unadjusted"]
             a_rows = hist.get("adjusted", [])
             events = hist.get("adjustment_events", {})
-            # Unadjusted table
             buffer = io.StringIO()
-            u_cols = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count")
-            writer = csv.DictWriter(buffer, fieldnames=u_cols, lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(u_rows)
-            lines.extend(("", "## Price history (unadjusted) / تاریخچه قیمت (بدون تعدیل)", "```csv", buffer.getvalue().rstrip(), "```"))
-            # Adjusted table (interleaved)
             if a_rows:
-                buffer = io.StringIO()
-                a_cols = ("date", "adj_first_rial", "adj_high_rial", "adj_low_rial", "adj_closing_rial", "adj_last_rial", "adj_factor", "corporate_action", "volume_shares", "value_rial", "trade_count")
-                writer = csv.DictWriter(buffer, fieldnames=a_cols, lineterminator="\n")
+                # adjusted rows already carry the raw fields plus adj_* columns
+                cols = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial",
+                        "adj_first_rial", "adj_high_rial", "adj_low_rial", "adj_closing_rial", "adj_last_rial",
+                        "adj_factor", "corporate_action", "volume_shares", "value_rial", "trade_count")
+                writer = csv.DictWriter(buffer, fieldnames=cols, lineterminator="\n")
                 writer.writeheader()
-                for row in a_rows:
-                    writer.writerow({
-                        "date": row["date"],
-                        "adj_first_rial": row.get("adj_first_rial"),
-                        "adj_high_rial": row.get("adj_high_rial"),
-                        "adj_low_rial": row.get("adj_low_rial"),
-                        "adj_closing_rial": row.get("adj_closing_rial"),
-                        "adj_last_rial": row.get("adj_last_rial"),
-                        "adj_factor": row.get("adj_factor"),
-                        "corporate_action": row.get("corporate_action"),
-                        "volume_shares": row.get("volume_shares"),
-                        "value_rial": row.get("value_rial"),
-                        "trade_count": row.get("trade_count"),
-                    })
-                lines.extend(("", "## Price history (adjusted for splits/dividends) / تاریخچه قیمت (تعدیل شده)", "```csv", buffer.getvalue().rstrip(), "```"))
+                writer.writerows(a_rows)
+                heading = "## Price history / تاریخچه قیمت"
+            else:
+                cols = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count")
+                writer = csv.DictWriter(buffer, fieldnames=cols, lineterminator="\n")
+                writer.writeheader()
+                writer.writerows(hist["unadjusted"])
+                heading = "## Price history / تاریخچه قیمت (بدون تعدیل)"
+            lines.extend(("", heading, "```csv", buffer.getvalue().rstrip(), "```"))
             # Adjustment events table
             pa = events.get("price_adjustments", [])
             sc = events.get("share_changes", [])
@@ -1249,7 +1241,7 @@ History options: --full (all records) is the default; --days N overrides it.""",
         "quote": "Show the latest price, trading activity, and instrument state",
         "book": "Show the five best bid and ask levels (صف خرید/فروش)",
         "flow": "Show individual/legal buyer and seller activity (حقیقی/حقوقی)",
-        "history": "Show unadjusted daily prices and trading volume",
+        "history": "Show daily price history and trading volume (raw plus split/dividend-adjusted columns)",
         "info": "Show industry, EPS, P/E, share count, market cap, price ranges, and fund NAV",
         "codal": "Show recent Codal announcements and extracted financial statements",
         "all": "Collect all available data as JSON or Markdown for an AI prompt",

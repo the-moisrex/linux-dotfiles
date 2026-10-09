@@ -9,12 +9,15 @@ import json
 import math
 import os
 import re
+import shlex
 import statistics
 import sys
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
+from datetime import datetime
 from importlib.machinery import SourceFileLoader
+from zoneinfo import ZoneInfo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _loader = SourceFileLoader("tse", os.path.join(HERE, "tse"))
@@ -740,6 +743,83 @@ def stats_summary(total, records, notes):
     return "\n".join(lines)
 
 
+def strip_format_args(argv):
+    """Drop --format / --format=... pairs (output concerns are not screen args)."""
+    out, index = [], 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--format":
+            index += 2
+            continue
+        if token.startswith("--format="):
+            index += 1
+            continue
+        out.append(token)
+        index += 1
+    return out
+
+
+def load_args_file(path):
+    """Read screen arguments from a .tse snapshot or a plain-text .tse.args file."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as exc:
+        raise ScreenError(f"{path}: {exc}") from exc
+    if text.lstrip()[:1] in ("{", "["):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ScreenError(f"{path}: invalid JSON: {exc}") from exc
+        if isinstance(payload, dict):
+            args = payload.get("args")
+            if args is None and isinstance(payload.get("meta"), dict):
+                args = payload["meta"].get("args")
+            if not isinstance(args, list):
+                raise ScreenError(f"{path}: no embedded screen arguments (meta.args)")
+        elif isinstance(payload, list):
+            raise ScreenError(f"{path}: results-only snapshot embeds no screen "
+                              "arguments; pass the filter flags explicitly")
+        else:
+            raise ScreenError(f"{path}: expected a JSON object or array")
+        return [str(arg) for arg in args]
+    try:
+        return shlex.split(text)
+    except ValueError as exc:
+        raise ScreenError(f"{path}: {exc}") from exc
+
+
+def extract_file_args(parser, argv):
+    """Split argv into (file-derived screen args, remaining argv).
+
+    A bare token naming an existing *.tse / *.args file is replaced by its
+    embedded screen arguments; remaining CLI flags come last so they win.
+    """
+    takes_value = set()
+    for action in parser._actions:
+        if action.option_strings and action.nargs != 0:
+            takes_value.update(action.option_strings)
+    file_args, rest, index = [], [], 0
+    while index < len(argv):
+        token = argv[index]
+        if token in takes_value:
+            rest.append(token)
+            index += 1
+            if index < len(argv):
+                rest.append(argv[index])
+                index += 1
+            continue
+        if not token.startswith("-") and token.endswith((".tse", ".args")):
+            if not os.path.isfile(token):
+                raise ScreenError(f"no such screen file: {token}")
+            file_args.extend(load_args_file(token))
+            index += 1
+            continue
+        rest.append(token)
+        index += 1
+    return strip_format_args(file_args), rest
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="tse.find",
@@ -761,11 +841,19 @@ def build_parser():
   tse.find --rsi-max 30 --above-sma 50 --type stock --sort rsi
   tse.find --near-limit 1 --up --format csv --limit 0
   tse.find --sector 34 --mcap-min 1t --book --bid-wall-min 1m --stats
-  tse.find --watchlist ~/my-symbols.txt --macd bull --format json --limit 0
+  tse.find --watchlist ~/my-symbols.txt --macd bull --format jsonl --limit 0
+  tse.find --traded --chg-min 1 --vol-min 1m --format tse > findings.tse
+  tse.find findings.tse --limit 10          # re-run the snapshot's screen
+  tse.find findings.tse --format jsonl | fzf --multi | tse.snapshot stocks/
 
 amounts accept k/m/b/t/p suffixes (10b = 10,000,000,000 rial, 1t = 1,000,000,000,000);
 percentages are plain numbers (8 means 8%). table/md output defaults to the first
-50 matches, json/csv print everything; --limit 0 disables the cap.
+50 matches, json/jsonl/tse/csv print everything; --limit 0 disables the cap.
+jsonl is one compact JSON object per line (fzf-friendly); tse writes a .tse
+snapshot with meta.args embedded so this command can re-run it later.
+
+FILE arguments ending in .tse or .args are loaded and their screen arguments
+are applied first; flags given on the command line override them.
 
 --columns and --sort accept: {', '.join(sorted(COLUMNS))} plus 'name'.""",
     )
@@ -856,7 +944,8 @@ percentages are plain numbers (8 means 8%). table/md output defaults to the firs
     flow.add_argument("--jobs", type=int, default=8, metavar="N", help="parallel enrichment requests (default 8)")
 
     output = parser.add_argument_group("output")
-    output.add_argument("--format", choices=("table", "json", "csv", "md"), default="table", help="output format")
+    output.add_argument("--format", choices=("table", "json", "jsonl", "csv", "md", "tse"), default="table",
+                        help="output format (jsonl = one object per line; tse = .tse snapshot embedding the screen args)")
     output.add_argument("--sort", default="value", metavar="KEY", help="sort key (column name or 'name'; default value)")
     output.add_argument("--asc", action="store_true", help="sort ascending instead of descending")
     output.add_argument("--limit", type=int, metavar="N", help="max rows (default 50 for table/md, 0 = all)")
@@ -884,7 +973,8 @@ def resolve_imbalance(text):
 
 def main(argv=None):
     parser = build_parser()
-    args = parser.parse_args(argv)
+    file_args, argv = extract_file_args(parser, list(sys.argv[1:] if argv is None else argv))
+    args = parser.parse_args(file_args + argv)
     if args.up and args.down:
         parser.error("--up and --down are mutually exclusive")
     if args.history_days < 30:
@@ -969,10 +1059,24 @@ def main(argv=None):
     if limit and limit > 0:
         records = records[:limit]
 
+    payload = [{key: value for key, value in record.items() if key not in ("levels", "enriched", "_near_limit")}
+               for record in records]
     if args.format == "json":
-        payload = [{key: value for key, value in record.items() if key not in ("levels", "enriched", "_near_limit")}
-                   for record in records]
         print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    elif args.format == "jsonl":
+        if payload:
+            print("\n".join(json.dumps(record, ensure_ascii=False, default=str) for record in payload))
+    elif args.format == "tse":
+        screen_args = strip_format_args(file_args + argv)
+        meta = {
+            "version": 1,
+            "screened_at": datetime.now(ZoneInfo("Asia/Tehran")).isoformat(timespec="seconds"),
+            "command": "tse.find " + shlex.join(screen_args),
+            "args": screen_args,
+            "total_universe": total,
+            "matched": len(payload),
+        }
+        print(json.dumps({"meta": meta, "results": payload}, ensure_ascii=False, indent=2, default=str))
     elif args.format == "csv":
         print(render_csv(records, columns))
     elif args.format == "md":

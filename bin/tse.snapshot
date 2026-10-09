@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""tse.snapshot — fetch full `tse all` data for screened symbols into .stock files."""
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+HERE = Path(__file__).resolve().parent
+TSE = HERE / "tse"
+TEHRAN = ZoneInfo("Asia/Tehran")
+SAFE_CHARS = re.compile(r'[\s\\/:*?"<>|\[\]]+')
+DASH_LINE = re.compile(r"[-=_]+$")
+FETCH_TIMEOUT = 300
+
+
+class SnapshotError(Exception):
+    pass
+
+
+def sanitize(text):
+    text = SAFE_CHARS.sub("_", str(text or "")).strip("_")
+    return text.lstrip(".") or "unknown"
+
+
+def row_token(row):
+    """Fetch token, display label, and stable dedupe key for a tse.find row."""
+    if not isinstance(row, dict):
+        return None
+    values = {key: str(row[key]).strip() for key in ("symbol", "isin", "code") if row.get(key)}
+    token = values.get("isin") or values.get("symbol") or values.get("code")
+    if not token:
+        return None
+    display = values.get("symbol") or token
+    key = values.get("isin") or values.get("code") or values.get("symbol")
+    return token, display, key
+
+
+def parse_input(text):
+    """Read a JSON array, JSONL rows, or plain symbol lines from stdin."""
+    text = text.strip()
+    if not text:
+        return []
+    if text[0] == "[":
+        try:
+            rows = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SnapshotError(f"stdin: invalid JSON array: {exc}") from exc
+        if not isinstance(rows, list):
+            raise SnapshotError("stdin: expected a JSON array of tse.find rows")
+        entries = [row_token(row) for row in rows]
+        return dedupe([entry for entry in entries if entry])
+    entries = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("{"):
+            try:
+                entry = row_token(json.loads(line))
+            except json.JSONDecodeError:
+                entry = None
+            if entry:
+                entries.append(entry)
+            continue
+        first = line.split()[0]
+        if first == "Symbol" or DASH_LINE.fullmatch(first):
+            continue
+        entries.append((first, first, first))
+    return dedupe(entries)
+
+
+def dedupe(entries):
+    seen, out = set(), []
+    for token, display, key in entries:
+        marker = token.upper()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append((token, display, key))
+    return out
+
+
+def already_saved(outdir, date, display, key):
+    matches = sorted(outdir.glob(f"{date}_*_{sanitize(key)}.stock"))
+    if not matches:
+        matches = sorted(outdir.glob(f"{date}_{sanitize(display)}_*.stock"))
+    return matches[0] if matches else None
+
+
+def fetch(token, opts):
+    parts = ["tse", "all", token]
+    if opts.days:
+        parts += ["--days", str(opts.days)]
+    else:
+        parts.append("--full")
+    parts += ["--top", str(opts.top)]
+    if opts.no_codal:
+        parts.append("--no-codal")
+    if opts.unadjusted:
+        parts.append("--unadjusted")
+    command = [sys.executable, str(TSE)] + parts[1:]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=FETCH_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise SnapshotError(f"{token}: `tse all` timed out after {FETCH_TIMEOUT}s") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        raise SnapshotError(f"{token}: {detail[-1] if detail else f'exit {proc.returncode}'}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise SnapshotError(f"{token}: `tse all` did not return JSON: {exc}") from exc
+    return data, " ".join(shlex.quote(part) for part in parts)
+
+
+def process(entry, outdir, date, opts):
+    token, display, key = entry
+    if not opts.force:
+        hit = already_saved(outdir, date, display, key)
+        if hit:
+            return "skip", f"{display} (already {hit.name})"
+    data, source = fetch(token, opts)
+    instrument = data.get("instrument") or {}
+    symbol = instrument.get("symbol") or display
+    isin = instrument.get("isin") or instrument.get("ins_code") or key
+    filename = f"{date}_{sanitize(symbol)}_{sanitize(isin)}.stock"
+    path = outdir / filename
+    if path.exists() and not opts.force:
+        return "skip", f"{display} (already {filename})"
+    meta = {
+        "version": 1,
+        "fetched_at": data.get("fetched_at"),
+        "saved_at": datetime.now(TEHRAN).isoformat(timespec="seconds"),
+        "source": source,
+        "input": token,
+        "symbol": instrument.get("symbol"),
+        "name": instrument.get("name"),
+        "isin": instrument.get("isin"),
+        "ins_code": instrument.get("ins_code"),
+        "market": instrument.get("market"),
+    }
+    if opts.note:
+        meta["note"] = opts.note
+    document = {"meta": meta, "data": data}
+    tmp = outdir / f"{filename}.{os.getpid()}.tmp"
+    tmp.write_text(json.dumps(document, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    warning = ""
+    if data.get("errors"):
+        failed = ", ".join(str(key) for key in data["errors"])
+        warning = f" [data.errors: {failed}]"
+    return "saved", f"{display} → {filename}{warning}"
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="tse.snapshot",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Fetch full `tse all` data for screened symbols and save each as a\n"
+            ".stock file (pretty JSON: meta + data). Reads stdin: a JSON array or\n"
+            "JSONL of tse.find rows, or plain symbol lines."
+        ),
+        epilog="""examples:
+  tse.find --traded --chg-min 1 --format jsonl | tse.snapshot stocks/
+  tse.find findings.tse --format jsonl | fzf --multi | tse.snapshot stocks/
+  printf 'فولاد\\nوبملت\\n' | tse.snapshot stocks/
+
+files are named <dir>/YYYYMMDD_<symbol>_<ISIN>.stock and are not re-fetched on
+re-run unless --force is given (so a failed batch can be topped up by rerunning).
+each fetch is one `tse all` process (300s timeout); with several parallel jobs the
+Codal sections may degrade under rate limits, reported as data.errors inside the
+file (rerun with --force to refill them).""",
+    )
+    parser.add_argument("dir", nargs="?", default=".",
+                        help="directory for .stock files (default: current directory)")
+    history = parser.add_mutually_exclusive_group()
+    history.add_argument("--days", type=int, metavar="N", help="daily history depth for `tse all` (default: full)")
+    history.add_argument("--full", action="store_true", help="full daily history (default)")
+    parser.add_argument("--top", type=int, default=5, metavar="N", help="recent Codal announcements (default 5)")
+    parser.add_argument("--no-codal", action="store_true", help="skip Codal fetches (faster, avoids Codal rate limits)")
+    parser.add_argument("--unadjusted", action="store_true", help="unadjusted prices only")
+    parser.add_argument("--jobs", type=int, default=4, metavar="N", help="parallel `tse all` fetches (default 4)")
+    parser.add_argument("--force", action="store_true", help="overwrite existing .stock files for today")
+    parser.add_argument("--note", metavar="TEXT", help="store TEXT in each file's meta.note")
+    parser.add_argument("--quiet", action="store_true", help="suppress progress and summary")
+    opts = parser.parse_args(argv)
+    if opts.days is not None and opts.days < 1:
+        parser.error("--days must be at least 1")
+    if opts.jobs < 1:
+        parser.error("--jobs must be at least 1")
+
+    if sys.stdin.isatty():
+        print("tse.snapshot: no input on stdin (pipe tse.find --format jsonl, "
+              "a JSON array, or symbol lines)", file=sys.stderr)
+        return 2
+    try:
+        entries = parse_input(sys.stdin.read())
+    except SnapshotError as exc:
+        print(f"tse.snapshot: {exc}", file=sys.stderr)
+        return 2
+    if not entries:
+        print("tse.snapshot: no symbols found on stdin", file=sys.stderr)
+        return 2
+
+    outdir = Path(opts.dir).expanduser()
+    outdir.mkdir(parents=True, exist_ok=True)
+    date = datetime.now(TEHRAN).strftime("%Y%m%d")
+
+    counts = {"saved": 0, "skip": 0, "fail": 0}
+    with ThreadPoolExecutor(max_workers=opts.jobs) as pool:
+        futures = [pool.submit(process, entry, outdir, date, opts) for entry in entries]
+        for future in as_completed(futures):
+            try:
+                status, message = future.result()
+            except Exception as exc:  # worker crashed — keep the batch going
+                status, message = "fail", str(exc)
+            counts[status] += 1
+            if not opts.quiet:
+                prefix = {"saved": "+", "skip": "=", "fail": "!"}[status]
+                print(f"{prefix} {message}", file=sys.stderr)
+
+    if not opts.quiet:
+        print(f"saved {counts['saved']}, skipped {counts['skip']}, failed {counts['fail']}",
+              file=sys.stderr)
+    return 1 if counts["fail"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -22,6 +22,8 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 
 `list` and `list-prompts` are ordinary prompt scripts (`prompts/list.sh`, `prompts/list-prompts.sh`), not special cases in the dispatcher.
 
+Argument tokens that match a prompt name — optionally prefixed with `.` or `-` — start a chained prompt that receives the previous prompt's output on stdin: `prompt stock فولاد .note "compare with فخوز"` runs `stock` and pipes its output through `note` (`.files` embeds files generically, `.note` appends a note, `.cli` a CLI hint).
+
 **Prompt script conventions** (follow these when adding/editing prompts):
 - Source `prompts/_common.sh` and call `init_prompt` (or `init_prompt --no-files`), then `set -- "${ARGS[@]}"`
 - Define `show_help()` with a `Usage: prompt <name>` line; its first paragraph must be a complete standalone summary (it is what `prompt list` shows)
@@ -35,9 +37,9 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 - `fix` / `review` / `tests` / `refactor` — general code analysis
 - `cpp` / `cpp-reviewer` — C++ specific (auto-detects compiler errors)
 - `run` — runs `bin/run`, embeds output for debugging
-- `stock` — gathers TSETMC and Codal data via `bin/tse` (plus market context: USD/IRR, Iran inflation/GDP, large-cap breadth) for Iranian stock/fund analysis (`prompt stock فولاد`); accepts a Persian symbol, ISIN, insCode or easytrader/tsetmc/codal URL, falls back to the clipboard when omitted, full history by default (`--days N` to limit)
+- `stock` — gathers TSETMC and Codal data via `bin/tse` (plus market context: USD/IRR, Iran inflation/GDP, large-cap breadth) for Iranian stock/fund analysis (`prompt stock فولاد`); accepts a Persian symbol, ISIN, insCode or easytrader/tsetmc/codal URL, falls back to the clipboard when omitted, full history by default (`--days N` to limit); one or more `.stock` snapshot files (written by `bin/tse.snapshot`) build the same prompt from cached data instead, warning when older than 24 hours (`prompt stock stocks/20261009_فولاد_IRO1FOLD0009.stock`)
 - `intraday` — same-day trade verdict (LONG or NO-TRADE with a numeric plan) from `bin/tse` data (`prompt intraday فولاد`); same identifier forms, clipboard fallback, full-history default and market context as `stock`
-- `tse.find` — turns a plain-language market request ("what to buy tomorrow") into a `bin/tse.find` screening command; chat mode (default) emits one runnable line, `--mode agentic` adds run-and-relax instructions (`--max-iter N`, `--dry-run`); embeds the live `tse.find --help` flags (`--head N` to cap)
+- `tse.find` — turns a plain-language market request ("what to buy tomorrow") into a `bin/tse.find` screening command; chat mode (default) emits one runnable line, `--mode agentic` adds run-and-relax instructions (`--max-iter N`, `--dry-run`); embeds the live `tse.find --help` flags (`--head N` to cap); a `.tse` file, `tse.find` flags, or piped `tse.find` output (tse/json/jsonl/table) switches to review mode: rank the matches with their real numbers and suggest `prompt stock`/`prompt intraday` deep dives (`prompt tse.find findings.tse`)
 - `gtest-case` / `gtest` — Google Test case source embedding
 - `spp` — C++ symbol expansion via `bin/spp`
 - `commit` — git commit message from staged/unstaged diff

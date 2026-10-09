@@ -21,22 +21,8 @@ init_prompt
 get_files || true
 
 
-relative_path() {
-    local file="$1"
-    find_git_root
-    if [[ -n "${GIT_ROOT:-}" ]]; then
-        realpath --relative-to="$GIT_ROOT" "$file"
-    else
-        realpath --relative-to="$PWD" "$file"
-    fi
-}
-
-
-# printf 'Additional file context:\n\n'
-
-if [ $# -eq 0 ]; then
-    # shellcheck disable=SC2046
-    set -- $(select_files)
+if [[ ${#ARGS[@]} -eq 0 ]]; then
+    mapfile -t ARGS < <(select_files)
 fi
 
 for file in "${ARGS[@]}"; do

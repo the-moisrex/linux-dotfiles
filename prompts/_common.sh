@@ -30,7 +30,9 @@ find_git_root() {
 trim_context() {
     local content="$1"
     if [[ -n "$head_lines" ]]; then
-        printf '%s\n' "$content" | head -n "$head_lines"
+        # sed (unlike head) always drains its input, so printf never dies of
+        # SIGPIPE when truncating a large context under `set -o pipefail`.
+        printf '%s\n' "$content" | sed -n "1,${head_lines}p"
     else
         printf '%s\n' "$content"
     fi
@@ -84,6 +86,10 @@ parse_arguments() {
             --head)
                 if [[ $# -lt 2 ]]; then
                     echo "Missing value for --head" >&2
+                    exit 2
+                fi
+                if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "--head requires a non-negative integer" >&2
                     exit 2
                 fi
                 head_lines="$2"
@@ -159,7 +165,7 @@ infer_lang() {
                 xml) lang="xml" ;;
                 xsl|xslt) lang="xslt" ;;
                 svg) lang="svg" ;;
-                json) lang="json" ;;
+                json|stock|tse) lang="json" ;;
                 jsonc) lang="jsonc" ;;
                 yaml|yml) lang="yaml" ;;
                 toml) lang="toml" ;;
@@ -202,6 +208,35 @@ select_files() {
     fi
 
     printf '%s\n' "$selected"
+}
+
+# Path of a file relative to the git root when inside one, else to $PWD.
+# Keeps embedded headings short and free of $HOME (sanitize_output rewrites
+# absolute home paths in prompt output).
+relative_path() {
+    local file="$1"
+    find_git_root
+    if [[ -n "${GIT_ROOT:-}" ]]; then
+        realpath --relative-to="$GIT_ROOT" "$file"
+    else
+        realpath --relative-to="$PWD" "$file"
+    fi
+}
+
+# Resolve a file exactly (cwd, then git root) without fzf's fuzzy fallback —
+# for snapshot inputs where a fuzzy match would silently pick the wrong file.
+resolve_exact_file() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        printf '%s\n' "$file"
+        return 0
+    fi
+    find_git_root
+    if [[ -n "${GIT_ROOT:-}" && -f "$GIT_ROOT/$file" ]]; then
+        printf '%s\n' "$GIT_ROOT/$file"
+        return 0
+    fi
+    return 1
 }
 
 resolve_input_file() {
