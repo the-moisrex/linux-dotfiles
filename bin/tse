@@ -356,15 +356,122 @@ def flow(client, code):
     }
 
 
-def history(client, code, days):
-    rows = client.api(f"ClosingPrice/GetClosingPriceDailyList/{code}/{days}", "closingPriceDaily")
+def price_adjustments(client, code):
+    rows = client.api(f"ClosingPrice/GetPriceAdjustList/{code}", "priceAdjust")
     if not isinstance(rows, list):
-        raise DataError("Unexpected daily history result")
+        raise DataError("Unexpected price adjustments result")
     result = []
     for row in rows:
         if not isinstance(row, dict):
             continue
-        result.append({
+        adj = price(pick(row, "pClosing"))
+        raw = price(pick(row, "pClosingNotAdjusted"))
+        date = trade_date(pick(row, "dEven"))
+        if adj is not None and raw is not None and raw != 0 and date:
+            result.append({
+                "date": date,
+                "pClosing_adj": adj,
+                "pClosing_raw": raw,
+                "adj_ratio": adj / raw,
+            })
+    result.sort(key=lambda x: x["date"])
+    return result
+
+
+def share_changes(client, code):
+    rows = client.api(f"Instrument/GetInstrumentShareChange/{code}", "instrumentShareChange")
+    if not isinstance(rows, list):
+        raise DataError("Unexpected share changes result")
+    seen = set()
+    result = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        date = trade_date(pick(row, "dEven"))
+        old = number(pick(row, "numberOfShareOld"))
+        new = number(pick(row, "numberOfShareNew"))
+        if date and old is not None and new is not None and old > 0 and new > 0:
+            key = (date, old, new)
+            if key not in seen:
+                seen.add(key)
+                result.append({"date": date, "old_shares": old, "new_shares": new, "ratio": old / new})
+    result.sort(key=lambda x: x["date"])
+    return result
+
+
+def dps_history(symbol):
+    url = f"http://old.tsetmc.com/tsev2/data/DPSData.aspx?s={urllib.parse.quote(symbol)}"
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            text = response.read().decode("utf-8-sig", errors="replace")
+    except Exception as exc:
+        raise DataError(f"DPS fetch failed: {exc}") from exc
+    result = []
+    seen = set()
+    for row in text.split(";"):
+        cols = row.split("@")
+        if len(cols) >= 7 and cols[6]:
+            try:
+                dps = float(cols[6].strip())
+                if dps > 0:
+                    fiscal_year = cols[2].strip()
+                    meeting_date = trade_date(cols[1].strip())
+                    key = (fiscal_year, dps)
+                    if key not in seen and meeting_date:
+                        seen.add(key)
+                        result.append({"fiscal_year": fiscal_year, "meeting_date": meeting_date, "dps_rial": dps})
+            except ValueError:
+                pass
+    result.sort(key=lambda x: x["meeting_date"])
+    return result
+
+
+def adjust_history(unadjusted_history, price_adjustments, share_changes):
+    if not unadjusted_history:
+        return []
+    price_adj_by_date = {a["date"]: a["adj_ratio"] for a in price_adjustments}
+    sc_by_date = {s["date"]: s["ratio"] for s in share_changes}
+    merged = {}
+    for d, r in price_adj_by_date.items():
+        merged[d] = merged.get(d, 1.0) * r
+    sc_dates = set(sc_by_date.keys())
+    for d, r in sc_by_date.items():
+        if any(abs(int(d.replace("-", "")) - int(ad.replace("-", ""))) <= 7 for ad in sc_dates if ad != d):
+            continue
+        merged[d] = merged.get(d, 1.0) * r
+    merged_dates = sorted(merged.keys(), reverse=True)
+    adjusted = []
+    for row in unadjusted_history:
+        date = row["date"]
+        factor = 1.0
+        for ev_date in merged_dates:
+            if date < ev_date:
+                factor *= merged[ev_date]
+        adj_row = {**row}
+        for field in ("first_rial", "high_rial", "low_rial", "closing_rial", "last_rial"):
+            val = row.get(field)
+            adj_row[f"adj_{field}"] = round(val * factor, 2) if val is not None else None
+        adj_row["adj_factor"] = round(factor, 6)
+        action = None
+        if date in price_adj_by_date:
+            action = "dividend+split" if date in sc_by_date else "dividend"
+        elif date in sc_by_date:
+            action = "split"
+        adj_row["corporate_action"] = action
+        adjusted.append(adj_row)
+    return adjusted
+
+
+def history(client, code, days, adjusted=True):
+    rows = client.api(f"ClosingPrice/GetClosingPriceDailyList/{code}/{days}", "closingPriceDaily")
+    if not isinstance(rows, list):
+        raise DataError("Unexpected daily history result")
+    unadjusted = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        unadjusted.append({
             "date": trade_date(pick(row, "dEven")),
             "first_rial": price(pick(row, "priceFirst")),
             "high_rial": price(pick(row, "priceMax")),
@@ -375,8 +482,15 @@ def history(client, code, days):
             "value_rial": value(row, "qTotCap"),
             "trade_count": value(row, "zTotTran"),
         })
-    result.sort(key=lambda row: row["date"] or "")
-    return result if days == 0 else result[-days:]
+    unadjusted.sort(key=lambda row: row["date"] or "")
+    if days != 0:
+        unadjusted = unadjusted[-days:]
+    if not adjusted:
+        return {"unadjusted": unadjusted}
+    pa = price_adjustments(client, code)
+    sc = share_changes(client, code)
+    adjusted = adjust_history(unadjusted, pa, sc)
+    return {"unadjusted": unadjusted, "adjusted": adjusted, "adjustment_events": {"price_adjustments": pa, "share_changes": sc}}
 
 
 def detect_fund(isin, industry, sub_industry, units=None):
@@ -963,7 +1077,7 @@ def indexes(client):
     ]
 
 
-def collect(client, symbol, days, top, with_codal):
+def collect(client, symbol, days, top, with_codal, adjusted=False):
     instrument = resolve(client, symbol)
     code = instrument["ins_code"]
     now = tehran_now()
@@ -991,7 +1105,7 @@ def collect(client, symbol, days, top, with_codal):
             "order_book": pool.submit(book, client, code),
             "client_type": pool.submit(flow, client, code),
             "indexes": pool.submit(indexes, client),
-            "history": pool.submit(history, client, code, days),
+            "history": pool.submit(history, client, code, days, adjusted),
             "currencies": pool.submit(market_currencies, client),
             "economy": pool.submit(economy, client),
             "breadth": pool.submit(market_breadth, client),
@@ -1053,13 +1167,60 @@ def markdown(data):
             continue
         lines.extend(("", f"## {heading}", "```json", json.dumps(data[key], ensure_ascii=False, indent=2), "```"))
     if data["history"] is not None:
-        rows = data["history"]
-        buffer = io.StringIO()
-        columns = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count")
-        writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
-        lines.extend(("", "## Price history / تاریخچه قیمت (unadjusted)", "```csv", buffer.getvalue().rstrip(), "```"))
+        hist = data["history"]
+        if isinstance(hist, dict) and "unadjusted" in hist:
+            u_rows = hist["unadjusted"]
+            a_rows = hist.get("adjusted", [])
+            events = hist.get("adjustment_events", {})
+            # Unadjusted table
+            buffer = io.StringIO()
+            u_cols = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count")
+            writer = csv.DictWriter(buffer, fieldnames=u_cols, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(u_rows)
+            lines.extend(("", "## Price history (unadjusted) / تاریخچه قیمت (بدون تعدیل)", "```csv", buffer.getvalue().rstrip(), "```"))
+            # Adjusted table (interleaved)
+            if a_rows:
+                buffer = io.StringIO()
+                a_cols = ("date", "adj_first_rial", "adj_high_rial", "adj_low_rial", "adj_closing_rial", "adj_last_rial", "adj_factor", "corporate_action", "volume_shares", "value_rial", "trade_count")
+                writer = csv.DictWriter(buffer, fieldnames=a_cols, lineterminator="\n")
+                writer.writeheader()
+                for row in a_rows:
+                    writer.writerow({
+                        "date": row["date"],
+                        "adj_first_rial": row.get("adj_first_rial"),
+                        "adj_high_rial": row.get("adj_high_rial"),
+                        "adj_low_rial": row.get("adj_low_rial"),
+                        "adj_closing_rial": row.get("adj_closing_rial"),
+                        "adj_last_rial": row.get("adj_last_rial"),
+                        "adj_factor": row.get("adj_factor"),
+                        "corporate_action": row.get("corporate_action"),
+                        "volume_shares": row.get("volume_shares"),
+                        "value_rial": row.get("value_rial"),
+                        "trade_count": row.get("trade_count"),
+                    })
+                lines.extend(("", "## Price history (adjusted for splits/dividends) / تاریخچه قیمت (تعدیل شده)", "```csv", buffer.getvalue().rstrip(), "```"))
+            # Adjustment events table
+            pa = events.get("price_adjustments", [])
+            sc = events.get("share_changes", [])
+            if pa or sc:
+                buffer = io.StringIO()
+                ev_cols = ("date", "type", "details")
+                writer = csv.DictWriter(buffer, fieldnames=ev_cols, lineterminator="\n")
+                writer.writeheader()
+                for a in pa:
+                    writer.writerow({"date": a["date"], "type": "price_adjustment", "details": f"adj_ratio={a['adj_ratio']:.4f} (pClosing_adj={a['pClosing_adj']}, pClosing_raw={a['pClosing_raw']})"})
+                for s in sc:
+                    writer.writerow({"date": s["date"], "type": "share_change", "details": f"ratio={s['ratio']:.4f} (old={s['old_shares']:.0f}, new={s['new_shares']:.0f})"})
+                lines.extend(("", "## Corporate action events / رویدادهای اقدامات شرکتی", "```csv", buffer.getvalue().rstrip(), "```"))
+        else:
+            rows = hist
+            buffer = io.StringIO()
+            columns = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count")
+            writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+            lines.extend(("", "## Price history / تاریخچه قیمت (unadjusted)", "```csv", buffer.getvalue().rstrip(), "```"))
     if data["errors"]:
         lines.extend(("", "## Missing or failed sources / داده‌های ناموجود", "```json", json.dumps(data["errors"], ensure_ascii=False, indent=2), "```"))
     return "\n".join(lines)
@@ -1104,7 +1265,8 @@ History options: --full (all records) is the default; --days N overrides it.""",
         if name in ("history", "all"):
             history_options = command.add_mutually_exclusive_group()
             history_options.add_argument("--days", type=int, default=None, metavar="N", help="Number of trading days (1–365; overrides the default full history)")
-            history_options.add_argument("--full", action="store_true", help="Fetch all available daily records (default; unadjusted, may be large)")
+            history_options.add_argument("--full", action="store_true", help="Fetch all available daily records (default; may be large)")
+            command.add_argument("--unadjusted", action="store_true", help="Show only unadjusted prices (default includes split/dividend-adjusted)")
         if name in ("codal", "all"):
             command.add_argument("--top", type=int, default=5, metavar="N", help="Maximum recent Codal announcements (1–20; default: 5)")
         if name == "all":
@@ -1121,7 +1283,7 @@ History options: --full (all records) is the default; --days N overrides it.""",
         if args.command == "search":
             result = search(client, args.symbol)
         elif args.command == "all":
-            result = collect(client, args.symbol, history_days, args.top, not args.no_codal)
+            result = collect(client, args.symbol, history_days, args.top, not args.no_codal, not getattr(args, "unadjusted", False))
         else:
             instrument = resolve(client, args.symbol)
             code = instrument["ins_code"]
@@ -1132,7 +1294,7 @@ History options: --full (all records) is the default; --days N overrides it.""",
             elif args.command == "flow":
                 result = flow(client, code)
             elif args.command == "history":
-                result = history(client, code, history_days)
+                result = history(client, code, history_days, not getattr(args, "unadjusted", False))
             elif args.command == "info":
                 errors = {}
                 try:

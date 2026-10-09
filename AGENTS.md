@@ -37,6 +37,7 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 - `run` — runs `bin/run`, embeds output for debugging
 - `stock` — gathers TSETMC and Codal data via `bin/tse` (plus market context: USD/IRR, Iran inflation/GDP, large-cap breadth) for Iranian stock/fund analysis (`prompt stock فولاد`); accepts a Persian symbol, ISIN, insCode or easytrader/tsetmc/codal URL, falls back to the clipboard when omitted, full history by default (`--days N` to limit)
 - `intraday` — same-day trade verdict (LONG or NO-TRADE with a numeric plan) from `bin/tse` data (`prompt intraday فولاد`); same identifier forms, clipboard fallback, full-history default and market context as `stock`
+- `tse.find` — turns a plain-language market request ("what to buy tomorrow") into a `bin/tse.find` screening command; chat mode (default) emits one runnable line, `--mode agentic` adds run-and-relax instructions (`--max-iter N`, `--dry-run`); embeds the live `tse.find --help` flags (`--head N` to cap)
 - `gtest-case` / `gtest` — Google Test case source embedding
 - `spp` — C++ symbol expansion via `bin/spp`
 - `commit` — git commit message from staged/unstaged diff

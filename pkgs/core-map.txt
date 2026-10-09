@@ -28,6 +28,7 @@ tree                 tree                tree
 sudo                 sudo                sudo
 neovim               neovim              neovim
 vim                  vim                 vim
+helix                helix               helix
 cpupower             linux-cpupower      kernel-tools
 criu                 criu                criu                # Utilities to checkpoint and restore processes in userspace
 whois                whois               whois
@@ -49,6 +50,7 @@ zsh-completions      NONE                NONE                # not packaged on D
 fish                 fish                fish
 nushell              NONE                nushell             # not packaged on Debian/Ubuntu
 bash-completion      bash-completion     bash-completion
+tmux                 tmux                tmux
 
 # Networking
 nethogs              nethogs             nethogs

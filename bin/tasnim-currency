@@ -12,11 +12,19 @@ import urllib.request
 
 API_URL = "https://www.tasnimnews.ir/common/CurrencyTable"
 
-# Comprehensive English name mapping for all known tasnim currency/gold items
+# Explicit English name mapping for special/irregular tasnim items
 ENGLISH_NAMES = {
-    # Currencies (USD, EUR, etc. against IRR)
+    # Currencies (against IRR)
     "price_dollar_rl": "US Dollar",
+    "price_dollar_sm": "US Dollar (SM)",
+    "price_dollar_ex": "US Dollar (Exchange)",
+    "price_dollar_dt": "US Dollar (DT)",
+    "price_dollar_future": "US Dollar Futures",
+    "price_dollar_afshar": "US Dollar (Afshar)",
+    "price_dollar_afshar_future": "US Dollar Futures (Afshar)",
+    "price_dubai_dollar": "Dubai Dollar",
     "price_eur": "Euro",
+    "price_eur_ex": "Euro (Exchange)",
     "price_gbp": "British Pound",
     "price_aed": "UAE Dirham",
     "price_try": "Turkish Lira",
@@ -42,55 +50,449 @@ ENGLISH_NAMES = {
     "price_rub": "Russian Ruble",
     "price_azn": "Azerbaijani Manat",
     "price_bhd": "Bahraini Dinar",
+    "price_inr": "Indian Rupee",
+    "price_pkr": "Pakistani Rupee",
 
-    # Gold (per gram)
+    # Gold (per gram) and gold variants
     "geram18": "18K Gold (gram)",
+    "geram18_buy": "18K Gold (gram, Buy)",
     "geram24": "24K Gold (gram)",
+    "geram24_buy": "24K Gold (gram, Buy)",
     "silver_999": "999 Silver (gram)",
+    "silver_925": "925 Silver (gram)",
+    "silver": "Silver",
+    "gold_17": "17K Gold",
+    "gold_17_aed": "17K Gold (AED)",
+    "gold_17_coin": "17K Gold (Coin)",
+    "gold_17_transfer": "17K Gold (Transfer)",
+    "gold_17_usd": "17K Gold (USD)",
+    "gold_740k": "740K Gold",
+    "gold_checkout": "Gold (Checkout)",
+    "gold_futures": "Gold Futures",
+    "gold_futures_buy": "Gold Futures (Buy)",
+    "gold_melted_transfer": "Melted Gold (Transfer)",
+    "gold_melted_wholesale": "Melted Gold (Wholesale)",
+    "gold_mini_size": "Mini Gold Bar",
+    "gold_world_futures": "World Gold Futures",
+    "mesghal": "Mesghal Gold",
+    "mesghal_buy": "Mesghal Gold (Buy)",
+    "ons": "Gold Ounce",
+    "ons_buy": "Gold Ounce (Buy)",
+    "platinum": "Platinum",
+    "palladium": "Palladium",
+    "tgju_gold_irg18": "TGJU 18K Gold Index",
+    "tgju_gold_irg18_buy": "TGJU 18K Gold (Buy)",
+    "tether_gold_xaut": "Tether Gold (XAUT)",
 
     # Coins
     "sekee": "Imami Coin",
+    "sekee_buy": "Imami Coin (Buy)",
+    "sekee_dollar": "Imami Coin (USD)",
+    "sekee_down": "Imami Coin (Down)",
+    "sekee_real": "Imami Coin (Real)",
     "sekeb": "Bahar Azadi Coin",
+    "sekeb_buy": "Bahar Azadi Coin (Buy)",
+    "sekeb_blubber": "Bahar Azadi Coin Premium",
     "nim": "Half Coin",
+    "nim_buy": "Half Coin (Buy)",
+    "nim_down": "Half Coin (Down)",
+    "nim_blubber": "Half Coin Premium",
     "rob": "Quarter Coin",
+    "rob_buy": "Quarter Coin (Buy)",
+    "rob_down": "Quarter Coin (Down)",
+    "rob_blubber": "Quarter Coin Premium",
     "gerami": "Grami Coin",
+    "gerami_buy": "Grami Coin (Buy)",
+    "gerami_blubber": "Grami Coin Premium",
+    "coin_blubber": "Coin Premium",
+    "coin_checkout": "Coin (Checkout)",
+    "coin_future": "Coin Futures",
+    "irec_future": "IREC Futures",
 
     # Retail coins
-    "retail_sekee": "Retail Imami",
-    "retail_sekeb": "Retail Bahar Azadi",
-    "retail_nim": "Retail Half",
-    "retail_rob": "Retail Quarter",
-    "retail_gerami": "Retail Grami",
+    "retail_sekee": "Retail Imami Coin",
+    "retail_sekeb": "Retail Bahar Azadi Coin",
+    "retail_nim": "Retail Half Coin",
+    "retail_rob": "Retail Quarter Coin",
+    "retail_gerami": "Retail Grami Coin",
 
-    # Global metals
+    # Global / US metals
     "base_global_gold": "Global Gold",
     "base_global_silver": "Global Silver",
     "base_global_platinum": "Global Platinum",
     "base_global_palladium": "Global Palladium",
     "base_global_copper": "Global Copper",
+    "base_global_copper2": "Global Copper 2",
     "base_global_silver_10oz": "Global Silver 10oz",
     "base_global_gold_10oz": "Global Gold 10oz",
+    "base_global_cobalt_hydroxide": "Global Cobalt Hydroxide",
+    "base_global_di_ammonium": "Global Diammonium Phosphate",
+    "base_global_gallium": "Global Gallium",
+    "base_global_germanium": "Global Germanium",
+    "base_global_indium": "Global Indium",
+    "base_global_iron_ore": "Global Iron Ore",
+    "base_global_lead": "Global Lead",
+    "base_global_lithium": "Global Lithium",
+    "base_global_manganese": "Global Manganese",
+    "base_global_molybdenum": "Global Molybdenum",
+    "base_global_neodymium": "Global Neodymium",
+    "base_global_nickel": "Global Nickel",
+    "base_global_steel": "Global Steel",
+    "base_global_tin": "Global Tin",
+    "base_global_titanium": "Global Titanium",
+    "base_global_zinc": "Global Zinc",
+    "base-us-aluminum": "US Aluminum",
+    "base-us-copper": "US Copper",
+    "base-us-iron-ore": "US Iron Ore",
+    "base-us-steel-coil": "US Steel Coil",
+    "base-us-uranium": "US Uranium",
+    "base-us-zinc": "US Zinc",
 
-    # Exchange rates from various Iranian exchanges
-    "sarafiroyal_usd_sell": "Sarafiroyal USD",
-    "sarafiroyal_eur_sell": "Sarafiroyal EUR",
-    "sarafiroyal_gbp_sell": "Sarafiroyal GBP",
-    "sarafiroyal_aed_sell": "Sarafiroyal AED",
-    "namdarex_usd_sell": "Namdarex USD",
-    "namdarex_eur_sell": "Namdarex EUR",
-    "namdarex_gbp_sell": "Namdarex GBP",
-    "namdarex_aed_sell": "Namdarex AED",
-    "sabaexchange_usd_sell": "Sabaexchange USD",
-    "sabaexchange_eur_sell": "Sabaexchange EUR",
-    "sabaexchange_gbp_sell": "Sabaexchange GBP",
-    "sabaexchange_aed_sell": "Sabaexchange AED",
-    "shahrexchange_usd_sell": "Shahrexchange USD",
-    "ice_exchange_exusd_sell": "Ice Exchange USD",
-    "mex_exchange_usd_sell": "Mex Exchange USD",
+    # Industrial metals & crude oil
+    "aluminium": "Aluminium",
+    "copper": "Copper",
+    "copperp": "Copper (Premium)",
+    "lead": "Lead",
+    "nickel": "Nickel",
+    "zinc": "Zinc",
+    "cobalt": "Cobalt",
+    "molybdenum": "Molybdenum",
+    "oil": "Crude Oil",
+    "oil_brent": "Brent Crude Oil",
+    "oil_opec": "OPEC Crude Oil",
+    "urals": "Urals Crude Oil",
+    "azeri_light": "Azeri Light Crude",
+    "lula": "Lula Crude",
+    "umm_lulu": "Umm Lulu Crude",
+    "upper_zakum": "Upper Zakum Crude",
+    "kansas_common": "Kansas Common Crude",
+    "central_alberta": "Central Alberta Crude",
+    "dme_oman": "DME Oman Crude",
+    "louisiana_light_oil": "Louisiana Light Oil",
+    "coking_coal": "Coking Coal",
+    "methanol": "Methanol",
+    "naphtha": "Naphtha",
+    "propane": "Propane",
+    "nuclear_energy": "Nuclear Energy",
+    "solar_energy": "Solar Energy",
 
-    # Some other important items
+    # Stock indices
+    "bourse": "Tehran Stock Exchange",
+    "bourse_asia-dow": "AsiaDow Index",
+    "bourse_globaldow": "GlobalDow Index",
+    "bourse_nikkei-225": "Nikkei 225",
+    "bourse_singapore": "Singapore STI",
+    "bourse_stoxx-600": "STOXX Europe 600",
+    "dow_jones_us": "Dow Jones Industrial",
+    "s_p_500_us": "S&P 500",
+    "nasdaq_us": "NASDAQ",
+
+    # Ratios
+    "ratio_crudeoil": "Crude Oil Ratio",
+    "ratio_dija": "Dow Jones Ratio",
+    "ratio_hui": "HUI Gold Miners Ratio",
+    "ratio_palladium": "Palladium Ratio",
+    "ratio_platinum": "Platinum Ratio",
+    "ratio_silver": "Silver Ratio",
+    "ratio_sp500": "S&P 500 Ratio",
+    "ratio_xau": "Gold Ratio",
+
+    # Forex pairs
+    "usd_afn_bid": "USD/AFN Bid",
+    "afn_usd_bid": "AFN/USD Bid",
+    "yemen@kwd-sell": "Yemen KWD Sell",
+    "exeur-sell": "Exchange EUR Sell",
+    "exeur_sell": "Exchange EUR Sell",
+    "exusd_sell": "Exchange USD Sell",
+
+    # ICE instrument rows
+    "ice_usd": "ICE USD",
+    "ice_eur": "ICE EUR",
+    "ice_rub": "ICE RUB",
+    "ice_iqd": "ICE IQD",
+
+    # Iranian coin/currency basis (used by several exchanges)
     "afghan_usd": "Afghan USD",
+
+    # IME certificates
+    "ime_certificate_coin": "IME Coin Certificate",
+    "ime_certificate_gold_bars": "IME Gold Bar Certificate",
+    "ime_certificate_silver_bars": "IME Silver Bar Certificate",
+
+    # IME index funds
+    "ime_indices_ati_sandogh_tala": "IME ATI Gold Fund Index",
+    "ime_indices_ati_sekeh": "IME ATI Coin Index",
+    "ime_indices_ati_shemsh_silver": "IME ATI Silver Bar Index",
+    "ime_indices_ati_silver": "IME ATI Silver Index",
+    "ime_indices_dena_zagros": "IME Dena Zagros Index",
+    "ime_indices_kahroba": "IME Kahroba Index",
+    "ime_indices_sandogh_silver": "IME Silver Fund Index",
+    "ime_indices_sandogh_tala": "IME Gold Fund Index",
+    "ime_indices_shemsh_tala_kham": "IME Raw Gold Bar Index",
+
+    # Crypto (IRR quotes and gold-backed tokens)
+    "btc-irr": "Bitcoin (IRR)",
+    "eth-irr": "Ethereum (IRR)",
+    "eos-irr": "EOS (IRR)",
+    "dash-irr": "Dash (IRR)",
+    "xlm-irr": "Stellar (IRR)",
+    "xrp-irr": "Ripple (IRR)",
+    "usdt-irr": "Tether (IRR)",
+    "price_bch": "Bitcoin Cash",
+    "price_eos": "EOS",
+    "price_etc": "Ethereum Classic",
+    "price_gnt": "Golem",
+    "price_omg": "OmiseGO",
+    "crypto_comtech_gold": "Comtech Gold",
+    "crypto_gldt": "GLDT",
+    "crypto_gold_dao": "Gold DAO",
+    "crypto_gold_kau": "KAU Gold",
+    "crypto_matrixdock_gold": "Matrixdock Gold",
+    "crypto_nugget_trap_gold_token": "Nugget Trap Gold Token",
+    "crypto_paxg_gold": "PAX Gold",
+    "crypto_quorium": "Quorium",
+    "crypto_tether_gold_tokens": "Tether Gold",
+    "crypto_ugold_inc": "uGold",
+    "crypto_vnx_gold": "VNX Gold",
+
+    # Commodity markets
+    "commodity_Polypropylene": "Polypropylene",
+    "commodity_barley": "Barley",
+    "commodity_beef": "Beef",
+    "commodity_bitumen": "Bitumen",
+    "commodity_butter": "Butter",
+    "commodity_canola_oil": "Canola Oil",
+    "commodity_cheese": "Cheese",
+    "commodity_cn_eggs": "China Eggs",
+    "commodity_corn": "Corn",
+    "commodity_cotton": "Cotton",
+    "commodity_feed_cattle": "Feed Cattle",
+    "commodity_kraft_pulp": "Kraft Pulp",
+    "commodity_live_cattle": "Live Cattle",
+    "commodity_london_cocoa": "London Cocoa",
+    "commodity_london_coffee": "London Coffee",
+    "commodity_london_sugar": "London Sugar",
+    "commodity_london_wheat": "London Wheat",
+    "commodity_lumber": "Lumber",
+    "commodity_magnesium": "Magnesium",
+    "commodity_milk": "Milk",
+    "commodity_oats": "Oats",
+    "commodity_orange_juice": "Orange Juice",
+    "commodity_palm_oil": "Palm Oil",
+    "commodity_phosphorus": "Phosphorus",
+    "commodity_polyethylene": "Polyethylene",
+    "commodity_polyvinyl": "Polyvinyl (PVC)",
+    "commodity_poultry": "Poultry",
+    "commodity_rapeseed": "Rapeseed",
+    "commodity_rhodium": "Rhodium",
+    "commodity_rough_rice": "Rough Rice",
+    "commodity_rubber": "Rubber",
+    "commodity_salmon": "Salmon",
+    "commodity_silicon": "Silicon",
+    "commodity_soda_ash": "Soda Ash",
+    "commodity_soybean_meal": "Soybean Meal",
+    "commodity_soybean_oil": "Soybean Oil",
+    "commodity_soybeans": "Soybeans",
+    "commodity_styrene": "Styrene",
+    "commodity_sulfur": "Sulfur",
+    "commodity_sunflower_oil": "Sunflower Oil",
+    "commodity_synthetic_rubber": "Synthetic Rubber",
+    "commodity_tea": "Tea",
+    "commodity_tellurium": "Tellurium",
+    "commodity_urea": "Urea",
+    "commodity_us_cocoa": "US Cocoa",
+    "commodity_us_coffee_c": "US Coffee C",
+    "commodity_us_eggs": "US Eggs",
+    "commodity_us_sugar_no11": "US Sugar No. 11",
+    "commodity_us_wheat": "US Wheat",
+    "commodity_wool": "Wool",
 }
+
+# ISO-ish currency codes used by price_*, diff_*, forex pairs
+CURRENCY_CODES = {
+    "all": "Albanian Lek", "amd": "Armenian Dram", "ang": "Netherlands Antillean Guilder",
+    "ars": "Argentine Peso", "aud": "Australian Dollar", "awg": "Aruban Florin",
+    "azn": "Azerbaijani Manat", "bam": "Bosnia-Herzegovina Convertible Mark",
+    "bbd": "Barbadian Dollar", "bch": "Bitcoin Cash", "bdt": "Bangladeshi Taka",
+    "bgn": "Bulgarian Lev", "bhd": "Bahraini Dinar", "bif": "Burundian Franc",
+    "bmd": "Bermudian Dollar", "bnd": "Brunei Dollar", "brl": "Brazilian Real",
+    "bsd": "Bahamian Dollar", "btn": "Bhutanese Ngultrum", "bwp": "Botswana Pula",
+    "byn": "Belarusian Ruble", "bzd": "Belize Dollar", "cad": "Canadian Dollar",
+    "cdf": "Congolese Franc", "chf": "Swiss Franc", "clp": "Chilean Peso",
+    "cny": "Chinese Yuan", "cop": "Colombian Peso", "crc": "Costa Rican Colon",
+    "cup": "Cuban Peso", "cve": "Cape Verdean Escudo", "cyp": "Cypriot Pound",
+    "czk": "Czech Koruna", "djf": "Djiboutian Franc", "dkk": "Danish Krone",
+    "dop": "Dominican Peso", "dzd": "Algerian Dinar", "egp": "Egyptian Pound",
+    "eos": "EOS", "etb": "Ethiopian Birr", "etc": "Ethereum Classic",
+    "eur": "Euro", "fjd": "Fijian Dollar", "gbp": "British Pound",
+    "gel": "Georgian Lari", "ghs": "Ghanaian Cedi", "gmd": "Gambian Dalasi",
+    "gnf": "Guinean Franc", "gnt": "Golem", "gtq": "Guatemalan Quetzal",
+    "gyd": "Guyanese Dollar", "hkd": "Hong Kong Dollar", "hnl": "Honduran Lempira",
+    "hrk": "Croatian Kuna", "htg": "Haitian Gourde", "huf": "Hungarian Forint",
+    "idr": "Indonesian Rupiah", "inr": "Indian Rupee", "iqd": "Iraqi Dinar",
+    "isk": "Icelandic Krona", "jmd": "Jamaican Dollar", "jod": "Jordanian Dinar",
+    "jpy": "Japanese Yen", "kes": "Kenyan Shilling", "kgs": "Kyrgyzstani Som",
+    "khr": "Cambodian Riel", "kmf": "Comorian Franc", "krw": "South Korean Won",
+    "kwd": "Kuwaiti Dinar", "kyd": "Cayman Islands Dollar", "kzt": "Kazakhstani Tenge",
+    "lak": "Lao Kip", "lbp": "Lebanese Pound", "lkr": "Sri Lankan Rupee",
+    "lrd": "Liberian Dollar", "lsl": "Lesotho Loti", "lyd": "Libyan Dinar",
+    "mad": "Moroccan Dirham", "mdl": "Moldovan Leu", "mga": "Malagasy Ariary",
+    "mkd": "Macedonian Denar", "mmk": "Myanmar Kyat", "mop": "Macanese Pataca",
+    "mro": "Mauritanian Ouguiya", "mur": "Mauritian Rupee", "mvr": "Maldivian Rufiyaa",
+    "mwk": "Malawian Kwacha", "mxn": "Mexican Peso", "myr": "Malaysian Ringgit",
+    "mzn": "Mozambican Metical", "nad": "Namibian Dollar", "ngn": "Nigerian Naira",
+    "nio": "Nicaraguan Cordoba", "nok": "Norwegian Krone", "npr": "Nepalese Rupee",
+    "nzd": "New Zealand Dollar", "omg": "OmiseGO", "omr": "Omani Rial",
+    "pab": "Panamanian Balboa", "pen": "Peruvian Sol", "pgk": "Papua New Guinean Kina",
+    "php": "Philippine Peso", "pkr": "Pakistani Rupee", "pln": "Polish Zloty",
+    "pyg": "Paraguayan Guarani", "qar": "Qatari Riyal", "ron": "Romanian Leu",
+    "rsd": "Serbian Dinar", "rub": "Russian Ruble", "rwf": "Rwandan Franc",
+    "sar": "Saudi Riyal", "scr": "Seychellois Rupee", "sdg": "Sudanese Pound",
+    "sek": "Swedish Krona", "sgd": "Singapore Dollar", "shp": "Saint Helena Pound",
+    "skk": "Slovak Koruna", "sll": "Sierra Leonean Leone", "sos": "Somali Shilling",
+    "std": "Sao Tomean Dobra", "svc": "Salvadoran Colon", "syp": "Syrian Pound",
+    "szl": "Swazi Lilangeni", "thb": "Thai Baht", "tjs": "Tajikistani Somoni",
+    "tmt": "Turkmenistani Manat", "tnd": "Tunisian Dinar", "try": "Turkish Lira",
+    "ttd": "Trinidad and Tobago Dollar", "twd": "New Taiwan Dollar",
+    "tzs": "Tanzanian Shilling", "uah": "Ukrainian Hryvnia", "ugx": "Ugandan Shilling",
+    "uyu": "Uruguayan Peso", "uzs": "Uzbekistani Som", "vef": "Venezuelan Bolivar",
+    "vnd": "Vietnamese Dong", "vuv": "Vanuatu Vatu", "xaf": "CFA Franc BEAC",
+    "xcd": "East Caribbean Dollar", "xof": "CFA Franc BCEAO", "xpf": "CFP Franc",
+    "yer": "Yemeni Rial", "zar": "South African Rand", "zmw": "Zambian Kwacha",
+    "afn": "Afghani", "aed": "UAE Dirham",
+}
+
+# crypto-<slug> base names
+CRYPTO_NAMES = {
+    "avalanche": "Avalanche", "binance-coin": "BNB", "bittorrent": "BitTorrent",
+    "bitcoin": "Bitcoin", "bitcoin-cash": "Bitcoin Cash", "cardano": "Cardano",
+    "cashaa": "Cashaa", "chainlink": "Chainlink", "cosmos": "Cosmos",
+    "dash": "Dash", "decred": "Decred", "dogecoin": "Dogecoin",
+    "elrond": "Elrond (MultiversX)", "eos": "EOS", "ethereum": "Ethereum",
+    "ethereum-classic": "Ethereum Classic", "fantom": "Fantom",
+    "filecoin": "Filecoin", "flow": "Flow", "gala": "Gala", "litecoin": "Litecoin",
+    "loopring-irc": "Loopring", "maker": "Maker", "monero": "Monero",
+    "nem": "NEM", "neo": "Neo", "pancakeswap": "PancakeSwap",
+    "polkadot": "Polkadot", "ripple": "Ripple (XRP)", "sandbox": "The Sandbox",
+    "shiba-inu": "Shiba Inu", "solana": "Solana", "stellar": "Stellar",
+    "tezos": "Tezos", "tether": "Tether", "toncoin": "Toncoin",
+    "tron": "TRON", "uniswap": "Uniswap", "usd-coin": "USD Coin",
+    "waves": "Waves", "zcash": "Zcash",
+}
+
+# Iranian exchange slugs -> display names
+EXCHANGE_NAMES = {
+    "altinexchange": "Altin Exchange",
+    "arshinexchange": "Arshin Exchange",
+    "ex_sa_exchange": "EX-SA Exchange",
+    "ice_exchange": "ICE Exchange",
+    "ice_exchange_mellat": "ICE Mellat Exchange",
+    "ice_exchange_sepehr": "ICE Sepehr Exchange",
+    "kajex": "KAJEX",
+    "maskanexchange": "Maskan Exchange",
+    "melalexchangeco": "Mela Exchange",
+    "mex_exchange": "MEX Exchange",
+    "mojtahedi": "Mojtahedi Exchange",
+    "namdarex": "Namdar Exchange",
+    "sarafiroyal": "Sarafi Royal",
+    "sarafiyaran": "Sarafi Yaran",
+    "sarafiyousefabad": "Sarafi Yusefabad",
+    "sarrafkhaneh": "Sarrafkhaneh Exchange",
+    "sabaexchange": "Saba Exchange",
+    "shahrexchange": "Shahr Exchange",
+}
+
+# Words that stay uppercase inside generated names
+_UPPER_WORDS = set(CURRENCY_CODES) | {
+    "ati", "ice", "ime", "usd", "eur", "gc", "bid", "ask", "iri",
+    "exusd", "exeur", "irhc", "irec", "irbc", "irqc", "irgc", "rgc",
+    "irhc86", "irec86", "irqc86", "amd", "sip",
+}
+
+
+def _humanize(text):
+    """Turn snake/kebab-case words into readable English."""
+    words = str(text).replace("-", " ").replace("_", " ").split()
+    out = []
+    for w in words:
+        lw = w.lower()
+        if lw in _UPPER_WORDS:
+            out.append(lw.upper())
+        elif w.isdigit():
+            out.append(w)
+        else:
+            out.append(w[:1].upper() + w[1:])
+    return " ".join(out)
+
+
+def title_to_english(title):
+    """Map a raw tasnymarket title to a readable English name."""
+    if not title:
+        return ""
+    if title in ENGLISH_NAMES:
+        return ENGLISH_NAMES[title]
+
+    # crypto-bitcoin / crypto-bitcoin-irr
+    m = re.fullmatch(r"crypto-([a-z0-9-]+?)(-irr)?", title)
+    if m and m.group(1) in CRYPTO_NAMES:
+        return CRYPTO_NAMES[m.group(1)] + (" (IRR)" if m.group(2) else "")
+
+    # price_<currency code>
+    if title.startswith("price_"):
+        code = title[len("price_"):]
+        if code in CURRENCY_CODES:
+            return CURRENCY_CODES[code]
+        return _humanize(code)
+
+    # diff_eur_usd -> EUR/USD Spread
+    m = re.fullmatch(r"diff_([a-z]+)_([a-z]+)", title)
+    if m:
+        return f"{m.group(1).upper()}/{m.group(2).upper()} Spread"
+
+    # IME option / futures contracts
+    m = re.fullmatch(r"ime_option_([a-z_]+)_([a-z]+)_(\d{2})_c(\d+)", title)
+    if m:
+        return f"IME {_humanize(m.group(1))} Option {m.group(2).title()} {m.group(3)} C{m.group(4)}"
+    m = re.fullmatch(r"ime_futures_([a-z_]+)_([a-z]+)_(\d{2})", title)
+    if m:
+        return f"IME {_humanize(m.group(1))} Futures {m.group(2).title()} {m.group(3)}"
+
+    # IME indices / funds / certificates
+    if title.startswith("ime_indices_"):
+        return f"IME {_humanize(title[len('ime_indices_'):])} Index"
+    if title.startswith("ime_fund_"):
+        return f"IME {_humanize(title[len('ime_fund_'):])} Fund"
+    if title.startswith("ime_certificate_"):
+        return f"IME {_humanize(title[len('ime_certificate_'):])} Certificate"
+
+    # <exchange>_<instrument>_<buy|sell>
+    m = re.fullmatch(r"(.+)_(.+)_(buy|sell)", title)
+    if m and m.group(1) in EXCHANGE_NAMES:
+        inst = m.group(2).rstrip("-")
+        return f"{EXCHANGE_NAMES[m.group(1)]} {inst.upper()} {m.group(3).title()}"
+
+    # ICE average/currency/transfer/... rows
+    m = re.fullmatch(r"(ice_(?:average|currency|transfer|commodity_transfer))_([a-z0-9]+)_(buy|sell)", title)
+    if m:
+        kind = m.group(1)[len("ice_"):]
+        return f"ICE {_humanize(kind)} {m.group(2).upper()} {m.group(3).title()}"
+
+    # forex pairs: usd-jpy-ask / aud-usd-ask / usd_afn_bid
+    m = re.fullmatch(r"([a-z]{3})-([a-z]{3})-(ask|bid)", title)
+    if m:
+        return f"{m.group(1).upper()}/{m.group(2).upper()} {m.group(3).title()}"
+    m = re.fullmatch(r"([a-z]{3})_([a-z]{3})_(ask|bid)", title)
+    if m:
+        return f"{m.group(1).upper()}/{m.group(2).upper()} {m.group(3).title()}"
+
+    # contract ticker codes: gc10 -> GC10
+    if re.fullmatch(r"gc\d+", title):
+        return title.upper()
+
+    # generic fallback: join words, keep currency codes uppercase
+    if "_" in title:
+        return _humanize(title)
+    return title
 
 # ANSI color codes (only used when stdout is a TTY)
 is_tty = sys.stdout.isatty()
@@ -365,8 +767,8 @@ def parse_item(item):
     time_en = item.get("t_en", "")
     timestamp = item.get("ts", "")
 
-    # Get English name from mapping, fall back to title processing
-    english_name = ENGLISH_NAMES.get(title, title)
+    # Get English name from mapping/heuristics
+    english_name = title_to_english(title)
 
     # Clean the price - remove commas for display
     price_clean = price.replace(",", "")

@@ -1,0 +1,995 @@
+#!/usr/bin/env python3
+"""tse.find — screen every TSETMC instrument against flag-defined filters."""
+
+import argparse
+import csv
+import importlib.util
+import io
+import json
+import math
+import os
+import re
+import statistics
+import sys
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
+from importlib.machinery import SourceFileLoader
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+_loader = SourceFileLoader("tse", os.path.join(HERE, "tse"))
+_spec = importlib.util.spec_from_loader("tse", _loader)
+tse = importlib.util.module_from_spec(_spec)
+_loader.exec_module(tse)
+
+SECTOR_CODES = {
+    "01": "زراعت و خدمات وابسته", "10": "استخراج زغال سنگ",
+    "11": "استخراج نفت گاز و خدمات جنبي جز اکتشاف", "13": "استخراج کانه هاي فلزي",
+    "14": "استخراج ساير معادن", "17": "منسوجات",
+    "19": "دباغي، پرداخت چرم و ساخت انواع پاپوش", "20": "محصولات چوبي",
+    "21": "محصولات كاغذي", "22": "انتشار، چاپ و تکثير",
+    "23": "فراورده هاي نفتي، كك و سوخت هسته اي", "25": "لاستيك و پلاستيك",
+    "26": "توليد محصولات كامپيوتري الكترونيكي ونوري", "27": "فلزات اساسي",
+    "28": "ساخت محصولات فلزي", "29": "ماشين آلات و تجهيزات",
+    "31": "ماشين آلات و دستگاه هاي برقي", "32": "ساخت دستگاه ها و وسايل ارتباطي",
+    "34": "خودرو و ساخت قطعات", "35": "ساير تجهيزات حمل و نقل", "38": "قند و شكر",
+    "39": "شرکتهاي چند رشته اي صنعتي", "40": "عرضه برق، گاز، بخاروآب گرم",
+    "42": "محصولات غذايي و آشاميدني به جز قند و شكر", "43": "مواد و محصولات دارويي",
+    "44": "محصولات شيميايي", "45": "پيمانكاري صنعتي",
+    "46": "تجارت عمده فروشي به جز وسايل نقليه موتور",
+    "47": "خرده فروشي،باستثناي وسايل نقليه موتوري", "49": "كاشي و سراميك",
+    "50": "تجارت عمده وخرده فروشي وسائط نقليه موتور", "53": "سيمان، آهك و گچ",
+    "54": "ساير محصولات كاني غيرفلزي", "55": "هتل و رستوران", "56": "سرمايه گذاريها",
+    "57": "بانكها و موسسات اعتباري", "58": "ساير واسطه گريهاي مالي",
+    "59": "اوراق حق تقدم استفاده از تسهيلات مسكن",
+    "60": "حمل ونقل، انبارداري و ارتباطات", "61": "حمل و نقل آبي", "64": "مخابرات",
+    "66": "بيمه وصندوق بازنشستگي به جزتامين اجتماعي",
+    "67": "فعاليتهاي كمكي به نهادهاي مالي واسط", "68": "صندوق سرمايه گذاري قابل معامله",
+    "69": "اوراق تامين مالي", "70": "انبوه سازي، املاك و مستغلات",
+    "71": "فعاليت مهندسي، تجزيه، تحليل و آزمايش فني", "72": "رايانه و فعاليت هاي وابسته به آن",
+    "73": "اطلاعات و ارتباطات", "74": "خدمات فني و مهندسي",
+    "84": "سلامت انسان و مددكاري اجتماعي", "90": "فعاليت هاي هنري، سرگرمي و خلاقانه",
+    "93": "فعاليتهاي فرهنگي و ورزشي",
+}
+
+BOARD_CODES = {
+    "1A": "بازار ابزارهاي نوين مالي فرابورس", "1N": "بازار اول (تابلوی اصلی) بورس",
+    "1Z": "بازار اول فرابورس", "2A": "بازار ابزارهاي نوين مالي فرابورس",
+    "2Z": "بازار دوم فرابورس", "41": "بازار ابزارهاي نوين مالي",
+    "4A": "بازار ابزارهاي نوين مالي فرابورس", "51": "بازار صندوق های قابل معامله",
+    "5A": "بازار صندوق های قابل معامله", "5N": "بازار صندوق های قابل معامله",
+    "61": "بازار ابزارهای مشتقه", "71": "بازار ابزارهای مشتقه",
+    "91": "بازار ابزارهای مشتقه", "C1": "بازار پایه نارنجی فرابورس",
+    "D1": "بازار دوم فرابورس", "EQ": "بازار سایر اوراق بهادار قابل معامله",
+    "F1": "بازار عادی آتی", "G1": "بازار دوم (تابلوی اصلی) بورس",
+    "H1": "بازار صندوق های قابل معامله", "HN": "بازار صندوق های قابل معامله",
+    "I1": "بازار ابزارهاي نوين مالي فرابورس", "I2": "بازار ابزارهاي نوين مالي فرابورس",
+    "K2": "بازار دوم فرابورس", "L1": "بازار پایه قرمز فرابورس",
+    "M1": "بازار ابزارهاي نوين مالي فرابورس", "M2": "بازار ابزارهاي نوين مالي فرابورس",
+    "N1": "بازار اول (تابلوی فرعی) بورس", "N2": "بازار دوم (تابلوی فرعی) بورس",
+    "N4": "بازار اوراق بدهی", "NS": "بازار سرمایه گذاری حرفه ای",
+    "O1": "بازار خرده فروشی بورس", "P1": "بازار پایه زرد فرابورس",
+    "P2": "بازار پایه زرد فرابورس", "Q1": "بورس کالا",
+    "QS": "صندوق های کالایی", "T1": "بازار ابزارهاي نوين مالي فرابورس",
+    "T2": "بازار ابزارهاي نوين مالي فرابورس", "V1": "بازار نوآفرین - رشد",
+    "W1": "بازار نوآفرین - دانش بنیان", "Z1": "بازار دوم فرابورس",
+    "13": "بازار ابزارهای مشձه", "20": "بازار ابزارهای مشتقه",
+}
+
+FLOW_NAMES = {1: "بورس", 2: "فرابورس", 3: "مشتقه", 4: "پایه", 6: "فرابورس", 7: "فرابورس"}
+
+FLOW_ALIASES = {
+    "borse": {1}, "bourse": {1}, "tse": {1}, "1": {1},
+    "frabors": {2, 6, 7}, "farabourse": {2, 6, 7}, "ifb": {2, 6, 7}, "2": {2},
+    "moshtaghe": {3}, "derivative": {3}, "3": {3},
+    "paye": {4}, "base": {4}, "4": {4},
+    "6": {6}, "7": {7},
+}
+
+KIND_TYPES = {
+    300: "stock", 303: "stock", 309: "stock", 313: "stock",
+    305: "fund", 380: "fund", 315: "fund",
+    311: "option", 312: "option", 320: "option", 321: "option",
+    304: "future", 307: "mortgage",
+    400: "right", 403: "right", 404: "right",
+    306: "bond", 706: "bond", 301: "bond", 206: "bond", 208: "bond",
+    200: "forward", 308: "forward", 701: "forward",
+    201: "other", 801: "other", 802: "other", 803: "other",
+}
+
+TYPE_ALIASES = {
+    "stock": "stock", "stocks": "stock", "equity": "stock", "سهم": "stock",
+    "fund": "fund", "funds": "fund", "etf": "fund", "صندوق": "fund",
+    "option": "option", "options": "option", "اختيار": "option",
+    "bond": "bond", "bonds": "bond", "اصاق": "bond",
+    "right": "right", "rights": "right", "حق": "right",
+    "future": "future", "futures": "future", "آتي": "future",
+    "mortgage": "mortgage", "تسه": "mortgage",
+    "forward": "forward", "سلف": "forward",
+    "other": "other", "all": "all", "همه": "all",
+}
+
+COLUMNS = {
+    "symbol": ("Symbol", "text"), "name": ("Name", "text"),
+    "type": ("Type", "text"), "market": ("Market", "text"),
+    "board": ("Board", "text"), "sector": ("Sector", "text"),
+    "code": ("insCode", "text"), "isin": ("ISIN", "text"),
+    "state": ("State", "text"), "macd": ("MACD", "text"),
+    "chg": ("Chg%", "pct"), "to_ceil": ("ToCeil%", "pct"),
+    "to_floor": ("ToFloor%", "pct"), "spread_pct": ("Spr%", "pct"),
+    "y52h": ("To52H%", "pct"), "y52l": ("To52L%", "pct"),
+    "price": ("Price", "int"), "last": ("Last", "int"),
+    "open": ("Open", "int"), "low": ("Lo", "int"), "high": ("Hi", "int"),
+    "eps": ("EPS", "int"), "spread": ("Spread", "int"),
+    "trades": ("Trades", "int"),
+    "pe": ("P/E", "float"), "sector_pe": ("SecP/E", "float"),
+    "psr": ("P/S", "float"),     "rsi": ("RSI", "float"),
+    "sma20": ("SMA20", "int"), "sma50": ("SMA50", "int"), "sma200": ("SMA200", "int"),
+    "streak": ("Strk", "int"), "surge": ("Surge", "float"),
+    "imbalance": ("Imbal", "float"),
+    "vol": ("Volume", "amt"), "value": ("Value", "amt"),
+    "mcap": ("MktCap", "amt"), "avg5d": ("Avg5d", "amt"),
+    "bid_wall": ("BidWall", "amt"), "ask_wall": ("AskWall", "amt"),
+    "free_float": ("FF%", "pct"),
+}
+
+AMOUNT_KEYS = {"vol", "value", "mcap", "avg5d", "bid_wall", "ask_wall"}
+INT_KEYS = {"price", "last", "open", "low", "high", "eps", "spread", "trades", "streak"}
+PCT_KEYS = {"chg", "to_ceil", "to_floor", "spread_pct", "y52h", "y52l", "free_float"}
+INFO_KEYS = {"psr", "sector_pe", "avg5d", "y52h", "y52l", "free_float"}
+HIST_KEYS = {"rsi", "sma20", "sma50", "sma200", "macd", "streak", "surge"}
+BOOK_KEYS = {"bid_wall", "ask_wall", "imbalance"}
+DEFAULT_COLUMNS = ["symbol", "type", "market", "chg", "price", "pe", "vol", "value", "mcap", "sector"]
+
+
+class ScreenError(Exception):
+    pass
+
+
+def parse_amount(text):
+    """Parse a number with optional k/m/b/t suffix (rial)."""
+    match = re.fullmatch(r"\s*([+-]?[\d.,]+)\s*([kKmMbBtTpP])?\s*", str(text))
+    if not match:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}")
+    number = float(match.group(1).replace(",", ""))
+    suffix = (match.group(2) or "").lower()
+    factor = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12, "p": 1e15}.get(suffix, 1)
+    return int(number * factor) if number == int(number) else number * factor
+
+
+def parse_ratio(text):
+    try:
+        return float(str(text).replace(",", ""))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
+
+
+def split_list(values):
+    if isinstance(values, str):
+        values = [values]
+    items = []
+    for value in values or []:
+        items.extend(part.strip() for part in str(value).split(",") if part.strip())
+    return items
+
+
+def guess_type(isin, name):
+    prefix = (isin or "")[:4]
+    if isin.startswith(("IRO9", "IROA", "IROB", "IROF")):
+        return "option"
+    if isin.startswith("IRO4"):
+        return "future"
+    if isin.startswith("IRO6"):
+        return "mortgage"
+    if isin.startswith(("IRO1", "IRO3", "IRO5", "IRO7")):
+        return "stock"
+    if prefix in ("IRT1", "IRT3", "IRTK", "IRTE"):
+        return "fund"
+    if prefix.startswith("IRR"):
+        return "right"
+    if isin.startswith("IRBK") or isin.startswith("IRBE") or prefix == "IRK1":
+        return "forward"
+    if prefix == "IRB3":
+        return "bond"
+    text = tse.normal(name)
+    if "اختيار" in text or "اختیار" in text:
+        return "option"
+    if "صندوق" in text:
+        return "fund"
+    if "سلف" in text:
+        return "forward"
+    if "مرابحه" in text or "مشاركت" in text or "صكوك" in text or "اراد" in text or "گام" in text:
+        return "bond"
+    if "آتي" in text or "آتی" in text:
+        return "future"
+    if "تسه" in text or "امتياز" in text or "امتیاز" in text:
+        return "mortgage"
+    if re.match(r"^ح\s*\.|^ح\s", text):
+        return "right"
+    return "other"
+
+
+def marketwatch_path(with_book):
+    params = {"market": 0, "withBestLimits": str(bool(with_book)).lower(), "hEven": 0, "RefID": 0}
+    params.update({f"paperTypes[{i}]": i + 1 for i in range(9)})
+    return "ClosingPrice/GetMarketWatch?" + urllib.parse.urlencode(params)
+
+
+def book_is_real(levels):
+    if not isinstance(levels, list):
+        return False
+    return any(
+        (level.get("qmd") or level.get("qmo") or level.get("pmd") or level.get("pmo"))
+        for level in levels if isinstance(level, dict)
+    )
+
+
+def fetch_market_watch(client, with_book=False):
+    """Merge successive market-watch payloads until kind codes (and book) are present."""
+    merged = {}
+    for _ in range(6):
+        rows = client.api(marketwatch_path(with_book), "marketwatch")
+        if not isinstance(rows, list) or not rows:
+            raise tse.DataError("Unexpected market watch result")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            code = str(tse.pick(row, "insCode") or "")
+            if not code:
+                continue
+            current = merged.get(code)
+            if current is None:
+                merged[code] = dict(row)
+                continue
+            for key, value in row.items():
+                if key not in current or current[key] in (None, "", 0, []):
+                    current[key] = value
+            if book_is_real(row.get("blDs")) and not book_is_real(current.get("blDs")):
+                current["blDs"] = row["blDs"]
+        kinds = sum(1 for row in merged.values() if tse.pick(row, "yVal") is not None)
+        have_kinds = kinds >= len(merged) * 0.98
+        have_book = not with_book or any(book_is_real(row.get("blDs")) for row in merged.values())
+        if have_kinds and have_book:
+            break
+    if not merged:
+        raise tse.DataError("Market watch returned no instruments")
+    return list(merged.values())
+
+
+def parse_row(row):
+    isin = str(tse.pick(row, "insID") or "").strip()
+    symbol = tse.normal(tse.pick(row, "lva"))
+    name = tse.normal(tse.pick(row, "lvc"))
+    kind = tse.number(tse.pick(row, "yVal"))
+    flow = tse.number(tse.pick(row, "flow"))
+    close = tse.price(tse.pick(row, "pcl")) or tse.price(tse.pick(row, "pdv"))
+    last = tse.price(tse.pick(row, "pdv"))
+    prev = tse.price(tse.pick(row, "py"))
+    change = tse.number(tse.pick(row, "pcpc"))
+    if change is None and close and prev:
+        change = close - prev
+    ceiling = tse.price(tse.pick(row, "pMax"))
+    floor = tse.number(tse.pick(row, "pMin"))
+    bid = tse.price(tse.pick(row, "pmd"))
+    ask = tse.price(tse.pick(row, "pmo"))
+    sector_code = str(tse.pick(row, "csv") or "").strip()
+    board_code = str(tse.pick(row, "cGrValCot") or "").strip()
+    shares = tse.number(tse.pick(row, "ztd"))
+    volume = tse.number(tse.pick(row, "qtj"))
+    value = tse.number(tse.pick(row, "qtc"))
+    to_ceil = round((ceiling / close - 1) * 100, 2) if ceiling and close else None
+    to_floor = round((1 - floor / close) * 100, 2) if floor and close else None
+    gaps = [gap for gap in (to_ceil, to_floor) if gap is not None]
+    kind_type = KIND_TYPES.get(int(kind)) if kind is not None else None
+    flow_name = FLOW_NAMES.get(int(flow), f"flow{int(flow)}") if flow is not None else None
+    return {
+        "code": str(tse.pick(row, "insCode") or ""),
+        "symbol": symbol, "name": name, "isin": isin,
+        "kind": int(kind) if kind is not None else None,
+        "type": kind_type or guess_type(isin, name),
+        "flow": int(flow) if flow is not None else None,
+        "market": flow_name,
+        "board_code": board_code, "board": BOARD_CODES.get(board_code) or flow_name or board_code or None,
+        "sector_code": sector_code, "sector": SECTOR_CODES.get(sector_code) or None,
+        "state": tse.pick(row, "yMarNSC"),
+        "price": close, "last": last, "prev": prev,
+        "open": tse.price(tse.pick(row, "pf")),
+        "low": tse.price(tse.pick(row, "pmn")), "high": tse.price(tse.pick(row, "pmx")),
+        "chg": round((close / prev - 1) * 100, 2) if close and prev else None,
+        "change": change,
+        "ceiling": ceiling, "floor": floor,
+        "to_ceil": to_ceil, "to_floor": to_floor, "_near_limit": min(gaps) if gaps else None,
+        "bid": bid, "ask": ask,
+        "spread": (ask - bid) if bid and ask else None,
+        "spread_pct": round((ask / bid - 1) * 100, 2) if bid and ask else None,
+        "vol": volume, "value": value, "trades": tse.number(tse.pick(row, "ztt")),
+        "eps": tse.number(tse.pick(row, "eps")) or None,
+        "pe": tse.number(tse.pick(row, "pe")),
+        "shares": shares, "mcap": shares * close if shares and close else None,
+        "traded": bool(value and value > 0),
+        "levels": row.get("blDs") if isinstance(row.get("blDs"), list) else [],
+        "enriched": set(),
+    }
+
+
+def watchlist_filter(path):
+    symbols = set()
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            token = line.split("#", 1)[0].split()[0] if line.split("#", 1)[0].split() else ""
+            if not token:
+                continue
+            token = tse.normalize_input(token)
+            symbols.add(tse.normal(token).upper())
+            symbols.add(token.upper())
+    return symbols
+
+
+def matches_watchlist(record, symbols):
+    return any(
+        key in symbols
+        for key in (tse.normal(record["symbol"]).upper(), (record["isin"] or "").upper(), record["code"], record["symbol"])
+    )
+
+
+def build_filters(args, columns):
+    """Return (base_filters, info_filters, hist_filters, book_filters) as (label, fn) lists."""
+    base, info, hist, book = [], [], [], []
+
+    def add(bucket, label, fn):
+        bucket.append((label, fn))
+
+    wanted_types = {TYPE_ALIASES.get(item, item) for item in split_list(args.type)} or {"all"}
+    if "all" not in wanted_types:
+        unknown = wanted_types - set(TYPE_ALIASES.values())
+        if unknown:
+            raise ScreenError(f"unknown --type: {', '.join(sorted(unknown))} (choose from {', '.join(sorted(set(TYPE_ALIASES.values()) - {'all'}))})")
+        add(base, f"type in {','.join(sorted(wanted_types))}", lambda r: r["type"] in wanted_types)
+
+    markets = set()
+    for item in split_list(args.market):
+        if item.lower() not in FLOW_ALIASES:
+            raise ScreenError(f"unknown --market: {item} (choose from {', '.join(sorted(set(FLOW_ALIASES)))})")
+        markets.update(FLOW_ALIASES[item.lower()])
+    if markets:
+        add(base, f"market in {sorted(markets)}", lambda r: r["flow"] in markets)
+
+    for text in split_list(args.board):
+        needle = tse.normal(text).lower()
+        add(base, f"board~{text}", lambda r, n=needle: n in tse.normal(r["board"]).lower() or n == (r["board_code"] or "").lower())
+
+    for text in split_list(args.sector):
+        needle = tse.normal(text)
+        code = needle.zfill(2) if needle.isdigit() else None
+        add(base, f"sector~{text}", lambda r, n=needle, c=code: n in tse.normal(r["sector"] or "").lower() or c == r["sector_code"] or n == r["sector_code"])
+
+    for text in split_list(args.match):
+        needle = tse.normal(text).lower()
+        add(base, f"match~{text}", lambda r, n=needle: n in tse.normal(r["symbol"]).lower() or n in tse.normal(r["name"]).lower())
+
+    if args.watchlist:
+        symbols = watchlist_filter(args.watchlist)
+        add(base, f"watchlist {os.path.basename(args.watchlist)}", lambda r: matches_watchlist(r, symbols))
+    if args.traded:
+        add(base, "traded today", lambda r: r["traded"])
+    if args.untraded:
+        add(base, "not traded today", lambda r: not r["traded"])
+    if args.up:
+        add(base, "up on the day", lambda r: r["chg"] is not None and r["chg"] > 0)
+    if args.down:
+        add(base, "down on the day", lambda r: r["chg"] is not None and r["chg"] < 0)
+    if args.states:
+        states = {item.upper() for item in split_list(args.states)}
+        add(base, f"state in {sorted(states)}", lambda r: str(r["state"] or "").upper() in states)
+
+    for label, key, cmp in (("price-min", "price", lambda a, b: a >= b), ("price-max", "price", lambda a, b: a <= b),
+                            ("chg-min", "chg", lambda a, b: a >= b), ("chg-max", "chg", lambda a, b: a <= b),
+                            ("pe-min", "pe", lambda a, b: a >= b), ("pe-max", "pe", lambda a, b: a <= b),
+                            ("eps-min", "eps", lambda a, b: a >= b), ("eps-max", "eps", lambda a, b: a <= b),
+                            ("mcap-min", "mcap", lambda a, b: a >= b), ("mcap-max", "mcap", lambda a, b: a <= b),
+                            ("vol-min", "vol", lambda a, b: a >= b), ("vol-max", "vol", lambda a, b: a <= b),
+                            ("val-min", "value", lambda a, b: a >= b), ("val-max", "value", lambda a, b: a <= b),
+                            ("trades-min", "trades", lambda a, b: a >= b), ("trades-max", "trades", lambda a, b: a <= b),
+                            ("spread-max", "spread", lambda a, b: a <= b), ("spread-pct-max", "spread_pct", lambda a, b: a <= b),
+                            ("near-limit", "_near_limit", lambda a, b: a <= b)):
+        value = getattr(args, label.replace("-", "_"))
+        if value is None:
+            continue
+        add(base, f"{label} {value}", lambda r, k=key, v=value, f=cmp: r.get(k) is not None and f(r.get(k), v))
+
+    if args.profitable:
+        add(base, "profitable (EPS>0)", lambda r: r["eps"] is not None and r["eps"] > 0)
+    elif args.loss_making:
+        add(base, "loss-making (EPS<0)", lambda r: r["eps"] is not None and r["eps"] < 0)
+    if args.at_ceiling:
+        add(base, "at daily ceiling", lambda r: r["to_ceil"] is not None and r["to_ceil"] <= 0.001)
+    if args.at_floor:
+        add(base, "at daily floor", lambda r: r["to_floor"] is not None and r["to_floor"] <= 0.001)
+
+    for label, key, cmp in (("ps-min", "psr", lambda a, b: a >= b), ("ps-max", "psr", lambda a, b: a <= b),
+                            ("sector-pe-min", "sector_pe", lambda a, b: a >= b),
+                            ("sector-pe-max", "sector_pe", lambda a, b: a <= b),
+                            ("avg5d-min", "avg5d", lambda a, b: a >= b),
+                            ("free-float-min", "free_float", lambda a, b: a >= b),
+                            ("near-52w-high", "y52h", lambda a, b: a <= b),
+                            ("near-52w-low", "y52l", lambda a, b: a <= b)):
+        value = getattr(args, label.replace("-", "_"))
+        if value is None:
+            continue
+        add(info, f"{label} {value}", lambda r, k=key, v=value, f=cmp: r.get(k) is not None and f(r.get(k), v))
+
+    for label, key, cmp in (("rsi-min", "rsi", lambda a, b: a >= b), ("rsi-max", "rsi", lambda a, b: a <= b),
+                            ("streak-min", "streak", lambda a, b: a >= b), ("streak-max", "streak", lambda a, b: a <= b),
+                            ("vol-surge", "surge", lambda a, b: a >= b)):
+        value = getattr(args, label.replace("-", "_"))
+        if value is None:
+            continue
+        add(hist, f"{label} {value}", lambda r, k=key, v=value, f=cmp: r.get(k) is not None and f(r.get(k), v))
+
+    if args.above_sma:
+        add(hist, f"above SMA{args.above_sma}", lambda r: r.get("price") and r.get(f"sma{args.above_sma}") and r["price"] > r[f"sma{args.above_sma}"])
+    if args.below_sma:
+        add(hist, f"below SMA{args.below_sma}", lambda r: r.get("price") and r.get(f"sma{args.below_sma}") and r["price"] < r[f"sma{args.below_sma}"])
+    if args.macd:
+        want = "bull" if args.macd.startswith("b") else "bear"
+        add(hist, f"macd {want}", lambda r, w=want: r.get("macd") == w)
+    for spec, direction in ((args.cross, "bull"), (args.cross_below, "bear")):
+        if not spec:
+            continue
+        parts = [part for part in re.split(r"[,\s]+", spec) if part]
+        if len(parts) != 2:
+            raise ScreenError(f"--cross expects two periods, e.g. 20,50 (got {spec!r})")
+        fast, slow = int(parts[0]), int(parts[1])
+        if fast >= slow:
+            raise ScreenError(f"--cross fast period must be shorter than slow ({fast} >= {slow})")
+        key = f"cross_{fast}_{slow}_{direction}"
+        add(hist, f"{direction} cross {fast}/{slow}", lambda r, k=key: r.get(k) is True)
+
+    if args.bid_wall_min is not None:
+        add(book, f"bid wall >= {args.bid_wall_min}", lambda r: r.get("bid_wall") is not None and r["bid_wall"] >= args.bid_wall_min)
+    if args.ask_wall_min is not None:
+        add(book, f"ask wall >= {args.ask_wall_min}", lambda r: r.get("ask_wall") is not None and r["ask_wall"] >= args.ask_wall_min)
+    if args.imbalance:
+        low, high = args.imbalance
+        label = f"imbalance >= {low:g}" if high == math.inf else f"imbalance in [{low:g}, {high:g}]"
+        add(book, label,
+            lambda r: r.get("imbalance") is not None and low <= r["imbalance"] <= high)
+
+    return base, info, hist, book
+
+
+def fetch_info(client, record):
+    row = client.api(f"Instrument/GetInstrumentInfo/{record['code']}", "instrumentInfo")
+    if not isinstance(row, dict):
+        raise tse.DataError("No instrument info")
+    earnings = tse.pick(row, "eps")
+    sector_pe = tse.value(earnings, "sectorPE") if isinstance(earnings, dict) else None
+    psr = tse.value(earnings, "psr") if isinstance(earnings, dict) else None
+    sector = tse.pick(row, "sector")
+    record.update({
+        "sector_pe": sector_pe if sector_pe is not None else tse.value(row, "sectorPE"),
+        "psr": psr if psr is not None else tse.value(row, "psr"),
+        "avg5d": tse.value(row, "qTotTran5JAvg"),
+        "year_low": tse.value(row, "minYear"), "year_high": tse.value(row, "maxYear"),
+        "week_low": tse.value(row, "minWeek"), "week_high": tse.value(row, "maxWeek"),
+        "free_float": tse.value(row, "freeFloatPercent", "floatPercent"),
+    })
+    if isinstance(sector, dict) and tse.pick(sector, "lSecVal"):
+        record["sector"] = tse.normal(tse.pick(sector, "lSecVal"))
+    board_title = tse.pick(row, "cgrValCotTitle")
+    if board_title and board_title != "-'":
+        record["board"] = tse.normal(board_title)
+    flow_title = tse.pick(row, "flowTitle")
+    if flow_title:
+        record["market"] = tse.normal(flow_title)
+    if record.get("year_high") and record.get("price"):
+        record["y52h"] = round((record["year_high"] - record["price"]) / record["year_high"] * 100, 2)
+    if record.get("year_low") and record.get("price"):
+        record["y52l"] = round((record["price"] - record["year_low"]) / record["year_low"] * 100, 2)
+    if record.get("eps") is None:
+        estimate = tse.value(earnings, "estimatedEPS") if isinstance(earnings, dict) else None
+        if estimate:
+            record["eps"] = estimate
+
+
+def sma_series(values, period):
+    if len(values) < period:
+        return []
+    series = [None] * len(values)
+    window = sum(values[:period])
+    series[period - 1] = window / period
+    for index in range(period, len(values)):
+        window += values[index] - values[index - period]
+        series[index] = window / period
+    return series
+
+
+def ema_series(values, period):
+    if len(values) < period:
+        return []
+    factor = 2 / (period + 1)
+    series = [None] * (period - 1)
+    series.append(sum(values[:period]) / period)
+    for value in values[period:]:
+        series.append(value * factor + series[-1] * (1 - factor))
+    return series
+
+
+def rsi_of(closes, period=14):
+    if len(closes) < period + 1:
+        return None
+    gains = losses = 0.0
+    for index in range(len(closes) - period, len(closes)):
+        delta = closes[index] - closes[index - 1]
+        if delta >= 0:
+            gains += delta
+        else:
+            losses -= delta
+    if losses == 0:
+        return 100.0
+    relative = (gains / period) / (losses / period)
+    return round(100 - 100 / (1 + relative), 2)
+
+
+def cross_flag(closes, fast, slow, direction):
+    fast_series = sma_series(closes, fast)
+    slow_series = sma_series(closes, slow)
+    if not fast_series or not slow_series:
+        return None
+    window = range(len(closes) - 1, max(0, len(closes) - 11), -1)
+    for index in window:
+        if None in (fast_series[index], slow_series[index], fast_series[index - 1], slow_series[index - 1]):
+            continue
+        crossed_up = fast_series[index - 1] <= slow_series[index - 1] and fast_series[index] > slow_series[index]
+        crossed_down = fast_series[index - 1] >= slow_series[index - 1] and fast_series[index] < slow_series[index]
+        if direction == "bull" and crossed_up:
+            return True
+        if direction == "bear" and crossed_down:
+            return True
+        if crossed_up or crossed_down:
+            return False
+    return False
+
+
+def fetch_history(client, record, days, cross_specs, sma_periods):
+    data = tse.history(client, record["code"], days, False)
+    rows = data.get("unadjusted") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        raise tse.DataError("Unexpected history")
+    closes = [row["closing_rial"] for row in rows if row.get("closing_rial")]
+    volumes = [row.get("volume_shares") or 0 for row in rows]
+    if len(closes) < 3:
+        raise tse.DataError("History too short")
+    record["rsi"] = rsi_of(closes)
+    for period in sma_periods:
+        series = sma_series(closes, period)
+        record[f"sma{period}"] = round(series[-1], 2) if series else None
+    fast, slow = ema_series(closes, 12), ema_series(closes, 26)
+    if len(fast) == len(slow) and fast:
+        macd_line = [f - s for f, s in zip(fast, slow) if f is not None and s is not None]
+        if len(macd_line) >= 9:
+            signal = ema_series(macd_line, 9)
+            if signal:
+                record["macd"] = "bull" if macd_line[-1] > signal[-1] else "bear"
+    streak = 0
+    for index in range(len(closes) - 1, 0, -1):
+        rising = closes[index] > closes[index - 1]
+        if streak == 0:
+            streak = 1 if rising else -1
+            if closes[-1] == closes[-2]:
+                break
+        elif (streak > 0) != rising:
+            break
+        elif streak > 0:
+            streak += 1
+        else:
+            streak -= 1
+    record["streak"] = streak
+    recent_volume = [value for value in volumes[-21:-1] if value]
+    if recent_volume and record.get("vol"):
+        record["surge"] = round(record["vol"] / (sum(recent_volume) / len(recent_volume)), 2)
+    for fast_period, slow_period, direction in cross_specs:
+        record[f"cross_{fast_period}_{slow_period}_{direction}"] = cross_flag(closes, fast_period, slow_period, direction)
+
+
+def fetch_book(record):
+    levels = [level for level in record.get("levels") or [] if isinstance(level, dict)]
+    bids = [level.get("qmd") or 0 for level in levels]
+    asks = [level.get("qmo") or 0 for level in levels]
+    bid_total, ask_total = sum(bids), sum(asks)
+    record["bid_wall"] = max(bids) if bids else None
+    record["ask_wall"] = max(asks) if asks else None
+    if bid_total and ask_total:
+        record["imbalance"] = round(bid_total / ask_total, 2)
+
+
+def apply_filters(records, filters, label, notes):
+    kept = records
+    for name, predicate in filters:
+        try:
+            kept = [record for record in kept if predicate(record)]
+        except Exception as exc:  # a broken filter must not kill the run
+            raise ScreenError(f"filter {name} failed: {exc}") from exc
+    if len(kept) != len(records):
+        notes.append(f"{label}: {len(records) - len(kept)} filtered out")
+    return kept
+
+
+def enrich(records, worker, jobs, cap, stage):
+    """Run worker() over up to cap records (most liquid first) in parallel."""
+    if not records:
+        return 0, 0
+    ordered = sorted(records, key=lambda r: r.get("value") or 0, reverse=True)
+    targets = ordered[:cap] if cap else ordered
+    skipped = len(ordered) - len(targets)
+    failures = []
+
+    def run(record):
+        try:
+            worker(record)
+        except Exception as exc:
+            failures.append(f"{record['symbol']}: {exc}")
+
+    if targets:
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            list(pool.map(run, targets))
+    if failures:
+        print(f"warning: {stage}: {len(failures)}/{len(targets)} fetches failed (e.g. {failures[0]})", file=sys.stderr)
+    return len(targets) - len(failures), skipped
+
+
+def sort_records(records, key, ascending):
+    if key == "name":
+        return sorted(records, key=lambda r: tse.normal(r.get("name") or ""), reverse=not ascending)
+    if key not in COLUMNS:
+        raise ScreenError(f"unknown --sort key {key!r}; choose from {', '.join(sorted(COLUMNS))} or name")
+
+    def order(record):
+        value = record.get(key)
+        if isinstance(value, bool) or value is None:
+            return (1, 0)
+        return (0, value)
+
+    return sorted(records, key=order, reverse=not ascending)
+
+
+def fmt_amount(value):
+    if value is None:
+        return "-"
+    for divisor, suffix in ((1e15, "P"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(value) >= divisor:
+            return f"{value / divisor:.2f}{suffix}"
+    return f"{value:g}"
+
+
+def fmt_cell(key, value, kind):
+    if value is None:
+        return "-"
+    if kind == "amt":
+        return fmt_amount(value)
+    if kind == "pct":
+        return f"{value:+.2f}" if key == "chg" else f"{value:.2f}"
+    if kind == "float":
+        if key in ("rsi", "streak"):
+            return f"{value:.0f}" if key == "rsi" else f"{value:+d}" if isinstance(value, int) else f"{value:.0f}"
+        if key == "surge":
+            return f"{value:.2f}x"
+        if key == "imbalance":
+            return f"{value:.2f}"
+        return f"{value:.1f}"
+    if kind == "int":
+        if key == "streak":
+            return f"{value:+d}"
+        return f"{value:,.0f}"
+    return str(value)
+
+
+def render_table(records, columns):
+    header = [COLUMNS[key][0] for key in columns]
+    body = [[fmt_cell(key, record.get(key), COLUMNS[key][1]) for key in columns] for record in records]
+    widths = [len(text) for text in header]
+    for row in body:
+        for index, text in enumerate(row):
+            widths[index] = max(widths[index], len(text))
+    lines = []
+    lines.append("  ".join(text.ljust(widths[index]) for index, text in enumerate(header)))
+    lines.append("  ".join("-" * widths[index] for index in range(len(header))))
+    for row in body:
+        cells = []
+        for index, text in enumerate(row):
+            cells.append(text.rjust(widths[index]) if COLUMNS[columns[index]][1] != "text" else text.ljust(widths[index]))
+        lines.append("  ".join(cells).rstrip())
+    return "\n".join(lines)
+
+
+def render_md(records, columns):
+    header = [COLUMNS[key][0] for key in columns]
+    lines = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
+    for record in records:
+        cells = [fmt_cell(key, record.get(key), COLUMNS[key][1]) for key in columns]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def render_csv(records, columns):
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
+    writer.writeheader()
+    for record in records:
+        writer.writerow({key: record.get(key) for key in columns})
+    return buffer.getvalue().rstrip("\n")
+
+
+def stats_summary(total, records, notes):
+    lines = [f"matched {len(records)} / {total} instruments"]
+    lines.extend(f"  {note}" for note in notes)
+    if not records:
+        return "\n".join(lines)
+    types = Counter(record["type"] for record in records)
+    lines.append("  types: " + ", ".join(f"{name} {count}" for name, count in types.most_common()))
+    up = sum(1 for record in records if (record.get("chg") or 0) > 0)
+    down = sum(1 for record in records if (record.get("chg") or 0) < 0)
+    flat = len(records) - up - down
+    value = sum(record.get("value") or 0 for record in records)
+    lines.append(f"  advancers {up}, decliners {down}, unchanged {flat}; traded value {fmt_amount(value)} rial")
+    pes = [record["pe"] for record in records if record.get("pe") and record["pe"] > 0]
+    if pes:
+        lines.append(f"  median P/E {statistics.median(pes):.1f} (n={len(pes)})")
+    sectors = Counter(record.get("sector") or "?" for record in records)
+    lines.append("  top sectors: " + ", ".join(f"{name} {count}" for name, count in sectors.most_common(5)))
+    return "\n".join(lines)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="tse.find",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Screen the whole Tehran Stock Exchange (TSETMC) against filters.\n"
+            "One bulk request returns every instrument with quotes, P/E, EPS, volume,\n"
+            "value, trade count, spread, price limits, sector/board codes and market\n"
+            "cap; filtering happens locally. Filters that need 52-week/average-volume\n"
+            "data (--ps-*, --sector-pe-*, --avg5d-*, --near-52w-*) or daily history\n"
+            "(--rsi-*, --above-sma, --cross, --macd, --streak-*, --vol-surge) enrich\n"
+            "only the survivors, in parallel, capped by --max-enrich; order-book\n"
+            "filters (--bid-wall-*, --ask-wall-*, --imbalance) use one extra bulk\n"
+            "request carrying 5-level best limits."
+        ),
+        epilog=f"""examples:
+  tse.find --type stock --sector "فلزات" --val-min 10b
+  tse.find --pe-max 8 --chg-min 0 --traded --limit 20
+  tse.find --rsi-max 30 --above-sma 50 --type stock --sort rsi
+  tse.find --near-limit 1 --up --format csv --limit 0
+  tse.find --sector 34 --mcap-min 1t --book --bid-wall-min 1m --stats
+  tse.find --watchlist ~/my-symbols.txt --macd bull --format json --limit 0
+
+amounts accept k/m/b/t/p suffixes (10b = 10,000,000,000 rial, 1t = 1,000,000,000,000);
+percentages are plain numbers (8 means 8%). table/md output defaults to the first
+50 matches, json/csv print everything; --limit 0 disables the cap.
+
+--columns and --sort accept: {', '.join(sorted(COLUMNS))} plus 'name'.""",
+    )
+    universe = parser.add_argument_group("universe")
+    universe.add_argument("--type", action="append", metavar="LIST",
+                          help="stock, fund, option, bond, right, future, mortgage, forward, other, all "
+                               "(comma-separated/repeatable; default: stock)")
+    universe.add_argument("--market", action="append", metavar="LIST",
+                          help="borse, frabors, paye, moshtaghe, 6, 7 (or raw flow codes; repeatable)")
+    universe.add_argument("--board", action="append", metavar="TEXT", help="board title substring or code (repeatable)")
+    universe.add_argument("--sector", action="append", metavar="TEXT",
+                          help="industry substring or code, e.g. 'فلزات' or 27 (repeatable)")
+    universe.add_argument("--match", action="append", metavar="TEXT", help="symbol/company-name substring (repeatable)")
+    universe.add_argument("--watchlist", metavar="FILE", help="restrict to symbols/ISINs/insCodes listed in FILE")
+    universe.add_argument("--traded", action="store_true", help="only instruments that traded today")
+    universe.add_argument("--untraded", action="store_true", help="only instruments with no trades today")
+    universe.add_argument("--states", metavar="LIST", help="raw TSETMC state codes (e.g. NO,BY,OL,BK)")
+
+    price = parser.add_argument_group("price and change")
+    price.add_argument("--price-min", type=parse_amount, metavar="N", help="last/close price floor (rial)")
+    price.add_argument("--price-max", type=parse_amount, metavar="N", help="last/close price ceiling (rial)")
+    price.add_argument("--chg-min", type=parse_ratio, metavar="P", help="minimum change vs previous close (%%)")
+    price.add_argument("--chg-max", type=parse_ratio, metavar="P", help="maximum change vs previous close (%%)")
+    price.add_argument("--up", action="store_true", help="up on the day")
+    price.add_argument("--down", action="store_true", help="down on the day")
+    price.add_argument("--at-ceiling", action="store_true", help="locked at the daily upper limit")
+    price.add_argument("--at-floor", action="store_true", help="locked at the daily lower limit")
+    price.add_argument("--near-limit", type=parse_ratio, metavar="P",
+                       help="within P%% of either daily price limit")
+
+    value_group = parser.add_argument_group("valuation")
+    value_group.add_argument("--pe-min", type=parse_ratio, metavar="N", help="minimum P/E")
+    value_group.add_argument("--pe-max", type=parse_ratio, metavar="N", help="maximum P/E (negative P/E = losses)")
+    value_group.add_argument("--eps-min", type=parse_amount, metavar="N", help="minimum EPS (rial)")
+    value_group.add_argument("--eps-max", type=parse_amount, metavar="N", help="maximum EPS (rial)")
+    profit = value_group.add_mutually_exclusive_group()
+    profit.add_argument("--profitable", action="store_true", help="EPS > 0")
+    profit.add_argument("--loss-making", action="store_true", help="EPS < 0")
+    value_group.add_argument("--mcap-min", type=parse_amount, metavar="N", help="market-cap floor (shares x price, rial)")
+    value_group.add_argument("--mcap-max", type=parse_amount, metavar="N", help="market-cap ceiling (rial)")
+    value_group.add_argument("--ps-min", type=parse_ratio, metavar="N", help="minimum P/S (needs instrument info fetch)")
+    value_group.add_argument("--ps-max", type=parse_ratio, metavar="N", help="maximum P/S (needs instrument info fetch)")
+    value_group.add_argument("--sector-pe-min", type=parse_ratio, metavar="N", help="minimum sector P/E (info fetch)")
+    value_group.add_argument("--sector-pe-max", type=parse_ratio, metavar="N", help="maximum sector P/E (info fetch)")
+    value_group.add_argument("--near-52w-high", type=parse_ratio, metavar="P",
+                             help="within P%% of the 52-week high (info fetch)")
+    value_group.add_argument("--near-52w-low", type=parse_ratio, metavar="P",
+                             help="within P%% of the 52-week low (info fetch)")
+
+    liquidity = parser.add_argument_group("liquidity and size")
+    liquidity.add_argument("--vol-min", type=parse_amount, metavar="N", help="traded volume floor (shares)")
+    liquidity.add_argument("--vol-max", type=parse_amount, metavar="N", help="traded volume ceiling (shares)")
+    liquidity.add_argument("--val-min", type=parse_amount, metavar="N", help="traded value floor (rial)")
+    liquidity.add_argument("--val-max", type=parse_amount, metavar="N", help="traded value ceiling (rial)")
+    liquidity.add_argument("--trades-min", type=parse_amount, metavar="N", help="minimum number of trades")
+    liquidity.add_argument("--trades-max", type=parse_amount, metavar="N", help="maximum number of trades")
+    liquidity.add_argument("--spread-max", type=parse_amount, metavar="N", help="max bid/ask spread (rial, needs a quote)")
+    liquidity.add_argument("--spread-pct-max", type=parse_ratio, metavar="P", help="max bid/ask spread (%%)")
+    liquidity.add_argument("--avg5d-min", type=parse_amount, metavar="N", help="5-day average volume floor (info fetch)")
+    liquidity.add_argument("--free-float-min", type=parse_ratio, metavar="P", help="free-float %% floor (info fetch)")
+    liquidity.add_argument("--vol-surge", type=parse_ratio, metavar="X",
+                           help="today's volume / 20-day average >= X (history fetch)")
+
+    book = parser.add_argument_group("order book")
+    book.add_argument("--book", action="store_true",
+                      help="include 5-level best limits from a second bulk request (needed by the filters below)")
+    book.add_argument("--bid-wall-min", type=parse_amount, metavar="N", help="largest bid level (shares); implies --book")
+    book.add_argument("--ask-wall-min", type=parse_amount, metavar="N", help="largest ask level (shares); implies --book")
+    book.add_argument("--imbalance", type=resolve_imbalance, metavar="LOW[:HIGH]",
+                      help="bid/ask volume ratio; LOW alone means at least LOW, LOW:HIGH is a range (implies --book)")
+
+    tech = parser.add_argument_group("technical (history fetch)")
+    tech.add_argument("--rsi-min", type=parse_ratio, metavar="N", help="minimum RSI(14)")
+    tech.add_argument("--rsi-max", type=parse_ratio, metavar="N", help="maximum RSI(14)")
+    tech.add_argument("--above-sma", type=int, metavar="N", help="price above SMA(N) (e.g. 50, 200)")
+    tech.add_argument("--below-sma", type=int, metavar="N", help="price below SMA(N)")
+    tech.add_argument("--cross", metavar="FAST,SLOW", help="golden cross of SMA FAST over SLOW in the last 10 sessions")
+    tech.add_argument("--cross-below", metavar="FAST,SLOW", help="death cross of SMA FAST under SLOW in the last 10 sessions")
+    tech.add_argument("--macd", choices=("bull", "bear"), help="MACD(12,26,9) above/below its signal line")
+    tech.add_argument("--streak-min", type=int, metavar="N", help="N or more consecutive up closes (negative: down)")
+    tech.add_argument("--streak-max", type=int, metavar="N", help="N or fewer consecutive up closes (negative: down)")
+
+    flow = parser.add_argument_group("fetch control")
+    flow.add_argument("--info", action="store_true", help="force instrument-info enrichment (52w range, P/S, sector P/E)")
+    flow.add_argument("--history-days", type=int, default=260, metavar="N", help="daily history window for indicators (default 260)")
+    flow.add_argument("--max-enrich", type=int, default=300, metavar="N",
+                      help="max survivors to enrich per stage, most liquid first (0 = unlimited, default 300)")
+    flow.add_argument("--jobs", type=int, default=8, metavar="N", help="parallel enrichment requests (default 8)")
+
+    output = parser.add_argument_group("output")
+    output.add_argument("--format", choices=("table", "json", "csv", "md"), default="table", help="output format")
+    output.add_argument("--sort", default="value", metavar="KEY", help="sort key (column name or 'name'; default value)")
+    output.add_argument("--asc", action="store_true", help="sort ascending instead of descending")
+    output.add_argument("--limit", type=int, metavar="N", help="max rows (default 50 for table/md, 0 = all)")
+    output.add_argument("--columns", metavar="LIST", help="comma-separated column keys (see the columns note in --help)")
+    output.add_argument("--stats", action="store_true", help="print a summary block to stderr")
+    output.add_argument("--quiet", action="store_true", help="suppress the stderr match footer")
+    return parser
+
+
+def resolve_imbalance(text):
+    parts = [part for part in re.split(r"[:,\s]+", str(text).strip()) if part]
+    try:
+        if len(parts) == 1:
+            low, high = float(parts[0]), math.inf
+        elif len(parts) == 2:
+            low, high = float(parts[0]), float(parts[1])
+        else:
+            raise ValueError
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected LOW or LOW:HIGH (got {text!r})") from None
+    if low > high:
+        low, high = high, low
+    return low, high
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.up and args.down:
+        parser.error("--up and --down are mutually exclusive")
+    if args.history_days < 30:
+        parser.error("--history-days must be at least 30")
+    if args.limit is not None and args.limit < 0:
+        parser.error("--limit must be 0 or positive")
+    if args.type is None:
+        args.type = ["stock"]
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
+    if args.max_enrich < 0:
+        parser.error("--max-enrich must be 0 (unlimited) or positive")
+    cap = None if args.max_enrich == 0 else args.max_enrich
+
+    columns = split_list(args.columns) if args.columns else list(DEFAULT_COLUMNS)
+    unknown = [key for key in columns if key not in COLUMNS]
+    if unknown:
+        raise ScreenError(f"unknown --columns key(s): {', '.join(sorted(unknown))}")
+
+    base_filters, info_filters, hist_filters, book_filters = build_filters(args, columns)
+    need_info = bool(info_filters) or args.info or bool(INFO_KEYS & set(columns))
+    need_hist = bool(hist_filters) or bool(HIST_KEYS & set(columns))
+    need_book = (bool(book_filters) or args.book or args.bid_wall_min is not None
+                 or args.ask_wall_min is not None or bool(BOOK_KEYS & set(columns)))
+    requested_sma = {period for period in (args.above_sma, args.below_sma) if period}
+    requested_sma |= {int(key[3:]) for key in columns if key.startswith("sma") and key[3:].isdigit()}
+    sma_periods = sorted({20, 50, 200} | requested_sma)
+
+    cross_specs = []
+    for spec, direction in ((args.cross, "bull"), (args.cross_below, "bear")):
+        if spec:
+            parts = [int(part) for part in re.split(r"[,\s]+", spec) if part]
+            if len(parts) == 2 and parts[0] < parts[1]:
+                cross_specs.append((parts[0], parts[1], direction))
+    needed_bars = max(requested_sma | {spec[1] for spec in cross_specs}, default=0)
+    if needed_bars > args.history_days:
+        parser.error(f"--history-days must be at least {needed_bars} for the requested moving averages/crosses")
+
+    client = tse.Client()
+    rows = fetch_market_watch(client, need_book)
+    records = [parse_row(row) for row in rows]
+    total = len(records)
+    notes = []
+
+    records = apply_filters(records, base_filters, "filters", notes)
+    if need_info and records:
+        _, skipped = enrich(records, lambda r: fetch_info(client, r), args.jobs, cap, "instrument info")
+        records = [r for r in records if "sector_pe" in r or "psr" in r or "avg5d" in r or "y52h" in r or "year_high" in r or not info_filters]
+        if info_filters:
+            records = apply_filters(records, info_filters, "info filters", notes)
+        if skipped:
+            notes.append(f"{skipped} least-liquid survivors had no info fetch (--max-enrich)")
+        for record in records:
+            record["enriched"].add("info")
+    if need_hist and records:
+        _, skipped = enrich(records,
+                             lambda r: fetch_history(client, r, args.history_days, cross_specs, sma_periods),
+                             args.jobs, cap, "history")
+        records = apply_filters(records, hist_filters, "history filters", notes)
+        for record in records:
+            record["enriched"].add("hist")
+        if skipped:
+            notes.append(f"{skipped} least-liquid survivors had no history fetch (--max-enrich)")
+    if need_book and records:
+        for record in records:
+            fetch_book(record)
+            record["enriched"].add("book")
+        records = apply_filters(records, book_filters, "book filters", notes)
+
+    if not args.columns:
+        extra = []
+        if need_hist:
+            extra += ["rsi", "macd", "sma50"]
+        if need_info:
+            extra += ["sector_pe", "psr"]
+        if need_book:
+            extra += ["bid_wall", "ask_wall", "imbalance"]
+        columns = columns + [key for key in extra if key in COLUMNS and key not in columns]
+
+    records = sort_records(records, args.sort, args.asc)
+    limit = args.limit if args.limit is not None else (50 if args.format in ("table", "md") else 0)
+    if limit and limit > 0:
+        records = records[:limit]
+
+    if args.format == "json":
+        payload = [{key: value for key, value in record.items() if key not in ("levels", "enriched", "_near_limit")}
+                   for record in records]
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    elif args.format == "csv":
+        print(render_csv(records, columns))
+    elif args.format == "md":
+        print(render_md(records, columns))
+    else:
+        print(render_table(records, columns) if records else "no matches")
+
+    if args.stats:
+        print(stats_summary(total, records, notes), file=sys.stderr)
+    elif not args.quiet:
+        print(f"matched {len(records)} / {total} instruments", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (tse.DataError, ScreenError, OSError) as exc:
+        print(f"tse.find: {exc}", file=sys.stderr)
+        sys.exit(1)
