@@ -1,0 +1,666 @@
+#!/usr/bin/env python3
+"""
+Finglish Transliterator - Convert between Persian/Farsi and Finglish (Persian in Latin script)
+Supports bidirectional conversion with comprehensive character mappings, vowel inference,
+ZWNJ handling, ezāfe/tanvin, and configurable rules.
+"""
+
+import sys
+import argparse
+import re
+import json
+from typing import Dict, List, Tuple, Optional, Set
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class TransliterationRule:
+    """A single transliteration rule."""
+    pattern: str
+    replacement: str
+    context_before: str = ''  # regex pattern for preceding context
+    context_after: str = ''   # regex pattern for following context
+    priority: int = 0         # higher = applied first
+
+
+class FinglishTransliterator:
+    """Comprehensive Persian <-> Finglish transliterator with smart inference."""
+    
+    # Persian consonants (for vowel inference) - excluding vav and yeh which are vowels/semi-vowels
+    PERSIAN_CONSONANTS = set('بپتثجچحخدذرزژسشصضطظعغفقکگلمنه')
+    PERSIAN_VOWELS = set('آاَُِِّْوی')
+    PERSIAN_LETTERS = PERSIAN_CONSONANTS | PERSIAN_VOWELS | {'ء', 'ئ', 'ؤ', 'أ', 'إ', 'ة', 'ﻻ', 'ﻷ', 'ﻹ', 'ﻵ', '‌'}
+    
+    # Arabic → Persian normalization
+    ARABIC_TO_PERSIAN = {
+        'ك': 'ک', 'ي': 'ی', 'ى': 'ی', 'ة': 'ه', 'ئ': 'ی', 'ؤ': 'و', 'أ': 'ا', 'إ': 'ا',
+        'ﻻ': 'لا', 'ﻷ': 'لا', 'ﻹ': 'لا', 'ﻵ': 'لا',
+        'ﮐ': 'ک', 'ﮑ': 'ک', 'ﮔ': 'گ', 'ﮓ': 'گ', 'ﯼ': 'ی', 'ﯽ': 'ی',
+    }
+    
+    # ZWNJ (Zero Width Non-Joiner)
+    ZWNJ = '\u200c'
+    
+    # Default configuration
+    DEFAULT_CONFIG = {
+        "persian_to_finglish": {
+            "consonants": {
+                "ب": "b", "پ": "p", "ت": "t", "ث": "s", "ج": "j", "چ": "ch",
+                "ح": "h", "خ": "kh", "د": "d", "ذ": "z", "ر": "r", "ز": "z",
+                "ژ": "zh", "س": "s", "ش": "sh", "ص": "s", "ض": "z", "ط": "t",
+                "ظ": "z", "ع": "'", "غ": "gh", "ف": "f", "ق": "gh", "ک": "k",
+                "گ": "g", "ل": "l", "م": "m", "ن": "n", "ه": "h", "ی": "y",
+            },
+            "vowels": {
+                "آ": "aa", "ا": "a",
+                "َ": "a", "ِ": "e", "ُ": "o",
+                "ً": "an", "ٍ": "en", "ٌ": "un",
+                "ْ": "", "ّ": "",
+            },
+            "vav": {
+                # و handled contextually in code
+            },
+            "yeh": {
+                # ی handled contextually in code
+            },
+            "special": {
+                "ء": "'", "ئ": "i", "ؤ": "u", "أ": "a", "إ": "e", "ة": "h",
+                "ﻻ": "la", "ﻷ": "la", "ﻹ": "le", "ﻵ": "laa",
+                "‌": "-",  # ZWNJ
+            },
+            "digits": {
+                "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+                "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+            },
+            "punctuation": {
+                "،": ",", "؛": ";", "؟": "?", "٪": "%",
+                "«": '"', "»": '"', "۔": ".", "٬": ",",
+            }
+        },
+        "finglish_to_persian": {
+            "consonants": {
+                "b": "ب", "p": "پ", "t": "ت", "s": "س", "j": "ج", "c": "چ",
+                "h": "ه", "d": "د", "z": "ز", "r": "ر", "k": "ک", "g": "گ",
+                "l": "ل", "m": "م", "n": "ن", "f": "ف", "q": "ق", "x": "خ",
+                "'": "ع", "`": "ع",
+            },
+            "digraphs": {
+                "kh": "خ", "gh": "غ", "sh": "ش", "zh": "ژ", "ch": "چ",
+                "kh": "خ", "gh": "غ", "sh": "ش", "zh": "ژ", "ch": "چ",
+            },
+            "vowels": {
+                "aa": "آ", "a": "ا", "e": "ا", "o": "و", "i": "ی", "u": "و",
+                "ee": "ی", "oo": "و", "ou": "و", "ei": "ی", "ai": "ی", "ay": "ای",
+                "ey": "ی", "oy": "وی",
+            },
+            "digits": {
+                "0": "۰", "1": "۱", "2": "۲", "3": "۳", "4": "۴",
+                "5": "۵", "6": "۶", "7": "۷", "8": "۸", "9": "۹",
+            },
+            "punctuation": {
+                ",": "،", ";": "؛", "?": "؟", "%": "٪",
+                ".": ".", "!": "!", ":": ":", "(": "(", ")": ")",
+                "[": "[", "]": "]", "{": "{", "}": "}",
+                '"': "«", "'": "»",
+            }
+        },
+        "inference": {
+            "add_implicit_vowels": False,     # salaam vs slam (default: literal)
+            "vowel_style": "literal",         # "literal" | "default_a" | "smart"
+            "vowel_patterns": {
+                # CVC -> CaVC, CeVC, CoVC patterns
+                "consonant_vowel_consonant": True,
+            },
+            "ezāfe": False,                   # detect ی اضافه (disabled by default)
+            "tanvin": True,                   # detect اً، اً، اً
+            "zwnj_preserve": True,            # keep ‌ as - or _
+            "arabic_normalize": True,         # normalize Arabic letters
+        },
+        "aliases": {
+            "خ": ["kh", "x", "kh"],
+            "غ": ["gh", "g"],
+            "ق": ["gh", "g", "q"],
+            "ش": ["sh", "s"],
+            "ژ": ["zh", "j"],
+            "چ": ["ch", "c"],
+            "ث": ["s", "th"],
+            "ص": ["s", "s"],
+            "ض": ["z", "d"],
+            "ط": ["t", "t"],
+            "ظ": ["z", "z"],
+        }
+    }
+    
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or self.DEFAULT_CONFIG
+        self._build_lookup_tables()
+        self._compile_patterns()
+    
+    def _build_lookup_tables(self):
+        """Build optimized lookup tables from config."""
+        # Persian → Finglish
+        self.fa_to_finglish = {}
+        for category in self.config["persian_to_finglish"].values():
+            self.fa_to_finglish.update(category)
+        
+        # Finglish → Persian (longest match first)
+        self.finglish_to_fa = {}
+        for category in self.config["finglish_to_persian"].values():
+            self.finglish_to_fa.update(category)
+        
+        # Sort by length descending for greedy matching
+        self.fa_keys = sorted(self.fa_to_finglish.keys(), key=len, reverse=True)
+        self.finglish_keys = sorted(self.finglish_to_fa.keys(), key=len, reverse=True)
+        
+        # Aliases for reverse lookup
+        self.aliases = self.config.get("aliases", {})
+    
+    def _compile_patterns(self):
+        """Compile regex patterns for contextual rules."""
+        self.patterns = {
+            # Ezāfe: ی between noun and modifier (ketab-e ali -> کتابِ علی)
+            'ezāfe': re.compile(r'(?<=[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی])ی(?=[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهیآاَُِ])'),
+            # Tanvin: اً، اً، اً at word end
+            'tanvin': re.compile(r'اً?$'),
+            # ZWNJ
+            'zwnj': re.compile(r'‌'),
+            # Silent vav (خو، خوا، خوی)
+            'silent_vav': re.compile(r'خو(?=[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی]|$)'),
+            # Word boundaries for vowel inference
+            'word_boundary': re.compile(r'(?<=[\s\(\[\{\،\؛\؟\!\?\.\:\"\'\`])|(?=[\s\)\]\}\،\؛\؟\!\?\.\:\"\'\`])'),
+        }
+    
+    def normalize_persian(self, text: str) -> str:
+        """Normalize Arabic letters to Persian equivalents."""
+        if not self.config["inference"].get("arabic_normalize", True):
+            return text
+        result = []
+        for ch in text:
+            result.append(self.ARABIC_TO_PERSIAN.get(ch, ch))
+        return ''.join(result)
+    
+    def _infer_vowels_persian(self, text: str) -> str:
+        """Add implicit short vowels in Persian text before transliteration.
+        
+        This works on Persian text where consonant clusters are visible.
+        Adds Persian diacritics (fatha َ) which transliterate to 'a'.
+        
+        Styles:
+        - "literal": no implicit vowels
+        - "default_a": add 'a' for initial CC and CCC+ clusters
+        - "smart": try to guess based on common patterns (experimental)
+        """
+        if not self.config["inference"].get("add_implicit_vowels", True):
+            return text
+        
+        style = self.config["inference"].get("vowel_style", "default_a")
+        if style == "literal":
+            return text
+        
+        # Persian consonant pattern (from class constant)
+        cons = ''.join(self.PERSIAN_CONSONANTS)
+        vowel_marks = 'َُِ'
+        fatha = 'َ'  # short 'a' diacritic
+        
+        # Pattern 1: CCC+ clusters -> CaCaC... (always applies)
+        def break_cluster(m):
+            cluster = m.group(1)
+            if len(cluster) <= 2:
+                return cluster
+            result = cluster[0]
+            for i in range(1, len(cluster)):
+                result += fatha + cluster[i]
+            return result
+        
+        text = re.sub(f'([{cons}]{{3,}})', break_cluster, text)
+        
+        if style == "default_a":
+            # Pattern 2: Initial CC -> CaC (add fatha after first consonant)
+            # Only if not already vocalized
+            text = re.sub(
+                f'^([{cons}])([{cons}])(?![{vowel_marks}])',
+                r'\1' + fatha + r'\2', text
+            )
+        
+        elif style == "smart":
+            # Pattern 2: Initial CC with smart vowel guessing
+            # This is experimental - uses common patterns
+            patterns = [
+                (f'^س([{cons}])', 'س' + fatha + r'\1'),  # salam
+                (f'^خ([{cons}])', 'خ' + fatha + r'\1'),  # khab
+                (f'^چ([{cons}])', 'چ' + fatha + r'\1'),  # chap
+                (f'^ش([{cons}])', 'ش' + fatha + r'\1'),  # shahr
+                (f'^م([{cons}])', 'م' + fatha + r'\1'),  # mard
+                (f'^د([{cons}])', 'د' + fatha + r'\1'),  # dar
+                (f'^ب([{cons}])', 'ب' + fatha + r'\1'),  # bar
+                (f'^پ([{cons}])', 'پ' + fatha + r'\1'),  # par
+                (f'^ت([{cons}])', 'ت' + fatha + r'\1'),  # tar
+                (f'^ج([{cons}])', 'ج' + fatha + r'\1'),  # jam
+                (f'^ح([{cons}])', 'ح' + fatha + r'\1'),  # har
+                (f'^ر([{cons}])', 'ر' + fatha + r'\1'),
+                (f'^ز([{cons}])', 'ز' + fatha + r'\1'),
+                (f'^ص([{cons}])', 'ص' + fatha + r'\1'),
+                (f'^ط([{cons}])', 'ط' + fatha + r'\1'),
+                (f'^ع([{cons}])', 'ع' + fatha + r'\1'),
+                (f'^غ([{cons}])', 'غ' + fatha + r'\1'),
+                (f'^ف([{cons}])', 'ف' + fatha + r'\1'),
+                (f'^ق([{cons}])', 'ق' + fatha + r'\1'),
+                (f'^ک([{cons}])', 'ک' + fatha + r'\1'),
+                (f'^گ([{cons}])', 'گ' + fatha + r'\1'),
+                (f'^ل([{cons}])', 'ل' + fatha + r'\1'),
+                (f'^ن([{cons}])', 'ن' + fatha + r'\1'),
+                (f'^ه([{cons}])', 'ه' + fatha + r'\1'),
+            ]
+            
+            for pattern, repl in patterns:
+                text = re.sub(pattern, repl, text)
+        
+        return text
+    
+    def _infer_vowels(self, text: str) -> str:
+        """Add implicit short vowels for more readable Finglish (post-processing).
+        
+        DISABLED: Vowel inference is now done in Persian text via _infer_vowels_persian.
+        Post-processing on Latin output creates too many false positives.
+        """
+        # Disabled - causes issues like aamdid -> aamadid
+        return text
+    
+    def _handle_ezāfe(self, text: str) -> str:
+        """Convert ezāfe (ی اضافه) to 'e' in Finglish."""
+        if not self.config["inference"].get("ezāfe", True):
+            return text
+        # ی between two letters where first is consonant and second starts a word
+        return re.sub(r'(?<=[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی])ی(?=[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهیآا])', 'e', text)
+    
+    def _handle_tanvin(self, text: str) -> str:
+        """Convert tanvin (اً، اً، اً) to 'an', 'en', 'on'."""
+        if not self.config["inference"].get("tanvin", True):
+            return text
+        text = re.sub(r'اً$', 'an', text)
+        text = re.sub(r'اً$', 'en', text)  # kasra tanvin
+        text = re.sub(r'اً$', 'on', text)  # damma tanvin (rare)
+        return text
+    
+    def _handle_silent_vav(self, text: str) -> str:
+        """Handle silent vav in خو، خوا، خوی -> kho, khwa, khoy."""
+        # خو at word start -> kho
+        text = re.sub(r'^خو', 'kho', text)
+        # خو after space/punctuation -> kho
+        text = re.sub(r'(?<=[\s\(\[\{])خو', 'kho', text)
+        # خوا -> khwa
+        text = re.sub(r'خوا', 'khwa', text)
+        # خوی -> khoy
+        text = re.sub(r'خوی', 'khoy', text)
+        return text
+    
+    def _handle_zwnj(self, text: str) -> str:
+        """Convert ZWNJ to hyphen or underscore."""
+        if not self.config["inference"].get("zwnj_preserve", True):
+            return text.replace(self.ZWNJ, '')
+        return text.replace(self.ZWNJ, '-')
+    
+    def _map_vav(self, text: str, pos: int) -> str:
+        """Map و contextually: v at start, o/u in middle."""
+        # Check if at word start
+        if pos == 0 or (pos > 0 and text[pos-1] in ' \t\n\r،؛؟!.()[]{}""\''):
+            return 'v'
+        # Check previous char in original text
+        if pos > 0:
+            prev = text[pos-1]
+            # After alef/آ -> o (long vowel)
+            if prev in 'آا':
+                return 'o'
+            # After consonants -> o/u (long vowel)
+            if prev in self.PERSIAN_CONSONANTS:
+                # Check next char to decide o vs u
+                if pos + 1 < len(text) and text[pos+1] in 'یي':
+                    return 'oy'  # وی -> oy
+                return 'o'
+        return 'v'
+    
+    def _map_yeh(self, text: str, pos: int, result: List[str]) -> str:
+        """Map ی contextually: y at start, i at end, i in middle.
+        
+        Ezāfe detection disabled by default - too many false positives
+        without morphological analysis.
+        """
+        # At word start
+        if pos == 0 or (pos > 0 and text[pos-1] in ' \t\n\r،؛؟!.()[]{}""\''):
+            return 'y'
+        # At word end
+        if pos == len(text) - 1 or (pos + 1 < len(text) and text[pos+1] in ' \t\n\r،؛؟!.()[]{}""\''):
+            return 'i'
+        # After alef -> i (ای -> i)
+        if pos > 0 and text[pos-1] in 'آا':
+            return 'i'
+        # After consonants -> i (long vowel)
+        if pos > 0 and text[pos-1] in self.PERSIAN_CONSONANTS:
+            return 'i'
+        return 'y'
+    
+    def persian_to_finglish(self, text: str) -> str:
+        """Convert Persian text to Finglish with smart vowel inference."""
+        # Normalize Arabic letters
+        text = self.normalize_persian(text)
+        
+        # Pre-process: infer implicit vowels in Persian text (adds diacritics)
+        text = self._infer_vowels_persian(text)
+        
+        # Main transliteration with full context awareness
+        result = []
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            
+            # Handle ZWNJ
+            if ch == self.ZWNJ:
+                result.append(self.fa_to_finglish.get(self.ZWNJ, '-'))
+                i += 1
+                continue
+            
+            # Handle silent vav: خو -> kho
+            if ch == 'خ' and i + 1 < len(text) and text[i+1] == 'و':
+                # Check if start of word or after space/punct
+                if i == 0 or (i > 0 and text[i-1] in ' \t\n\r،؛؟!.()[]{}""\''):
+                    result.append('kho')
+                    i += 2
+                    continue
+            
+            # Handle خوا -> khwa
+            if ch == 'خ' and i + 2 < len(text) and text[i+1] == 'و' and text[i+2] == 'ا':
+                if i == 0 or (i > 0 and text[i-1] in ' \t\n\r،؛؟!.()[]{}""\''):
+                    result.append('khwa')
+                    i += 3
+                    continue
+            
+            # Handle خوی -> khoy
+            if ch == 'خ' and i + 2 < len(text) and text[i+1] == 'و' and text[i+2] in 'یي':
+                if i == 0 or (i > 0 and text[i-1] in ' \t\n\r،؛؟!.()[]{}""\''):
+                    result.append('khoy')
+                    i += 3
+                    continue
+            
+            # Handle tanvin: اً -> an
+            if ch == 'ا' and i + 1 < len(text) and text[i+1] == 'ً':
+                result.append('an')
+                i += 2
+                continue
+            if ch == 'اً':
+                result.append('an')
+                i += 1
+                continue
+            
+            # Handle و contextually
+            if ch == 'و':
+                result.append(self._map_vav(text, i))
+                i += 1
+                continue
+            
+            # Handle ی contextually (includes ezāfe detection)
+            if ch == 'ی' or ch == 'ي':
+                result.append(self._map_yeh(text, i, result))
+                i += 1
+                continue
+            
+            # Standard mappings
+            matched = False
+            for key in self.fa_keys:
+                if text[i:].startswith(key):
+                    result.append(self.fa_to_finglish[key])
+                    i += len(key)
+                    matched = True
+                    break
+            if not matched:
+                result.append(ch)
+                i += 1
+        
+        raw = ''.join(result)
+        
+        # Post-process: infer vowels for readability
+        return self._infer_vowels(raw)
+    
+    def _is_consonant(self, ch: str) -> bool:
+        """Check if character is a Persian consonant."""
+        return ch in self.PERSIAN_CONSONANTS
+    
+    def _get_prev_char(self, result: List[str], text: str, pos: int) -> Optional[str]:
+        """Get previous meaningful character from result."""
+        if result:
+            return result[-1]
+        if pos > 0:
+            return text[pos-1]
+        return None
+    
+    def finglish_to_persian(self, text: str) -> str:
+        """Convert Finglish to Persian text with smart vowel handling."""
+        text_lower = text.lower()
+        result = []
+        i = 0
+        
+        while i < len(text):
+            matched = False
+            
+            # Check digraphs first (kh, gh, sh, zh, ch)
+            if i + 1 < len(text):
+                digraph = text_lower[i:i+2]
+                if digraph in self.config["finglish_to_persian"]["digraphs"]:
+                    result.append(self.config["finglish_to_persian"]["digraphs"][digraph])
+                    i += 2
+                    matched = True
+            
+            if not matched:
+                # Check for 'aa' (آ vs ا)
+                if i + 1 < len(text) and text_lower[i:i+2] == 'aa':
+                    is_word_initial = (i == 0) or (not text[i-1].isalpha())
+                    result.append('آ' if is_word_initial else 'ا')
+                    i += 2
+                    matched = True
+            
+            if not matched:
+                ch = text[i]
+                ch_lower = text_lower[i]
+                
+                # Handle single vowels contextually
+                if ch_lower in 'aeiou':
+                    prev_char = self._get_prev_char(result, text, i)
+                    prev_is_consonant = prev_char and self._is_consonant(prev_char)
+                    
+                    if ch_lower == 'a':
+                        # 'a' -> ا (alef) 
+                        if prev_is_consonant:
+                            result.append('ا')
+                        else:
+                            result.append('ا')
+                        i += 1
+                        matched = True
+                    elif ch_lower == 'e':
+                        # 'e' after consonant = ezāfe or short vowel (omit)
+                        # Word-initial or after vowel -> ا
+                        if prev_is_consonant:
+                            # Could be ezāfe - check if next char suggests it
+                            if i + 1 < len(text) and text_lower[i+1] not in 'aeiou':
+                                result.append('ی')  # ezāfe
+                            # else short vowel - omit
+                        else:
+                            result.append('ا')
+                        i += 1
+                        matched = True
+                    elif ch_lower == 'o':
+                        # 'o' -> و
+                        if prev_is_consonant:
+                            result.append('و')
+                        else:
+                            result.append('و')
+                        i += 1
+                        matched = True
+                    elif ch_lower == 'i':
+                        # 'i' -> ی
+                        if prev_is_consonant:
+                            result.append('ی')
+                        else:
+                            result.append('ی')
+                        i += 1
+                        matched = True
+                    elif ch_lower == 'u':
+                        # 'u' -> و
+                        if prev_is_consonant:
+                            result.append('و')
+                        else:
+                            result.append('و')
+                        i += 1
+                        matched = True
+            
+            if not matched:
+                # Try consonants and other mappings
+                for key in self.finglish_keys:
+                    if text_lower[i:].startswith(key.lower()):
+                        if len(key) == 1 and text[i].isupper():
+                            mapped = self.finglish_to_fa[key]
+                            result.append(mapped.upper() if mapped.isalpha() else mapped)
+                        else:
+                            result.append(self.finglish_to_fa[key])
+                        i += len(key)
+                        matched = True
+                        break
+            
+            if not matched:
+                result.append(text[i])
+                i += 1
+        
+        # Post-process: fix common issues
+        persian = ''.join(result)
+        persian = self._post_process_persian(persian)
+        return persian
+    
+    def _post_process_persian(self, text: str) -> str:
+        """Fix common issues in generated Persian."""
+        # Fix double alef
+        text = re.sub(r'اا+', 'ا', text)
+        # Fix alef after alef madda
+        text = re.sub(r'آا+', 'آ', text)
+        # Fix ya after ya
+        text = re.sub(r'یی+', 'ی', text)
+        # Fix vav after vav
+        text = re.sub(r'وو+', 'و', text)
+        # Restore ZWNJ from hyphen between specific patterns
+        text = re.sub(r'(?<=[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی])-(?=[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهیآا])', self.ZWNJ, text)
+        return text
+    
+    def auto_convert(self, text: str) -> str:
+        """Auto-detect direction and convert."""
+        persian_chars = sum(1 for c in text if c in self.PERSIAN_LETTERS or '\u0600' <= c <= '\u06FF')
+        ascii_chars = sum(1 for c in text if ord(c) < 128 and c.isalnum())
+        
+        if persian_chars > ascii_chars:
+            return self.persian_to_finglish(text)
+        else:
+            return self.finglish_to_persian(text)
+    
+    def load_config(self, path: str):
+        """Load configuration from JSON file."""
+        with open(path, 'r', encoding='utf-8') as f:
+            user_config = json.load(f)
+        # Deep merge
+        self._deep_merge(self.config, user_config)
+        self._build_lookup_tables()
+        self._compile_patterns()
+    
+    def save_config(self, path: str):
+        """Save current configuration to JSON file."""
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(self.config, f, ensure_ascii=False, indent=2)
+    
+    def _deep_merge(self, base: Dict, override: Dict):
+        """Recursively merge override into base."""
+        for key, value in override.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                self._deep_merge(base[key], value)
+            else:
+                base[key] = value
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Convert between Persian/Farsi and Finglish (Persian in Latin script)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  echo "سلام" | finglish                    # -> slam (literal)
+  echo "سلام" | finglish --vowel-style=default_a  # -> salam
+  echo "چطورید؟" | finglish                # -> chtorid?
+  echo "خوش آمدید" | finglish              # -> khosh aamdid
+  echo "می‌آیم" | finglish                  # -> mi-aaim (ZWNJ preserved)
+  echo "salaam" | finglish -r               # -> سلام
+  echo "chetorid" | finglish -r             # -> چتورید
+  echo "khosh amadid" | finglish -r         # -> خوش امادید
+  echo "mi-aaim" | finglish -r              # -> می‌آیم
+  finglish -a "mixed متن text"             # Auto-detect direction
+  finglish --config my_config.json "text"  # Use custom config
+  finglish --save-config default.json       # Save current config
+        """
+    )
+    
+    parser.add_argument('text', nargs='*', help='Text to convert (reads from stdin if omitted)')
+    parser.add_argument('-r', '--reverse', action='store_true',
+                        help='Convert Finglish to Persian (default: Persian to Finglish)')
+    parser.add_argument('-a', '--auto', action='store_true',
+                        help='Auto-detect conversion direction')
+    parser.add_argument('-n', '--no-newline', action='store_true',
+                        help='Do not add trailing newline')
+    parser.add_argument('--config', metavar='FILE',
+                        help='Load configuration from JSON file')
+    parser.add_argument('--save-config', metavar='FILE',
+                        help='Save current configuration to JSON file')
+    parser.add_argument('--vowel-style', choices=['literal', 'default_a', 'smart'],
+                        default='literal', help='Vowel inference style (default: literal)')
+    parser.add_argument('--no-inference', action='store_true',
+                        help='Disable vowel inference (alias for --vowel-style=literal)')
+    parser.add_argument('--zwnj-char', metavar='CHAR', default='-',
+                        help='Character to use for ZWNJ (default: -)')
+    
+    args = parser.parse_args()
+    
+    transliterator = FinglishTransliterator()
+    
+    if args.config:
+        transliterator.load_config(args.config)
+    
+    if args.no_inference:
+        args.vowel_style = 'literal'
+    
+    transliterator.config["inference"]["vowel_style"] = args.vowel_style
+    transliterator.config["inference"]["add_implicit_vowels"] = (args.vowel_style != 'literal')
+    transliterator._build_lookup_tables()
+    
+    if args.zwnj_char:
+        transliterator.config["persian_to_finglish"]["special"]["‌"] = args.zwnj_char
+        transliterator._build_lookup_tables()
+    
+    # Get input text
+    if args.text:
+        text = ' '.join(args.text)
+    else:
+        text = sys.stdin.read().rstrip('\n')
+    
+    # Perform conversion
+    if args.auto:
+        result = transliterator.auto_convert(text)
+    elif args.reverse:
+        result = transliterator.finglish_to_persian(text)
+    else:
+        result = transliterator.persian_to_finglish(text)
+    
+    # Output
+    if args.no_newline:
+        sys.stdout.write(result)
+    else:
+        print(result)
+    
+    if args.save_config:
+        transliterator.save_config(args.save_config)
+
+
+if __name__ == '__main__':
+    main()
