@@ -1169,7 +1169,7 @@ def markdown(data):
     for heading, key in sections:
         if data[key] is None:
             continue
-        lines.extend(("", f"## {heading}", "```json", json.dumps(data[key], ensure_ascii=False, indent=2), "```"))
+        lines.extend(("", f"## {heading}", "```json", json.dumps(data[key], ensure_ascii=False, separators=(",", ":")), "```"))
     if data["history"] is not None:
         hist = data["history"]
         if isinstance(hist, dict) and "unadjusted" in hist:
@@ -1214,7 +1214,7 @@ def markdown(data):
             writer.writerows(rows)
             lines.extend(("", "## Price history / تاریخچه قیمت (unadjusted)", "```csv", buffer.getvalue().rstrip(), "```"))
     if data["errors"]:
-        lines.extend(("", "## Missing or failed sources / داده‌های ناموجود", "```json", json.dumps(data["errors"], ensure_ascii=False, indent=2), "```"))
+        lines.extend(("", "## Missing or failed sources / داده‌های ناموجود", "```json", json.dumps(data["errors"], ensure_ascii=False, separators=(",", ":")), "```"))
     return "\n".join(lines)
 
 

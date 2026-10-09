@@ -168,9 +168,21 @@ if isinstance(fetched, str) and fetched:
         stale = "?"
 note = meta.get("note")
 note = "" if note in (None, "") else " ".join(str(note).split())
+bits = []
+for value, label in (
+    (meta.get("symbol"), ""),
+    (meta.get("name"), ""),
+    (meta.get("isin"), "ISIN "),
+    (meta.get("ins_code"), "insCode "),
+    (meta.get("market"), ""),
+    (meta.get("source"), "source: "),
+):
+    if value not in (None, ""):
+        bits.append(f"{label}{value}")
 print(fetched or "unknown")
 print(stale)
 print(note)
+print("Instrument: " + " — ".join(bits) if bits else "")
 PY
 )"; then
             printf 'prompt stock: %s\n' "$info" >&2
@@ -219,6 +231,7 @@ if $cache_mode; then
         fetched="${info_lines[0]:-unknown}"
         stale="${info_lines[1]:-}"
         note="${info_lines[2]:-}"
+        instrument="${info_lines[3]:-}"
         rel="$(relative_path "$resolved")"
         printf '\n## Cached snapshot: %s (fetched %s)\n' "$rel" "$fetched"
         if [[ "$stale" == yes ]]; then
@@ -227,9 +240,40 @@ if $cache_mode; then
         if [[ -n "$note" ]]; then
             printf 'Snapshot note: %s\n' "$note"
         fi
-        printf 'File: %s\n```json\n' "$rel"
-        trim_context "$(cat -- "$resolved")"
-        printf '\n```\n'
+        if [[ -n "$instrument" ]]; then
+            printf '%s\n' "$instrument"
+        fi
+        if rendered="$(python3 - "$resolved" "$prompt_dir/../bin/tse" 2>&1 <<'PY'
+import importlib.machinery
+import importlib.util
+import json
+import sys
+
+path, tse_path = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as handle:
+        doc = json.load(handle)
+    data = doc["data"]
+    if not isinstance(data, dict):
+        raise TypeError("data is not an object")
+    loader = importlib.machinery.SourceFileLoader("tse_snapshot_render", tse_path)
+    spec = importlib.util.spec_from_loader("tse_snapshot_render", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    sys.stdout.write(module.markdown(data))
+except Exception as exc:
+    sys.exit(str(exc))
+PY
+)"; then
+            printf '\n'
+            trim_context "$rendered"
+            printf '\n'
+        else
+            printf 'prompt stock: %s: snapshot render failed (%s); embedding raw JSON instead\n' "$rel" "$rendered" >&2
+            printf '\nFile: %s\n```json\n' "$rel"
+            trim_context "$(cat -- "$resolved")"
+            printf '\n```\n'
+        fi
     done
 else
     trim_context "$context"

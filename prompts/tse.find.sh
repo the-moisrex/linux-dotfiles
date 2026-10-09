@@ -193,12 +193,7 @@ if kind:
 lines = [line for line in text.splitlines() if line.strip()]
 first = lines[0].lstrip()
 if first.startswith("{"):
-    ok = True
-    for line in lines:
-        if not line.strip().startswith("{") or classify(line.strip()) is None:
-            ok = False
-            break
-    print("jsonl" if ok else "nl")
+    print("jsonl")
     raise SystemExit
 if first.split()[:1] == ["Symbol"]:
     print("table")
@@ -234,9 +229,10 @@ either a saved .tse snapshot or output piped straight from the tool. The data
 below is fixed — refresh nothing, run nothing, invent nothing.
 
 === Task ===
-- When meta is present, meta.args/meta.command hold the filters that produced
-  these rows and meta.screened_at the moment they held; infer what the screen was
-  looking for from those flags before ranking.
+- The header above the rows (for saved .tse snapshots) carries `Command:` with
+the filters that produced them and `screened …` with the moment they held;
+infer what the screen was looking for from those flags before ranking. Piped
+output has no such header — rank only what the rows show.
 - Rank the rows and recommend the 3-5 most promising for that intent, strongest
   first, each justified with the concrete numbers from its own row (price, chg%,
   P/E, EPS, traded value, volume, market cap, sector, distance to the limit...).
@@ -258,9 +254,58 @@ below is fixed — refresh nothing, run nothing, invent nothing.
 EOF
 }
 
+review_rows_to_csv() {
+    python3 -c '
+import csv
+import io
+import json
+import sys
+
+text = sys.stdin.read()
+try:
+    doc = json.loads(text)
+except ValueError:
+    doc = None
+if isinstance(doc, dict) and isinstance(doc.get("results"), list):
+    rows = doc["results"]
+elif isinstance(doc, list):
+    rows = doc
+elif isinstance(doc, dict) and "symbol" in doc:
+    rows = [doc]
+else:
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError as exc:
+            sys.exit(f"not JSON rows: {exc}")
+        rows.append(row)
+if any(not isinstance(row, dict) for row in rows):
+    sys.exit("rows are not objects")
+columns = []
+seen = set()
+for row in rows:
+    for key in row:
+        if key not in seen:
+            seen.add(key)
+            columns.append(key)
+if not columns:
+    sys.exit(0)
+buffer = io.StringIO()
+writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
+writer.writeheader()
+for row in rows:
+    writer.writerow({key: row.get(key) for key in columns})
+sys.stdout.write(buffer.getvalue().rstrip("\n"))
+'
+}
+
 emit_review() {
     local kind="$1" label="$2" payload="$3"
-    local info="" header count
+    local info="" header count csv
     case "$kind" in
         doc)
             if ! info="$(printf '%s' "$payload" | python3 -c '
@@ -294,9 +339,17 @@ print(command)
             if [[ -n "${lines[2]:-}" ]]; then
                 printf 'Command: %s\n' "${lines[2]}"
             fi
-            printf '```json\n'
-            trim_context "$payload"
-            printf '\n```\n'
+            if ! csv="$(printf '%s' "$payload" | review_rows_to_csv 2>&1)"; then
+                printf 'prompt tse.find: %s: %s\n' "$label" "$csv" >&2
+                return 2
+            fi
+            if [[ -n "$csv" ]]; then
+                printf '```csv\n'
+                trim_context "$csv"
+                printf '\n```\n'
+            else
+                printf '(no rows)\n'
+            fi
         ;;
         array)
             if ! count="$(printf '%s' "$payload" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))' 2>&1)"; then
@@ -304,17 +357,33 @@ print(command)
                 return 2
             fi
             printf '## Piped tse.find results: %s (%s rows, no snapshot metadata)\n\n' "$label" "$count"
-            printf '```json\n'
-            trim_context "$payload"
-            printf '\n```\n'
+            if ! csv="$(printf '%s' "$payload" | review_rows_to_csv 2>&1)"; then
+                printf 'prompt tse.find: %s: %s\n' "$label" "$csv" >&2
+                return 2
+            fi
+            if [[ -n "$csv" ]]; then
+                printf '```csv\n'
+                trim_context "$csv"
+                printf '\n```\n'
+            else
+                printf '(no rows)\n'
+            fi
         ;;
         jsonl)
             count=$(printf '%s\n' "$payload" | wc -l)
             count=$((count))
             printf '## Piped tse.find rows: %s (%s rows, no snapshot metadata)\n\n' "$label" "$count"
-            printf '```json\n'
-            trim_context "$payload"
-            printf '\n```\n'
+            if ! csv="$(printf '%s' "$payload" | review_rows_to_csv 2>&1)"; then
+                printf 'prompt tse.find: %s: %s\n' "$label" "$csv" >&2
+                return 2
+            fi
+            if [[ -n "$csv" ]]; then
+                printf '```csv\n'
+                trim_context "$csv"
+                printf '\n```\n'
+            else
+                printf '(no rows)\n'
+            fi
         ;;
         table)
             printf '## Piped tse.find table: %s\n\n' "$label"
