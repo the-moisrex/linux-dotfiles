@@ -1,2 +1,5 @@
 __pycache__
 pods/agents/.env
+cpp_prompt/build/
+cpp_prompt/build-asan/
+cpp_prompt/.cache/
