@@ -1,6 +1,5 @@
 #include "prompt/prompts/note_prompt.hpp"
 #include "prompt/sdk/embed.hpp"
-#include "prompt/sdk/embed.hpp"
 #include <string>
 
 namespace prompt::prompts {
@@ -9,7 +8,7 @@ prompt_result execute_note(prompt_context&& ctx) noexcept {
     std::size_t head_lines = 0;
     bool prepend = false;
     std::vector<std::string_view> notes;
-    
+
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         if (ctx.args[i] == "--head" && i + 1 < ctx.args_count) {
             head_lines = std::stoull(std::string(ctx.args[++i]));
@@ -19,26 +18,31 @@ prompt_result execute_note(prompt_context&& ctx) noexcept {
             notes.push_back(ctx.args[i]);
         }
     }
-    
+
     std::string output;
-    
+
     if (prepend) {
         for (auto note : notes) {
             output += std::string(note) + "\n\n";
         }
-        if (ctx.stdin_consumed && !ctx.stdin_content.empty()) {
+        // bash's `embed_stdin || true` prints a blank block for an empty
+        // (but piped) stdin too — note.sh relies on that separator.
+        if (ctx.stdin_consumed) {
             output += embed_stdin(ctx.stdin_content, head_lines);
         }
     } else {
-        if (ctx.stdin_consumed && !ctx.stdin_content.empty()) {
+        // bash's `embed_stdin || true` prints a blank block for an empty
+        // (but piped) stdin too — note.sh relies on that separator.
+        if (ctx.stdin_consumed) {
             output += embed_stdin(ctx.stdin_content, head_lines);
         }
+        if (!notes.empty()) output += "\n";
         for (auto note : notes) {
             output += std::string(note) + "\n\n";
         }
     }
-    
-    return {std::move(output), 0, false};
+
+    return {std::move(output), 0, false, std::string{}, ctx.stdin_consumed};
 }
 
 void render_help_note(std::ostream& os) noexcept {

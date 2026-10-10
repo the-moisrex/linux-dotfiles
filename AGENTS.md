@@ -22,7 +22,7 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 
 `list` and `list-prompts` are ordinary prompt scripts (`prompts/list.sh`, `prompts/list-prompts.sh`), not special cases in the dispatcher.
 
-Argument tokens that match a prompt name — optionally prefixed with `.` or `-` — start a chained prompt that receives the previous prompt's output on stdin: `prompt stock فولاد .note "compare with فخوز"` runs `stock` and pipes its output through `note` (`.files` embeds files generically, `.note` appends a note, `.cli` a CLI hint).
+Argument tokens that match a prompt name — optionally prefixed with `.` or `-` — start a chained prompt: `prompt stock فولاد .note "compare with فخوز"` runs `stock`, then `note` (`.files` embeds files generically, `.note` appends a note, `.cli` a CLI hint). Chained prompts do NOT receive the previous prompt's output on stdin — each sees the original piped stdin, which is spent once a prompt that reads stdin has consumed it (the dispatcher separates segments with blank lines and copies only the combined output).
 
 **Prompt script conventions** (follow these when adding/editing prompts):
 - Source `prompts/_common.sh` and call `init_prompt` (or `init_prompt --no-files`), then `set -- "${ARGS[@]}"`
@@ -57,6 +57,16 @@ Argument tokens that match a prompt name — optionally prefixed with `.` or `-`
 - `collect_prompts` — prints `name<TAB>file` for every available prompt
 - `prompt_search_dirs` — prints the directories searched for prompt files
 - `extract_help para|full <files>` — statically extracts `show_help()` text via `prompts/_extract-help.awk` (used by `list`/`list-prompts` to avoid running `bash --help` per prompt)
+
+## `cpp_prompt/` — native prompt dispatcher (C++)
+
+A C++ reimplementation of `bin/prompt` + `prompts/*.sh` that must stay **behaviorally identical** (stdout, stderr, exit codes) to the bash side: every prompt script has a counterpart in `cpp_prompt/src/prompts/` (byte-identical help/body text), while not-yet-ported or script-heavy prompts run through `cpp_prompt/src/legacy/` (runs the bash script directly, bypassing the dispatcher to avoid recursion). The parity harness (case lists + `parity.sh` under `/home/moisrex/.tmp/opencode/`) runs both sides and diffs them — keep it green when touching either side.
+
+- Build: `cmake -S cpp_prompt -B cpp_prompt/build && cmake --build cpp_prompt/build -j 8`; Debug build with tests: `cpp_prompt/build-asan` (`ctest` there must pass)
+- Format: clang-format (`clang-format -i` over `cpp_prompt/**/*.{cpp,hpp}`; `--dry-run -Werror` must be clean)
+- Chain semantics match `bin/prompt`: prompts in a chain share the ORIGINAL piped stdin (nobody feeds a prompt's output into the next), segments are separated by blank lines, and a prompt that reads stdin (`read_stdin`/`embed_stdin`) spends the pipe for later prompts (native prompts report `stdin_consumed` in `prompt_result`)
+- Not-yet-ported prompts fall back to the legacy script runner; native prompts that shell out (`run`, `spp`, `gtest-case`, `stock`/`intraday` via `bin/tse`, `tse.find`) must match the script's exact output text and error routing (`tse: <msg>` exit 1, usage errors to stderr)
+- When editing a prompt script, port the same change to its `cpp_prompt/src/prompts/` counterpart (or delete the native port if you'd rather delegate to the script) and re-run the parity harness
 
 ## `bin/` Utilities (150+)
 
@@ -97,6 +107,7 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 |-----------|---------|
 | `bin/` | 150+ standalone shell utilities |
 | `prompts/` | AI prompt scripts (`.sh`), all source `_common.sh` |
+| `cpp_prompt/` | Native C++ prompt dispatcher + prompt ports (behaviorally identical to `bin/prompt` + `prompts/*.sh`) |
 | `firewall/` | nftables/iptables scripts and configs |
 | `pods/` | Containerized services (podman-compose, managed by `pods/stack`) + dev-container recipes (`recipes/`) |
 | `pkgs/` | Package lists (`pacman-core.txt`, `pacman-all.txt`, `dnf-core.txt`) + `core-map.txt`/`all-map.txt` (distro names with `NONE` placeholders for the dotfiles recipe and apt installs) |

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <chrono>
-#include <string>
 #include <optional>
+#include <string>
 
 namespace prompt::clipboard {
 

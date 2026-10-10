@@ -1,65 +1,83 @@
 #include "prompt/prompts/gtest_case_prompt.hpp"
-#include "prompt/sdk/embed.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/legacy/legacy_runner.hpp"
+#include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
-#include <filesystem>
 #include <string>
+#include <vector>
 
 namespace prompt::prompts {
 
-namespace {
-
-struct basic_gtest_case_prompt_config {
+prompt_result execute_gtest_case(prompt_context&& ctx) noexcept {
     std::size_t head_lines = 0;
-    std::string test_name;
-};
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines, false); !msg.empty()) {
+        return {std::string{}, 2, false, std::move(msg)};
+    }
 
-basic_gtest_case_prompt_config parse_gtest_case_args(std::span<std::string_view const> args) noexcept {
-    basic_gtest_case_prompt_config config;
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i] == "--head" && i + 1 < args.size()) {
-            config.head_lines = std::stoull(std::string(args[++i]));
-        } else if (config.test_name.empty() && !args[i].starts_with('-')) {
-            config.test_name = std::string(args[i]);
+    bool exact = false;
+    std::vector<std::string> test_names;
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (ctx.args[i] == "--head") {
+            ++i;
+        } else if (ctx.args[i] == "--exact") {
+            exact = true;
+        } else {
+            test_names.emplace_back(ctx.args[i]);
         }
     }
-    return config;
-}
 
-} // namespace
-
-prompt_result execute_gtest_case(prompt_context&& ctx) noexcept {
-    auto config = parse_gtest_case_args({ctx.args.data(), ctx.args_count});
-    
-    if (config.test_name.empty()) {
-        return {"prompt gtest-case: no test name specified\n", 2, false};
+    // gtest-case.sh embeds stdin before it validates the test names, so a
+    // usage error still ships the piped context on stdout.
+    std::string output;
+    if (ctx.stdin_consumed) {
+        output += embed_stdin(ctx.stdin_content, head_lines);
     }
-    
-    std::vector<std::string> cmd = {"gtest-case", config.test_name};
+
+    if (test_names.empty()) {
+        return {std::move(output), 2, false,
+                "Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]\n", ctx.stdin_consumed};
+    }
+
+    auto bin_dir = legacy::prompts_dir().parent_path() / "bin";
+    std::string tool = (bin_dir / "gtest-case").string();
+
+    std::vector<std::string> cmd;
+    cmd.push_back(tool);
+    if (exact) cmd.push_back("--exact");
+    for (auto const& name : test_names) cmd.push_back(name);
+
     std::vector<char const*> argv;
     argv.reserve(cmd.size() + 1);
     for (auto const& s : cmd) argv.push_back(s.c_str());
     argv.push_back(nullptr);
-    
+
     auto result = prompt::process::run_command(argv, ctx.stdin_content);
-    
-    std::string output;
-    output += "Google Test case: " + config.test_name + "\n\n";
+
+    std::string tests;
+    for (std::size_t i = 0; i < test_names.size(); ++i) {
+        if (i) tests += ' ';
+        tests += test_names[i];
+    }
+
+    output += "Additional Google Test case context:\n\n";
+    output += "Tests: " + tests + "\n\n";
     output += "```cpp\n";
-    output += trim_context(result.stdout_data, config.head_lines);
-    output += "\n```\n";
-    output += "Exit code: " + std::to_string(result.exit_code) + "\n";
-    
-    return {std::move(output), result.exit_code, false};
+    output += trim_context_nl(result.stdout_data, head_lines);
+    output += "\n```\n\n";
+    output += "Use the test case context above when analyzing the issue.";
+
+    return {std::move(output), 0, false, std::move(result.stderr_data), ctx.stdin_consumed};
 }
 
 void render_help_gtest_case(std::ostream& os) noexcept {
-    os << R"EOF(Usage: prompt gtest-case [--head N] <TEST_NAME>
+    os << R"EOF(Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]
 
-Find a single Google Test case source from its name.
+Builds a debugging prompt and embeds the original source for Google Test cases.
+By default, test names are prefix matches.
 
 Options:
-  --head N   Keep only the first N lines of the embedded test
+  --head N   Keep only the first N lines of each test case
+  --exact    Match each given test name exactly
 )EOF";
 }
 

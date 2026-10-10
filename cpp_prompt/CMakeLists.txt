@@ -47,7 +47,9 @@ add_library(prompt_lib
     src/sdk/chaining.cpp
     src/sdk/pipeline.cpp
     src/sdk/embed.cpp
+    src/sdk/args.cpp
     src/legacy/legacy_runner.cpp
+    src/legacy/legacy_prompts.cpp
     src/tse/tse_python.cpp
     src/prompts/prompt_entry.cpp
     src/prompts/auto_prompt.cpp

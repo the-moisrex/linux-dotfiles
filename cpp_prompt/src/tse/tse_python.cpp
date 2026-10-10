@@ -22,25 +22,21 @@ collected_data parse_collected_data(nlohmann::json const& j) noexcept {
     return data;
 }
 
-std::expected<collected_data, std::string> collect(
-    std::string_view symbol,
-    int days,
-    int top,
-    bool with_codal,
-    bool adjusted) noexcept {
-    
+std::expected<collected_data, std::string> collect(std::string_view symbol, int days, int top, bool with_codal,
+                                                   bool adjusted) noexcept {
+
     std::string days_str = std::to_string(days);
     std::string top_str = std::to_string(top);
     std::string codal_str = with_codal ? "true" : "false";
     std::string adjusted_str = adjusted ? "true" : "false";
-    
+
     std::array<std::string_view, 5> collect_args = {symbol, days_str, top_str, codal_str, adjusted_str};
     auto result = python::call("bin.tse", "collect_embed", collect_args);
-    
+
     if (!result) {
         return std::unexpected(result.error());
     }
-    
+
     auto json = nlohmann::json::parse(*result);
     return parse_collected_data(json);
 }
@@ -49,11 +45,11 @@ std::expected<std::string, std::string> render_markdown(nlohmann::json const& da
     std::string data_json = data.dump();
     std::array<std::string_view, 1> markdown_args = {data_json};
     auto result = python::call("bin.tse", "markdown_embed", markdown_args);
-    
+
     if (!result) {
         return std::unexpected(result.error());
     }
-    
+
     // call() JSON-encodes the return value; markdown returns a str, so the
     // payload is a JSON string literal — decode it back to raw text.
     auto parsed = nlohmann::json::parse(*result, nullptr, false);

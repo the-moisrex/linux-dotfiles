@@ -52,6 +52,34 @@ void test_unknown_defaults_to_auto() {
     check(chain.count == 1 && chain.invocations[0].name == "auto", "empty argv: defaults to auto");
 }
 
+void test_legacy_prompts_registered() {
+    // Every prompt file in prompts/ must be addressable by name (bash
+    // dispatcher parity), not just the natively ported ones.
+    check(find_prompt("summarize") != nullptr, "legacy summarize is registered");
+    check(find_prompt("explain") != nullptr, "legacy explain is registered");
+    check(find_prompt("git.worktree.files") != nullptr, "legacy dotted name registered");
+
+    auto const* summarize = find_prompt("summarize");
+    if (summarize) {
+        check(!summarize->script.empty(), "summarize has a backing script");
+        check(!summarize->help_summary.empty(), "summarize has a help summary");
+        check(summarize->execute_fn != nullptr, "summarize has an executor");
+    }
+
+    // Registry holds native + legacy (76 prompt files today).
+    check(get_all_prompts().size() >= 70, "registry includes all prompt files");
+
+    // Native prompts win over their .sh files.
+    auto const* fix = find_prompt("fix");
+    check(fix && fix->script.empty(), "native fix shadows fix.sh");
+
+    // Dotted legacy names resolve through the chain parser directly.
+    char const* argv[] = {"prompt", "explain"};
+    auto chain = parse_chain(std::span<char const* const>(argv, 2), get_all_prompts());
+    check(chain.count == 1, "legacy name: one invocation");
+    check(chain.count == 1 && chain.invocations[0].name == "explain", "legacy name resolves to explain, not auto");
+}
+
 } // namespace
 
 int main() {
@@ -61,6 +89,7 @@ int main() {
     test_prompt_with_args();
     test_chain_two_prompts();
     test_unknown_defaults_to_auto();
+    test_legacy_prompts_registered();
 
     if (failures == 0) {
         std::printf("all chaining tests passed\n");

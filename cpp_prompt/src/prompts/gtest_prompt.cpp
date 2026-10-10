@@ -1,6 +1,5 @@
 #include "prompt/prompts/gtest_prompt.hpp"
-#include "prompt/sdk/embed.hpp"
-#include "prompt/core/process.hpp"
+#include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
 #include <string>
@@ -8,63 +7,52 @@
 
 namespace prompt::prompts {
 
-namespace {
-
-struct basic_gtest_prompt_config {
+prompt_result execute_gtest(prompt_context&& ctx) noexcept {
     std::size_t head_lines = 0;
-    std::vector<std::string_view> test_names;
-};
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
+        return {std::string{}, 2, false, std::move(msg)};
+    }
 
-basic_gtest_prompt_config parse_gtest_args(std::span<std::string_view const> args) noexcept {
-    basic_gtest_prompt_config config;
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i] == "--head" && i + 1 < args.size()) {
-            config.head_lines = std::stoull(std::string(args[++i]));
+    std::string output;
+    output += "Write comprehensive unit tests for the following C++ code using Google Test (gtest).\n";
+    output += "This code is part of a C++ web framework named web++.\n";
+    output += "Focus on:\n";
+    output += "- Clear and descriptive test names.\n";
+    output += "- Proper Setup/Teardown (using TEST_F and fixtures if necessary).\n";
+    output += "- Edge cases and typical web framework scenarios (e.g., malformed inputs, "
+              "boundaries).\n";
+    output += "- Standard gtest macros (EXPECT_EQ, ASSERT_TRUE, EXPECT_THROW, etc.).\n";
+    output += "Provide the complete test code implementation.\n";
+    output += "\n";
+
+    std::string error;
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (ctx.args[i] == "--head") {
+            ++i;
+            continue;
+        }
+        std::filesystem::path file(ctx.args[i]);
+        if (std::filesystem::is_regular_file(file)) {
+            output += "File: " + file.filename().string() + "\n\n";
+            output += "```" + infer_lang(file) + "\n";
+            output += trim_context_nl(read_file(file), head_lines);
+            output += "\n```\n";
         } else {
-            config.test_names.push_back(args[i]);
+            error += "Warning: File not found or not a regular file: " + std::string(ctx.args[i]) + "\n";
         }
     }
-    return config;
-}
 
-} // namespace
-
-prompt_result execute_gtest(prompt_context&& ctx) noexcept {
-    auto config = parse_gtest_args({ctx.args.data(), ctx.args_count});
-    
-    if (config.test_names.empty()) {
-        return {"prompt gtest: no test names specified\n", 2, false};
-    }
-    
-    std::vector<std::string> cmd = {"gtest-case"};
-    for (auto name : config.test_names) {
-        cmd.push_back(std::string(name));
-    }
-    
-    std::vector<char const*> argv;
-    argv.reserve(cmd.size() + 1);
-    for (auto const& s : cmd) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    
-    auto result = prompt::process::run_command(argv, ctx.stdin_content);
-    
-    std::string output;
-    output += "Google Test case source for analysis:\n\n";
-    output += "```cpp\n";
-    output += trim_context(result.stdout_data, config.head_lines);
-    output += "\n```\n";
-    output += "Exit code: " + std::to_string(result.exit_code) + "\n";
-    
-    return {std::move(output), result.exit_code, false};
+    return {std::move(output), 0, false, std::move(error)};
 }
 
 void render_help_gtest(std::ostream& os) noexcept {
-    os << R"EOF(Usage: prompt gtest [--head N] <TEST_NAME>...
+    os << R"EOF(Usage: prompt gtest [--head N] [FILE]...
+       some-command | prompt gtest [--head N] [FILE...]
 
-Find Google Test test case source from names and embed for analysis.
+Ask the AI to write Google Test (gtest) unit tests for the provided code.
 
 Options:
-  --head N   Keep only the first N lines of each embedded test
+  --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
 

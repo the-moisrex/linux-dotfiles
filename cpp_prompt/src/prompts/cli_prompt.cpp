@@ -1,67 +1,66 @@
 #include "prompt/prompts/cli_prompt.hpp"
-#include "prompt/sdk/embed.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/legacy/legacy_runner.hpp"
+#include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
+#include <vector>
 
 namespace prompt::prompts {
 
-namespace {
-
-struct basic_cli_prompt_config {
-    std::size_t head_lines = 0;
-    std::string command;
-};
-
-basic_cli_prompt_config parse_cli_args(std::span<std::string_view const> args) noexcept {
-    basic_cli_prompt_config config;
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i] == "--head" && i + 1 < args.size()) {
-            config.head_lines = std::stoull(std::string(args[++i]));
-        } else if (config.command.empty() && !args[i].starts_with('-')) {
-            for (std::size_t j = i; j < args.size(); ++j) {
-                if (j > i) config.command += " ";
-                config.command += args[j];
-            }
-            break;
-        }
-    }
-    return config;
-}
-
-} // namespace
-
 prompt_result execute_cli(prompt_context&& ctx) noexcept {
-    auto config = parse_cli_args({ctx.args.data(), ctx.args_count});
-    
-    if (config.command.empty()) {
-        return {"prompt cli: no command specified\n", 2, false};
+    std::size_t head_lines = 0;
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
+        return {std::string{}, 2, false, std::move(msg)};
     }
-    
-    std::vector<char const*> argv = {"sh", "-c", config.command.c_str(), nullptr};
+
+    std::vector<std::string_view> cmd_args;
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (ctx.args[i] == "--head") {
+            ++i;
+            continue;
+        }
+        cmd_args.push_back(ctx.args[i]);
+    }
+
+    if (cmd_args.empty()) {
+        return {std::string{}, 1, false, "prompt cli: no command provided\n" + legacy::help_text("cli")};
+    }
+
+    // cli.sh: cmd_description="${ARGS[*]}" and eval "${ARGS[@]}" 2>&1 — eval
+    // joins its arguments with spaces, so a single joined string is faithful.
+    std::string command;
+    for (std::size_t i = 0; i < cmd_args.size(); ++i) {
+        if (i) command += ' ';
+        command += cmd_args[i];
+    }
+
+    std::vector<char const*> argv = {"bash", "-c", "eval \"$0\" 2>&1", command.c_str(), nullptr};
     auto result = prompt::process::run_command(argv, ctx.stdin_content);
-    
+
     std::string output;
-    output += "Command: " + config.command + "\n\n";
-    output += "```text\n";
-    output += trim_context(result.stdout_data, config.head_lines);
-    if (!result.stderr_data.empty()) {
-        output += "\n--- STDERR ---\n";
-        output += trim_context(result.stderr_data, config.head_lines);
+    output += "Output of command `" + command + "`:\n\n";
+    if (result.exit_code != 0) {
+        output += "(Exited with status: " + std::to_string(result.exit_code) + ")\n\n";
+    }
+    output += "\n```text\n";
+    if (!result.stdout_data.empty()) {
+        output += trim_context_nl(result.stdout_data, head_lines);
     }
     output += "\n```\n";
-    output += "Exit code: " + std::to_string(result.exit_code) + "\n";
-    
-    return {std::move(output), result.exit_code, false};
+
+    return {std::move(output), 0, false, std::string{}};
 }
 
 void render_help_cli(std::ostream& os) noexcept {
-    os << R"EOF(Usage: prompt cli [--head N] <COMMAND>
+    os << R"EOF(Usage: prompt cli [--head N] <command> [args...]
+       some-input | prompt cli [--head N] <command> [args...]
 
-Run a shell command and embed its output for AI context.
+Executes the given CLI command and appends its output as a Markdown code block.
+Useful for appending the output of arbitrary commands to your prompt chain.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
+  --head N   Keep only the first N lines of the command output
 )EOF";
 }
 

@@ -1,0 +1,15 @@
+---
+# Style for the cpp_prompt port, tuned to match the existing sources:
+# 4-space indent, no namespace indentation (dominant style), left pointers,
+# short ifs/loops on one line, 120 columns (longest legitimate code lines).
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+NamespaceIndentation: None
+FixNamespaceComments: true
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortLoopsOnASingleLine: true
+BreakTemplateDeclarations: Yes

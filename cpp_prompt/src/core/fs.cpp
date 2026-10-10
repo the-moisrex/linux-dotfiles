@@ -8,7 +8,7 @@ std::vector<std::filesystem::path> xdg_config_dirs() noexcept {
     std::vector<std::filesystem::path> dirs;
     char const* xdg = std::getenv("XDG_CONFIG_DIRS");
     std::string_view dirs_str = xdg ? xdg : "/etc/xdg";
-    
+
     std::size_t start = 0;
     while (start < dirs_str.size()) {
         auto end = dirs_str.find(':', start);
@@ -21,29 +21,27 @@ std::vector<std::filesystem::path> xdg_config_dirs() noexcept {
     return dirs;
 }
 
-std::vector<std::filesystem::path> prompt_search_dirs(
-    std::filesystem::path const& exe_path) noexcept {
-    
+std::vector<std::filesystem::path> prompt_search_dirs(std::filesystem::path const& exe_path) noexcept {
+
     std::vector<std::filesystem::path> dirs;
-    
+
     for (auto const& base : xdg_config_dirs()) {
         dirs.push_back(base / "prompts");
     }
-    
+
     auto repo_prompts = exe_path.parent_path().parent_path() / "prompts";
     if (std::filesystem::exists(repo_prompts)) {
         dirs.push_back(std::filesystem::canonical(repo_prompts));
     }
-    
+
     return dirs;
 }
 
-std::optional<std::filesystem::path> find_prompt_file(
-    std::string_view name,
-    std::span<std::filesystem::path const> search_dirs) noexcept {
-    
+std::optional<std::filesystem::path> find_prompt_file(std::string_view name,
+                                                      std::span<std::filesystem::path const> search_dirs) noexcept {
+
     constexpr std::array<std::string_view, 4> exts = {".sh", ".txt", ".md", ""};
-    
+
     for (auto const& dir : search_dirs) {
         if (!std::filesystem::exists(dir)) continue;
         for (auto const& ext : exts) {
@@ -57,9 +55,8 @@ std::optional<std::filesystem::path> find_prompt_file(
     return std::nullopt;
 }
 
-std::optional<std::filesystem::path> find_git_root(
-    std::filesystem::path const& start) noexcept {
-    
+std::optional<std::filesystem::path> find_git_root(std::filesystem::path const& start) noexcept {
+
     auto current = start;
     while (true) {
         auto git_dir = current / ".git";
@@ -81,10 +78,9 @@ file_type detect_file_type(std::filesystem::path const& path) noexcept {
     return file_type::unknown;
 }
 
-std::filesystem::path relative_path(
-    std::filesystem::path const& file,
-    std::optional<std::filesystem::path> const& git_root) noexcept {
-    
+std::filesystem::path relative_path(std::filesystem::path const& file,
+                                    std::optional<std::filesystem::path> const& git_root) noexcept {
+
     try {
         if (git_root && std::filesystem::exists(*git_root)) {
             return std::filesystem::relative(file, *git_root);

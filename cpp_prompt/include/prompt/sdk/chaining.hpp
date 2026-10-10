@@ -18,8 +18,6 @@ struct chain_result {
     std::size_t count = 0;
 };
 
-chain_result parse_chain(
-    std::span<char const* const> argv,
-    std::span<prompt_descriptor const> registry) noexcept;
+chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_descriptor const> registry) noexcept;
 
 } // namespace prompt

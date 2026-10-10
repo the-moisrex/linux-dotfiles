@@ -1,13 +1,17 @@
 #include "prompt/prompts/stock_prompt.hpp"
+#include "prompt/core/fs.hpp"
+#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/embed.hpp"
 #include "prompt/tse/tse_python.hpp"
-#include "prompt/sdk/embed.hpp"
-#include <filesystem>
-#include <string>
-#include <vector>
-#include <fstream>
-#include <sstream>
 #include <chrono>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unistd.h>
+#include <vector>
 
 namespace prompt::prompts {
 
@@ -15,152 +19,381 @@ namespace {
 
 struct basic_stock_prompt_config {
     std::size_t head_lines = 0;
+    std::vector<std::string> inputs;
     std::string symbol;
     int days = 0;
+    bool days_set = false;
     int top = 5;
     bool no_codal = false;
     bool unadjusted = false;
     bool full = false;
+    bool fetch_flags = false;
     bool cache_mode = false;
     std::vector<std::filesystem::path> snapshot_files;
+    bool failed = false;
+    int exit_code = 2;
+    std::string error;
 };
 
-basic_stock_prompt_config parse_stock_args(std::span<std::string_view const> args, prompt_context const& ctx) noexcept {
+bool is_positive_int(std::string_view s) noexcept {
+    if (s.empty()) return false;
+    for (char c : s) {
+        if (c < '0' || c > '9') return false;
+    }
+    return true;
+}
+
+std::string collapse_whitespace(std::string_view text) noexcept {
+    std::string out;
+    bool pending = false;
+    for (char c : text) {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            pending = !out.empty();
+            continue;
+        }
+        if (pending) {
+            out += ' ';
+            pending = false;
+        }
+        out += c;
+    }
+    return out;
+}
+
+// Port of the snapshot header python in stock.sh: `datetime.fromisoformat`
+// compared against now to flag data older than a day.
+std::string compute_stale(std::string const& fetched) noexcept {
+    if (fetched.empty()) return {};
+
+    std::string_view s(fetched);
+    std::size_t pos = 0;
+    auto read_num = [&](int width, int& out) -> bool {
+        if (pos + static_cast<std::size_t>(width) > s.size()) return false;
+        int value = 0;
+        for (int i = 0; i < width; ++i) {
+            char c = s[pos + static_cast<std::size_t>(i)];
+            if (c < '0' || c > '9') return false;
+            value = value * 10 + (c - '0');
+        }
+        out = value;
+        pos += static_cast<std::size_t>(width);
+        return true;
+    };
+
+    int year = 0, month = 0, day = 0;
+    if (!read_num(4, year) || pos >= s.size() || s[pos++] != '-' || !read_num(2, month) || pos >= s.size() ||
+        s[pos++] != '-' || !read_num(2, day)) {
+        return "?";
+    }
+
+    int hour = 0, minute = 0, second = 0;
+    if (pos >= s.size() || (s[pos] != 'T' && s[pos] != ' ')) return "?";
+    ++pos;
+    if (!read_num(2, hour) || pos >= s.size() || s[pos++] != ':' || !read_num(2, minute)) {
+        return "?";
+    }
+    if (pos < s.size() && s[pos] == ':') {
+        ++pos;
+        if (!read_num(2, second)) return "?";
+    }
+    if (pos < s.size() && s[pos] == '.') {
+        ++pos;
+        while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') ++pos;
+    }
+
+    long offset_seconds = 0;
+    bool has_offset = false;
+    if (pos < s.size() && (s[pos] == '+' || s[pos] == '-')) {
+        int sign = s[pos] == '-' ? -1 : 1;
+        ++pos;
+        int off_hours = 0, off_minutes = 0;
+        if (!read_num(2, off_hours)) return "?";
+        if (pos < s.size() && s[pos] == ':') {
+            ++pos;
+            if (!read_num(2, off_minutes)) return "?";
+        }
+        offset_seconds = sign * (off_hours * 3600L + off_minutes * 60L);
+        has_offset = true;
+    }
+
+    std::tm tm{};
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = minute;
+    tm.tm_sec = second;
+
+    std::time_t when = has_offset ? timegm(&tm) - offset_seconds : std::mktime(&tm);
+    auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    return (now - when) > 86400 ? "yes" : "no";
+}
+
+struct snapshot_info {
+    std::string fetched = "unknown";
+    std::string stale;
+    std::string note;
+    std::string instrument;
+    std::string error;
+};
+
+snapshot_info read_snapshot_info(std::filesystem::path const& path) noexcept {
+    snapshot_info info;
+
+    std::ifstream handle(path);
+    if (!handle) {
+        info.error = path.string() + ": cannot open snapshot";
+        return info;
+    }
+
+    nlohmann::json doc;
+    try {
+        handle >> doc;
+    } catch (std::exception const& exc) {
+        info.error = path.string() + ": not valid JSON: " + exc.what();
+        return info;
+    }
+
+    auto meta = doc.value("meta", nlohmann::json::object());
+    auto data = doc.value("data", nlohmann::json::object());
+    if (!meta.is_object() || !data.is_object()) {
+        info.error = path.string() + ": not a .stock snapshot (expected top-level meta and data objects)";
+        return info;
+    }
+
+    std::string fetched = data.value("fetched_at", std::string{});
+    if (fetched.empty()) fetched = meta.value("fetched_at", std::string{});
+    info.fetched = fetched.empty() ? "unknown" : fetched;
+    info.stale = compute_stale(fetched);
+
+    if (meta.contains("note") && meta["note"].is_string()) {
+        info.note = collapse_whitespace(meta["note"].get<std::string>());
+    }
+
+    std::vector<std::string> bits;
+    auto add_bit = [&bits](nlohmann::json const& value, std::string_view label) {
+        if (value.is_null()) return;
+        if (value.is_string() && value.get<std::string>().empty()) return;
+        if (!value.is_string() && !value.is_number()) return;
+        bits.push_back(std::string(label) + value.dump(1, ' ', false, nlohmann::json::error_handler_t::replace));
+    };
+    add_bit(meta.value("symbol", nlohmann::json{}), "");
+    add_bit(meta.value("name", nlohmann::json{}), "");
+    add_bit(meta.value("isin", nlohmann::json{}), "ISIN ");
+    add_bit(meta.value("ins_code", nlohmann::json{}), "insCode ");
+    add_bit(meta.value("market", nlohmann::json{}), "");
+    add_bit(meta.value("source", nlohmann::json{}), "source: ");
+    if (!bits.empty()) {
+        std::string joined;
+        for (std::size_t i = 0; i < bits.size(); ++i) {
+            if (i) joined += " — ";
+            joined += bits[i];
+        }
+        info.instrument = "Instrument: " + joined;
+    }
+
+    return info;
+}
+
+basic_stock_prompt_config parse_stock_args(prompt_context const& ctx) noexcept {
     basic_stock_prompt_config config;
-    
-    std::vector<std::string_view> positional;
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        auto arg = args[i];
-        if (arg == "--head" && i + 1 < args.size()) {
-            config.head_lines = std::stoull(std::string(args[++i]));
-        } else if (arg == "--days" && i + 1 < args.size()) {
-            config.days = std::stoi(std::string(args[++i]));
-        } else if (arg == "--top" && i + 1 < args.size()) {
-            config.top = std::stoi(std::string(args[++i]));
-        } else if (arg == "--full") {
+
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        std::string_view arg = ctx.args[i];
+        if (arg == "--head") {
+            ++i; // consumed by parse_arguments
+            continue;
+        }
+        if (arg == "--days" || arg == "--top") {
+            config.fetch_flags = true;
+            if (i + 1 >= ctx.args_count || !is_positive_int(ctx.args[i + 1])) {
+                config.failed = true;
+                config.error = "prompt stock: " + std::string(arg) + " requires a positive integer\n";
+                return config;
+            }
+            if (arg == "--days") {
+                config.days = std::stoi(std::string(ctx.args[i + 1]));
+                config.days_set = true;
+            } else {
+                config.top = std::stoi(std::string(ctx.args[i + 1]));
+            }
+            ++i;
+            continue;
+        }
+        if (arg == "--full") {
+            config.fetch_flags = true;
             config.full = true;
-        } else if (arg == "--no-codal") {
+            continue;
+        }
+        if (arg == "--no-codal") {
+            config.fetch_flags = true;
             config.no_codal = true;
-        } else if (arg == "--unadjusted") {
+            continue;
+        }
+        if (arg == "--unadjusted") {
+            config.fetch_flags = true;
             config.unadjusted = true;
-        } else if (arg == "--") {
-            for (++i; i < args.size(); ++i) {
-                positional.push_back(args[i]);
-            }
-            break;
-        } else if (!arg.starts_with('-')) {
-            positional.push_back(arg);
+            continue;
+        }
+        if (arg == "--") continue;
+        if (arg.starts_with('-')) {
+            config.failed = true;
+            config.error = "prompt stock: unknown option: " + std::string(arg) + "\n";
+            return config;
+        }
+        config.inputs.emplace_back(arg);
+    }
+
+    if (config.inputs.empty()) {
+        if (auto id = ctx.clipboard_identifier()) config.inputs.push_back(*id);
+        if (config.inputs.empty()) {
+            config.failed = true;
+            config.error = "prompt stock: no symbol given and no identifier found in the clipboard\n";
+            config.error += legacy::help_text("stock");
+            return config;
         }
     }
-    
-    for (auto arg : positional) {
-        std::filesystem::path p(arg);
-        if (p.extension() == ".stock" || std::filesystem::exists(p)) {
-            config.cache_mode = true;
-            if (auto resolved = ctx.resolve_input_file(arg)) {
-                config.snapshot_files.push_back(*resolved);
-            }
+
+    std::vector<std::string> file_inputs;
+    std::vector<std::string> ident_inputs;
+    for (auto const& input : config.inputs) {
+        std::filesystem::path p(input);
+        if (std::filesystem::is_regular_file(p) || p.extension() == ".stock") {
+            file_inputs.push_back(input);
         } else {
-            config.symbol = std::string(arg);
+            ident_inputs.push_back(input);
         }
     }
-    
-    if (config.symbol.empty() && !config.cache_mode) {
-        if (auto id = ctx.clipboard_identifier()) {
-            config.symbol = *id;
+
+    if (!file_inputs.empty() && !ident_inputs.empty()) {
+        config.failed = true;
+        config.error = "prompt stock: cannot mix .stock snapshot files with a live identifier\n";
+        return config;
+    }
+    if (config.full && config.days_set) {
+        config.failed = true;
+        config.error = "prompt stock: --full and --days cannot be used together\n";
+        return config;
+    }
+    if (!file_inputs.empty() && config.fetch_flags) {
+        config.failed = true;
+        config.error = "prompt stock: --days/--full/--top/--no-codal/--unadjusted need a live fetch; "
+                       "snapshot files are used as-is\n";
+        return config;
+    }
+    if (ident_inputs.size() > 1) {
+        config.failed = true;
+        config.error = "prompt stock: provide exactly one symbol/insCode (or several .stock files)\n";
+        return config;
+    }
+    config.symbol = ident_inputs.empty() ? std::string{} : ident_inputs[0];
+
+    if (!file_inputs.empty()) {
+        config.cache_mode = true;
+        auto git_root = prompt::fs::find_git_root();
+        for (auto const& input : file_inputs) {
+            std::filesystem::path resolved;
+            if (std::filesystem::is_regular_file(input)) {
+                resolved = input;
+            } else if (git_root) {
+                auto candidate = *git_root / input;
+                if (std::filesystem::is_regular_file(candidate)) resolved = candidate;
+            }
+            if (resolved.empty()) {
+                config.failed = true;
+                config.error = "prompt stock: snapshot file not found: " + input + "\n";
+                return config;
+            }
+            if (::access(resolved.c_str(), R_OK) != 0) {
+                config.failed = true;
+                config.error = "prompt stock: snapshot file not readable: " + resolved.string() + "\n";
+                return config;
+            }
+            config.snapshot_files.push_back(resolved);
         }
     }
-    
+
     return config;
 }
 
-std::string render_snapshot_file(std::filesystem::path const& path, std::size_t head_lines) noexcept {
-    std::ifstream file(path);
-    if (!file) return "";
-    
-    auto json = nlohmann::json::parse(file);
-    
-    std::string fetched = json.value("fetched_at", "");
-    if (fetched.empty()) {
-        fetched = json["meta"].value("fetched_at", "");
+// Port of the per-snapshot block in stock.sh.
+std::string render_snapshot(std::filesystem::path const& path, std::size_t head_lines, std::string& errors) noexcept {
+    auto info = read_snapshot_info(path);
+    if (!info.error.empty()) {
+        errors += "prompt stock: " + info.error + "\n";
+        return {};
     }
-    
-    std::string stale_warning;
-    if (!fetched.empty()) {
-        try {
-            std::tm tm = {};
-            std::istringstream ss(fetched);
-            ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
-            if (!ss.fail()) {
-                auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
-                auto now = std::chrono::system_clock::now();
-                if (now - tp > std::chrono::hours(24)) {
-                    stale_warning = "Data is older than 24 hours — the latest session is probably missing; re-run tse.snapshot to refresh.\n";
-                }
-            }
-        } catch (...) {}
-    }
-    
+
+    std::error_code ec;
+    auto base = prompt::fs::find_git_root().value_or(std::filesystem::current_path(ec));
+    auto rel = std::filesystem::relative(std::filesystem::weakly_canonical(path, ec), base, ec);
+    if (ec || rel.empty()) rel = path;
+    std::string rel_path = rel.string();
+
     std::string output;
-    output += "The data below comes from CACHED `.stock` snapshots written by tse.snapshot, not a live fetch — analyze each as-of its fetched_at timestamp.\n\n";
-    
-    output += "## Cached snapshot: " + path.filename().string() + " (fetched " + fetched + ")\n";
-    if (!stale_warning.empty()) output += stale_warning;
-    
-    auto meta = json.value("meta", nlohmann::json::object());
-    std::vector<std::string> bits;
-    if (auto v = meta.value("symbol", ""); !v.empty()) bits.push_back(v);
-    if (auto v = meta.value("name", ""); !v.empty()) bits.push_back(v);
-    if (auto v = meta.value("isin", ""); !v.empty()) bits.push_back("ISIN " + v);
-    if (auto v = meta.value("ins_code", ""); !v.empty()) bits.push_back("insCode " + v);
-    if (auto v = meta.value("market", ""); !v.empty()) bits.push_back(v);
-    if (!bits.empty()) {
-        output += "Instrument: ";
-        for (size_t i = 0; i < bits.size(); ++i) {
-            if (i) output += " — ";
-            output += bits[i];
-        }
-        output += "\n";
+    output += "\n## Cached snapshot: " + rel_path + " (fetched " + info.fetched + ")\n";
+    if (info.stale == "yes") {
+        output += "Data is older than 24 hours — the latest session is probably missing; re-run "
+                  "tse.snapshot to refresh.\n";
     }
-    
-    auto render_result = tse::render_markdown(json["data"]);
-    if (render_result) {
-        output += "\n" + trim_context(*render_result, head_lines) + "\n";
+    if (!info.note.empty()) output += "Snapshot note: " + info.note + "\n";
+    if (!info.instrument.empty()) output += info.instrument + "\n";
+
+    std::ifstream handle(path);
+    nlohmann::json doc;
+    try {
+        handle >> doc;
+    } catch (...) {
+        doc = nlohmann::json::object();
+    }
+
+    auto rendered = tse::render_markdown(doc["data"]);
+    if (rendered) {
+        output += "\n" + trim_context(*rendered, head_lines) + "\n";
     } else {
-        output += "prompt stock: snapshot render failed; embedding raw JSON instead\n";
-        output += "File: " + path.filename().string() + "\n```json\n";
-        output += trim_context(json.dump(2), head_lines);
+        errors += "prompt stock: " + rel_path + ": snapshot render failed (" + rendered.error() +
+                  "); embedding raw JSON instead\n";
+        output += "\nFile: " + rel_path + "\n```json\n";
+        output += trim_context(read_file(path), head_lines);
         output += "\n```\n";
     }
-    
     return output;
 }
 
 } // namespace
 
 prompt_result execute_stock(prompt_context&& ctx) noexcept {
-    auto config = parse_stock_args({ctx.args.data(), ctx.args_count}, ctx);
-    
+    auto config = parse_stock_args(ctx);
+    if (config.failed) {
+        return {"", config.exit_code, false, std::move(config.error)};
+    }
+
     std::string output;
-    
     if (config.cache_mode) {
-        for (auto const& file : config.snapshot_files) {
-            output += render_snapshot_file(file, config.head_lines);
-            output += "\n";
-        }
-    } else {
-        if (config.symbol.empty()) {
-            return {"prompt stock: no symbol given and no identifier found in the clipboard\n", 2, false};
-        }
-        
-        int days = config.full ? 0 : config.days;
+        output += "The data below comes from CACHED `.stock` snapshots written by tse.snapshot, not a "
+                  "live fetch — analyze each as-of its fetched_at timestamp.\n\n";
+    }
+
+    std::string context;
+    if (!config.cache_mode) {
+        int days = config.days_set ? config.days : 0;
         auto result = tse::collect(config.symbol, days, config.top, !config.no_codal, !config.unadjusted);
-        
         if (!result) {
-            return {"prompt stock: " + result.error() + "\n", 2, false};
+            // `python3 bin/tse all ...` prints `tse: <message>` on stderr and
+            // exits 1; stock.sh runs under `set -e`, so the prompt aborts.
+            std::string msg = result.error();
+            if (auto pos = msg.find(": DataError: "); pos != std::string::npos) {
+                msg = msg.substr(pos + 13);
+            } else if (msg.starts_with("Python call failed: ")) {
+                msg = msg.substr(20);
+            }
+            return {"", 1, false, "tse: " + msg + "\n"};
         }
-        
-        output += R"EOF(You are an institutional analyst of the Tehran Stock Exchange. Analyze the instrument data below.
+        auto rendered = tse::render_markdown(result->raw_json);
+        if (rendered) context = *rendered;
+    }
+
+    output += R"EOF(You are an institutional analyst of the Tehran Stock Exchange. Analyze the instrument data below.
 
 - Start with the symbol, instrument type (stock vs صندوق — check `fundamentals.is_fund`), trading state, source dates, market-session status and the benchmark indexes if provided. A fetched timestamp does not mean the last trade occurred then: compare the quote's trade_date to the fetch date, and check Codal's retrieved_at separately. Distinguish last trade from closing price; all prices and trading values are in rial, not toman.
 - Use `market_context` when present: `currencies` holds free-market FX rates (USD/IRR, EUR/IRR, GBP/IRR, AED/IRR, etc.), gold prices (18K, 24K, silver per gram), and coin prices (Imami, Bahar Azadi, half, quarter, grami) from Tasnim News — frame rial moves in hard-currency terms and note gold/coin trends for commodity-sensitive names; `economy` holds Iran's World Bank annual CPI inflation and GDP growth — weigh nominal returns against the latest inflation print; `breadth` tracks a fixed set of 15 large caps (advancers/decliners, mean change, aggregate volume and traded value, top gainers/losers) as a market-regime gauge — it covers only those names, and symbols under `non_trading` are excluded from its counts.
@@ -175,13 +408,17 @@ prompt_result execute_stock(prompt_context&& ctx) noexcept {
 
 ---
 )EOF";
-        
-        auto render_result = tse::render_markdown(result->raw_json);
-        if (render_result) {
-            output += trim_context(*render_result, config.head_lines);
+
+    std::string errors;
+    if (config.cache_mode) {
+        for (auto const& file : config.snapshot_files) {
+            output += render_snapshot(file, config.head_lines, errors);
         }
+    } else {
+        output += trim_context(context, config.head_lines);
     }
-    
+
+    if (!errors.empty()) return {std::move(output), 0, false, std::move(errors)};
     return {std::move(output), 0, false};
 }
 
@@ -189,7 +426,19 @@ void render_help_stock(std::ostream& os) noexcept {
     os << R"EOF(Usage: prompt stock [<symbol|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
        prompt stock <FILE.stock>... [--head N]
 
-Fetch TSETMC market data, fundamentals, market benchmarks, market context (USD/IRR, Iran CPI/GDP, large-cap breadth) and Codal financial statements for an Iranian بورس instrument and build a bilingual AI analysis prompt.
+Fetch TSETMC market data, fundamentals (price ranges, average volume, fund NAV, Codal-derived ratios), market benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP growth, large-cap breadth) and Codal financial statements (including monthly fund portfolio reports) for an Iranian بورس instrument and build a bilingual AI analysis prompt. Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), TSETMC insCode, or an easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one. One or more `.stock` snapshot files (written by tse.snapshot) build the same prompt from cached data instead, warning when a snapshot is older than 24 hours.
+
+An Iranian IP is required for the public data sources. Prices are in rial.
+
+Examples:
+  prompt stock فولاد
+  prompt stock اهرم
+  prompt stock IRT1DARA0001
+  prompt stock https://d.easytrader.ir/easy-chart/IRT1DARA0001
+  prompt stock فولاد --days 30
+  prompt stock فولاد --unadjusted
+  prompt stock stocks/20261009_فولاد_IRO1FOLD0009.stock
+  prompt stock stocks/20261009_فولاد_IRO1FOLD0009.stock stocks/20261009_وبملت_IRO1BMLT0007.stock
 
 Options:
   --days N         Number of daily trading records (max: 365; default: full history)
@@ -198,7 +447,10 @@ Options:
   --no-codal       Skip Codal announcements and financial statements
   --unadjusted     Show only unadjusted prices (default includes split/dividend-adjusted)
   --head N         Limit lines of collected context
-  -h, --help       Show this help
+  -h, --help   Show this help
+
+Snapshot files are used as-is: --days/--full/--top/--no-codal/--unadjusted apply to
+live fetches only and are rejected together with FILE arguments.
 )EOF";
 }
 

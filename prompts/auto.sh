@@ -86,7 +86,12 @@ extract_stock_identifier() {
     local re_tsetmc='https?://(www\.)?tsetmc\.com/instInfo/[0-9]{15,}'
     local re_codal='https?://(www\.)?codal\.ir/ReportList\.aspx\?([^[:space:]]*&)?Symbol=[^&[:space:]]+'
     local match
-    if match=$(echo "$content" | grep -oE "$re_easytrader|$re_tsetmc|$re_codal|$re_isin|$re_inscode" | head -1); then
+    # grep's status must be the test result: piping straight into head
+    # would mask it (head exits 0 even when grep found nothing, so every
+    # input used to "match" and plain text was routed to stock).
+    match=$(echo "$content" | grep -oE "$re_easytrader|$re_tsetmc|$re_codal|$re_isin|$re_inscode" || true)
+    match="${match%%$'\n'*}"
+    if [[ -n "$match" ]]; then
         stock_identifier="$match"
         return 0
     fi

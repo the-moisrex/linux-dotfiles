@@ -1,6 +1,6 @@
 #include "prompt/sdk/prompt_context.hpp"
-#include "prompt/core/fs.hpp"
 #include "prompt/core/clipboard.hpp"
+#include "prompt/core/fs.hpp"
 
 namespace prompt {
 

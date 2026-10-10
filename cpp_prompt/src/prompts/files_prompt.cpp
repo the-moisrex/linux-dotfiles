@@ -1,45 +1,58 @@
 #include "prompt/prompts/files_prompt.hpp"
-#include "prompt/sdk/embed.hpp"
 #include "prompt/core/fs.hpp"
+#include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace prompt::prompts {
 
 prompt_result execute_files(prompt_context&& ctx) noexcept {
     std::size_t head_lines = 0;
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
+        return {std::string{}, 2, false, std::move(msg)};
+    }
+
     std::vector<std::string_view> file_args;
-    
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head" && i + 1 < ctx.args_count) {
-            head_lines = std::stoull(std::string(ctx.args[++i]));
+        if (ctx.args[i] == "--head") {
+            ++i;
         } else {
             file_args.push_back(ctx.args[i]);
         }
     }
-    
+
     std::vector<std::filesystem::path> selected_files;
+    std::string errors;
     if (file_args.empty()) {
         selected_files = ctx.select_files();
     } else {
         for (auto arg : file_args) {
-            if (auto resolved = ctx.resolve_input_file(arg)) {
-                selected_files.push_back(*resolved);
+            auto resolved = ctx.resolve_input_file(arg);
+            if (!resolved) {
+                errors += "prompt files: file not found: " + std::string(arg) + "\n";
+                continue;
             }
+            if (::access(resolved->c_str(), R_OK) != 0) {
+                errors += "prompt files: file not readable: \"" + std::string(arg) + "\"; resolved to \"" +
+                          resolved->string() + "\"\n";
+                continue;
+            }
+            selected_files.push_back(*resolved);
         }
     }
-    
+
     std::string output;
-    
+
     for (auto const& file : selected_files) {
         if (!std::filesystem::exists(file) || !std::filesystem::is_regular_file(file)) continue;
-        
+
         auto rel = fs::relative_path(file, ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
         auto lang = infer_lang(file);
         auto content = read_file(file);
-        
+
         if (!content.empty()) {
             if (head_lines > 0) {
                 output += "File " + rel.string() + " (first " + std::to_string(head_lines) + " lines)\n\n";
@@ -51,7 +64,8 @@ prompt_result execute_files(prompt_context&& ctx) noexcept {
             output += "\n```\n\n";
         }
     }
-    
+
+    if (!errors.empty()) return {std::move(output), 0, false, std::move(errors)};
     return {std::move(output), 0, false};
 }
 
