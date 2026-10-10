@@ -177,8 +177,9 @@ def main(argv=None):
 files are named <dir>/YYYYMMDD_<symbol>_<ISIN>.stock and are not re-fetched on
 re-run unless --force is given (so a failed batch can be topped up by rerunning).
 each fetch is one `tse all` process (300s timeout); with several parallel jobs the
-Codal sections may degrade under rate limits, reported as data.errors inside the
-file (rerun with --force to refill them).""",
+Codal sections (they solve Codal's rate-limit captcha through `codal` when needed)
+may degrade, reported as data.errors inside the file (rerun with --force to refill
+them).""",
     )
     parser.add_argument("dir", nargs="?", default=".",
                         help="directory for .stock files (default: current directory)")
@@ -186,7 +187,7 @@ file (rerun with --force to refill them).""",
     history.add_argument("--days", type=int, metavar="N", help="daily history depth for `tse all` (default: full)")
     history.add_argument("--full", action="store_true", help="full daily history (default)")
     parser.add_argument("--top", type=int, default=5, metavar="N", help="recent Codal announcements (default 5)")
-    parser.add_argument("--no-codal", action="store_true", help="skip Codal fetches (faster, avoids Codal rate limits)")
+    parser.add_argument("--no-codal", action="store_true", help="skip Codal fetches (faster, avoids Codal captcha and rate limits)")
     parser.add_argument("--unadjusted", action="store_true", help="unadjusted prices only")
     parser.add_argument("--jobs", type=int, default=4, metavar="N", help="parallel `tse all` fetches (default 4)")
     parser.add_argument("--force", action="store_true", help="overwrite existing .stock files for today")

@@ -18,6 +18,9 @@ python               python3             python3
 dialog               dialog              dialog
 entr                 entr                entr
 python-pydbus        python3-pydbus      python3-pydbus      # for sig-gui.py
+tesseract            tesseract-ocr       tesseract           # bin/codal captcha OCR
+tesseract-data-eng   tesseract-ocr-eng   tesseract-langpack-eng  # English traineddata for the captcha
+python-pillow        python3-pil         python3-pillow      # captcha image preprocessing for bin/codal (optional)
 
 # Media software
 vlc                  vlc                 vlc

@@ -1,0 +1,622 @@
+#!/usr/bin/env python3
+"""codal — Codal.ir letters: announcements, financial statements, portfolio reports.
+
+search.codal.ir answers HTTP 429 until its DDoS captcha is solved, so this client
+runs the same flow the codal.ir web app uses:
+
+  POST https://search.codal.ir/api/ddos/v1/begin   {"clientId": "ABBS"}  -> CaptchaToken
+  GET  https://search.codal.ir/api/ddos/v1/Captcha/{token}               -> JPEG
+  POST https://search.codal.ir/api/ddos/v1/end     {CaptchaToken, Captchatext}
+  GET  https://search.codal.ir/api/search/v2/q?... header X-Captcha-Token: {token}
+
+OCR uses tesseract (English traineddata is enough: the captcha is uppercase Latin
+letters and digits); a token lasts about four minutes and is re-solved
+automatically. The cookie session matters: without it the search API silently
+returns zero rows instead of failing. Report pages on www.codal.ir need no
+captcha. Requires an Iranian IP. No result cache — every run fetches live data.
+
+Usage:
+  codal search فولاد
+  codal search فولاد --letter-type 6 --category 1 --limit 5
+  codal statements فولاد
+  codal snapshot فولاد --top 3 --fund
+"""
+
+import argparse
+import http.cookiejar
+import io
+import json
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+CODAL_SEARCH = "https://search.codal.ir/api/search/v2/q"
+CODAL_REPORT = "https://www.codal.ir"
+CAPTCHA_DDOS = "https://search.codal.ir/api/ddos/v1"
+CODAL_SPACING_SECONDS = 4.0
+CAPTCHA_SPACING_SECONDS = 1.0
+CAPTCHA_CLIENT_ID = "ABBS"
+CAPTCHA_CYCLES = 3
+CAPTCHA_CANDIDATES = 6
+TOKEN_TTL_SECONDS = 180.0
+MAX_ANNOUNCEMENTS = 20
+BODY_LIMIT = 6_000_000
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+OCR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+OCR_PSM_MODES = ("7", "8", "6")
+DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+VERIFICATION_MARKERS = ("تأیید کاربر", "تایید کاربر")
+BLOCK_MARKERS = ("دسترسی شما", "مسدود", "General Error Detected")
+
+
+class DataError(Exception):
+    pass
+
+
+def normal(text):
+    return str(text or "").translate(DIGITS).replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ").strip()
+
+
+def pick(row, *names):
+    if not isinstance(row, dict):
+        return None
+    keys = {str(key).lower(): val for key, val in row.items()}
+    for name in names:
+        value = keys.get(name.lower())
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def marker_hit(text, markers):
+    if any(marker in text for marker in markers):
+        return True
+    fixed = text.encode("cp1252", errors="ignore").decode("utf-8", errors="ignore")
+    return any(marker in fixed for marker in markers)
+
+
+def verification_page(html):
+    if marker_hit(html, VERIFICATION_MARKERS):
+        return True
+    lowered = html.lower()
+    return "captcha" in lowered or "verify" in lowered
+
+
+def normalize_symbol(value):
+    text = str(value or "").strip()
+    match = re.search(r"codal\.ir/ReportList\.aspx\?[^#]*?\bSymbol=([^&#]+)", text, re.IGNORECASE)
+    if match:
+        return urllib.parse.unquote_plus(match.group(1)).strip()
+    return text
+
+
+def tehran_now():
+    try:
+        tz = ZoneInfo("Asia/Tehran")
+    except ZoneInfoNotFoundError:
+        tz = timezone(timedelta(hours=3, minutes=30))
+    return datetime.now(tz)
+
+
+def ocr_candidates(image):
+    if not image:
+        return []
+    prepared = []
+    scaled = _scaled_png(image)
+    if scaled:
+        prepared.append(scaled)
+        dark = _threshold_png(scaled, 150)
+        if dark:
+            prepared.append(dark)
+    else:
+        prepared.append(image)
+    candidates = []
+    for data in prepared:
+        for psm in OCR_PSM_MODES:
+            text = _tesseract(data, psm)
+            if text and text not in candidates:
+                candidates.append(text)
+            if len(candidates) >= CAPTCHA_CANDIDATES:
+                return candidates
+    return candidates
+
+
+def _scaled_png(image):
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return None
+    try:
+        page = Image.open(io.BytesIO(image)).convert("L")
+        page = ImageOps.autocontrast(page)
+        page = page.resize((page.width * 3, page.height * 3), Image.LANCZOS)
+    except Exception:
+        return None
+    buffer = io.BytesIO()
+    page.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _threshold_png(image, level):
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        page = Image.open(io.BytesIO(image)).convert("L").point(lambda v: 255 if v > level else 0)
+    except Exception:
+        return None
+    buffer = io.BytesIO()
+    page.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _tesseract(image, psm):
+    try:
+        proc = subprocess.run(
+            ["tesseract", "stdin", "stdout", "--psm", psm, "-c", f"tessedit_char_whitelist={OCR_WHITELIST}"],
+            input=image,
+            capture_output=True,
+            timeout=30,
+        )
+    except FileNotFoundError as exc:
+        raise DataError("Codal captcha OCR needs the 'tesseract' binary (pacman: tesseract tesseract-data-eng, apt: tesseract-ocr tesseract-ocr-eng)") from exc
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise DataError(f"tesseract OCR failed: {exc}") from exc
+    text = proc.stdout.decode("utf-8", errors="replace").strip().replace(" ", "")
+    if not text and proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        raise DataError(f"tesseract OCR failed: {detail[-1] if detail else f'exit {proc.returncode}'}")
+    return text
+
+
+class CodalClient:
+    def __init__(self):
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.pace_lock = threading.Lock()
+        self.token_lock = threading.Lock()
+        self.last_request = {}
+        self.token = None
+        self.token_at = 0.0
+        self.blocked_hosts = set()
+
+    def pace(self, key, spacing):
+        with self.pace_lock:
+            last = self.last_request.get(key, 0.0)
+            wait = max(0.0, spacing - (time.monotonic() - last))
+            self.last_request[key] = time.monotonic() + wait
+        if wait:
+            time.sleep(wait)
+
+    def captcha_token(self, force=False):
+        with self.token_lock:
+            if not force and self.token and time.monotonic() - self.token_at < TOKEN_TTL_SECONDS:
+                return self.token
+            self.token = self.solve_captcha()
+            self.token_at = time.monotonic()
+            return self.token
+
+    def solve_captcha(self):
+        if shutil.which("tesseract") is None:
+            raise DataError("Codal captcha OCR needs the 'tesseract' binary (pacman: tesseract tesseract-data-eng, apt: tesseract-ocr tesseract-ocr-eng)")
+        for _ in range(CAPTCHA_CYCLES):
+            status, body = self.post(CAPTCHA_DDOS + "/begin", {"clientId": CAPTCHA_CLIENT_ID})
+            payload = None
+            if status == 200 and body:
+                try:
+                    payload = json.loads(body)
+                except json.JSONDecodeError:
+                    payload = None
+            token = payload.get("CaptchaToken") if isinstance(payload, dict) else None
+            if status != 200 or not token:
+                raise DataError(f"Codal captcha challenge unavailable (HTTP {status})")
+            status, image = self.fetch(CAPTCHA_DDOS + "/Captcha/" + token)
+            if status != 200 or not image:
+                raise DataError(f"Codal captcha image unavailable (HTTP {status})")
+            for text in ocr_candidates(image):
+                status, _ = self.post(CAPTCHA_DDOS + "/end", {"CaptchaToken": token, "Captchatext": text})
+                if status == 200:
+                    return token
+        raise DataError(f"Codal captcha OCR failed after {CAPTCHA_CYCLES} challenges; retry or check tesseract")
+
+    def fetch(self, url, *, accept="application/json"):
+        host = urllib.parse.urlsplit(url).hostname
+        self.pace("captcha:" + str(host), CAPTCHA_SPACING_SECONDS)
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept, "Referer": CODAL_REPORT + "/"})
+        try:
+            with self.opener.open(request, timeout=20) as response:
+                return response.status, response.read(BODY_LIMIT + 1)
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            raise DataError(f"Cannot reach {host}: {exc}") from exc
+
+    def post(self, url, payload):
+        host = urllib.parse.urlsplit(url).hostname
+        self.pace("captcha:" + str(host), CAPTCHA_SPACING_SECONDS)
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json", "Content-Type": "application/json", "Referer": CODAL_REPORT + "/"},
+        )
+        try:
+            with self.opener.open(request, timeout=20) as response:
+                return response.status, response.read(BODY_LIMIT + 1)
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            raise DataError(f"Cannot reach {host}: {exc}") from exc
+
+    def get(self, url, *, accept="application/json", search=False):
+        host = urllib.parse.urlsplit(url).hostname
+        if host in self.blocked_hosts:
+            raise DataError(f"{host} requires browser verification; try again later")
+        headers = {"User-Agent": USER_AGENT, "Accept": accept, "Referer": CODAL_REPORT + "/"}
+        if search:
+            headers["X-Captcha-Token"] = self.captcha_token()
+        verification_retried = False
+        rate_limit_retries = 0
+        attempt = 0
+        while True:
+            self.pace(str(host), CODAL_SPACING_SECONDS)
+            request = urllib.request.Request(url, headers=headers)
+            try:
+                with self.opener.open(request, timeout=12) as response:
+                    body = response.read(BODY_LIMIT + 1)
+                if len(body) > BODY_LIMIT:
+                    raise DataError(f"Response too large: {url}")
+                text = body.decode("utf-8-sig", errors="replace")
+                if marker_hit(text, VERIFICATION_MARKERS):
+                    if not verification_retried:
+                        verification_retried = True
+                        time.sleep(12)
+                        continue
+                    self.blocked_hosts.add(host)
+                    raise DataError(f"{host} requires browser verification; try again later")
+                if marker_hit(text, BLOCK_MARKERS):
+                    raise DataError(f"Access blocked by {host}; try an Iranian IP without a VPN")
+                return text
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429:
+                    if search and rate_limit_retries < 1:
+                        rate_limit_retries += 1
+                        headers["X-Captcha-Token"] = self.captcha_token(force=True)
+                        continue
+                    detail = "even after solving its captcha" if search else "wait a few minutes and rerun"
+                    raise DataError(f"Rate limited by {host} (HTTP 429); {detail}") from exc
+                if exc.code == 403:
+                    raise DataError(f"Access denied by {host} (HTTP 403); check your Iranian IP and VPN") from exc
+                if exc.code not in (500, 502, 503, 504) or attempt == 2:
+                    raise DataError(f"{host}: HTTP {exc.code}") from exc
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                if attempt == 2:
+                    raise DataError(f"Cannot reach {host}: {exc}") from exc
+            attempt += 1
+            time.sleep(1.5 * attempt)
+
+    def json(self, url, *, search=False):
+        text = self.get(url, search=search)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise DataError(f"Non-JSON response from {urllib.parse.urlsplit(url).hostname} (possibly blocked)") from exc
+
+
+_CLIENT = None
+_CLIENT_LOCK = threading.Lock()
+
+
+def default_client():
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = CodalClient()
+        return _CLIENT
+
+
+def codal_search(client, symbol, letter_type, category):
+    symbol = normalize_symbol(symbol)
+    params = {
+        "Symbol": symbol,
+        "Category": category,
+        "PublisherType": 1,
+        "LetterType": letter_type,
+        "Length": -1,
+        "Audited": "true",
+        "NotAudited": "true",
+        "IsNotAudited": "false",
+        "Mains": "true",
+        "Childs": "false",
+        "Consolidatable": "true",
+        "NotConsolidatable": "true",
+        "AuditorRef": -1,
+        "CompanyState": 0,
+        "CompanyType": -1,
+        "PageNumber": 1,
+        "TracingNo": -1,
+        "Publisher": "false",
+        "search": "true",
+    }
+    payload = client.json(CODAL_SEARCH + "?" + urllib.parse.urlencode(params), search=True)
+    rows = pick(payload, "Letters")
+    if not isinstance(rows, list):
+        raise DataError("Unexpected Codal search result")
+    return [row for row in rows if isinstance(row, dict) and normal(pick(row, "Symbol")) == normal(symbol)]
+
+
+def codal_url(path, report=False):
+    if not isinstance(path, str) or not path:
+        return None
+    parts = urllib.parse.urlsplit(urllib.parse.urljoin(CODAL_REPORT + "/", path))
+    hosts = ("www.codal.ir", "codal.ir") if report else ("www.codal.ir", "codal.ir", "cdn.codal.ir", "excel.codal.ir")
+    if parts.scheme != "https" or parts.hostname not in hosts:
+        return None
+    return urllib.parse.urlunsplit(parts)
+
+
+def codal_meta(row):
+    return {
+        "title": pick(row, "Title"),
+        "letter_code": pick(row, "LetterCode"),
+        "company_name": pick(row, "CompanyName"),
+        "published_at": pick(row, "PublishDateTime", "SentDateTime"),
+        "sent_at": pick(row, "SentDateTime"),
+        "tracing_no": pick(row, "TracingNo"),
+        "is_estimate": pick(row, "IsEstimate"),
+        "url": codal_url(pick(row, "Url"), report=True),
+        "pdf_url": codal_url(pick(row, "PdfUrl")),
+        "excel_url": codal_url(pick(row, "ExcelUrl")),
+        "xbrl_url": codal_url(pick(row, "XbrlUrl")),
+        "tedan_url": codal_url(pick(row, "TedanUrl")),
+        "attachment_url": codal_url(pick(row, "AttachmentUrl")),
+    }
+
+
+def _number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) if isinstance(value, float) and value.is_integer() else value
+    text = normal(value).replace(",", "").replace("٬", "").replace(" ", "")
+    if text.startswith("(") and text.endswith(")"):
+        text = "-" + text[1:-1]
+    try:
+        return float(text) if "." in text else int(text)
+    except ValueError:
+        return None
+
+
+def sheet_rows(datasource, alias):
+    for sheet in datasource.get("sheets") or []:
+        if not isinstance(sheet, dict):
+            continue
+        for table in sheet.get("tables") or []:
+            if not isinstance(table, dict) or pick(table, "aliasName") != alias:
+                continue
+            grid = {}
+            for cell in table.get("cells") or []:
+                if not isinstance(cell, dict):
+                    continue
+                r = _number(pick(cell, "rowSequence"))
+                c = _number(pick(cell, "columnSequence"))
+                if isinstance(r, int) and isinstance(c, int):
+                    grid.setdefault(r, {})[c] = pick(cell, "value")
+            for header, cols in sorted(grid.items()):
+                label_cols = [c for c, text in cols.items() if normal(text) == "شرح"]
+                if not label_cols:
+                    continue
+                result = []
+                for rownum, cells in sorted(grid.items()):
+                    if rownum <= header:
+                        continue
+                    for col in label_cols:
+                        label = normal(cells.get(col))
+                        amount = _number(cells.get(col + 1))
+                        if label and amount is not None:
+                            result.append({"item": label, "current_period": amount})
+                if result:
+                    return {"table_title": pick(table, "title_Fa"), "rows": result[:60], "truncated": len(result) > 60}
+    return None
+
+
+def statement(client, metadata):
+    url = metadata["url"]
+    if not url or urllib.parse.urlsplit(url).path.lower() != "/reports/decision.aspx":
+        return {**metadata, "financials": None, "reason": "No supported machine-readable report URL"}
+    financials = {}
+    details = {}
+    failures = []
+    for sheet_id, alias, name in ((1, "IncomeStatement", "income_statement"), (0, "BalanceSheet", "balance_sheet")):
+        parts = urllib.parse.urlsplit(url)
+        query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        query = [(key, val) for key, val in query if key.lower() != "sheetid"]
+        query.append(("SheetId", str(sheet_id)))
+        page = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), ""))
+        try:
+            html = client.get(page, accept="text/html")
+            match = re.search(r"\bvar\s+datasource\s*=\s*", html)
+            if not match:
+                if verification_page(html):
+                    raise DataError("Report page requires browser verification; try again later")
+                raise DataError("Report has no embedded financial datasource")
+            data, _ = json.JSONDecoder().raw_decode(html, match.end())
+            if not isinstance(data, dict):
+                raise DataError("Unexpected financial datasource")
+            details = {key: pick(data, key) for key in ("period", "periodEndToDate", "yearEndToDate", "isAudited", "isConsolidated")}
+            financials[name] = sheet_rows(data, alias)
+            if financials[name] is None:
+                failures.append(f"{name}: no recognized table rows")
+        except (DataError, json.JSONDecodeError) as exc:
+            failures.append(f"{name}: {exc}")
+            if "requires browser verification" in str(exc) or "Rate limited" in str(exc):
+                break
+    return {
+        **metadata,
+        "period": details,
+        "financials": financials or None,
+        "reason": "; ".join(failures) if failures else None,
+    }
+
+
+def codal(symbol, errors, fund=False):
+    client = default_client()
+    symbol = normalize_symbol(symbol)
+    rows_queue = queue.Queue(maxsize=1)
+
+    def search_worker():
+        found = {}
+        found_errors = {}
+        try:
+            try:
+                found["statement_rows"] = codal_search(client, symbol, 6, 1)
+            except DataError as exc:
+                found_errors["codal_financials"] = str(exc)
+        finally:
+            rows_queue.put(found.get("statement_rows"))
+        try:
+            found["announcements"] = [codal_meta(row) for row in codal_search(client, symbol, -1, -1)[:MAX_ANNOUNCEMENTS]]
+        except DataError as exc:
+            found_errors["codal_announcements"] = str(exc)
+        if fund:
+            try:
+                found["portfolio_reports"] = [codal_meta(row) for row in codal_search(client, symbol, -1, 3)[:3]]
+            except DataError as exc:
+                found_errors["codal_portfolio"] = str(exc)
+        return found, found_errors
+
+    def page_worker():
+        statements = []
+        found_errors = {}
+        rows = rows_queue.get()
+        if rows:
+            try:
+                seen_reports = set()
+                seen_periods = set()
+                for row in rows[:6]:
+                    metadata = codal_meta(row)
+                    if not metadata["url"] or not metadata["title"]:
+                        continue
+                    key = pick(row, "TracingNo")
+                    if key in seen_reports:
+                        continue
+                    seen_reports.add(key)
+                    report = statement(client, metadata)
+                    period = report.get("period") or {}
+                    period_key = (period.get("periodEndToDate"), period.get("isConsolidated"))
+                    if period_key[0] and period_key in seen_periods:
+                        continue
+                    seen_periods.add(period_key)
+                    statements.append(report)
+                    if report.get("reason") and any(word in report["reason"] for word in ("requires browser verification", "Rate limited")):
+                        found_errors["codal_financials"] = report["reason"]
+                        break
+                    if len(statements) >= 2:
+                        break
+            except DataError as exc:
+                found_errors["codal_financials"] = str(exc)
+        return {"statements": statements}, found_errors
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        search_future = pool.submit(search_worker)
+        page_future = pool.submit(page_worker)
+        found, search_errors = search_future.result()
+        page_found, page_errors = page_future.result()
+    result = {
+        "announcements": found.get("announcements") or [],
+        "statements": page_found["statements"],
+        "portfolio_reports": found.get("portfolio_reports") or [],
+    }
+    for key in ("codal_announcements", "codal_portfolio", "codal_financials"):
+        if key in search_errors:
+            errors[key] = search_errors[key]
+        if key in page_errors:
+            errors[key] = page_errors[key]
+    if not result["statements"] and "codal_financials" not in errors:
+        errors["codal_financials"] = "No matching Codal financial statements found"
+    elif result["statements"] and not any(report.get("financials") and any(report["financials"].values()) for report in result["statements"]):
+        errors.setdefault("codal_financials", result["statements"][0].get("reason") or "No financial statement rows extracted")
+    return result
+
+
+def trim_announcements(data, top):
+    out = {**data}
+    announcements = data.get("announcements")
+    if isinstance(announcements, list):
+        out["announcements"] = announcements[:top]
+    out.setdefault("portfolio_reports", [])
+    return out
+
+
+def codal_snapshot(symbol, top, errors, fund=False):
+    result = codal(symbol, errors, fund=fund)
+    return {**trim_announcements(result, top), "retrieved_at": tehran_now().isoformat(timespec="seconds")}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="codal",
+        description="Fetch Codal.ir announcements and financial statements (requires an Iranian IP).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  codal search فولاد
+  codal search فولاد --letter-type 6 --category 1 --limit 5
+  codal statements فولاد
+  codal snapshot فولاد --top 3 --fund
+LetterType/Category: -1 = all, 6/1 = financial statements, -1/3 = fund portfolio reports.""",
+    )
+    sub = parser.add_subparsers(title="commands", metavar="COMMAND", dest="command", required=True)
+
+    search_cmd = sub.add_parser("search", help="List Codal letters for a symbol as JSON")
+    search_cmd.add_argument("symbol", metavar="SYMBOL", help="Persian symbol or codal.ir ReportList URL")
+    search_cmd.add_argument("--letter-type", type=int, default=-1, metavar="N", help="Codal letter type (-1 = all, 6 = financial statements)")
+    search_cmd.add_argument("--category", type=int, default=-1, metavar="N", help="Codal category (-1 = all, 1 = financial statements, 3 = fund portfolio)")
+    search_cmd.add_argument("--limit", type=int, default=MAX_ANNOUNCEMENTS, metavar="N", help=f"Maximum rows (default: {MAX_ANNOUNCEMENTS})")
+    search_cmd.add_argument("--raw", action="store_true", help="Print raw Codal rows instead of normalized entries")
+
+    statements_cmd = sub.add_parser("statements", help="Extract financial statement tables from the latest reports")
+    statements_cmd.add_argument("symbol", metavar="SYMBOL", help="Persian symbol or codal.ir ReportList URL")
+
+    snapshot_cmd = sub.add_parser("snapshot", help="Announcements plus statements, like 'tse codal'")
+    snapshot_cmd.add_argument("symbol", metavar="SYMBOL", help="Persian symbol or codal.ir ReportList URL")
+    snapshot_cmd.add_argument("--top", type=int, default=5, metavar="N", help="Maximum recent announcements (default: 5)")
+    snapshot_cmd.add_argument("--fund", action="store_true", help="Also fetch monthly portfolio reports (funds/ETFs)")
+
+    args = parser.parse_args(argv)
+    if getattr(args, "limit", 1) < 1:
+        parser.error("--limit must be positive")
+    errors = {}
+    try:
+        client = default_client()
+        if args.command == "search":
+            rows = codal_search(client, args.symbol, args.letter_type, args.category)
+            result = rows[: args.limit] if args.raw else [codal_meta(row) for row in rows[: args.limit]]
+        elif args.command == "statements":
+            result = codal(args.symbol, errors)["statements"]
+        else:
+            result = codal_snapshot(args.symbol, args.top, errors, fund=args.fund)
+            if errors:
+                result["errors"] = errors
+    except DataError as exc:
+        print(f"codal: {exc}", file=sys.stderr)
+        return 1
+    if errors:
+        print("codal: " + "; ".join(errors.values()), file=sys.stderr)
+        if not result:
+            return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

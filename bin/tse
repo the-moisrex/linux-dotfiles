@@ -2,29 +2,32 @@
 
 import argparse
 import csv
+import importlib.util
 import io
 import json
-import queue
+import os
 import re
 import sys
-import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from importlib.machinery import SourceFileLoader
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+_codal_loader = SourceFileLoader("codal", os.path.join(HERE, "codal"))
+_codal_spec = importlib.util.spec_from_loader("codal", _codal_loader)
+codal = importlib.util.module_from_spec(_codal_spec)
+_codal_loader.exec_module(codal)
 
 
 TSETMC = "https://cdn.tsetmc.com/api"
-CODAL_SEARCH = "https://search.codal.ir/api/search/v2/q"
-CODAL_REPORT = "https://www.codal.ir"
 WEBGW = "https://webgw.tse.ir/InstrumentProvider/api/v1/Instrument/LiveInstrumentByIdQuery/fa"
 TASNIM_CURRENCY = "/home/moisrex/cmd/bin/tasnim-currency"
 WORLD_BANK = "https://api.worldbank.org/v2/country/IRN/indicator/{}?format=json&per_page=4"
-CODAL_SPACING_SECONDS = 4.0
-MAX_ANNOUNCEMENTS = 20
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 ISIN_RE = re.compile(r"IR[A-Z0-9]{10}")
@@ -53,8 +56,7 @@ def marketwatch_url():
     return TSETMC + "/ClosingPrice/GetMarketWatch?" + urllib.parse.urlencode(params)
 
 
-class DataError(Exception):
-    pass
+DataError = codal.DataError
 
 
 def normal(text):
@@ -137,24 +139,15 @@ def verification_page(html):
 
 class Client:
     def __init__(self):
-        self.codal_last = {}
-        self.codal_lock = threading.Lock()
         self.blocked_hosts = set()
 
-    def get(self, url, *, accept="application/json", codal=False):
+    def get(self, url, *, accept="application/json"):
         host = urllib.parse.urlsplit(url).hostname
         if host in self.blocked_hosts:
             raise DataError(f"{host} requires browser verification; try again later")
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
         verification_retried = False
         for attempt in range(3):
-            if codal:
-                with self.codal_lock:
-                    last = self.codal_last.get(host, 0.0)
-                    wait = max(0.0, CODAL_SPACING_SECONDS - (time.monotonic() - last))
-                    self.codal_last[host] = time.monotonic() + wait
-                if wait:
-                    time.sleep(wait)
             try:
                 with urllib.request.urlopen(request, timeout=12) as response:
                     body = response.read(6_000_001)
@@ -184,8 +177,8 @@ class Client:
             time.sleep(1.5 * (attempt + 1))
         raise DataError(f"Cannot retrieve {url}")
 
-    def json(self, url, *, codal=False):
-        text = self.get(url, codal=codal)
+    def json(self, url):
+        text = self.get(url)
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
@@ -625,220 +618,6 @@ def info(client, code, ident, current, errors):
     return result
 
 
-def codal_search(client, symbol, letter_type, category):
-    params = {
-        "Symbol": symbol,
-        "Category": category,
-        "PublisherType": 1,
-        "LetterType": letter_type,
-        "Length": -1,
-        "Audited": "true",
-        "NotAudited": "true",
-        "IsNotAudited": "false",
-        "Mains": "true",
-        "Childs": "false",
-        "Consolidatable": "true",
-        "NotConsolidatable": "true",
-        "AuditorRef": -1,
-        "CompanyState": 0,
-        "CompanyType": -1,
-        "PageNumber": 1,
-        "TracingNo": -1,
-        "Publisher": "false",
-        "search": "true",
-    }
-    payload = client.json(CODAL_SEARCH + "?" + urllib.parse.urlencode(params), codal=True)
-    rows = pick(payload, "Letters")
-    if not isinstance(rows, list):
-        raise DataError("Unexpected Codal search result")
-    return [row for row in rows if isinstance(row, dict) and normal(pick(row, "Symbol")) == normal(symbol)]
-
-
-def codal_url(path, report=False):
-    if not isinstance(path, str) or not path:
-        return None
-    parts = urllib.parse.urlsplit(urllib.parse.urljoin(CODAL_REPORT + "/", path))
-    hosts = ("www.codal.ir", "codal.ir") if report else ("www.codal.ir", "codal.ir", "cdn.codal.ir", "excel.codal.ir")
-    if parts.scheme != "https" or parts.hostname not in hosts:
-        return None
-    return urllib.parse.urlunsplit(parts)
-
-
-def codal_meta(row):
-    return {
-        "title": pick(row, "Title"),
-        "published_at": pick(row, "PublishDateTime", "SentDateTime"),
-        "tracing_no": pick(row, "TracingNo"),
-        "url": codal_url(pick(row, "Url"), report=True),
-        "pdf_url": codal_url(pick(row, "PdfUrl")),
-        "excel_url": codal_url(pick(row, "ExcelUrl")),
-    }
-
-
-def sheet_rows(datasource, alias):
-    for sheet in datasource.get("sheets") or []:
-        if not isinstance(sheet, dict):
-            continue
-        for table in sheet.get("tables") or []:
-            if not isinstance(table, dict) or pick(table, "aliasName") != alias:
-                continue
-            grid = {}
-            for cell in table.get("cells") or []:
-                if not isinstance(cell, dict):
-                    continue
-                r = number(pick(cell, "rowSequence"))
-                c = number(pick(cell, "columnSequence"))
-                if isinstance(r, int) and isinstance(c, int):
-                    grid.setdefault(r, {})[c] = pick(cell, "value")
-            for header, cols in sorted(grid.items()):
-                label_cols = [c for c, text in cols.items() if normal(text) == "شرح"]
-                if not label_cols:
-                    continue
-                result = []
-                for rownum, cells in sorted(grid.items()):
-                    if rownum <= header:
-                        continue
-                    for col in label_cols:
-                        label = normal(cells.get(col))
-                        amount = number(cells.get(col + 1))
-                        if label and amount is not None:
-                            result.append({"item": label, "current_period": amount})
-                if result:
-                    return {"table_title": pick(table, "title_Fa"), "rows": result[:60], "truncated": len(result) > 60}
-    return None
-
-
-def statement(client, metadata):
-    url = metadata["url"]
-    if not url or urllib.parse.urlsplit(url).path.lower() != "/reports/decision.aspx":
-        return {**metadata, "financials": None, "reason": "No supported machine-readable report URL"}
-    financials = {}
-    details = {}
-    failures = []
-    for sheet_id, alias, name in ((1, "IncomeStatement", "income_statement"), (0, "BalanceSheet", "balance_sheet")):
-        parts = urllib.parse.urlsplit(url)
-        query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
-        query = [(key, val) for key, val in query if key.lower() != "sheetid"]
-        query.append(("SheetId", str(sheet_id)))
-        page = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), ""))
-        try:
-            html = client.get(page, accept="text/html", codal=True)
-            match = re.search(r"\bvar\s+datasource\s*=\s*", html)
-            if not match:
-                if verification_page(html):
-                    raise DataError("Report page requires browser verification; try again later")
-                raise DataError("Report has no embedded financial datasource")
-            data, _ = json.JSONDecoder().raw_decode(html, match.end())
-            if not isinstance(data, dict):
-                raise DataError("Unexpected financial datasource")
-            details = {key: pick(data, key) for key in ("period", "periodEndToDate", "yearEndToDate", "isAudited", "isConsolidated")}
-            financials[name] = sheet_rows(data, alias)
-            if financials[name] is None:
-                failures.append(f"{name}: no recognized table rows")
-        except (DataError, json.JSONDecodeError) as exc:
-            failures.append(f"{name}: {exc}")
-            if "requires browser verification" in str(exc) or "Rate limited" in str(exc):
-                break
-    return {
-        **metadata,
-        "period": details,
-        "financials": financials or None,
-        "reason": "; ".join(failures) if failures else None,
-    }
-
-
-def codal(client, symbol, errors, fund=False):
-    rows_queue = queue.Queue(maxsize=1)
-
-    def search_worker():
-        found = {}
-        found_errors = {}
-        try:
-            try:
-                found["statement_rows"] = codal_search(client, symbol, 6, 1)
-            except DataError as exc:
-                found_errors["codal_financials"] = str(exc)
-        finally:
-            rows_queue.put(found.get("statement_rows"))
-        try:
-            found["announcements"] = [codal_meta(row) for row in codal_search(client, symbol, -1, -1)[:MAX_ANNOUNCEMENTS]]
-        except DataError as exc:
-            found_errors["codal_announcements"] = str(exc)
-        if fund:
-            try:
-                found["portfolio_reports"] = [codal_meta(row) for row in codal_search(client, symbol, -1, 3)[:3]]
-            except DataError as exc:
-                found_errors["codal_portfolio"] = str(exc)
-        return found, found_errors
-
-    def page_worker():
-        statements = []
-        found_errors = {}
-        rows = rows_queue.get()
-        if rows:
-            try:
-                seen_reports = set()
-                seen_periods = set()
-                for row in rows[:6]:
-                    metadata = codal_meta(row)
-                    if not metadata["url"] or not metadata["title"]:
-                        continue
-                    key = pick(row, "TracingNo")
-                    if key in seen_reports:
-                        continue
-                    seen_reports.add(key)
-                    report = statement(client, metadata)
-                    period = report.get("period") or {}
-                    period_key = (period.get("periodEndToDate"), period.get("isConsolidated"))
-                    if period_key[0] and period_key in seen_periods:
-                        continue
-                    seen_periods.add(period_key)
-                    statements.append(report)
-                    if report.get("reason") and any(word in report["reason"] for word in ("requires browser verification", "Rate limited")):
-                        found_errors["codal_financials"] = report["reason"]
-                        break
-                    if len(statements) >= 2:
-                        break
-            except DataError as exc:
-                found_errors["codal_financials"] = str(exc)
-        return {"statements": statements}, found_errors
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        search_future = pool.submit(search_worker)
-        page_future = pool.submit(page_worker)
-        found, search_errors = search_future.result()
-        page_found, page_errors = page_future.result()
-    result = {
-        "announcements": found.get("announcements") or [],
-        "statements": page_found["statements"],
-        "portfolio_reports": found.get("portfolio_reports") or [],
-    }
-    for key in ("codal_announcements", "codal_portfolio", "codal_financials"):
-        if key in search_errors:
-            errors[key] = search_errors[key]
-        if key in page_errors:
-            errors[key] = page_errors[key]
-    if not result["statements"] and "codal_financials" not in errors:
-        errors["codal_financials"] = "No matching Codal financial statements found"
-    elif result["statements"] and not any(report.get("financials") and any(report["financials"].values()) for report in result["statements"]):
-        errors.setdefault("codal_financials", result["statements"][0].get("reason") or "No financial statement rows extracted")
-    return result
-
-
-def trim_announcements(data, top):
-    out = {**data}
-    announcements = data.get("announcements")
-    if isinstance(announcements, list):
-        out["announcements"] = announcements[:top]
-    out.setdefault("portfolio_reports", [])
-    return out
-
-
-def codal_snapshot(client, symbol, top, errors, fund=False):
-    result = codal(client, symbol, errors, fund=fund)
-    return {**trim_announcements(result, top), "retrieved_at": tehran_now().isoformat(timespec="seconds")}
-
-
 def tehran_now():
     try:
         tz = ZoneInfo("Asia/Tehran")
@@ -874,12 +653,12 @@ def unit_factor(shares, capital):
     return None
 
 
-def derive_fundamentals(fundamentals, codal, closing):
-    if not isinstance(fundamentals, dict) or not isinstance(codal, dict):
+def derive_fundamentals(fundamentals, filings, closing):
+    if not isinstance(fundamentals, dict) or not isinstance(filings, dict):
         return
     balance_rows = income_rows = None
     period = None
-    for report in codal.get("statements") or []:
+    for report in filings.get("statements") or []:
         financials = report.get("financials") or {}
         balance = financials.get("balance_sheet") or {}
         income = financials.get("income_statement") or {}
@@ -1132,7 +911,7 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
         if with_codal:
             if instrument["symbol"]:
                 fund = bool(detect_fund(ident.get("isin"), ident.get("industry"), ident.get("sub_industry")))
-                codal_future = pool.submit(codal_snapshot, client, instrument["symbol"], top, codal_errors, fund=fund)
+                codal_future = pool.submit(codal.codal_snapshot, instrument["symbol"], top, codal_errors, fund=fund)
             else:
                 errors["codal"] = "No symbol found for Codal search"
         output["fundamentals"] = info(client, code, ident, output["quote"] or {}, errors)
@@ -1316,7 +1095,7 @@ History options: --full (all records) is the default; --days N overrides it.""",
                     raise DataError("No symbol found for Codal search")
                 isin = ident.get("isin") or instrument.get("isin")
                 fund = isinstance(isin, str) and isin.startswith("IRT")
-                result = codal_snapshot(client, symbol, args.top, errors, fund=fund)
+                result = codal.codal_snapshot(symbol, args.top, errors, fund=fund)
                 if errors:
                     result["errors"] = errors
                 if not result["announcements"] and not result["statements"] and not result.get("portfolio_reports") and errors:

@@ -87,6 +87,10 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 - `gtask` — taskwarrior per-git-project
 - `github.issues` / `github.repos` — GitHub API helpers
 
+**Market data:**
+- `tse` — TSETMC quotes, order book, flows, history, fundamentals, market context and Codal filings for `prompt stock`/`prompt intraday` (`tse all <symbol>` for JSON); `tse.find` screens the market, `tse.snapshot` stores fetches as `.stock` files
+- `codal` — Codal.ir client behind `tse`'s Codal sections (also standalone: `codal search/statements/snapshot <symbol>`); solves search.codal.ir's rate-limit DDoS captcha with `tesseract` and keeps the cookie session that API requires, then extracts statement tables from `www.codal.ir` report pages
+
 ## Directory Layout
 
 | Directory | Purpose |
@@ -110,6 +114,7 @@ Each script is standalone. Check `bin/README.md` for the full categorized index.
 - Prompt scripts are not executable (run via `bash`); the dispatcher handles this
 - `prompt-compiler` needs Python 3 and shells out to `prompt list --names` for autocomplete
 - `spp` needs `clang` and reads `.clang`/`.clangd` from the git root
+- Codal fetches (`tse codal`/`tse all`, `codal`) solve search.codal.ir's rate-limit captcha with `tesseract` (English traineddata); without it they fail with an install hint, and the search API needs its cookie session or it returns zero rows silently
 - `pods/stack start` sets `net.ipv4.ip_unprivileged_port_start=80` via sudo
 - Firewall scripts need root and use nftables
 - `transfer` service (transfer.sh) is currently down

@@ -5,6 +5,9 @@ python
 dialog
 entr
 python-pydbus # for sig-gui.py
+tesseract       # bin/codal captcha OCR
+tesseract-data-eng  # English traineddata for the captcha
+python-pillow   # captcha image preprocessing for bin/codal (optional)
 
 # Media software
 vlc
