@@ -21,6 +21,8 @@ struct prompt_context {
     std::string stdin_content;
     bool stdin_consumed = false;
     std::filesystem::path git_root;
+    // Path of the running executable (for locating repo bin/ utilities).
+    std::filesystem::path exe_path;
 
     std::string (*clipboard_content_fn)() = nullptr;
     std::optional<std::string> (*clipboard_identifier_fn)() = nullptr;

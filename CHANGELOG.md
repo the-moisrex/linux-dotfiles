@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `cpp_prompt/` — native C++ prompt dispatcher and prompt ports, kept behaviorally identical (stdout, stderr, exit codes) to the bash side (`bin/prompt` + `prompts/*.sh`), with a parity harness comparing both sides
-- Native ports for `run`, `new`, `note`, `files`, `auto`, `cpp`, `cpp-reviewer`, `gtest-case`, `commit`, `stock`, `intraday`, `tse.find` (the last delegates to the legacy script runner), plus the shared dispatch/chaining/pipeline/clipboard/sanitize SDK
+- `cpp_prompt/` — native C++ prompt dispatcher with **all prompts implemented natively**: no runtime dependency on the `prompts/` directory (no scanning/reading/executing of prompt scripts; `new` embeds static snapshots instead). Every prompt's stdout, stderr, exit codes, `--help` text and `prompt list` summary stay byte-identical to `bin/prompt` + `prompts/*.sh`
+- Native ports for the remaining prompt families: text/analysis (`api`, `explain`, `debug`, `diagram`, `metadata`, …), git (`git`, `git.diff`, `git-dirty`, `git.files`, `git.worktree.*`, `repo`, `verify`), tool wrappers (`clang-tidy`, `cmake`, `gdb`, `cppman`, `ci`, `docker`, `gh.issue`, `paths`, …), stdin/translate (`english`, `farsi`, `stdin`, `tweets`, `symbols`, `summarize`, `yt`), complex (`agents`, `ai-said`, `ask-for-help`, `skill`, `opportunities`, `fs8.mod`, `fs8.test`), plus the shared dispatch/chaining/pipeline/clipboard/sanitize SDK
+- `prompt::fs::bin_tool` — locates repo `bin/` utilities (exe dir → git root → cwd walk → PATH) without going through the prompt scripts
+- `prompt/prompts/prompt_assets.hpp` — static snapshots of `_common.sh`/`fix.sh`/`symbols.sh` embedded into the binary for the `new` prompt
+
+### Removed
+
+- `cpp_prompt/src/legacy/` and `include/prompt/legacy/` (the bash-script fallback runner) — `cpp_prompt` no longer knows about or accesses the `prompts/` directory at all
+- `prompt_descriptor::script`, `set_sort_file()` and `set_help_texts()` from the registry; `prompt_search_dirs()`/`find_prompt_file()`/`detect_file_type()` from `prompt::fs`
 
 ### Changed
 

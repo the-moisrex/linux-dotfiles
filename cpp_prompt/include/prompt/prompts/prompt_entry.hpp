@@ -73,4 +73,7 @@ void render_help_cli(std::ostream&) noexcept;
 
 void init_prompt_registry() noexcept;
 
+// Batch registrars (see src/prompts/register_batches.cpp).
+void register_batches() noexcept;
+
 } // namespace prompt

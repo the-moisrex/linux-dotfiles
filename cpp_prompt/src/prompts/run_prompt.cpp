@@ -1,7 +1,8 @@
 #include "prompt/prompts/run_prompt.hpp"
+#include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
 #include "prompt/core/sanitize.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
+#include "prompt/prompts/gtest_case_prompt.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <regex>
@@ -91,7 +92,7 @@ prompt_result execute_run(prompt_context&& ctx) noexcept {
     std::string description;
 
     if (!run_args.empty()) {
-        auto run_path = (legacy::prompts_dir().parent_path() / "bin" / "run").string();
+        auto run_path = prompt::fs::bin_tool("run", ctx.exe_path, ctx.git_root).string();
         std::vector<std::string> cmd;
         cmd.push_back(run_path);
         for (auto const& arg : run_args) cmd.push_back(arg);
@@ -147,11 +148,15 @@ prompt_result execute_run(prompt_context&& ctx) noexcept {
             for (auto const& s : gtest_args) argv.push_back(s.c_str());
             argv.push_back(nullptr);
 
-            auto result = legacy::run_prompt_script("gtest-case", ctx.stdin_content, argv);
-            output += result.stdout_data;
-            if (!result.stderr_data.empty()) {
-                // stderr of a script is never captured by popen; nothing to add
-            }
+            // Native gtest-case prompt, invoked in-process exactly as the
+            // script would be (`gtest-case` with --exact + the test names).
+            prompt_context sub = ctx;
+            sub.name = "gtest-case";
+            std::size_t n = 0;
+            for (auto const& a : gtest_args) sub.args[n++] = a;
+            sub.args_count = n;
+            auto result = prompts::execute_gtest_case(std::move(sub));
+            output += result.output;
         } else {
             output += "\nNo failed Google Test cases were detected in the output.\n";
         }

@@ -1,8 +1,8 @@
 #include "prompt/prompts/cli_prompt.hpp"
 #include "prompt/core/process.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -24,7 +24,9 @@ prompt_result execute_cli(prompt_context&& ctx) noexcept {
     }
 
     if (cmd_args.empty()) {
-        return {std::string{}, 1, false, "prompt cli: no command provided\n" + legacy::help_text("cli")};
+        std::ostringstream help_os;
+        render_help_cli(help_os);
+        return {std::string{}, 1, false, "prompt cli: no command provided\n" + help_os.str()};
     }
 
     // cli.sh: cmd_description="${ARGS[*]}" and eval "${ARGS[@]}" 2>&1 — eval

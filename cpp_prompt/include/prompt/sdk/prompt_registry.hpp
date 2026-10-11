@@ -2,6 +2,7 @@
 
 #include "prompt/sdk/prompt_context.hpp"
 #include "prompt/sdk/prompt_result.hpp"
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <span>
@@ -16,19 +17,19 @@ struct prompt_descriptor {
     std::string_view help_full;
     prompt_result (*execute_fn)(prompt_context&&) noexcept;
     void (*render_help_fn)(std::ostream&) noexcept;
-    // Non-empty for dynamically registered legacy prompts: the path of the
-    // script file (bash/txt/md) backing this prompt. Empty for native ones.
-    std::string_view script{};
-
-    // The file path the bash dispatcher's collect_prompts pairs with this
-    // name. list/list-prompts sort whole `name<TAB>file` lines under
-    // LC_COLLATE, and the file part influences the collation result — so
-    // byte-parity with bash needs the exact path here. Set during legacy
-    // registration (including for native-shadowed names).
+    // The bash dispatcher's collect_prompts pairs each name with its script
+    // path, and list/list-prompts sort whole `name<TAB>file` lines under
+    // LC_COLLATE — the file part influences the collation result. This build
+    // keeps the same key (prompt files lived in <repo>/prompts/) purely so
+    // the ordering matches the bash dispatcher; it never opens the file.
     std::string_view sort_file{};
 };
 
 std::span<prompt_descriptor const> get_all_prompts() noexcept;
+
+// Set the sort_file of every registered prompt to <dir>/<name>.sh
+// (bash-dispatcher collation parity).
+void assign_sort_files(std::filesystem::path const& dir) noexcept;
 
 prompt_descriptor const* find_prompt(std::string_view name) noexcept;
 
@@ -36,14 +37,6 @@ prompt_descriptor const* find_prompt(std::string_view name) noexcept;
 // the environment), matching the `sort` the bash dispatcher applies to
 // collect_prompts output for list/list-prompts.
 bool prompt_descriptor_less(prompt_descriptor const* a, prompt_descriptor const* b) noexcept;
-
-// Attach the collect_prompts file path to an already-registered name
-// (native prompts are registered before their backing files are scanned).
-void set_sort_file(std::string_view name, std::string_view file) noexcept;
-
-// Replace an already-registered prompt's help text (used when a script
-// shadows a native prompt: bash's list/--help come from the script).
-void set_help_texts(std::string_view name, std::string_view summary, std::string_view full) noexcept;
 
 std::vector<std::string_view> list_prompt_names() noexcept;
 

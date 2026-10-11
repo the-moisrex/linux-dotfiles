@@ -36,6 +36,8 @@ include(cmake/import.cmake)
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 set(Python3_EMBED_LIBRARY "/usr/lib/python3.14/config-3.14-x86_64-linux-gnu/libpython3.14.a")
 
+file(GLOB PROMPT_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prompts/*.cpp")
+
 add_library(prompt_lib
     src/core/fs.cpp
     src/core/process.cpp
@@ -48,31 +50,10 @@ add_library(prompt_lib
     src/sdk/pipeline.cpp
     src/sdk/embed.cpp
     src/sdk/args.cpp
-    src/legacy/legacy_runner.cpp
-    src/legacy/legacy_prompts.cpp
     src/tse/tse_python.cpp
     src/prompts/prompt_entry.cpp
-    src/prompts/auto_prompt.cpp
-    src/prompts/fix_prompt.cpp
-    src/prompts/note_prompt.cpp
-    src/prompts/files_prompt.cpp
-    src/prompts/list_prompt.cpp
-    src/prompts/list_prompts_prompt.cpp
-    src/prompts/stock_prompt.cpp
-    src/prompts/intraday_prompt.cpp
-    src/prompts/tse_find_prompt.cpp
-    src/prompts/cpp_prompt.cpp
-    src/prompts/cpp_reviewer_prompt.cpp
-    src/prompts/review_prompt.cpp
-    src/prompts/tests_prompt.cpp
-    src/prompts/refactor_prompt.cpp
-    src/prompts/run_prompt.cpp
-    src/prompts/commit_prompt.cpp
-    src/prompts/new_prompt.cpp
-    src/prompts/gtest_prompt.cpp
-    src/prompts/gtest_case_prompt.cpp
-    src/prompts/spp_prompt.cpp
-    src/prompts/cli_prompt.cpp
+    src/prompts/register_batches.cpp
+    ${PROMPT_SRCS}
 )
 
 target_compile_features(prompt_lib PUBLIC cxx_std_26)

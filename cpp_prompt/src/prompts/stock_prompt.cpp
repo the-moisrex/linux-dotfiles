@@ -1,6 +1,5 @@
 #include "prompt/prompts/stock_prompt.hpp"
 #include "prompt/core/fs.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/embed.hpp"
 #include "prompt/tse/tse_python.hpp"
 #include <chrono>
@@ -8,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -249,7 +249,9 @@ basic_stock_prompt_config parse_stock_args(prompt_context const& ctx) noexcept {
         if (config.inputs.empty()) {
             config.failed = true;
             config.error = "prompt stock: no symbol given and no identifier found in the clipboard\n";
-            config.error += legacy::help_text("stock");
+            std::ostringstream help_os;
+            render_help_stock(help_os);
+            config.error += help_os.str();
             return config;
         }
     }

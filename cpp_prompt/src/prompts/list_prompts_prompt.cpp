@@ -1,5 +1,4 @@
 #include "prompt/prompts/list_prompts_prompt.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <sstream>
@@ -30,10 +29,6 @@ prompt_result execute_list_prompts(prompt_context&& ctx) noexcept {
             // Static help extracted from the script (or, for file-less
             // native prompts, the embedded fallback text).
             body = desc->help_full;
-        } else if (!desc->sort_file.empty()) {
-            std::ostringstream oss;
-            prompt::legacy::render_script_help(desc->sort_file, oss);
-            body = oss.str();
         } else if (desc->render_help_fn) {
             std::ostringstream oss;
             desc->render_help_fn(oss);
@@ -51,7 +46,11 @@ prompt_result execute_list_prompts(prompt_context&& ctx) noexcept {
 void render_help_list_prompts(std::ostream& os) noexcept {
     os << R"EOF(Usage: prompt list-prompts
 
-Print the full help text of every available prompt.
+Print the full help text of every available prompt, one after another.
+Bash prompts are shown via their --help output; .txt/.md prompts are
+printed in full.
+
+See also: prompt list (short descriptions, one line per prompt).
 )EOF";
 }
 

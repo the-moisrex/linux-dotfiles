@@ -3,7 +3,6 @@
 #include "prompt/core/process.hpp"
 #include "prompt/core/python.hpp"
 #include "prompt/core/sanitize.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/prompts/prompt_entry.hpp"
 #include "prompt/sdk/chaining.hpp"
 #include "prompt/sdk/pipeline.hpp"
@@ -20,6 +19,26 @@
 #include <string_view>
 #include <unistd.h>
 #include <vector>
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define PROMPT_HAS_ASAN 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__)
+#define PROMPT_HAS_ASAN 1
+#endif
+
+#ifdef PROMPT_HAS_ASAN
+// The embedded CPython runtime keeps interpreter allocations alive until it is
+// finalized and never releases all of them at exit; LeakSanitizer reports them
+// as leaks (aborting before iostreams flush, which swallows stdout). They are
+// lifecycle-allocations of the interpreter, not bugs in this program.
+extern "C" const char* __lsan_default_suppressions() noexcept { return "leak:libpython\nleak:_Py\n"; }
+
+// Don't print the "Suppressions used" summary: it would otherwise pollute
+// stderr on every run that touches the embedded Python runtime.
+extern "C" const char* __lsan_default_options() noexcept { return "print_suppressions=0"; }
+#endif
 
 int main(int argc, char** argv) {
     // Initialize prompt registry (needed even for --help)
@@ -225,11 +244,8 @@ Notes:
         }
         if (wants_help) {
             std::ostringstream help_os;
-            if (!desc->sort_file.empty()) {
-                // Same as the bash dispatcher: run the script with --help
-                // (or print the .txt/.md file itself). Scripts shadowing
-                // native prompts keep their own help text.
-                prompt::legacy::render_script_help(desc->sort_file, help_os);
+            if (!desc->help_full.empty()) {
+                help_os << desc->help_full;
             } else if (desc->render_help_fn) {
                 desc->render_help_fn(help_os);
             }

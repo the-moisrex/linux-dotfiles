@@ -47,7 +47,7 @@ prompt_result execute_gtest(prompt_context&& ctx) noexcept {
 
 void render_help_gtest(std::ostream& os) noexcept {
     os << R"EOF(Usage: prompt gtest [--head N] [FILE]...
-       some-command | prompt gtest [--head N] [FILE...]
+       some-command | prompt gtest [--head N] [FILE]...
 
 Ask the AI to write Google Test (gtest) unit tests for the provided code.
 

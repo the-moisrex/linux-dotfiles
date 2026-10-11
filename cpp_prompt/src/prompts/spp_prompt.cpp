@@ -1,6 +1,6 @@
 #include "prompt/prompts/spp_prompt.hpp"
+#include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -19,7 +19,7 @@ prompt_result execute_spp(prompt_context&& ctx) noexcept {
         return {std::string{}, 2, false, "Usage: prompt spp [--head N] <symbol> [symbol...]\n"};
     }
 
-    auto bin_dir = legacy::prompts_dir().parent_path() / "bin";
+    auto tool = prompt::fs::bin_tool("spp", ctx.exe_path, ctx.git_root);
 
     std::string output;
     output += "Additional C++ symbol context:\n\n";
@@ -34,7 +34,7 @@ prompt_result execute_spp(prompt_context&& ctx) noexcept {
         output += "Symbol: " + symbol + "\n\n";
         output += "```cpp\n";
 
-        std::string spp_path = (bin_dir / "spp").string();
+        std::string spp_path = tool.string();
         std::vector<char const*> argv = {spp_path.c_str(), symbol.c_str(), nullptr};
         auto result = prompt::process::run_command(argv, ctx.stdin_content);
         output += trim_context_nl(result.stdout_data, head_lines);

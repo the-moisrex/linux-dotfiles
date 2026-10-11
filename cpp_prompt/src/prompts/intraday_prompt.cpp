@@ -1,7 +1,7 @@
 #include "prompt/prompts/intraday_prompt.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/embed.hpp"
 #include "prompt/tse/tse_python.hpp"
+#include <sstream>
 #include <string>
 
 namespace prompt::prompts {
@@ -85,7 +85,9 @@ basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) noex
         if (config.symbol.empty()) {
             config.failed = true;
             config.error = "prompt intraday: no symbol given and no identifier found in the clipboard\n";
-            config.error += legacy::help_text("intraday");
+            std::ostringstream help_os;
+            render_help_intraday(help_os);
+            config.error += help_os.str();
             return config;
         }
     }

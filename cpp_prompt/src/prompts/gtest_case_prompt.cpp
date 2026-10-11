@@ -1,6 +1,6 @@
 #include "prompt/prompts/gtest_case_prompt.hpp"
+#include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -38,8 +38,7 @@ prompt_result execute_gtest_case(prompt_context&& ctx) noexcept {
                 "Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]\n", ctx.stdin_consumed};
     }
 
-    auto bin_dir = legacy::prompts_dir().parent_path() / "bin";
-    std::string tool = (bin_dir / "gtest-case").string();
+    std::string tool = prompt::fs::bin_tool("gtest-case", ctx.exe_path, ctx.git_root).string();
 
     std::vector<std::string> cmd;
     cmd.push_back(tool);

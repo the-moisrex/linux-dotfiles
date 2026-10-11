@@ -76,7 +76,7 @@ void render_help_files(std::ostream& os) noexcept {
 Appends the given fuzzily found files as Markdown code blocks.
 If you're inside a Git repository, file headings are printed relative to the
 repository root.
-If no files are provided, fzf -m is used to choose them interactively.
+If no files are provided, `fzf -m` is used to choose them interactively.
 
 Options:
   --head N   Keep only the first N lines of each embedded file

@@ -3,13 +3,14 @@
 #include <array>
 #include <clocale>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <vector>
 
 namespace prompt {
 
 namespace {
-// 21 native prompts + up to ~76 legacy prompt files.
+// Every prompt is native (76 today).
 std::array<prompt_descriptor, 128> prompts_storage{};
 std::size_t prompts_count = 0;
 } // namespace
@@ -25,28 +26,6 @@ bool prompt_descriptor_less(prompt_descriptor const* a, prompt_descriptor const*
     int const c = std::strcoll(ka.c_str(), kb.c_str());
     if (c != 0) return c < 0;
     return a->name < b->name; // collation-equal keys: deterministic tiebreak
-}
-
-void set_sort_file(std::string_view name, std::string_view file) noexcept {
-    for (std::size_t i = 0; i < prompts_count; ++i) {
-        if (prompts_storage[i].name == name) {
-            // First search dir wins (collect_prompts' `seen` semantics).
-            if (prompts_storage[i].sort_file.empty()) {
-                prompts_storage[i].sort_file = file;
-            }
-            return;
-        }
-    }
-}
-
-void set_help_texts(std::string_view name, std::string_view summary, std::string_view full) noexcept {
-    for (std::size_t i = 0; i < prompts_count; ++i) {
-        if (prompts_storage[i].name == name) {
-            prompts_storage[i].help_summary = summary;
-            prompts_storage[i].help_full = full;
-            return;
-        }
-    }
 }
 
 std::span<prompt_descriptor const> get_all_prompts() noexcept { return {prompts_storage.data(), prompts_count}; }
@@ -71,6 +50,16 @@ std::vector<std::string_view> list_prompt_names() noexcept {
     names.reserve(sorted.size());
     for (auto const* desc : sorted) names.push_back(desc->name);
     return names;
+}
+
+void assign_sort_files(std::filesystem::path const& dir) noexcept {
+    // The keys must outlive the views; a deque keeps them stable.
+    static std::deque<std::string> keys;
+    for (std::size_t i = 0; i < prompts_count; ++i) {
+        std::string key = (dir / (std::string(prompts_storage[i].name) + ".sh")).string();
+        auto it = keys.emplace(keys.end(), std::move(key));
+        prompts_storage[i].sort_file = *it;
+    }
 }
 
 void register_prompt(prompt_descriptor const& desc) noexcept {

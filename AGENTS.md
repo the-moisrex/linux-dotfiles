@@ -60,13 +60,14 @@ Argument tokens that match a prompt name — optionally prefixed with `.` or `-`
 
 ## `cpp_prompt/` — native prompt dispatcher (C++)
 
-A C++ reimplementation of `bin/prompt` + `prompts/*.sh` that must stay **behaviorally identical** (stdout, stderr, exit codes) to the bash side: every prompt script has a counterpart in `cpp_prompt/src/prompts/` (byte-identical help/body text), while not-yet-ported or script-heavy prompts run through `cpp_prompt/src/legacy/` (runs the bash script directly, bypassing the dispatcher to avoid recursion). The parity harness (case lists + `parity.sh` under `/home/moisrex/.tmp/opencode/`) runs both sides and diffs them — keep it green when touching either side.
+A native C++ reimplementation of `bin/prompt` + `prompts/*.sh`. **Every prompt is ported natively** — `cpp_prompt/` has no runtime dependency on the `prompts/` directory (it does not scan, read or execute any `.sh`/`.txt`/`.md` prompt; the static snapshots `new` embeds live in `prompt/prompts/prompt_assets.hpp`). Help text, output bytes and exit codes stay identical to the bash side; the parity harness (case lists + `parity.sh` under `/home/moisrex/.tmp/opencode/`) compares both sides — keep it green when touching either side.
 
 - Build: `cmake -S cpp_prompt -B cpp_prompt/build && cmake --build cpp_prompt/build -j 8`; Debug build with tests: `cpp_prompt/build-asan` (`ctest` there must pass)
 - Format: clang-format (`clang-format -i` over `cpp_prompt/**/*.{cpp,hpp}`; `--dry-run -Werror` must be clean)
 - Chain semantics match `bin/prompt`: prompts in a chain share the ORIGINAL piped stdin (nobody feeds a prompt's output into the next), segments are separated by blank lines, and a prompt that reads stdin (`read_stdin`/`embed_stdin`) spends the pipe for later prompts (native prompts report `stdin_consumed` in `prompt_result`)
-- Not-yet-ported prompts fall back to the legacy script runner; native prompts that shell out (`run`, `spp`, `gtest-case`, `stock`/`intraday` via `bin/tse`, `tse.find`) must match the script's exact output text and error routing (`tse: <msg>` exit 1, usage errors to stderr)
-- When editing a prompt script, port the same change to its `cpp_prompt/src/prompts/` counterpart (or delete the native port if you'd rather delegate to the script) and re-run the parity harness
+- Prompts that shell out (`run`, `spp`, `gtest-case`, `clang-tidy`, `git*`, `stock`/`intraday`/`tse*` via `bin/tse`, `skill`, `yt`, …) must match the script's exact output text and error routing (`tse: <msg>` exit 1, usage errors to stderr). Repo utilities are located with `fs::bin_tool` (exe dir → git root → cwd walk → PATH), never through the prompt scripts
+- Adding a prompt: drop a *_prompt.cpp/**_prompt.hpp pair into `cpp_prompt/src/prompts/` + `include/prompt/prompts/` (CMake globs the sources), register it in one of the `register_batch_*.cpp` files, and re-run the parity harness. `prompt list`/`--help`/`list-prompts` come straight from the registry (`help_summary` = the bash script's first help paragraph, verbatim)
+- `list`/`list-prompts` ordering replays the bash dispatcher's `sort` over `name<TAB><repo>/prompts/<name>.sh` keys (`assign_sort_files`); the path is a collation key only, never opened
 
 ## `bin/` Utilities (150+)
 

@@ -1,5 +1,5 @@
 #include "prompt/prompts/new_prompt.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
+#include "prompt/prompts/prompt_assets.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -10,18 +10,21 @@ namespace prompt::prompts {
 
 namespace {
 
-// Port of _common.sh embed_file: a leading blank line, the heading, the
-// fenced body and the closing fence (no blank line after it).
-std::string embed_block(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) noexcept {
-    if (!std::filesystem::is_regular_file(path)) return {};
-    std::string name = path.filename().string();
-    std::string heading = label.empty() ? name : std::string(label);
+// Same fenced-block form for embedded snapshot assets (no filesystem access).
+std::string embed_text(std::string_view content, std::string_view lang, std::string_view label,
+                       std::size_t head_lines) noexcept {
     std::string out;
-    out += "\nFile: " + heading + "\n";
-    out += "```" + infer_lang(path) + "\n";
-    out += trim_context_nl(read_file(path), head_lines);
+    out += "\nFile: " + std::string(label) + "\n";
+    out += "```" + std::string(lang) + "\n";
+    out += trim_context_nl(content, head_lines);
     out += "```\n";
     return out;
+}
+
+std::string embed_block(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) noexcept {
+    if (!std::filesystem::is_regular_file(path)) return {};
+    return embed_text(read_file(path), infer_lang(path), label.empty() ? path.filename().string() : std::string(label),
+                      head_lines);
 }
 
 } // namespace
@@ -69,10 +72,10 @@ Return:
 4. One or two example invocations.
 )NEWTEXT";
 
-    auto dir = legacy::prompts_dir();
-    output += embed_block(dir / "_common.sh", "prompts/_common.sh", head_lines);
-    output += embed_block(dir / "fix.sh", "prompts/fix.sh (example)", head_lines);
-    output += embed_block(dir / "symbols.sh", "prompts/symbols.sh (example)", head_lines);
+    using namespace prompt::prompt_assets;
+    output += embed_text(common, "bash", "prompts/_common.sh", head_lines);
+    output += embed_text(fix, "bash", "prompts/fix.sh (example)", head_lines);
+    output += embed_text(symbols, "bash", "prompts/symbols.sh (example)", head_lines);
 
     std::string error;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {

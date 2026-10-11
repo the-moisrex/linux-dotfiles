@@ -3,7 +3,6 @@
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
 #include "prompt/core/python.hpp"
-#include "prompt/legacy/legacy_runner.hpp"
 #include "prompt/sdk/embed.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
 #include "prompt/tse/tse_python.hpp"
@@ -290,25 +289,10 @@ prompt_result execute_auto(prompt_context&& ctx) noexcept {
         return result;
     }
 
-    // Fallback: not yet ported — run the legacy bash prompt script
-    // directly (never re-invoke the dispatcher: it may resolve back to
-    // this binary and recurse).
-    std::vector<std::string> arg_storage;
-    if (pass_extra) {
-        for (auto const& a : extra_args) arg_storage.push_back(a);
-    }
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        arg_storage.emplace_back(ctx.args[i]);
-    }
-    std::vector<char const*> arg_argv;
-    arg_argv.reserve(arg_storage.size() + 1);
-    for (auto const& s : arg_storage) arg_argv.push_back(s.c_str());
-    arg_argv.push_back(nullptr);
-
-    auto result =
-        prompt::legacy::run_prompt_script(target_script, has_stdin ? input_buffer + "\n" : std::string{}, arg_argv);
-
-    return {echo + result.stdout_data, result.exit_code, result.no_clipboard, result.stderr_data, has_stdin};
+    // Every dispatch target of this binary is implemented natively; the
+    // dispatch above always resolves. (A missing target is a bug — report
+    // it like the bash dispatcher reports an unknown prompt.)
+    return {"", 3, false, "prompt auto: prompt '" + std::string(target_script) + "' not found\n", has_stdin};
 }
 
 void render_help_auto(std::ostream& os) noexcept {
@@ -318,8 +302,8 @@ void render_help_auto(std::ostream& os) noexcept {
 Automatically chooses and executes the most appropriate prompt script based on the input.
 For example, if it detects YouTube URLs, it delegates to the 'yt' prompt.
 If it detects C++ files, it delegates to 'cpp-reviewer'.
-A bare stock identifier delegates to 'stock'.
-Defaults to 'summarize' for English and Farsi text, or 'english' (translate) for other languages.
+A bare stock identifier (ISIN, insCode, or easytrader/tsetmc/codal URL) delegates to 'stock'.
+Defaults to 'summarize' for English and Farsi text, or 'english' (translate) for other languages like Arabic.
 
 Options:
   --help, -h   Show this help message

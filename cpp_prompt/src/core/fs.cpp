@@ -1,59 +1,9 @@
 #include "prompt/core/fs.hpp"
 #include <cstdlib>
 #include <string>
+#include <unistd.h>
 
 namespace prompt::fs {
-
-std::vector<std::filesystem::path> xdg_config_dirs() noexcept {
-    std::vector<std::filesystem::path> dirs;
-    char const* xdg = std::getenv("XDG_CONFIG_DIRS");
-    std::string_view dirs_str = xdg ? xdg : "/etc/xdg";
-
-    std::size_t start = 0;
-    while (start < dirs_str.size()) {
-        auto end = dirs_str.find(':', start);
-        if (end == std::string_view::npos) end = dirs_str.size();
-        if (end > start) {
-            dirs.emplace_back(dirs_str.substr(start, end - start));
-        }
-        start = end + 1;
-    }
-    return dirs;
-}
-
-std::vector<std::filesystem::path> prompt_search_dirs(std::filesystem::path const& exe_path) noexcept {
-
-    std::vector<std::filesystem::path> dirs;
-
-    for (auto const& base : xdg_config_dirs()) {
-        dirs.push_back(base / "prompts");
-    }
-
-    auto repo_prompts = exe_path.parent_path().parent_path() / "prompts";
-    if (std::filesystem::exists(repo_prompts)) {
-        dirs.push_back(std::filesystem::canonical(repo_prompts));
-    }
-
-    return dirs;
-}
-
-std::optional<std::filesystem::path> find_prompt_file(std::string_view name,
-                                                      std::span<std::filesystem::path const> search_dirs) noexcept {
-
-    constexpr std::array<std::string_view, 4> exts = {".sh", ".txt", ".md", ""};
-
-    for (auto const& dir : search_dirs) {
-        if (!std::filesystem::exists(dir)) continue;
-        for (auto const& ext : exts) {
-            std::string filename = std::string(name) + std::string(ext);
-            auto candidate = dir / filename;
-            if (std::filesystem::is_regular_file(candidate)) {
-                return candidate;
-            }
-        }
-    }
-    return std::nullopt;
-}
 
 std::optional<std::filesystem::path> find_git_root(std::filesystem::path const& start) noexcept {
 
@@ -70,14 +20,6 @@ std::optional<std::filesystem::path> find_git_root(std::filesystem::path const& 
     return std::nullopt;
 }
 
-file_type detect_file_type(std::filesystem::path const& path) noexcept {
-    auto ext = path.extension().string();
-    if (ext == ".sh") return file_type::bash;
-    if (ext == ".txt") return file_type::text;
-    if (ext == ".md") return file_type::markdown;
-    return file_type::unknown;
-}
-
 std::filesystem::path relative_path(std::filesystem::path const& file,
                                     std::optional<std::filesystem::path> const& git_root) noexcept {
 
@@ -89,6 +31,47 @@ std::filesystem::path relative_path(std::filesystem::path const& file,
     } catch (...) {
         return file.filename();
     }
+}
+
+std::optional<std::filesystem::path> self_path() noexcept {
+    std::error_code ec;
+    auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) return std::nullopt;
+    return exe;
+}
+
+std::filesystem::path bin_tool(std::string_view name, std::filesystem::path const& exe_path,
+                               std::optional<std::filesystem::path> const& git_root) noexcept {
+    std::error_code ec;
+    std::filesystem::path bare(name);
+
+    std::vector<std::filesystem::path> candidates;
+    if (!exe_path.empty()) {
+        auto exe_dir = exe_path.parent_path();
+        candidates.push_back(exe_dir / "bin" / bare);                             // installed layout
+        candidates.push_back(exe_dir.parent_path().parent_path() / "bin" / bare); // build layout
+    }
+    if (git_root) candidates.push_back(*git_root / "bin" / bare);
+    // Walk up from cwd (covers running from a repo subdirectory when the
+    // executable lives elsewhere, e.g. installed).
+    auto dir = std::filesystem::current_path();
+    for (std::size_t i = 0; i < 8 && !dir.empty(); ++i) {
+        candidates.push_back(dir / "bin" / bare);
+        auto parent = dir.parent_path();
+        if (parent == dir) break;
+        dir = parent;
+    }
+
+    for (auto const& cand : candidates) {
+        if (std::filesystem::is_regular_file(cand, ec)) {
+            if ((std::filesystem::status(cand, ec).permissions() & std::filesystem::perms::owner_exec) !=
+                std::filesystem::perms::none) {
+                return cand;
+            }
+        }
+    }
+    // Last resort: let the shell resolve it via PATH.
+    return bare;
 }
 
 } // namespace prompt::fs
