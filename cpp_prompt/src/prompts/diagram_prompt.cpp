@@ -1,4 +1,4 @@
-#include "prompt/prompts/diagram_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -7,12 +7,12 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_diagram(prompt_context&& ctx) noexcept {
+prompt_output execute_diagram(prompt_context&& ctx) {
     // diagram.sh runs init_prompt (which already validated --head) before its
     // own --type loop, so --head errors win.
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     // diagram.sh's loop walks the ORIGINAL arguments, not the parsed ARGS.
@@ -20,7 +20,7 @@ prompt_result execute_diagram(prompt_context&& ctx) noexcept {
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         if (ctx.args[i] == "--type" || ctx.args[i] == "-t") {
             if (i + 1 >= ctx.args_count) {
-                return {std::string{}, 2, false, "Missing value for --type\n"};
+                throw usage_error{"Missing value for --type\n"};
             }
             diagram_type = std::string(ctx.args[i + 1]);
             ++i;
@@ -31,7 +31,7 @@ prompt_result execute_diagram(prompt_context&& ctx) noexcept {
     output += "You are a software architecture diagramming expert.\n";
     output += "Generate a clear, accurate diagram from the provided code or description.\n";
     output += "\n";
-    output += "Output format: " + diagram_type + "\n";
+    output += std::format("Output format: {}\n", diagram_type);
     output += "\n";
     output += "Guidelines:\n";
     output += "- Capture the essential relationships, not every detail\n";
@@ -54,21 +54,21 @@ prompt_result execute_diagram(prompt_context&& ctx) noexcept {
         }
         std::filesystem::path file(ctx.args[i]);
         if (std::filesystem::is_regular_file(file)) {
-            output += "File: " + file.filename().string() + "\n\n";
-            output += "```" + infer_lang(file) + "\n";
+            output += std::format("File: {}\n\n", file.filename().string());
+            output += std::format("```{}\n", infer_lang(file));
             output += trim_context_nl(read_file(file), head_lines);
             // diagram.sh leaves a blank line before the closing fence.
             output += "\n```\n";
             output += "\n";
         } else {
-            error += "Warning: File '" + std::string(ctx.args[i]) + "' not found.\n";
+            warn_missing_file(error, ctx.args[i]);
         }
     }
 
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_diagram(std::ostream& os) noexcept {
+void render_help_diagram(std::ostream& os) {
     os << R"EOF(Usage: prompt diagram [--head N] [--type TYPE] [FILE...]
        echo "task description" | prompt diagram [--head N] [--type TYPE] [FILE...]
 

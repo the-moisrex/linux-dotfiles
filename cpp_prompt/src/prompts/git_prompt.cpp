@@ -1,5 +1,5 @@
-#include "prompt/prompts/git_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <cstddef>
@@ -15,19 +15,12 @@ namespace {
 
 // Run `git <args>` in the inherited cwd (git.sh never uses -C / find_git_root
 // for its own git calls, so the output is cwd-relative exactly like the script).
-std::string git_raw(std::vector<std::string> const& args) noexcept {
-    std::vector<char const*> argv;
-    argv.reserve(args.size() + 1);
-    for (auto const& s : args) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return prompt::process::run_command(argv).stdout_data;
-}
+std::string git_raw(std::vector<std::string> const& args) { return prompt::process::run_command(args).stdout_data; }
 
 // ```bash echo "$(git branch --show-current ... || echo detached)"``` only
 // substitutes 'detached' on a non-zero exit, so the exit code matters here.
-std::string git_branch() noexcept {
-    std::vector<char const*> argv = {"git", "branch", "--show-current", nullptr};
-    auto result = prompt::process::run_command(argv);
+std::string git_branch() {
+    auto result = prompt::process::run_command({"git", "branch", "--show-current"});
     if (result.exit_code != 0) return "detached";
     std::string out = result.stdout_data;
     while (!out.empty() && out.back() == '\n') out.pop_back(); // $(...) strips them
@@ -36,7 +29,7 @@ std::string git_branch() noexcept {
 
 // Port of `git status --short | head -20` (direct to stdout, not captured):
 // the first n complete \n-terminated lines, verbatim.
-std::string head_lines_raw(std::string_view s, std::size_t n) noexcept {
+std::string head_lines_raw(std::string_view s, std::size_t n) {
     std::size_t pos = 0;
     std::size_t count = 0;
     while (pos < s.size() && count < n) {
@@ -50,10 +43,10 @@ std::string head_lines_raw(std::string_view s, std::size_t n) noexcept {
 
 } // namespace
 
-prompt_result execute_git(prompt_context&& ctx) noexcept {
+prompt_output execute_git(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     // parse_arguments leaves the non-flag files in ARGS (with --head N removed).
@@ -88,11 +81,11 @@ prompt_result execute_git(prompt_context&& ctx) noexcept {
 
     // Embed git status context if in a git repo.
     std::vector<char const*> rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};
-    if (prompt::process::run_command(rev).exit_code == 0) {
+    if (prompt::process::run_command({"git", "rev-parse", "--is-inside-work-tree"}).exit_code == 0) {
         output += "Current git context:\n";
         output += "\n";
         output += "```text\n";
-        output += "Branch: " + git_branch() + "\n";
+        output += std::format("Branch: {}\n", git_branch());
         output += "Status:\n";
         output += head_lines_raw(git_raw({"git", "status", "--short"}), 20);
         output += "\n";
@@ -111,23 +104,23 @@ prompt_result execute_git(prompt_context&& ctx) noexcept {
             std::string name = path.filename().string();
             std::string lang = infer_lang(path);
             std::string content = read_file(path);
-            output += "File: " + name + "\n";
+            output += std::format("File: {}\n", name);
             output += "\n";
-            output += "```" + lang + "\n";
+            output += std::format("```{}\n", lang);
             output += trim_context_nl(content, head_lines);
             output += "\n";
             output += "```\n";
             output += "\n";
         } else {
-            error += "Warning: File '" + file + "' not found.\n";
+            error += std::format("Warning: File '{}' not found.\n", file);
         }
     }
 
-    if (!error.empty()) return {std::move(output), 0, false, std::move(error)};
-    return {std::move(output), 0, false};
+    if (!error.empty()) return {std::move(output), std::move(error), false, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_git(std::ostream& os) noexcept {
+void render_help_git(std::ostream& os) {
     os << R"EOF(Usage: prompt git [--head N] [FILE...]
        echo "task description" | prompt git [--head N] [FILE...]
 

@@ -1,6 +1,6 @@
-#include "prompt/prompts/git_worktree_files_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <cstddef>
@@ -14,21 +14,15 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string git_raw(std::vector<std::string> const& args) noexcept {
-    std::vector<char const*> argv;
-    argv.reserve(args.size() + 1);
-    for (auto const& s : args) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return prompt::process::run_command(argv).stdout_data;
-}
+std::string git_raw(std::vector<std::string> const& args) { return prompt::process::run_command(args).stdout_data; }
 
-std::string strip_trailing_newlines(std::string_view s) noexcept {
+std::string strip_trailing_newlines(std::string_view s) {
     std::string out(s);
     while (!out.empty() && out.back() == '\n') out.pop_back();
     return out;
 }
 
-std::string infer_lang(std::string_view base) noexcept {
+std::string infer_lang(std::string_view base) {
     auto dot = base.rfind('.');
     std::string_view ext = (dot == std::string_view::npos) ? base : base.substr(dot + 1);
     if (base == "Dockerfile") return "dockerfile";
@@ -71,7 +65,7 @@ std::string infer_lang(std::string_view base) noexcept {
 
 // Port of `changed_files=($(git diff ... --name-only))` — bash word-splits the
 // captured output on IFS (space/tab/newline).
-std::vector<std::string> word_split(std::string_view s) noexcept {
+std::vector<std::string> word_split(std::string_view s) {
     std::vector<std::string> out;
     std::size_t i = 0;
     while (i < s.size()) {
@@ -83,7 +77,7 @@ std::vector<std::string> word_split(std::string_view s) noexcept {
     return out;
 }
 
-std::string detect_base_branch(std::string const& given) noexcept {
+std::string detect_base_branch(std::string const& given) {
     if (!given.empty()) return given;
     std::string upstream = strip_trailing_newlines(git_raw({"git", "rev-parse", "--abbrev-ref", "@{u}"}));
     if (upstream.empty()) return "origin/main";
@@ -92,15 +86,14 @@ std::string detect_base_branch(std::string const& given) noexcept {
 
 } // namespace
 
-prompt_result execute_git_worktree_files(prompt_context&& ctx) noexcept {
+prompt_output execute_git_worktree_files(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
-    std::vector<char const*> rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};
-    if (prompt::process::run_command(rev).exit_code != 0) {
-        return {std::string{}, 1, false, "prompt git.worktree.files: Error: Not inside a git repository.\n"};
+    if (prompt::process::run_command({"git", "rev-parse", "--is-inside-work-tree"}).exit_code != 0) {
+        throw soft_error{"prompt git.worktree.files: Error: Not inside a git repository.\n"};
     }
 
     std::vector<std::string> rest;
@@ -117,11 +110,11 @@ prompt_result execute_git_worktree_files(prompt_context&& ctx) noexcept {
     std::vector<std::string> files;
     for (std::size_t i = 0; i < rest.size();) {
         if (rest[i] == "--not") {
-            if (i + 1 >= rest.size()) return {std::string{}, 2, false, "Missing value for --not\n"};
+            if (i + 1 >= rest.size()) throw usage_error{"Missing value for --not\n"};
             not_commit = rest[i + 1];
             i += 2;
         } else if (rest[i] == "--base") {
-            if (i + 1 >= rest.size()) return {std::string{}, 2, false, "Missing value for --base\n"};
+            if (i + 1 >= rest.size()) throw usage_error{"Missing value for --base\n"};
             base_branch = rest[i + 1];
             i += 2;
         } else {
@@ -148,7 +141,8 @@ prompt_result execute_git_worktree_files(prompt_context&& ctx) noexcept {
     }
 
     if (changed_files.empty()) {
-        return {std::string{}, 0, false, "No changed files found between current branch and " + base_branch + ".\n"};
+        return {std::string{}, "No changed files found between current branch and " + base_branch + ".\n", false,
+                false};
     }
 
     std::optional<std::filesystem::path> git_root;
@@ -159,7 +153,7 @@ prompt_result execute_git_worktree_files(prompt_context&& ctx) noexcept {
     for (auto const& file : changed_files) {
         auto resolved = ctx.resolve_input_file(file);
         if (!resolved) {
-            error += "prompt git.worktree.files: file not found: " + file + "\n";
+            error += std::format("prompt git.worktree.files: file not found: {}\n", file);
             continue;
         }
         if (::access(resolved->c_str(), R_OK) != 0) {
@@ -173,19 +167,19 @@ prompt_result execute_git_worktree_files(prompt_context&& ctx) noexcept {
         std::string raw = read_file(*resolved);
         if (strip_trailing_newlines(raw).empty()) continue;
 
-        output += "File " + rel.string();
+        output += std::format("File {}", rel.string());
         if (head_lines > 0) output += " (first " + std::to_string(head_lines) + " lines)";
         output += "\n\n";
-        output += "```" + lang + "\n";
+        output += std::format("```{}\n", lang);
         output += trim_context_nl(raw, head_lines);
         output += "\n```\n\n";
     }
 
-    if (!error.empty()) return {std::move(output), 0, false, std::move(error)};
-    return {std::move(output), 0, false};
+    if (!error.empty()) return {std::move(output), std::move(error), false, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_git_worktree_files(std::ostream& os) noexcept {
+void render_help_git_worktree_files(std::ostream& os) {
     os << R"EOF(Usage: prompt git.worktree.files [--not <commit>] [--base <branch>] [--head N] [FILE...]
 
 Embeds files changed since the upstream branch as Markdown code blocks.

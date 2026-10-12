@@ -1,16 +1,10 @@
-#include "prompt/prompts/git_diff_prompt.hpp"
-#include "prompt/prompts/git_dirty_prompt.hpp"
-#include "prompt/prompts/git_files_prompt.hpp"
-#include "prompt/prompts/git_prompt.hpp"
-#include "prompt/prompts/git_worktree_diff_prompt.hpp"
-#include "prompt/prompts/git_worktree_files_prompt.hpp"
 #include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/repo_prompt.hpp"
-#include "prompt/prompts/verify_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
+#include "prompt/sdk/prompt_registry.hpp"
 
 namespace prompt {
 
-void register_batch_git() noexcept {
+void register_batch_git() {
     register_prompt({"git",
                      "Git workflow assistance prompt. Helps with branching strategies, merge conflicts, rebasing, "
                      "bisecting, and other git operations.",

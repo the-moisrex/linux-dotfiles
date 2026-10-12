@@ -1,5 +1,5 @@
-#include "prompt/prompts/repo_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -12,7 +12,7 @@ namespace {
 
 // Single-quote a value for embedding inside a bash -c pipeline the prompt will
 // re-parse (run_command adds the outer layer of quoting).
-std::string sh_quote(std::string const& s) noexcept {
+std::string sh_quote(std::string const& s) {
     std::string out = "'";
     for (char c : s) {
         if (c == '\'') out += "'\\''";
@@ -27,7 +27,7 @@ std::string sh_quote(std::string const& s) noexcept {
 // bash -c pipeline: tree reads the file list from the pipe exactly like the
 // script (its colour/summary output depends on how it is invoked — run_pipeline
 // feeds it a temp file and tree changes its default output under popen).
-std::string run_tree(std::vector<std::string> const& ls_dirs, std::vector<std::string> const& tree_args) noexcept {
+std::string run_tree(std::vector<std::string> const& ls_dirs, std::vector<std::string> const& tree_args) {
     std::string ls = "git ls-files";
     if (!ls_dirs.empty()) {
         ls += " --";
@@ -37,22 +37,17 @@ std::string run_tree(std::vector<std::string> const& ls_dirs, std::vector<std::s
     for (auto const& a : tree_args) tr += " " + sh_quote(a);
     tr += " --fromfile";
     std::vector<std::string> storage = {"bash", "-c", ls + " | " + tr};
-    std::vector<char const*> argv;
-    argv.reserve(storage.size() + 1);
-    for (auto const& s : storage) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return prompt::process::run_command(argv).stdout_data;
+    return prompt::process::run_command(storage).stdout_data;
 }
 
 } // namespace
 
-prompt_result execute_repo(prompt_context&& ctx) noexcept {
+prompt_output execute_repo(prompt_context&& ctx) {
     // repo.sh scans every arg for --help/-h itself (before the git check);
     // the native dispatcher already intercepted those before we run.
 
-    std::vector<char const*> rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};
-    if (prompt::process::run_command(rev).exit_code != 0) {
-        return {std::string{}, 1, false, "prompt repo: Not inside a git repository.\n"};
+    if (prompt::process::run_command({"git", "rev-parse", "--is-inside-work-tree"}).exit_code != 0) {
+        throw soft_error{"prompt repo: Not inside a git repository.\n"};
     }
 
     std::string depth;
@@ -60,7 +55,7 @@ prompt_result execute_repo(prompt_context&& ctx) noexcept {
     for (std::size_t i = 0; i < ctx.args_count;) {
         std::string_view a = ctx.args[i];
         if (a == "--depth") {
-            if (i + 1 >= ctx.args_count) return {std::string{}, 2, false, "Missing value for --depth\n"};
+            if (i + 1 >= ctx.args_count) throw usage_error{"Missing value for --depth\n"};
             depth = std::string(ctx.args[i + 1]);
             i += 2;
         } else {
@@ -85,10 +80,10 @@ prompt_result execute_repo(prompt_context&& ctx) noexcept {
         for (auto const& dir : dirs) output += run_tree({dir}, tree_args);
     }
 
-    return {std::move(output), 0, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_repo(std::ostream& os) noexcept {
+void render_help_repo(std::ostream& os) {
     os << R"EOF(Usage: prompt repo [--depth N] [DIR...]
 
 Displays the repository's file structure using only git-tracked files.

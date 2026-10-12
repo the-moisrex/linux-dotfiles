@@ -14,7 +14,6 @@ namespace prompt {
 // clamped (bash's `sed -n 1,Np` simply prints every line).
 // Scripts with their own arg loop (note.sh, gtest-case.sh) accept any value —
 // pass strict = false to mirror them (a non-numeric value becomes 0).
-std::string parse_head_option(std::span<std::string_view const> args, std::size_t& head_lines,
-                              bool strict = true) noexcept;
+std::string parse_head_option(std::span<std::string_view const> args, std::size_t& head_lines, bool strict = true);
 
 } // namespace prompt

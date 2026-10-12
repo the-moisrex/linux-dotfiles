@@ -6,7 +6,7 @@
 
 namespace prompt {
 
-std::string infer_lang(std::filesystem::path const& file) noexcept {
+std::string infer_lang(std::filesystem::path const& file) {
     auto ext = file.extension().string();
     if (ext == ".c" || ext == ".h") return "c";
     if (ext == ".cc" || ext == ".cpp" || ext == ".cxx" || ext == ".c++" || ext == ".hpp" || ext == ".hh" ||
@@ -38,7 +38,7 @@ std::string infer_lang(std::filesystem::path const& file) noexcept {
     return "text";
 }
 
-std::string trim_context(std::string_view content, std::size_t head_lines) noexcept {
+std::string trim_context(std::string_view content, std::size_t head_lines) {
     if (head_lines == 0) return std::string(content);
 
     std::size_t lines = 0;
@@ -52,7 +52,7 @@ std::string trim_context(std::string_view content, std::size_t head_lines) noexc
     return std::string(content.substr(0, pos));
 }
 
-std::string trim_context_nl(std::string_view content, std::size_t head_lines) noexcept {
+std::string trim_context_nl(std::string_view content, std::size_t head_lines) {
     while (!content.empty() && content.back() == '\n') content.remove_suffix(1);
     if (head_lines == 0) return std::string(content) + "\n";
 
@@ -68,13 +68,13 @@ std::string trim_context_nl(std::string_view content, std::size_t head_lines) no
     return std::string(content) + "\n";
 }
 
-std::string read_file(std::filesystem::path const& path) noexcept {
+std::string read_file(std::filesystem::path const& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return "";
     return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
 }
 
-std::string embed_file(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) noexcept {
+std::string embed_file(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) {
 
     if (!std::filesystem::exists(path)) return "";
 
@@ -83,17 +83,33 @@ std::string embed_file(std::filesystem::path const& path, std::string_view label
     if (content.empty()) return "";
 
     std::string output;
-    output += "File: " + name + "\n\n";
-    output += "```" + infer_lang(path) + "\n";
+    output += std::format("File: {}\n\n", name);
+    output += std::format("```{}\n", infer_lang(path));
     output += trim_context(content, head_lines);
     output += "\n```\n\n";
     return output;
 }
 
-std::string embed_stdin(std::string_view content, std::size_t head_lines) noexcept {
+std::string embed_stdin(std::string_view content, std::size_t head_lines) {
     (void)head_lines; // bash's embed_stdin does not apply --head
     while (!content.empty() && content.back() == '\n') content.remove_suffix(1);
     return std::string(content) + "\n\n";
+}
+
+std::string embed_file_block(std::filesystem::path const& file, std::size_t head_lines) {
+    std::string output;
+    output += std::format("File: {}\n\n", file.filename().string());
+    output += std::format("```{}\n", infer_lang(file));
+    output += trim_context_nl(read_file(file), head_lines);
+    output += "```\n";
+    output += "\n";
+    return output;
+}
+
+void warn_missing_file(std::string& errors, std::string_view name) {
+    errors += "Warning: File '";
+    errors += name;
+    errors += "' not found.\n";
 }
 
 } // namespace prompt

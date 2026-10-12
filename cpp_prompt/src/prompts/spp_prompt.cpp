@@ -1,6 +1,6 @@
-#include "prompt/prompts/spp_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -8,15 +8,15 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_spp(prompt_context&& ctx) noexcept {
+prompt_output execute_spp(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     // spp.sh tests the raw $# (so `prompt spp --head 5` is not an error).
     if (ctx.args_count == 0) {
-        return {std::string{}, 2, false, "Usage: prompt spp [--head N] <symbol> [symbol...]\n"};
+        throw usage_error{"Usage: prompt spp [--head N] <symbol> [symbol...]\n"};
     }
 
     auto tool = prompt::fs::bin_tool("spp", ctx.exe_path, ctx.git_root);
@@ -31,7 +31,7 @@ prompt_result execute_spp(prompt_context&& ctx) noexcept {
             continue;
         }
         std::string symbol(ctx.args[i]);
-        output += "Symbol: " + symbol + "\n\n";
+        output += std::format("Symbol: {}\n\n", symbol);
         output += "```cpp\n";
 
         std::string spp_path = tool.string();
@@ -43,10 +43,10 @@ prompt_result execute_spp(prompt_context&& ctx) noexcept {
     }
 
     output += "Use the symbol context above when analyzing the issue.";
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_spp(std::ostream& os) noexcept {
+void render_help_spp(std::ostream& os) {
     os << R"EOF(Usage: prompt spp [--head N] <symbol> [symbol...]
 
 Builds a C++ debugging prompt and expands the given symbols through `spp`.

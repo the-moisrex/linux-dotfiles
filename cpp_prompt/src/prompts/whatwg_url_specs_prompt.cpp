@@ -1,6 +1,6 @@
-#include "prompt/prompts/whatwg_url_specs_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -8,10 +8,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_whatwg_url_specs(prompt_context&& ctx) noexcept {
+prompt_output execute_whatwg_url_specs(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string> sections;
@@ -34,13 +34,13 @@ prompt_result execute_whatwg_url_specs(prompt_context&& ctx) noexcept {
     if (sections.empty()) {
         // No queries: the tool's --help is streamed verbatim inside a code
         // fence (no --head applied here), preceded by the stderr warning.
-        std::vector<char const*> argv = {tool.c_str(), "--help", nullptr};
-        auto result = prompt::process::run_command(argv);
+        auto result = prompt::process::run_command({tool, "--help"});
         output += "```text\n";
         output += result.stdout_data;
         output += "```\n\n";
-        return {std::move(output), 0, false,
-                "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n"};
+        return {std::move(output),
+                "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n", false,
+                false};
     }
 
     std::string joined;
@@ -48,24 +48,20 @@ prompt_result execute_whatwg_url_specs(prompt_context&& ctx) noexcept {
         if (i) joined += ' ';
         joined += sections[i];
     }
-    output += "Querying WHATWG URL specification for: " + joined + "\n\n";
+    output += std::format("Querying WHATWG URL specification for: {}\n\n", joined);
     output += "```markdown\n";
 
     std::vector<std::string> storage;
     storage.push_back(tool.string());
     for (auto const& s : sections) storage.push_back(s);
-    std::vector<char const*> argv;
-    argv.reserve(storage.size() + 1);
-    for (auto const& s : storage) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    auto result = prompt::process::run_command(argv);
+    auto result = prompt::process::run_command(storage);
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "```\n\n";
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_whatwg_url_specs(std::ostream& os) noexcept {
+void render_help_whatwg_url_specs(std::ostream& os) {
     os << R"EOF(Usage: prompt whatwg-url-specs [--head N] [SECTIONS...]
        some-command | prompt whatwg-url-specs [--head N] [SECTIONS...]
 

@@ -1,5 +1,5 @@
-#include "prompt/prompts/overengineering_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <algorithm>
@@ -76,18 +76,18 @@ constexpr overengineering_pattern kPatterns[] = {
      "simple structs, compile-time config, or code."},
 };
 
-std::string_view pattern_text(std::string_view name) noexcept {
+std::string_view pattern_text(std::string_view name) {
     for (auto const& pattern : kPatterns) {
         if (pattern.name == name) return pattern.text;
     }
     return {};
 }
 
-bool is_known_pattern(std::string_view name) noexcept { return !pattern_text(name).empty(); }
+bool is_known_pattern(std::string_view name) { return !pattern_text(name).empty(); }
 
 // `overengineering list`: printf "  %-25s %s\n" over names sorted by `sort`
 // (the padded names are unique, so byte order over names is the order).
-std::string render_pattern_list() noexcept {
+std::string render_pattern_list() {
     std::vector<std::string_view> names;
     for (auto const& pattern : kPatterns) names.push_back(pattern.name);
     std::sort(names.begin(), names.end());
@@ -108,7 +108,7 @@ std::string render_pattern_list() noexcept {
 
 // overengineering.sh never validates --head: it hands the raw value to
 // `head -n <value> -- file`, so run exactly that (head reports its own error).
-std::string run_head(std::string_view spec, std::filesystem::path const& file) noexcept {
+std::string run_head(std::string_view spec, std::filesystem::path const& file) {
     std::vector<std::string> storage;
     storage.push_back("bash");
     storage.push_back("-c");
@@ -116,16 +116,12 @@ std::string run_head(std::string_view spec, std::filesystem::path const& file) n
     storage.push_back(std::string());     // $0
     storage.push_back(std::string(spec)); // $1
     storage.push_back(file.string());     // $2
-    std::vector<char const*> argv;
-    argv.reserve(storage.size() + 1);
-    for (auto const& s : storage) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return prompt::process::run_command(argv).stdout_data;
+    return prompt::process::run_command(storage).stdout_data;
 }
 
 } // namespace
 
-prompt_result execute_overengineering(prompt_context&& ctx) noexcept {
+prompt_output execute_overengineering(prompt_context&& ctx) {
     // overengineering.sh parses "$@" itself (never init_prompt), so its loop
     // sees the unprocessed arguments.
     std::vector<std::string_view> selected;
@@ -135,25 +131,23 @@ prompt_result execute_overengineering(prompt_context&& ctx) noexcept {
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         std::string_view arg = ctx.args[i];
         if (arg == "--help" || arg == "-h") {
-            std::ostringstream help;
-            render_help_overengineering(help);
-            return {help.str(), 0, false, std::string{}};
+            std::string help = help_text(render_help_overengineering);
+            return {help, std::string{}, false, false};
         }
         if (arg == "--head") {
             if (i + 1 >= ctx.args_count) {
-                return {std::string{}, 2, false, "Missing value for --head\n"};
+                throw usage_error{"Missing value for --head\n"};
             }
             head_spec = std::string(ctx.args[i + 1]);
             ++i;
             continue;
         }
         if (arg == "list") {
-            return {render_pattern_list(), 0, false, std::string{}};
+            return {render_pattern_list(), std::string{}, false, false};
         }
         if (arg.starts_with('-')) {
-            std::ostringstream help;
-            render_help_overengineering(help);
-            return {help.str(), 2, false, "Unknown option: " + std::string(arg) + "\n"};
+            std::string help = help_text(render_help_overengineering);
+            throw usage_error{"Unknown option: " + std::string(arg) + "\n", help};
         }
         if (is_known_pattern(arg)) selected.push_back(arg);
         else
@@ -173,20 +167,20 @@ prompt_result execute_overengineering(prompt_context&& ctx) noexcept {
     for (auto const& arg : files) {
         std::filesystem::path file(arg);
         if (std::filesystem::is_regular_file(file)) {
-            output += "File: " + file.filename().string() + "\n\n";
-            output += "```" + infer_lang(file) + "\n";
+            output += std::format("File: {}\n\n", file.filename().string());
+            output += std::format("```{}\n", infer_lang(file));
             output += head_spec.empty() ? read_file(file) : run_head(head_spec, file);
             output += "```\n";
             output += "\n";
         } else {
-            error += "Warning: File '" + std::string(arg) + "' not found or is not a regular file.\n";
+            error += std::format("Warning: File '{}' not found or is not a regular file.\n", std::string(arg));
         }
     }
 
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_overengineering(std::ostream& os) noexcept {
+void render_help_overengineering(std::ostream& os) {
     os << R"EOF(Usage: prompt overengineering [PATTERN...] [--head N] [FILE...]
        prompt overengineering list
 

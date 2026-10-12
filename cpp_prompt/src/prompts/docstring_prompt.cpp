@@ -1,4 +1,4 @@
-#include "prompt/prompts/docstring_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -7,10 +7,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_docstring(prompt_context&& ctx) noexcept {
+prompt_output execute_docstring(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::string output;
@@ -36,7 +36,7 @@ prompt_result execute_docstring(prompt_context&& ctx) noexcept {
         }
         auto resolved = ctx.resolve_input_file(ctx.args[i]);
         if (!resolved) {
-            error += "prompt docstring: file not found: " + std::string(ctx.args[i]) + "\n";
+            error += std::format("prompt docstring: file not found: {}\n", std::string(ctx.args[i]));
             continue;
         }
         if (::access(resolved->c_str(), R_OK) != 0) {
@@ -44,16 +44,16 @@ prompt_result execute_docstring(prompt_context&& ctx) noexcept {
                      resolved->string() + "\"\n";
             continue;
         }
-        output += "File: " + resolved->filename().string() + "\n\n";
-        output += "```" + infer_lang(*resolved) + "\n";
+        output += std::format("File: {}\n\n", resolved->filename().string());
+        output += std::format("```{}\n", infer_lang(*resolved));
         output += trim_context_nl(read_file(*resolved), head_lines);
         output += "\n```\n";
     }
 
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_docstring(std::ostream& os) noexcept {
+void render_help_docstring(std::ostream& os) {
     os << R"EOF(Usage: prompt docstring [--head N] [FILE...]
        some-command | prompt docstring [--head N] [FILE...]
 

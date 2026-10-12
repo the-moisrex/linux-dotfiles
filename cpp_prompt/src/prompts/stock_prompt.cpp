@@ -1,7 +1,7 @@
-#include "prompt/prompts/stock_prompt.hpp"
 #include "prompt/core/fs.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/embed.hpp"
-#include "prompt/tse/tse_python.hpp"
+#include "prompt/tse/tse_markdown.hpp"
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -35,7 +35,7 @@ struct basic_stock_prompt_config {
     std::string error;
 };
 
-bool is_positive_int(std::string_view s) noexcept {
+bool is_positive_int(std::string_view s) {
     if (s.empty()) return false;
     for (char c : s) {
         if (c < '0' || c > '9') return false;
@@ -43,7 +43,7 @@ bool is_positive_int(std::string_view s) noexcept {
     return true;
 }
 
-std::string collapse_whitespace(std::string_view text) noexcept {
+std::string collapse_whitespace(std::string_view text) {
     std::string out;
     bool pending = false;
     for (char c : text) {
@@ -62,7 +62,7 @@ std::string collapse_whitespace(std::string_view text) noexcept {
 
 // Port of the snapshot header python in stock.sh: `datetime.fromisoformat`
 // compared against now to flag data older than a day.
-std::string compute_stale(std::string const& fetched) noexcept {
+std::string compute_stale(std::string const& fetched) {
     if (fetched.empty()) return {};
 
     std::string_view s(fetched);
@@ -137,7 +137,7 @@ struct snapshot_info {
     std::string error;
 };
 
-snapshot_info read_snapshot_info(std::filesystem::path const& path) noexcept {
+snapshot_info read_snapshot_info(std::filesystem::path const& path) {
     snapshot_info info;
 
     std::ifstream handle(path);
@@ -195,7 +195,7 @@ snapshot_info read_snapshot_info(std::filesystem::path const& path) noexcept {
     return info;
 }
 
-basic_stock_prompt_config parse_stock_args(prompt_context const& ctx) noexcept {
+basic_stock_prompt_config parse_stock_args(prompt_context const& ctx) {
     basic_stock_prompt_config config;
 
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
@@ -249,9 +249,8 @@ basic_stock_prompt_config parse_stock_args(prompt_context const& ctx) noexcept {
         if (config.inputs.empty()) {
             config.failed = true;
             config.error = "prompt stock: no symbol given and no identifier found in the clipboard\n";
-            std::ostringstream help_os;
-            render_help_stock(help_os);
-            config.error += help_os.str();
+            std::string help_os = help_text(render_help_stock);
+            config.error += help_os;
             return config;
         }
     }
@@ -319,10 +318,10 @@ basic_stock_prompt_config parse_stock_args(prompt_context const& ctx) noexcept {
 }
 
 // Port of the per-snapshot block in stock.sh.
-std::string render_snapshot(std::filesystem::path const& path, std::size_t head_lines, std::string& errors) noexcept {
+std::string render_snapshot(std::filesystem::path const& path, std::size_t head_lines, std::string& errors) {
     auto info = read_snapshot_info(path);
     if (!info.error.empty()) {
-        errors += "prompt stock: " + info.error + "\n";
+        errors += std::format("prompt stock: {}\n", info.error);
         return {};
     }
 
@@ -333,7 +332,7 @@ std::string render_snapshot(std::filesystem::path const& path, std::size_t head_
     std::string rel_path = rel.string();
 
     std::string output;
-    output += "\n## Cached snapshot: " + rel_path + " (fetched " + info.fetched + ")\n";
+    output += std::format("\n## Cached snapshot: {} (fetched {})\n", rel_path, info.fetched);
     if (info.stale == "yes") {
         output += "Data is older than 24 hours — the latest session is probably missing; re-run "
                   "tse.snapshot to refresh.\n";
@@ -349,25 +348,17 @@ std::string render_snapshot(std::filesystem::path const& path, std::size_t head_
         doc = nlohmann::json::object();
     }
 
-    auto rendered = tse::render_markdown(doc["data"]);
-    if (rendered) {
-        output += "\n" + trim_context(*rendered, head_lines) + "\n";
-    } else {
-        errors += "prompt stock: " + rel_path + ": snapshot render failed (" + rendered.error() +
-                  "); embedding raw JSON instead\n";
-        output += "\nFile: " + rel_path + "\n```json\n";
-        output += trim_context(read_file(path), head_lines);
-        output += "\n```\n";
-    }
+    std::string rendered = tse::render_markdown(doc["data"]);
+    output += std::format("\n{}\n", trim_context(rendered, head_lines));
     return output;
 }
 
 } // namespace
 
-prompt_result execute_stock(prompt_context&& ctx) noexcept {
+prompt_output execute_stock(prompt_context&& ctx) {
     auto config = parse_stock_args(ctx);
     if (config.failed) {
-        return {"", config.exit_code, false, std::move(config.error)};
+        throw prompt_error{config.exit_code, std::move(config.error), ""};
     }
 
     std::string output;
@@ -378,21 +369,27 @@ prompt_result execute_stock(prompt_context&& ctx) noexcept {
 
     std::string context;
     if (!config.cache_mode) {
-        int days = config.days_set ? config.days : 0;
-        auto result = tse::collect(config.symbol, days, config.top, !config.no_codal, !config.unadjusted);
-        if (!result) {
-            // `python3 bin/tse all ...` prints `tse: <message>` on stderr and
-            // exits 1; stock.sh runs under `set -e`, so the prompt aborts.
-            std::string msg = result.error();
-            if (auto pos = msg.find(": DataError: "); pos != std::string::npos) {
-                msg = msg.substr(pos + 13);
-            } else if (msg.starts_with("Python call failed: ")) {
-                msg = msg.substr(20);
-            }
-            return {"", 1, false, "tse: " + msg + "\n"};
+        // `python3 bin/tse all <symbol> ... --markdown` — the shell tool prints
+        // `tse: <message>` on stderr (inherited, exactly like bash's `$(...)`)
+        // and exits 1; stock.sh runs under `set -e`, so the prompt aborts
+        // without printing anything.
+        std::vector<std::string> fetch_args = {"all", config.symbol, "--top", std::to_string(config.top), "--markdown"};
+        if (config.days_set) {
+            fetch_args.push_back("--days");
+            fetch_args.push_back(std::to_string(config.days));
+        } else {
+            fetch_args.push_back("--full");
         }
-        auto rendered = tse::render_markdown(result->raw_json);
-        if (rendered) context = *rendered;
+        if (config.no_codal) fetch_args.push_back("--no-codal");
+        if (config.unadjusted) fetch_args.push_back("--unadjusted");
+        std::vector<std::string> tool_argv = {"python3",
+                                              prompt::fs::bin_tool("tse", ctx.exe_path, std::nullopt).string()};
+        for (auto const& a : fetch_args) tool_argv.push_back(a);
+        auto fetch = prompt::process::run_command(tool_argv);
+        if (fetch.exit_code != 0) {
+            throw soft_error{std::string{}};
+        }
+        context = fetch.stdout_data;
     }
 
     output += R"EOF(You are an institutional analyst of the Tehran Stock Exchange. Analyze the instrument data below.
@@ -420,11 +417,11 @@ prompt_result execute_stock(prompt_context&& ctx) noexcept {
         output += trim_context(context, config.head_lines);
     }
 
-    if (!errors.empty()) return {std::move(output), 0, false, std::move(errors)};
-    return {std::move(output), 0, false};
+    if (!errors.empty()) return {std::move(output), std::move(errors), false, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_stock(std::ostream& os) noexcept {
+void render_help_stock(std::ostream& os) {
     os << R"EOF(Usage: prompt stock [<symbol|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
        prompt stock <FILE.stock>... [--head N]
 

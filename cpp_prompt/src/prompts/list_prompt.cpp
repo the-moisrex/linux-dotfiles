@@ -1,4 +1,4 @@
-#include "prompt/prompts/list_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <iostream>
@@ -8,13 +8,13 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_list(prompt_context&& ctx) noexcept {
+prompt_output execute_list(prompt_context&& ctx) {
     bool names_only = false;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         if (ctx.args[i] == "--names") {
             names_only = true;
         } else {
-            return {"prompt list: unknown argument: " + std::string(ctx.args[i]) + "\n", 2, true};
+            throw usage_error{"prompt list: unknown argument: " + std::string(ctx.args[i]) + "\n", {}, true};
         }
     }
 
@@ -43,17 +43,17 @@ prompt_result execute_list(prompt_context&& ctx) noexcept {
             if (is_tty) {
                 output += std::string(desc->name);
                 output += std::string(18 - std::min<std::size_t>(18, desc->name.size()), ' ');
-                output += "  " + std::string(desc->help_summary) + "\n";
+                output += std::format("  {}\n", std::string(desc->help_summary));
             } else {
                 output += std::string(desc->name) + "\t" + std::string(desc->help_summary) + "\n";
             }
         }
     }
 
-    return {std::move(output), 0, true};
+    return {std::move(output), std::string{}, true, false};
 }
 
-void render_help_list(std::ostream& os) noexcept {
+void render_help_list(std::ostream& os) {
     os << R"EOF(Usage: prompt list [--names]
 
 List all available prompts with a short description.

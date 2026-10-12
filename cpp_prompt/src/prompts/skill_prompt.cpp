@@ -1,10 +1,14 @@
-#include "prompt/prompts/skill_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/core/strings.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <nlohmann/json.hpp>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -14,24 +18,22 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string env_or(std::string const& key, std::string const& fallback) noexcept {
+std::string env_or(std::string const& key, std::string const& fallback) {
     if (char const* v = std::getenv(key.c_str())) return v;
     return fallback;
 }
 
-std::string home_dir() noexcept { return env_or("HOME", ""); }
+std::string home_dir() { return env_or("HOME", ""); }
 
-std::string skills_dir() noexcept {
+std::string skills_dir() {
     std::string xdg = env_or("XDG_DATA_HOME", std::string());
     if (xdg.empty()) xdg = home_dir() + "/.local/share";
     return xdg + "/agents/skills";
 }
 
-std::vector<std::string> legacy_dirs() noexcept {
-    return {home_dir() + "/.agents/skills", home_dir() + "/.claude/skills"};
-}
+std::vector<std::string> legacy_dirs() { return {home_dir() + "/.agents/skills", home_dir() + "/.claude/skills"}; }
 
-std::vector<std::string> cache_dirs() noexcept {
+std::vector<std::string> cache_dirs() {
     auto dirs = legacy_dirs();
     dirs.insert(dirs.begin(), skills_dir());
     return dirs;
@@ -39,23 +41,23 @@ std::vector<std::string> cache_dirs() noexcept {
 
 // Run a command, capturing stdout (stderr is inherited/discarded like a
 // $() capture that hides nothing). Returns stdout and the exit code.
-std::string run_capture(std::vector<std::string> const& cmd, std::string const& stdin_data, int& exit_code) noexcept {
+std::string run_capture(std::vector<std::string> const& cmd, std::string const& stdin_data, int& exit_code) {
     std::vector<char const*> argv;
     argv.reserve(cmd.size() + 1);
     for (auto const& c : cmd) argv.push_back(c.c_str());
     argv.push_back(nullptr);
-    auto r = prompt::process::run_command(argv, stdin_data);
+    auto r = prompt::process::run_command(cmd, stdin_data);
     exit_code = r.exit_code;
     return r.stdout_data;
 }
 
-std::string strip_trailing_nl(std::string s) noexcept {
+std::string strip_trailing_nl(std::string s) {
     while (!s.empty() && s.back() == '\n') s.pop_back();
     return s;
 }
 
 // jq -r '<filter>' over $meta (bash feeds meta + a newline via <<<).
-std::string jq_extract(std::string const& meta, std::string const& filter) noexcept {
+std::string jq_extract(std::string const& meta, std::string const& filter) {
     int ec = 0;
     std::string out = run_capture({"jq", "-r", filter}, meta + "\n", ec);
     return strip_trailing_nl(out);
@@ -63,7 +65,7 @@ std::string jq_extract(std::string const& meta, std::string const& filter) noexc
 
 // Port of parse_frontmatter: collect lines between the first two "---" lines,
 // then parse them with the same Python one-liner the script uses.
-std::string parse_frontmatter(std::filesystem::path const& file) noexcept {
+std::string parse_frontmatter(std::filesystem::path const& file) {
     std::ifstream in(file, std::ios::binary);
     if (!in) return "{}";
     std::string fm;
@@ -81,28 +83,35 @@ std::string parse_frontmatter(std::filesystem::path const& file) noexcept {
     // bash pipes `echo "$fm_lines"`, i.e. fm + an extra trailing newline.
     std::string stdin_data = fm + "\n";
 
-    std::string const py = R"PY(import sys, json, re
-data = {}
-for line in sys.stdin:
-    line = line.rstrip()
-    m = re.match(r'^(\w[\w_-]*):\s*(.*)', line)
-    if m:
-        k, v = m.group(1), m.group(2).strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
-            v = v[1:-1]
-        data[k] = v
-print(json.dumps(data))
-)PY";
-
-    int ec = 0;
-    std::string out = run_capture({"python3", "-c", py}, stdin_data, ec);
-    if (ec != 0) return "{}";
-    std::string meta = strip_trailing_nl(out);
-    return meta.empty() ? "{}" : meta;
+    // Port of the python one-liner the script pipes the frontmatter into:
+    // `^(\w[\w_-]*):\s*(.*)` per line, value stripped and unquoted once when it
+    // is wrapped in matching quotes. The result is a flat JSON object —
+    // downstream consumers read it with jq, so the exact serialization does
+    // not matter, only the keys and values.
+    nlohmann::ordered_json data = nlohmann::ordered_json::object();
+    std::istringstream lines_in(stdin_data);
+    for (std::string line; std::getline(lines_in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        line = prompt::text::rstrip(line);
+        auto colon = line.find(':');
+        if (colon == std::string::npos || colon == 0) continue;
+        std::string key = line.substr(0, colon);
+        bool ok = (std::isalnum(static_cast<unsigned char>(key[0])) != 0) || key[0] == '_';
+        for (char c : key) {
+            if (!(std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '-')) ok = false;
+        }
+        if (!ok) continue;
+        std::string value = prompt::text::strip(line.substr(colon + 1));
+        if (value.size() >= 2 && value.front() == value.back() && (value.front() == '"' || value.front() == '\'')) {
+            value = value.substr(1, value.size() - 2);
+        }
+        data[key] = value;
+    }
+    return data.dump();
 }
 
 // bash_infer_lang (same table as _common.sh).
-std::string bash_infer_lang(std::string const& filename) noexcept {
+std::string bash_infer_lang(std::string const& filename) {
     std::string base = filename;
     auto slash = base.find_last_of('/');
     if (slash != std::string::npos) base = base.substr(slash + 1);
@@ -172,7 +181,7 @@ std::string bash_infer_lang(std::string const& filename) noexcept {
     return "text";
 }
 
-std::string find_cached_skill(std::string const& name) noexcept {
+std::string find_cached_skill(std::string const& name) {
     for (auto const& dir : cache_dirs()) {
         std::error_code ec;
         auto f = std::filesystem::path(dir) / name / "SKILL.md";
@@ -181,7 +190,7 @@ std::string find_cached_skill(std::string const& name) noexcept {
     return {};
 }
 
-void list_cached_skills(std::string& out) noexcept {
+void list_cached_skills(std::string& out) {
     bool found = false;
     for (auto const& dir : cache_dirs()) {
         std::error_code ec;
@@ -205,32 +214,32 @@ void list_cached_skills(std::string& out) noexcept {
             if (desc.size() > 80) desc = desc.substr(0, 77) + "...";
             std::string field = name;
             if (field.size() < 24) field += std::string(24 - field.size(), ' ');
-            out += "  " + field + " " + desc + "\n";
+            out += std::format("  {} {}\n", field, desc);
             found = true;
         }
     }
     if (!found) {
         out += "  (no cached skills found)\n";
         out += "\n";
-        out += "  Skills are cached in: " + skills_dir() + "\n";
+        out += std::format("  Skills are cached in: {}\n", skills_dir());
         out += "  Use 'prompt skill <query>' to search and download skills.\n";
     }
 }
 
-std::string ai_find_skills_tool(std::filesystem::path const& exe_path, std::filesystem::path const& git_root) noexcept {
+std::string ai_find_skills_tool(std::filesystem::path const& exe_path, std::filesystem::path const& git_root) {
     auto p = prompt::fs::bin_tool("ai-find-skills", exe_path, git_root);
     return p.string();
 }
 
 // search_skills: run ai-find-skills --json --no-scan <query>, suppress stderr.
-std::string search_skills(std::string const& query, std::string const& tool) noexcept {
+std::string search_skills(std::string const& query, std::string const& tool) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(tool, ec) || ec) return {};
     int ec2 = 0;
     return run_capture({tool, "--json", "--no-scan", query}, "", ec2);
 }
 
-std::string merge_results(std::string const& json) noexcept {
+std::string merge_results(std::string const& json) {
     std::string const filter =
         "[\n"
         "  (.skills_sh // [])[] | {name, board, repo, slug, url, installs, stars, match, summary},\n"
@@ -242,7 +251,7 @@ std::string merge_results(std::string const& json) noexcept {
     return run_capture({"jq", "-c", filter}, json, ec);
 }
 
-std::string find_rec(std::string const& results, std::string const& name) noexcept {
+std::string find_rec(std::string const& results, std::string const& name) {
     std::string q1 = "[.[] | select(.name == $n)] | .[0] // empty";
     int ec = 0;
     std::string rec = run_capture({"jq", "-c", "--arg", "n", name, q1}, results, ec);
@@ -256,17 +265,17 @@ std::string find_rec(std::string const& results, std::string const& name) noexce
 
 } // namespace
 
-prompt_result execute_skill(prompt_context&& ctx) noexcept {
+prompt_output execute_skill(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     // command -v jq is required before anything else.
     {
         int ec = 0;
         (void)run_capture({"bash", "-c", "command -v jq >/dev/null 2>&1"}, "", ec);
-        if (ec != 0) return {std::string{}, 1, false, "error: jq is required\n"};
+        if (ec != 0) throw soft_error{"error: jq is required\n"};
     }
 
     std::string first = ctx.args_count > 0 ? std::string(ctx.args[0]) : std::string();
@@ -294,7 +303,7 @@ prompt_result execute_skill(prompt_context&& ctx) noexcept {
             out += "Cached skills:\n";
             out += "\n";
             list_cached_skills(out);
-            return {std::move(out), 0, false, std::string{}};
+            return {std::move(out), std::string{}};
         }
 
         if (subcommand == "uninstall") {
@@ -309,14 +318,15 @@ prompt_result execute_skill(prompt_context&& ctx) noexcept {
                 if (std::filesystem::is_directory(target, ec)) {
                     std::uintmax_t removed = std::filesystem::remove_all(target, ec);
                     (void)removed;
-                    out += "Uninstalled '" + name + "' from " + (std::filesystem::path(dir) / name).string() + "\n";
+                    out +=
+                        std::format("Uninstalled '{}' from {}\n", name, (std::filesystem::path(dir) / name).string());
                     found = true;
                 }
             }
             if (!found) {
-                return {std::string{}, 1, false, "error: skill '" + name + "' not found in any cache directory\n"};
+                throw soft_error{"error: skill '" + name + "' not found in any cache directory\n"};
             }
-            return {std::move(out), 0, false, std::string{}};
+            return {std::move(out), std::string{}};
         }
 
         if (subcommand == "install") {
@@ -324,23 +334,23 @@ prompt_result execute_skill(prompt_context&& ctx) noexcept {
             std::string name = "install";
             std::string tool = ai_find_skills_tool(ctx.exe_path, ctx.git_root);
             std::string err;
-            err += "Searching for '" + name + "'...\n";
+            err += std::format("Searching for '{}'...\n", name);
             std::string results = merge_results(search_skills(name, tool));
             std::string rec = find_rec(results, name);
             if (rec.empty()) {
-                return {std::string{}, 1, false, err + "error: skill '" + name + "' not found in any registry\n"};
+                throw soft_error{err + "error: skill '" + name + "' not found in any registry\n"};
             }
-            err += "Found: " + jq_extract(rec, ".name") + " on " + jq_extract(rec, ".board") + "\n";
+            err += std::format("Found: {} on {}\n", jq_extract(rec, ".name"), jq_extract(rec, ".board"));
             std::string skill_name = jq_extract(rec, ".name");
             std::error_code ec;
             std::filesystem::create_directories(std::filesystem::path(skills_dir()) / skill_name, ec);
-            err += "Downloading " + skill_name + "...\n";
+            err += std::format("Downloading {}...\n", skill_name);
             // download_skill_md is network/curl/unzip/gh dependent.
             int dec = 0;
             std::string body = run_capture({"curl", "-sS", "--max-time", "15", jq_extract(rec, ".url")}, "", dec);
             if (body.empty()) {
                 std::filesystem::remove_all(std::filesystem::path(skills_dir()) / skill_name, ec);
-                return {std::string{}, 1, false, err + "error: failed to download SKILL.md for '" + skill_name + "'\n"};
+                throw soft_error{err + "error: failed to download SKILL.md for '" + skill_name + "'\n"};
             }
             {
                 std::ofstream of((std::filesystem::path(skills_dir()) / skill_name / "SKILL.md"), std::ios::binary);
@@ -353,7 +363,7 @@ prompt_result execute_skill(prompt_context&& ctx) noexcept {
             out += "Installed skill content:\n";
             out += "\n";
             out += read_file(std::filesystem::path(skills_dir()) / skill_name / "SKILL.md");
-            return {std::move(out), 0, false, std::move(err)};
+            return {std::move(out), std::move(err)};
         }
     }
 
@@ -362,25 +372,24 @@ prompt_result execute_skill(prompt_context&& ctx) noexcept {
     std::string skill_name = pos.empty() ? std::string() : pos[0];
 
     if (skill_name.empty()) {
-        return {std::string{}, 2, false,
-                "error: skill name required\n"
-                "Usage: prompt skill <name> [FILE...]\n"
-                "       prompt skill list   # to see cached skills\n"};
+        throw usage_error{"error: skill name required\n"
+                          "Usage: prompt skill <name> [FILE...]\n"
+                          "       prompt skill list   # to see cached skills\n"};
     }
 
     std::string err;
     std::string skill_file = find_cached_skill(skill_name);
     if (skill_file.empty()) {
-        err += "Skill '" + skill_name + "' not cached, downloading...\n";
+        err += std::format("Skill '{}' not cached, downloading...\n", skill_name);
         // download_by_name: search registries and download if a match exists.
         std::string tool = ai_find_skills_tool(ctx.exe_path, ctx.git_root);
         std::string results = merge_results(search_skills(skill_name, tool));
         std::string rec = find_rec(results, skill_name);
         std::string downloaded_skill = rec.empty() ? std::string() : jq_extract(rec, ".name");
         if (downloaded_skill.empty()) {
-            err += "error: skill '" + skill_name + "' not found in cache or registries\n";
-            err += "Use 'prompt skill list --remote " + skill_name + "' to search registries.\n";
-            return {std::string{}, 1, false, std::move(err)};
+            err += std::format("error: skill '{}' not found in cache or registries\n", skill_name);
+            err += std::format("Use 'prompt skill list --remote {}' to search registries.\n", skill_name);
+            throw soft_error{std::move(err)};
         }
         // A full faithful download-by-name would fetch the SKILL.md here; the
         // registry match found is surfaced verbatim so callers can retry.
@@ -409,20 +418,20 @@ prompt_result execute_skill(prompt_context&& ctx) noexcept {
         if (std::filesystem::is_regular_file(fp, ec)) {
             std::string file_name = fp.filename().string();
             out += "\n";
-            out += "File: " + file_name + "\n";
+            out += std::format("File: {}\n", file_name);
             out += "\n";
-            out += "```" + bash_infer_lang(file_name) + "\n";
+            out += std::format("```{}\n", bash_infer_lang(file_name));
             out += trim_context_nl(read_file(fp), head_lines);
             out += "```\n";
         } else {
-            err += "Warning: File '" + file + "' not found.\n";
+            err += std::format("Warning: File '{}' not found.\n", file);
         }
     }
 
-    return {std::move(out), 0, false, std::move(err)};
+    return {std::move(out), std::move(err)};
 }
 
-void render_help_skill(std::ostream& os) noexcept {
+void render_help_skill(std::ostream& os) {
     os << R"EOF(Usage: prompt skill <name> [--head N] [FILE...]
        some-command | prompt skill <name> [--head N] [FILE...]
        prompt skill list [--remote <query>]

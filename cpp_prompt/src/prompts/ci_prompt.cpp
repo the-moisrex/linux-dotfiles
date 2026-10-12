@@ -1,6 +1,6 @@
-#include "prompt/prompts/ci_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -19,12 +19,7 @@ std::vector<std::string> git_ls_files(prompt_context const& ctx, std::vector<std
     storage.push_back(ctx.git_root.string());
     for (auto const& p : patterns) storage.push_back(p);
 
-    std::vector<char const*> argv;
-    argv.reserve(storage.size() + 1);
-    for (auto const& s : storage) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-
-    auto result = prompt::process::run_command(argv);
+    auto result = prompt::process::run_command(storage);
     std::vector<std::string> lines;
     std::size_t start = 0;
     while (start <= result.stdout_data.size()) {
@@ -49,10 +44,10 @@ bool contains_ci_path(std::string const& line) {
 
 } // namespace
 
-prompt_result execute_ci(prompt_context&& ctx) noexcept {
+prompt_output execute_ci(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::string output;
@@ -88,7 +83,7 @@ prompt_result execute_ci(prompt_context&& ctx) noexcept {
     if (ci_files.empty()) {
         output += "No CI/CD configuration files found in this repository.\n";
         output += "Searched for: GitHub Actions, GitLab CI, Jenkins, Docker, CircleCI, Travis CI.\n";
-        return {std::move(output), 0, false, std::string{}};
+        return {std::move(output), std::string{}, false, false};
     }
 
     std::vector<std::string> seen;
@@ -107,17 +102,17 @@ prompt_result execute_ci(prompt_context&& ctx) noexcept {
         if (std::filesystem::is_regular_file(file, ec)) {
             std::filesystem::path p(file);
             auto label = fs::relative_path(p, ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
-            output += "File: " + label.string() + "\n\n";
-            output += "```" + infer_lang(p) + "\n";
+            output += std::format("File: {}\n\n", label.string());
+            output += std::format("```{}\n", infer_lang(p));
             output += trim_context_nl(read_file(p), head_lines);
             output += "\n```\n\n";
         }
     }
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_ci(std::ostream& os) noexcept {
+void render_help_ci(std::ostream& os) {
     os << R"EOF(Usage: prompt ci [--head N]
        echo "task description" | prompt ci [--head N]
 

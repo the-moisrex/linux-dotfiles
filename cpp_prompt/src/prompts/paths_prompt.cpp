@@ -1,7 +1,7 @@
-#include "prompt/prompts/paths_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
-#include "prompt/prompts/files_prompt.hpp"
+#include "prompt/core/strings.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <optional>
@@ -14,7 +14,7 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string strip_trailing_newlines(std::string s) noexcept {
+std::string strip_trailing_newlines(std::string s) {
     while (!s.empty() && s.back() == '\n') s.pop_back();
     return s;
 }
@@ -52,9 +52,8 @@ std::pair<std::string, std::string> parse_hit(std::string const& raw) {
 
 // git ls-files --error-unmatch <path> &>/dev/null — silence both streams.
 bool git_tracked(std::string const& path) {
-    std::vector<char const*> argv = {"bash", "-c", "git ls-files --error-unmatch \"$0\" >/dev/null 2>&1", path.c_str(),
-                                     nullptr};
-    return prompt::process::run_command(argv).exit_code == 0;
+    return prompt::process::run_command({"bash", "-c", "git ls-files --error-unmatch \"$0\" >/dev/null 2>&1", path})
+               .exit_code == 0;
 }
 
 // `wc -l < file`: number of newline bytes.
@@ -85,27 +84,35 @@ std::vector<std::string> to_sed_lines(std::string const& content) {
 
 } // namespace
 
-prompt_result execute_paths(prompt_context&& ctx) noexcept {
+prompt_output execute_paths(prompt_context&& ctx) {
     // paths.sh parses its own args (no init_prompt): --context/--head are NOT
     // integer-validated, and --head is only consumed so it is not a path.
     std::string mode = "context";
     long long context_lines = 10;
     std::size_t head_lines = 0;
+    std::string head_value;
+    std::string sed_error;
+    std::string sed_warnings;
     std::vector<std::string> file_args;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         std::string a(ctx.args[i]);
         if (a == "--context") {
             if (i + 1 >= ctx.args_count) {
-                return {std::string{}, 2, false, "Missing value for --context\n"};
+                throw usage_error{"Missing value for --context\n"};
             }
-            context_lines = std::stoll(std::string(ctx.args[++i]));
+            context_lines = prompt::text::to_ll(ctx.args[i], 0); // bash $((word)) treats a bare word as 0
         } else if (a == "--full") {
             mode = "full";
         } else if (a == "--head") {
             if (i + 1 >= ctx.args_count) {
-                return {std::string{}, 2, false, "Missing value for --head\n"};
+                throw usage_error{"Missing value for --head\n"};
             }
-            head_lines = static_cast<std::size_t>(std::stoll(std::string(ctx.args[++i])));
+            head_value = std::string(ctx.args[i]);
+            if (head_value.find_first_not_of("0123456789") != std::string::npos) {
+                sed_error = "sed: -e expression #1, char 3: unexpected ','\n";
+            } else {
+                head_lines = prompt::text::to_size(head_value, 0);
+            }
         } else {
             file_args.push_back(a);
         }
@@ -127,7 +134,7 @@ prompt_result execute_paths(prompt_context&& ctx) noexcept {
     if (!stdin_content.empty()) {
         auto tool = fs::bin_tool("paths", ctx.exe_path, git_root_opt);
         std::vector<char const*> argv = {tool.c_str(), nullptr};
-        auto result = prompt::process::run_command(argv, stdin_content);
+        auto result = prompt::process::run_command({tool}, stdin_content);
         for (auto const& line : split_lines(result.stdout_data)) {
             auto [clean, line_num] = parse_hit(line);
             bool seen = false;
@@ -159,7 +166,7 @@ prompt_result execute_paths(prompt_context&& ctx) noexcept {
     }
 
     if (hits.empty()) {
-        return {std::move(output), 1, false, "prompt paths: no file paths found\n", ctx.stdin_consumed};
+        throw soft_error{"prompt paths: no file paths found\n", std::move(output)};
     }
 
     // Resolve each unique path and keep only readable, git-tracked files.
@@ -173,7 +180,7 @@ prompt_result execute_paths(prompt_context&& ctx) noexcept {
     }
 
     if (resolved_files.empty()) {
-        return {std::move(output), 1, false, "prompt paths: no tracked files found\n", ctx.stdin_consumed};
+        throw soft_error{"prompt paths: no tracked files found\n", std::move(output)};
     }
 
     if (mode == "full") {
@@ -185,8 +192,9 @@ prompt_result execute_paths(prompt_context&& ctx) noexcept {
         for (auto const& r : resolved_files) sub.args[n++] = r;
         sub.args_count = n;
         auto files_result = prompts::execute_files(std::move(sub));
-        output += files_result.output;
-        return {std::move(output), 0, false, std::string{}, ctx.stdin_consumed};
+        output += files_result.text;
+        sed_warnings += files_result.error;
+        return {std::move(output), std::string{}, false, ctx.stdin_consumed};
     }
 
     for (auto const& resolved : resolved_files) {
@@ -206,7 +214,7 @@ prompt_result execute_paths(prompt_context&& ctx) noexcept {
         if (!line_num.empty()) {
             std::string content = read_file(std::filesystem::path(resolved));
             long long total = count_newlines(content);
-            long long ln = std::stoll(line_num);
+            long long ln = prompt::text::to_ll(line_num, 0);
             long long start = ln - context_lines;
             if (start < 1) start = 1;
             long long end = ln + context_lines;
@@ -215,7 +223,7 @@ prompt_result execute_paths(prompt_context&& ctx) noexcept {
 
             output += "File " + rel.string() + " around line " + std::to_string(ln) + " (lines " +
                       std::to_string(start) + "\u2013" + std::to_string(end) + "):\n\n";
-            output += "```" + lang + "\n";
+            output += std::format("```{}\n", lang);
             if (start <= end && start >= 1 && static_cast<std::size_t>(end) <= lines.size()) {
                 for (long long i = start; i <= end; ++i) {
                     output += lines[static_cast<std::size_t>(i - 1)];
@@ -226,17 +234,21 @@ prompt_result execute_paths(prompt_context&& ctx) noexcept {
         } else {
             // embed_file "$resolved" "$rel": leading blank, no blank after the
             // heading, then the trimmed file and its closing fence.
-            output += "\nFile: " + rel.string() + "\n";
-            output += "```" + lang + "\n";
-            output += trim_context_nl(read_file(std::filesystem::path(resolved)), head_lines);
+            output += std::format("\nFile: {}\n", rel.string());
+            output += std::format("```{}\n", lang);
+            if (!sed_error.empty()) {
+                sed_warnings += sed_error;
+            } else {
+                output += trim_context_nl(read_file(std::filesystem::path(resolved)), head_lines);
+            }
             output += "```\n";
         }
     }
 
-    return {std::move(output), 0, false, std::string{}, ctx.stdin_consumed};
+    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
 }
 
-void render_help_paths(std::ostream& os) noexcept {
+void render_help_paths(std::ostream& os) {
     os << R"EOF(Usage: prompt paths [--context N] [--full] [--head N] [FILE...]
        make 2>&1 | prompt paths [--context N] [--full] [--head N]
 

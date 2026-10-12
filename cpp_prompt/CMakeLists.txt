@@ -33,9 +33,6 @@ endif()
 
 include(cmake/import.cmake)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
-set(Python3_EMBED_LIBRARY "/usr/lib/python3.14/config-3.14-x86_64-linux-gnu/libpython3.14.a")
-
 file(GLOB PROMPT_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prompts/*.cpp")
 
 add_library(prompt_lib
@@ -43,14 +40,14 @@ add_library(prompt_lib
     src/core/process.cpp
     src/core/clipboard.cpp
     src/core/sanitize.cpp
-    src/core/python.cpp
+    src/core/strings.cpp
+    src/tse/tse_markdown.cpp
     src/sdk/prompt_context.cpp
     src/sdk/prompt_registry.cpp
     src/sdk/chaining.cpp
     src/sdk/pipeline.cpp
     src/sdk/embed.cpp
     src/sdk/args.cpp
-    src/tse/tse_python.cpp
     src/prompts/prompt_entry.cpp
     src/prompts/register_batches.cpp
     ${PROMPT_SRCS}
@@ -59,14 +56,11 @@ add_library(prompt_lib
 target_compile_features(prompt_lib PUBLIC cxx_std_26)
 target_include_directories(prompt_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${Python3_INCLUDE_DIRS}
 )
 target_link_libraries(prompt_lib PUBLIC
     nlohmann_json::nlohmann_json
     date::date
     fmt::fmt
-    ${Python3_LIBRARIES}
-    ${Python3_EMBED_LIBRARY}
 )
 
 add_executable(prompt src/main.cpp)

@@ -1,21 +1,11 @@
-#include "prompt/prompts/benchmark_prompt.hpp"
-#include "prompt/prompts/de_export_prompt.hpp"
-#include "prompt/prompts/debug_prompt.hpp"
-#include "prompt/prompts/diagram_prompt.hpp"
-#include "prompt/prompts/metadata_prompt.hpp"
-#include "prompt/prompts/migrate_prompt.hpp"
-#include "prompt/prompts/optimize_prompt_prompt.hpp"
-#include "prompt/prompts/overengineering_prompt.hpp"
-#include "prompt/prompts/plan_prompt.hpp"
 #include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/readme_prompt.hpp"
-#include "prompt/prompts/stupid_prompt.hpp"
-#include "prompt/prompts/table_lookup_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
+#include "prompt/sdk/prompt_registry.hpp"
 
 // Natively ported prompt batch 2 (see register_batches.cpp).
 namespace prompt {
 
-void register_batch_text2() noexcept {
+void register_batch_text2() {
     register_prompt({"table-lookup", "Replace conditional logic with precomputed table lookups.",
                      R"EOF(Usage: prompt table-lookup [--head N] [FILE...]
        some-command | prompt table-lookup [--head N] [FILE...]

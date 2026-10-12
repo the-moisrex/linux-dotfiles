@@ -1,17 +1,12 @@
-#include "prompt/prompts/english_prompt.hpp"
-#include "prompt/prompts/farsi_prompt.hpp"
 #include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/stdin_prompt.hpp"
-#include "prompt/prompts/summarize_prompt.hpp"
-#include "prompt/prompts/symbols_prompt.hpp"
-#include "prompt/prompts/tweets_prompt.hpp"
-#include "prompt/prompts/yt_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
+#include "prompt/sdk/prompt_registry.hpp"
 
 // Stdin-centric prompts: translation wrappers, raw stdin embedding and the
 // URL-fetching (yt / summarize) helpers.
 namespace prompt {
 
-void register_batch_stdin() noexcept {
+void register_batch_stdin() {
     register_prompt({"english", "Translate to English.", "", prompts::execute_english, prompts::render_help_english});
 
     register_prompt({"farsi", "Translate to Farsi.", "", prompts::execute_farsi, prompts::render_help_farsi});

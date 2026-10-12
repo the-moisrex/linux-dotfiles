@@ -1,5 +1,6 @@
 #include "prompt/prompts/prompt_entry.hpp"
 #include "prompt/core/fs.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <string>
@@ -7,7 +8,7 @@
 
 namespace prompt {
 
-void init_prompt_registry() noexcept {
+void init_prompt_registry() {
     static bool initialized = false;
     if (initialized) return;
     initialized = true;

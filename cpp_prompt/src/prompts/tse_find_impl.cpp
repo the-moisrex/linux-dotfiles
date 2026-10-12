@@ -4,6 +4,7 @@
 #include "prompt/core/process.hpp"
 #include "prompt/sdk/embed.hpp"
 
+#include "prompt/prompts/prompts.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
@@ -302,24 +303,24 @@ constexpr std::string_view kRowCountPy = R"TSE1(import json, sys; print(len(json
 // Small helpers mirroring the shell semantics the script relies on
 // ---------------------------------------------------------------------------
 
-std::string strip_trailing_newlines(std::string_view text) noexcept {
+std::string strip_trailing_newlines(std::string_view text) {
     while (!text.empty() && text.back() == '\n') text.remove_suffix(1);
     return std::string(text);
 }
 
 // `$(...)` capture semantics: every trailing newline is dropped and the script
 // re-adds exactly one when it prints the value.
-std::string captured(std::string_view text) noexcept { return strip_trailing_newlines(text); }
+std::string captured(std::string_view text) { return strip_trailing_newlines(text); }
 
 // Port of _common.sh trim_context as the script uses it: `printf '%s\n'` feeds
 // `sed -n 1,Np`, so a --head of 0 prints nothing while an absent --head adds a
 // single trailing newline.
-std::string trim_like_bash(std::string_view text, bool head_set, std::size_t head_lines) noexcept {
+std::string trim_like_bash(std::string_view text, bool head_set, std::size_t head_lines) {
     if (head_set && head_lines == 0) return {};
     return trim_context_nl(text, head_set ? head_lines : 0);
 }
 
-bool is_all_digits(std::string_view text) noexcept {
+bool is_all_digits(std::string_view text) {
     if (text.empty()) return false;
     for (char c : text)
         if (c < '0' || c > '9') return false;
@@ -328,21 +329,21 @@ bool is_all_digits(std::string_view text) noexcept {
 
 // bash's `[[ "$2" -lt 1 ]]` reads leading-zero tokens in base 8 (and errors out
 // on 08-style tokens, which bash treats as false), so only all-zero values fail.
-bool is_positive_int_token(std::string_view text) noexcept {
+bool is_positive_int_token(std::string_view text) {
     if (!is_all_digits(text)) return false;
     for (char c : text)
         if (c != '0') return true;
     return false;
 }
 
-std::size_t parse_head_value(std::string_view text) noexcept {
+std::size_t parse_head_value(std::string_view text) {
     std::string copy(text);
     unsigned long long parsed = std::strtoull(copy.c_str(), nullptr, 10);
     if (parsed > 0x7fffffffffffffffULL) parsed = 0x7fffffffffffffffULL;
     return static_cast<std::size_t>(parsed);
 }
 
-bool ends_with(std::string_view text, std::string_view suffix) noexcept {
+bool ends_with(std::string_view text, std::string_view suffix) {
     return text.size() >= suffix.size() && text.substr(text.size() - suffix.size()) == suffix;
 }
 
@@ -352,15 +353,14 @@ struct snippet_result {
     int exit_code = 0;
 };
 
-snippet_result run_snippet(std::string_view script, std::string_view stdin_data) noexcept {
+snippet_result run_snippet(std::string_view script, std::string_view stdin_data) {
     std::string const script_storage(script);
     std::string command = "python3 -c \"$0\" 2>&1";
     // run_command only redirects stdin when it has data to feed; an empty
     // payload must still read an empty stream, like `printf '%s' "" |` does.
     if (stdin_data.empty()) command += " < /dev/null";
 
-    std::vector<char const*> argv = {"bash", "-c", command.c_str(), script_storage.c_str(), nullptr};
-    auto result = prompt::process::run_command(argv, std::string(stdin_data));
+    auto result = prompt::process::run_command({"bash", "-c", command, script_storage}, std::string(stdin_data));
     return {captured(result.stdout_data), result.exit_code};
 }
 
@@ -381,7 +381,7 @@ struct parsed_args {
     int exit_code = 0;
 };
 
-parsed_args parse_args(prompt_context const& ctx) noexcept {
+parsed_args parse_args(prompt_context const& ctx) {
     parsed_args parsed;
     std::vector<bool> consumed(ctx.args_count, false);
 
@@ -389,10 +389,9 @@ parsed_args parse_args(prompt_context const& ctx) noexcept {
     // validated here, everything else survives into the script's own loop.
     for (std::size_t i = 0; i < ctx.args_count;) {
         if (ctx.args[i] == "--help" || ctx.args[i] == "-h") {
-            std::ostringstream help;
-            render_help_tse_find_impl(help);
+            std::string help = help_text(render_help_tse_find_impl);
             parsed.wants_help = true;
-            parsed.help_text = help.str();
+            parsed.help_text = help;
             return parsed;
         }
         if (ctx.args[i] != "--head") {
@@ -485,7 +484,7 @@ struct classified_input {
 
 // _common.sh resolve_exact_file: the token as given, then under the git root.
 std::optional<std::filesystem::path> resolve_exact_file(std::string const& file,
-                                                        std::filesystem::path const& git_root) noexcept {
+                                                        std::filesystem::path const& git_root) {
     std::error_code ec;
     if (std::filesystem::is_regular_file(std::filesystem::path(file), ec)) return std::filesystem::path(file);
     if (!git_root.empty()) {
@@ -495,7 +494,7 @@ std::optional<std::filesystem::path> resolve_exact_file(std::string const& file,
     return std::nullopt;
 }
 
-classified_input classify_input(prompt_context const& ctx, parsed_args const& parsed) noexcept {
+classified_input classify_input(prompt_context const& ctx, parsed_args const& parsed) {
     classified_input out;
 
     std::vector<std::string> screen_files;
@@ -513,9 +512,8 @@ classified_input classify_input(prompt_context const& ctx, parsed_args const& pa
     constexpr std::string_view kNoQuery =
         "prompt tse.find: no query given (pass it as arguments or pipe it on stdin)\n";
     auto no_query = [&kNoQuery]() {
-        std::ostringstream help;
-        render_help_tse_find_impl(help);
-        return std::string(kNoQuery) + help.str();
+        std::string help = help_text(render_help_tse_find_impl);
+        return std::string(kNoQuery) + help;
     };
 
     if (!screen_files.empty()) {
@@ -602,7 +600,7 @@ struct emit_result {
 };
 
 emit_result emit_review(std::string_view kind, std::string_view label, std::string_view payload, bool head_set,
-                        std::size_t head_lines) noexcept {
+                        std::size_t head_lines) {
     emit_result result;
 
     if (kind == "doc") {
@@ -708,7 +706,7 @@ struct screener_paths {
     std::filesystem::path tool_abs;
 };
 
-screener_paths locate_screener(prompt_context const& ctx) noexcept {
+screener_paths locate_screener(prompt_context const& ctx) {
     // The bash version resolves the screener through the directory its script
     // lives in (<prompts>/../bin/tse.find); this build knows the repo root
     // directly, which is the same bin/ directory.
@@ -730,7 +728,7 @@ screener_paths locate_screener(prompt_context const& ctx) noexcept {
     return paths;
 }
 
-std::string screener_to_run(screener_paths const& paths, prompt_context const& ctx) noexcept {
+std::string screener_to_run(screener_paths const& paths, prompt_context const& ctx) {
     if (std::filesystem::is_regular_file(paths.tool)) return paths.tool.string();
     // Same file for the installed/build layouts.
     return prompt::fs::bin_tool("tse.find", ctx.exe_path, ctx.git_root).string();
@@ -738,21 +736,21 @@ std::string screener_to_run(screener_paths const& paths, prompt_context const& c
 
 } // namespace
 
-prompt_result execute_tse_find_impl(prompt_context&& ctx) noexcept {
+prompt_output execute_tse_find_impl(prompt_context&& ctx) {
     auto parsed = parse_args(ctx);
-    if (parsed.wants_help) return {std::move(parsed.help_text), 0, false, std::string{}};
-    if (!parsed.error.empty()) return {std::string{}, parsed.exit_code, false, std::move(parsed.error)};
+    if (parsed.wants_help) return {std::move(parsed.help_text), std::string{}, false, false};
+    if (!parsed.error.empty()) throw prompt_error{parsed.exit_code, std::move(parsed.error)};
 
     auto screener = locate_screener(ctx);
     if (!std::filesystem::is_regular_file(screener.tool)) {
-        return {std::string{}, 1, false, "prompt tse.find: screener not found: " + screener.tool_abs.string() + "\n"};
+        throw soft_error{"prompt tse.find: screener not found: " + screener.tool_abs.string() + "\n"};
     }
     std::string tool = screener_to_run(screener, ctx);
 
     auto input = classify_input(ctx, parsed);
     bool stdin_consumed = input.read_stdin && ctx.stdin_consumed;
     if (!input.error.empty()) {
-        return {std::string{}, input.exit_code, false, std::move(input.error), stdin_consumed};
+        throw prompt_error{input.exit_code, std::move(input.error)};
     }
 
     if (input.source_kind == "review") {
@@ -762,13 +760,12 @@ prompt_result execute_tse_find_impl(prompt_context&& ctx) noexcept {
             for (auto const& file : input.review_files) {
                 // `$(cat -- "$resolved")`: its stderr is inherited and its
                 // trailing newlines are dropped by the capture.
-                std::vector<char const*> cat_argv = {"cat", "--", file.c_str(), nullptr};
-                auto payload = captured(prompt::process::run_command(cat_argv).stdout_data);
+                auto payload = captured(prompt::process::run_command({"cat", "--", file}).stdout_data);
                 auto rendered = emit_review("doc", prompt::fs::relative_path(file, ctx.git_root).string(), payload,
                                             parsed.head_set, parsed.head_lines);
                 output += rendered.output;
                 if (rendered.exit_code != 0) {
-                    return {std::move(output), 2, false, std::move(rendered.error), stdin_consumed};
+                    throw usage_error{std::move(rendered.error), std::move(output)};
                 }
                 output += "\n";
             }
@@ -777,10 +774,10 @@ prompt_result execute_tse_find_impl(prompt_context&& ctx) noexcept {
                                         parsed.head_lines);
             output += rendered.output;
             if (rendered.exit_code != 0) {
-                return {std::move(output), 2, false, std::move(rendered.error), stdin_consumed};
+                throw usage_error{std::move(rendered.error), std::move(output)};
             }
         }
-        return {std::move(output), 0, false, std::string{}, stdin_consumed};
+        return {std::move(output), std::string{}, false, stdin_consumed};
     }
 
     if (input.source_kind == "run") {
@@ -792,17 +789,11 @@ prompt_result execute_tse_find_impl(prompt_context&& ctx) noexcept {
         command.emplace_back("--format");
         command.emplace_back("tse");
 
-        std::vector<char const*> argv;
-        argv.reserve(command.size() + 1);
-        for (auto const& arg : command) argv.push_back(arg.c_str());
-        argv.push_back(nullptr);
-
         // The tool's stderr is inherited, exactly like the script's `$(...)`
         // capture, so it lands on this prompt's stderr.
-        auto screen = prompt::process::run_command(argv);
+        auto screen = prompt::process::run_command(command);
         if (screen.exit_code != 0) {
-            return {std::string{}, 1, false, "prompt tse.find: tse.find failed (see its error above)\n",
-                    stdin_consumed};
+            throw soft_error{"prompt tse.find: tse.find failed (see its error above)\n", {}, false, stdin_consumed};
         }
 
         std::string output(kReviewInstructions);
@@ -811,18 +802,18 @@ prompt_result execute_tse_find_impl(prompt_context&& ctx) noexcept {
             emit_review("doc", "fresh tse.find run", captured(screen.stdout_data), parsed.head_set, parsed.head_lines);
         output += rendered.output;
         if (rendered.exit_code != 0) {
-            return {std::move(output), 2, false, std::move(rendered.error), stdin_consumed};
+            throw usage_error{std::move(rendered.error), std::move(output)};
         }
-        return {std::move(output), 0, false, std::string{}, stdin_consumed};
+        return {std::move(output), std::string{}, false, stdin_consumed};
     }
 
     // Generator: embed the tool's own --help as the flag reference.
-    std::vector<char const*> help_argv = {"bash",       "-c",     "NO_COLOR=1 \"$0\" \"$@\" 2>&1",
-                                          tool.c_str(), "--help", nullptr};
-    auto help_run = prompt::process::run_command(help_argv);
+    auto help_run = prompt::process::run_command({"bash", "-c", "NO_COLOR=1 \"$0\" \"$@\" 2>&1", tool, "--help"});
     if (help_run.exit_code != 0) {
-        return {std::string{}, 1, false,
-                "prompt tse.find: tse.find --help failed:\n" + captured(help_run.stdout_data) + "\n", stdin_consumed};
+        throw soft_error{"prompt tse.find: tse.find --help failed:\n" + captured(help_run.stdout_data) + "\n",
+                         {},
+                         false,
+                         stdin_consumed};
     }
     // `help_text="$(trim_context "$help_text")"`: the captured text is capped by
     // sed and its trailing newline dropped, then printed with a single `\n`.
@@ -837,15 +828,15 @@ prompt_result execute_tse_find_impl(prompt_context&& ctx) noexcept {
         output += kChatMode;
     } else {
         output += "=== Mode: agentic (you can run commands) ===\n\n";
-        output += "Run the command yourself and iterate. At most " + parsed.max_iter + " attempts total.\n\n";
+        output += std::format("Run the command yourself and iterate. At most {} attempts total.\n\n", parsed.max_iter);
         output += kAgenticSteps;
         if (parsed.dry_run) output += kDryRun;
     }
     output += kGroundRules;
 
-    return {std::move(output), 0, false, std::string{}, stdin_consumed};
+    return {std::move(output), std::string{}, false, stdin_consumed};
 }
 
-void render_help_tse_find_impl(std::ostream& os) noexcept { os << kHelpText; }
+void render_help_tse_find_impl(std::ostream& os) { os << kHelpText; }
 
 } // namespace prompt::prompts

@@ -1,15 +1,5 @@
-#include "prompt/prompts/ci_prompt.hpp"
-#include "prompt/prompts/clang_tidy_prompt.hpp"
-#include "prompt/prompts/clipboard_prompt.hpp"
-#include "prompt/prompts/cmake_prompt.hpp"
-#include "prompt/prompts/cppman_prompt.hpp"
-#include "prompt/prompts/docker_prompt.hpp"
-#include "prompt/prompts/gdb_prompt.hpp"
-#include "prompt/prompts/gh_issue_prompt.hpp"
-#include "prompt/prompts/man_prompt.hpp"
-#include "prompt/prompts/paths_prompt.hpp"
 #include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/whatwg_url_specs_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
 
 // Native ports of the tool-invoking prompt batch. The help_summary here is a
@@ -17,7 +7,7 @@
 // overrides both the summary and full help for bash-parity of `list`/--help.
 namespace prompt {
 
-void register_batch_tools() noexcept {
+void register_batch_tools() {
     register_prompt({"clang-tidy",
                      "Runs `clang-tidy` on the provided files and outputs a prompt to fix the identified "
                      "issues. If no files are provided, `fzf -m` is used to choose them interactively.",

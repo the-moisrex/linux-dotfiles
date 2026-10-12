@@ -1,5 +1,5 @@
-#include "prompt/prompts/docker_prompt.hpp"
 #include "prompt/core/fs.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -8,10 +8,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_docker(prompt_context&& ctx) noexcept {
+prompt_output execute_docker(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string> files;
@@ -43,19 +43,19 @@ prompt_result execute_docker(prompt_context&& ctx) noexcept {
         std::filesystem::path p(file);
         if (std::filesystem::is_regular_file(p)) {
             std::string file_name = p.filename().string();
-            output += "File: " + file_name + "\n\n";
-            output += "```" + infer_lang(p) + "\n";
+            output += std::format("File: {}\n\n", file_name);
+            output += std::format("```{}\n", infer_lang(p));
             output += trim_context_nl(read_file(p), head_lines);
             output += "\n```\n\n";
         } else {
-            error += "Warning: File '" + file + "' not found.\n";
+            error += std::format("Warning: File '{}' not found.\n", file);
         }
     }
 
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_docker(std::ostream& os) noexcept {
+void render_help_docker(std::ostream& os) {
     os << R"EOF(Usage: prompt docker [--head N] [FILE...]
        echo "task description" | prompt docker [--head N] [FILE...]
 

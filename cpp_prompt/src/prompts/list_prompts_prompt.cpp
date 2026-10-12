@@ -1,4 +1,4 @@
-#include "prompt/prompts/list_prompts_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <sstream>
@@ -7,9 +7,9 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_list_prompts(prompt_context&& ctx) noexcept {
+prompt_output execute_list_prompts(prompt_context&& ctx) {
     if (ctx.args_count > 0) {
-        return {"prompt list-prompts: takes no arguments\n", 2, true};
+        throw usage_error{std::string{}, "prompt list-prompts: takes no arguments\n"};
     }
     auto prompts = get_all_prompts();
 
@@ -22,7 +22,7 @@ prompt_result execute_list_prompts(prompt_context&& ctx) noexcept {
     std::string output;
 
     for (auto const* desc : sorted) {
-        output += "=== " + std::string(desc->name) + " ===\n";
+        output += std::format("=== {} ===\n", std::string(desc->name));
 
         std::string body;
         if (!desc->help_full.empty()) {
@@ -40,10 +40,10 @@ prompt_result execute_list_prompts(prompt_context&& ctx) noexcept {
         output += "\n";
     }
 
-    return {std::move(output), 0, true};
+    return {std::move(output), std::string{}, true, false};
 }
 
-void render_help_list_prompts(std::ostream& os) noexcept {
+void render_help_list_prompts(std::ostream& os) {
     os << R"EOF(Usage: prompt list-prompts
 
 Print the full help text of every available prompt, one after another.

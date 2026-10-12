@@ -1,6 +1,6 @@
-#include "prompt/prompts/git_diff_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <cstddef>
@@ -14,21 +14,15 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string git_raw(std::vector<std::string> const& args) noexcept {
-    std::vector<char const*> argv;
-    argv.reserve(args.size() + 1);
-    for (auto const& s : args) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return prompt::process::run_command(argv).stdout_data;
-}
+std::string git_raw(std::vector<std::string> const& args) { return prompt::process::run_command(args).stdout_data; }
 
-std::string strip_trailing_newlines(std::string_view s) noexcept {
+std::string strip_trailing_newlines(std::string_view s) {
     std::string out(s);
     while (!out.empty() && out.back() == '\n') out.pop_back();
     return out;
 }
 
-std::string infer_lang(std::string_view base) noexcept {
+std::string infer_lang(std::string_view base) {
     auto dot = base.rfind('.');
     std::string_view ext = (dot == std::string_view::npos) ? base : base.substr(dot + 1);
     if (base == "Dockerfile") return "dockerfile";
@@ -66,15 +60,14 @@ std::string infer_lang(std::string_view base) noexcept {
 
 } // namespace
 
-prompt_result execute_git_diff(prompt_context&& ctx) noexcept {
+prompt_output execute_git_diff(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
-    std::vector<char const*> rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};
-    if (prompt::process::run_command(rev).exit_code != 0) {
-        return {std::string{}, 1, false, "prompt git.diff: Error: Not inside a git repository.\n"};
+    if (prompt::process::run_command({"git", "rev-parse", "--is-inside-work-tree"}).exit_code != 0) {
+        throw soft_error{"prompt git.diff: Error: Not inside a git repository.\n"};
     }
 
     std::vector<std::string> files;
@@ -100,7 +93,7 @@ prompt_result execute_git_diff(prompt_context&& ctx) noexcept {
             output += trim_context_nl(diff_output, head_lines);
             output += "```\n";
         } else {
-            return {std::string{}, 0, false, "No diffs found for the specified files.\n"};
+            return {std::string{}, "No diffs found for the specified files.\n", false, false};
         }
     } else {
         std::string unstaged_diff = strip_trailing_newlines(git_raw({"git", "diff"}));
@@ -132,9 +125,9 @@ prompt_result execute_git_diff(prompt_context&& ctx) noexcept {
                     std::string name = std::filesystem::path(filepath).filename().string();
                     std::string lang = infer_lang(name);
                     std::string content = read_file(full);
-                    output += "File: " + filepath + " (new)\n";
+                    output += std::format("File: {} (new)\n", filepath);
                     output += "\n";
-                    output += "```" + lang + "\n";
+                    output += std::format("```{}\n", lang);
                     output += trim_context_nl(content, head_lines);
                     output += "```\n";
                     output += "\n";
@@ -145,14 +138,14 @@ prompt_result execute_git_diff(prompt_context&& ctx) noexcept {
         }
 
         if (unstaged_diff.empty() && untracked_stripped.empty()) {
-            return {std::string{}, 0, false, "No changes found in the working tree.\n"};
+            return {std::string{}, "No changes found in the working tree.\n", false, false};
         }
     }
 
-    return {std::move(output), 0, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_git_diff(std::ostream& os) noexcept {
+void render_help_git_diff(std::ostream& os) {
     os << R"EOF(Usage: prompt git.diff [--head N] [FILE...]
 
 Shows Git diffs for the specified files.

@@ -1,5 +1,5 @@
-#include "prompt/prompts/man_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <sstream>
@@ -8,10 +8,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_man(prompt_context&& ctx) noexcept {
+prompt_output execute_man(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string> pages;
@@ -24,9 +24,8 @@ prompt_result execute_man(prompt_context&& ctx) noexcept {
     }
 
     if (pages.empty()) {
-        std::ostringstream help_os;
-        render_help_man(help_os);
-        return {std::string{}, 1, false, "prompt man: no manual page provided\n" + help_os.str()};
+        std::string help_os = help_text(render_help_man);
+        throw soft_error{"prompt man: no manual page provided\n" + help_os};
     }
 
     std::string man_pages;
@@ -44,17 +43,12 @@ prompt_result execute_man(prompt_context&& ctx) noexcept {
     storage.push_back("man");
     for (auto const& p : pages) storage.push_back(p);
 
-    std::vector<char const*> argv;
-    argv.reserve(storage.size() + 1);
-    for (auto const& s : storage) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-
-    auto result = prompt::process::run_command(argv);
+    auto result = prompt::process::run_command(storage);
 
     std::string output;
-    output += "Manual page for `" + man_pages + "`:\n\n";
+    output += std::format("Manual page for `{}`:\n\n", man_pages);
     if (result.exit_code != 0) {
-        output += "(Exited with status: " + std::to_string(result.exit_code) + ")\n\n";
+        output += std::format("(Exited with status: {})\n\n", std::to_string(result.exit_code));
     }
     output += "```text\n";
     std::string stripped = result.stdout_data;
@@ -64,10 +58,10 @@ prompt_result execute_man(prompt_context&& ctx) noexcept {
     }
     output += "\n```\n\n";
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_man(std::ostream& os) noexcept {
+void render_help_man(std::ostream& os) {
     os << R"EOF(Usage: prompt man [--head N] <page>...
        some-input | prompt man [--head N] <page>...
 

@@ -1,6 +1,6 @@
-#include "prompt/prompts/intraday_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/embed.hpp"
-#include "prompt/tse/tse_python.hpp"
+#include "prompt/tse/tse_markdown.hpp"
 #include <sstream>
 #include <string>
 
@@ -22,7 +22,7 @@ struct basic_intraday_prompt_config {
     std::string error;
 };
 
-bool is_positive_int(std::string_view s) noexcept {
+bool is_positive_int(std::string_view s) {
     if (s.empty()) return false;
     for (char c : s) {
         if (c < '0' || c > '9') return false;
@@ -30,7 +30,7 @@ bool is_positive_int(std::string_view s) noexcept {
     return true;
 }
 
-basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) noexcept {
+basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) {
     basic_intraday_prompt_config config;
 
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
@@ -85,9 +85,8 @@ basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) noex
         if (config.symbol.empty()) {
             config.failed = true;
             config.error = "prompt intraday: no symbol given and no identifier found in the clipboard\n";
-            std::ostringstream help_os;
-            render_help_intraday(help_os);
-            config.error += help_os.str();
+            std::string help_os = help_text(render_help_intraday);
+            config.error += help_os;
             return config;
         }
     }
@@ -102,25 +101,30 @@ basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) noex
 
 } // namespace
 
-prompt_result execute_intraday(prompt_context&& ctx) noexcept {
+prompt_output execute_intraday(prompt_context&& ctx) {
     auto config = parse_intraday_args(ctx);
     if (config.failed) {
-        return {"", config.exit_code, false, std::move(config.error)};
+        throw prompt_error{config.exit_code, std::move(config.error), ""};
     }
 
-    int days = config.days_set ? config.days : 0;
-    auto result = tse::collect(config.symbol, days, config.top, !config.no_codal, !config.unadjusted);
+    // `python3 bin/tse all <symbol> ... --markdown`: the tool prints
+    // `tse: <message>` on stderr (inherited, like bash's `$(...)`) and exits 1;
+    // intraday.sh runs under `set -e`, so the prompt aborts.
 
-    if (!result) {
-        // `python3 bin/tse all ...` prints `tse: <message>` on stderr and
-        // exits 1; intraday.sh runs under `set -e`, so the prompt aborts.
-        std::string msg = result.error();
-        if (auto pos = msg.find(": DataError: "); pos != std::string::npos) {
-            msg = msg.substr(pos + 13);
-        } else if (msg.starts_with("Python call failed: ")) {
-            msg = msg.substr(20);
-        }
-        return {"", 1, false, "tse: " + msg + "\n"};
+    std::vector<std::string> fetch_args = {"all", config.symbol, "--top", std::to_string(config.top), "--markdown"};
+    if (config.days_set) {
+        fetch_args.push_back("--days");
+        fetch_args.push_back(std::to_string(config.days));
+    } else {
+        fetch_args.push_back("--full");
+    }
+    if (config.no_codal) fetch_args.push_back("--no-codal");
+    if (config.unadjusted) fetch_args.push_back("--unadjusted");
+    std::vector<std::string> tool_argv = {"python3", prompt::fs::bin_tool("tse", ctx.exe_path, std::nullopt).string()};
+    for (auto const& a : fetch_args) tool_argv.push_back(a);
+    auto fetch = prompt::process::run_command(tool_argv);
+    if (fetch.exit_code != 0) {
+        throw soft_error{std::string{}};
     }
 
     std::string output;
@@ -143,15 +147,12 @@ prompt_result execute_intraday(prompt_context&& ctx) noexcept {
 ---
 )EOF";
 
-    auto render_result = tse::render_markdown(result->raw_json);
-    if (render_result) {
-        output += trim_context(*render_result, config.head_lines);
-    }
+    output += trim_context(fetch.stdout_data, config.head_lines);
 
-    return {std::move(output), 0, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_intraday(std::ostream& os) noexcept {
+void render_help_intraday(std::ostream& os) {
     os << R"EOF(Usage: prompt intraday [<symbol|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
 
 Fetch TSETMC market data, order-book/flow snapshot, recent daily history, market context (free-market USD/IRR, Iran macro indicators, large-cap breadth) and Codal news for an Iranian بورس instrument and build an AI prompt that decides a same-day trade: buy tomorrow and sell the same day (LONG) or stand aside (NO-TRADE). Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), TSETMC insCode, or an easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one.

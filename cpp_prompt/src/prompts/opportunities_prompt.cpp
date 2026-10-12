@@ -1,4 +1,4 @@
-#include "prompt/prompts/opportunities_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,7 +11,7 @@ namespace {
 // embeds files, and applies no --head. --help/-h anywhere and the empty
 // category both print the help text; the native dispatcher intercepts
 // --help/-h before we run, so execute only sees the no-category case.
-std::string opportunities_help() noexcept {
+std::string opportunities_help() {
     return "Usage: prompt opportunities [CATEGORY] [EXTRA...]\n"
            "       prompt opportunities money\n"
            "       prompt opportunities cpp \"backend development\"\n"
@@ -47,11 +47,11 @@ std::string opportunities_help() noexcept {
 }
 
 // Append the user-extra line exactly as the script's `if [[ -n "$extra" ]]`.
-void append_extra(std::string& out, std::string_view extra) noexcept {
+void append_extra(std::string& out, std::string_view extra) {
     if (!extra.empty()) out += "Additional context from user: " + std::string(extra) + "\n";
 }
 
-bool in(std::string const& cat, std::initializer_list<char const*> names) noexcept {
+bool in(std::string const& cat, std::initializer_list<char const*> names) {
     for (auto n : names)
         if (cat == n) return true;
     return false;
@@ -59,10 +59,10 @@ bool in(std::string const& cat, std::initializer_list<char const*> names) noexce
 
 } // namespace
 
-prompt_result execute_opportunities(prompt_context&& ctx) noexcept {
+prompt_output execute_opportunities(prompt_context&& ctx) {
     // CATEGORY="${1:-}"; shift; EXTRA="$*"
     if (ctx.args_count == 0 || ctx.args[0].empty()) {
-        return {opportunities_help(), 0, false, std::string{}};
+        return {opportunities_help(), std::string{}, false, false};
     }
 
     std::string category(ctx.args[0]);
@@ -363,12 +363,12 @@ prompt_result execute_opportunities(prompt_context&& ctx) noexcept {
             "'\n"
             "Available categories: money, tech, cpp, open-source, career, business, invest, learn, ai, "
             "remote, freelance, side-project, content, security, cloud, data, automation, health, creative, all\n";
-        return {std::string{}, 1, false, std::move(err)};
+        throw soft_error{std::move(err)};
     }
 
-    return {std::move(out), 0, false, std::string{}};
+    return {std::move(out), std::string{}, false, false};
 }
 
-void render_help_opportunities(std::ostream& os) noexcept { os << opportunities_help(); }
+void render_help_opportunities(std::ostream& os) { os << opportunities_help(); }
 
 } // namespace prompt::prompts

@@ -1,17 +1,18 @@
-#include "prompt/prompts/note_prompt.hpp"
+#include "prompt/core/strings.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
 
 namespace prompt::prompts {
 
-prompt_result execute_note(prompt_context&& ctx) noexcept {
+prompt_output execute_note(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     bool prepend = false;
     std::vector<std::string_view> notes;
 
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         if (ctx.args[i] == "--head" && i + 1 < ctx.args_count) {
-            head_lines = std::stoull(std::string(ctx.args[++i]));
+            head_lines = prompt::text::to_size(ctx.args[++i], 0); // unvalidated in bash, never read
         } else if (ctx.args[i] == "--prepend" || ctx.args[i] == "-p") {
             prepend = true;
         } else {
@@ -42,10 +43,10 @@ prompt_result execute_note(prompt_context&& ctx) noexcept {
         }
     }
 
-    return {std::move(output), 0, false, std::string{}, ctx.stdin_consumed};
+    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
 }
 
-void render_help_note(std::ostream& os) noexcept {
+void render_help_note(std::ostream& os) {
     os << R"EOF(Usage: prompt note [--head N] [NOTE...]
        some-command | prompt note [--head N] [NOTE...]
 

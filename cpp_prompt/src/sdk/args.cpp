@@ -4,7 +4,7 @@
 
 namespace prompt {
 
-std::string parse_head_option(std::span<std::string_view const> args, std::size_t& head_lines, bool strict) noexcept {
+std::string parse_head_option(std::span<std::string_view const> args, std::size_t& head_lines, bool strict) {
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i] != "--head") continue;
         if (i + 1 >= args.size()) return "Missing value for --head\n";

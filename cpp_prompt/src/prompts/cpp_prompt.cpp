@@ -1,4 +1,4 @@
-#include "prompt/prompts/cpp_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <regex>
@@ -10,7 +10,7 @@ namespace {
 
 // Port of cpp.sh is_compiler_output: `grep -qiE` with these patterns, so the
 // match is case-insensitive and never spans a newline.
-bool is_compiler_output(std::string_view content) noexcept {
+bool is_compiler_output(std::string_view content) {
     static const std::regex compiler_regex(
         R"(:[0-9]+:([0-9]+:)? (error|warning|fatal error|note):|In file included from|undefined reference to|no matching function for call to|ld: symbol\(s\) not found|FAILED:|ninja: build stopped|make\[[0-9]+\]: \*\*\*)",
         std::regex_constants::icase);
@@ -18,17 +18,17 @@ bool is_compiler_output(std::string_view content) noexcept {
     return std::regex_search(std::string(content), compiler_regex);
 }
 
-std::string strip_trailing_newlines(std::string_view content) noexcept {
+std::string strip_trailing_newlines(std::string_view content) {
     while (!content.empty() && content.back() == '\n') content.remove_suffix(1);
     return std::string(content);
 }
 
 } // namespace
 
-prompt_result execute_cpp(prompt_context&& ctx) noexcept {
+prompt_output execute_cpp(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
     (void)head_lines; // cpp.sh never embeds files, so --head has no effect
 
@@ -73,10 +73,10 @@ prompt_result execute_cpp(prompt_context&& ctx) noexcept {
     }
     output += "\n";
 
-    return {std::move(output), 0, false, std::string{}, ctx.stdin_consumed};
+    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
 }
 
-void render_help_cpp(std::ostream& os) noexcept {
+void render_help_cpp(std::ostream& os) {
     os << R"EOF(Usage: prompt cpp [--head N] [FILE...]
        make 2>&1 | prompt cpp [--head N] [FILE...]
 

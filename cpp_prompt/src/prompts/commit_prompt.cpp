@@ -1,5 +1,5 @@
-#include "prompt/prompts/commit_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -9,7 +9,7 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string git_output(std::initializer_list<char const*> args) noexcept {
+std::string git_output(std::initializer_list<char const*> args) {
     std::vector<char const*> argv;
     argv.reserve(args.size() + 1);
     for (char const* arg : args) argv.push_back(arg);
@@ -22,15 +22,14 @@ std::string git_output(std::initializer_list<char const*> args) noexcept {
 
 } // namespace
 
-prompt_result execute_commit(prompt_context&& ctx) noexcept {
+prompt_output execute_commit(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
-    std::vector<char const*> argv_rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};
-    if (prompt::process::run_command(argv_rev).exit_code != 0) {
-        return {std::string{}, 1, false, "prompt commit: Error: Not inside a git repository.\n"};
+    if (prompt::process::run_command({"git", "rev-parse", "--is-inside-work-tree"}).exit_code != 0) {
+        throw soft_error{"prompt commit: Error: Not inside a git repository.\n"};
     }
 
     std::string diff_type = "staged changes";
@@ -40,11 +39,11 @@ prompt_result execute_commit(prompt_context&& ctx) noexcept {
         diff = git_output({"git", "diff", nullptr});
     }
     if (diff.empty()) {
-        return {std::string{}, 1, false, "prompt commit: No changes found in the repository.\n"};
+        throw soft_error{"prompt commit: No changes found in the repository.\n"};
     }
 
     std::string output;
-    output += "Write a clear, descriptive Git commit message for the following " + diff_type + ".\n";
+    output += std::format("Write a clear, descriptive Git commit message for the following {}.\n", diff_type);
     output += "Follow the Conventional Commits specification (e.g., feat:, fix:, docs:, "
               "refactor:, chore:).\n";
     output += "Keep the subject line concise (under 50 characters) and include a more detailed "
@@ -62,10 +61,10 @@ prompt_result execute_commit(prompt_context&& ctx) noexcept {
     output += "\n```\n";
     output += "\n";
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_commit(std::ostream& os) noexcept {
+void render_help_commit(std::ostream& os) {
     os << R"EOF(Usage: prompt commit [--head N]
 
 Asks the AI to write a Git commit message based on current changes.

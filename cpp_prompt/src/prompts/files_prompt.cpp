@@ -1,5 +1,5 @@
-#include "prompt/prompts/files_prompt.hpp"
 #include "prompt/core/fs.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -9,10 +9,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_files(prompt_context&& ctx) noexcept {
+prompt_output execute_files(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string_view> file_args;
@@ -32,7 +32,7 @@ prompt_result execute_files(prompt_context&& ctx) noexcept {
         for (auto arg : file_args) {
             auto resolved = ctx.resolve_input_file(arg);
             if (!resolved) {
-                errors += "prompt files: file not found: " + std::string(arg) + "\n";
+                errors += std::format("prompt files: file not found: {}\n", std::string(arg));
                 continue;
             }
             if (::access(resolved->c_str(), R_OK) != 0) {
@@ -55,21 +55,21 @@ prompt_result execute_files(prompt_context&& ctx) noexcept {
 
         if (!content.empty()) {
             if (head_lines > 0) {
-                output += "File " + rel.string() + " (first " + std::to_string(head_lines) + " lines)\n\n";
+                output += std::format("File {} (first {} lines)\n\n", rel.string(), std::to_string(head_lines));
             } else {
-                output += "File " + rel.string() + "\n\n";
+                output += std::format("File {}\n\n", rel.string());
             }
-            output += "```" + lang + "\n";
+            output += std::format("```{}\n", lang);
             output += trim_context(content, head_lines);
             output += "\n```\n\n";
         }
     }
 
-    if (!errors.empty()) return {std::move(output), 0, false, std::move(errors)};
-    return {std::move(output), 0, false};
+    if (!errors.empty()) return {std::move(output), std::move(errors), false, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_files(std::ostream& os) noexcept {
+void render_help_files(std::ostream& os) {
     os << R"EOF(Usage: prompt files [--head N] [FILE...]
        some-command | prompt files [--head N] [FILE...]
 

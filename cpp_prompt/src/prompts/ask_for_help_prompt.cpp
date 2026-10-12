@@ -1,7 +1,7 @@
-#include "prompt/prompts/ask_for_help_prompt.hpp"
 #include "prompt/core/process.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
 
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <set>
@@ -17,7 +17,7 @@ namespace {
 // Prompts the local AI can handle itself, or meta prompts: no need to ask the
 // bigger AI about these. Mirrors the awk `$1 !~ excl` exclusion where the
 // pattern is fully anchored, i.e. an exact-name set.
-bool is_excluded(std::string const& name) noexcept {
+bool is_excluded(std::string const& name) {
     static const std::set<std::string> excluded = {
         "english", "farsi", "auto",         "summarize",    "metadata", "tweets", "diagram",
         "explain", "list",  "list-prompts", "ask-for-help", "ai-said",  "yt",
@@ -31,7 +31,7 @@ bool is_excluded(std::string const& name) noexcept {
 // Builds the "- `name` — desc" catalog from the native registry (sorted with
 // the same collation the bash list prompt applies). The registry is the
 // complete prompt catalog, so no prompts/ directory is needed.
-std::string build_prompt_list() noexcept {
+std::string build_prompt_list() {
     auto prompts = prompt::get_all_prompts();
     std::vector<prompt_descriptor const*> sorted;
     sorted.reserve(prompts.size());
@@ -52,10 +52,10 @@ std::string build_prompt_list() noexcept {
 
 } // namespace
 
-prompt_result execute_ask_for_help(prompt_context&& ctx) noexcept {
+prompt_output execute_ask_for_help(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
     (void)head_lines; // the command-construction prompt embeds no head-capped files
 
@@ -137,10 +137,10 @@ prompt_result execute_ask_for_help(prompt_context&& ctx) noexcept {
            "Make sure to properly escape characters.\n"
            "\n";
 
-    return {std::move(out), 0, true, std::string{}};
+    return {std::move(out), std::string{}, true, false};
 }
 
-void render_help_ask_for_help(std::ostream& os) noexcept {
+void render_help_ask_for_help(std::ostream& os) {
     os << R"EOF(Usage: prompt ask-for-help [--head N]
        echo "I'm stuck on this problem..." | prompt ask-for-help [--head N]
 

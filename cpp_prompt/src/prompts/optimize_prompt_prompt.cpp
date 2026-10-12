@@ -1,4 +1,4 @@
-#include "prompt/prompts/optimize_prompt_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -7,10 +7,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_optimize_prompt(prompt_context&& ctx) noexcept {
+prompt_output execute_optimize_prompt(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::string output;
@@ -38,20 +38,20 @@ prompt_result execute_optimize_prompt(prompt_context&& ctx) noexcept {
         std::filesystem::path file(ctx.args[i]);
         if (std::filesystem::is_regular_file(file)) {
             // optimize-prompt.sh puts no blank line between "File:" and the fence.
-            output += "File: " + file.filename().string() + "\n";
-            output += "```" + infer_lang(file) + "\n";
+            output += std::format("File: {}\n", file.filename().string());
+            output += std::format("```{}\n", infer_lang(file));
             output += trim_context_nl(read_file(file), head_lines);
             output += "```\n";
             output += "\n";
         } else {
-            error += "Warning: File '" + std::string(ctx.args[i]) + "' not found.\n";
+            warn_missing_file(error, ctx.args[i]);
         }
     }
 
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_optimize_prompt(std::ostream& os) noexcept {
+void render_help_optimize_prompt(std::ostream& os) {
     os << R"EOF(Usage: prompt optimize-prompt [--head N] [FILE...]
        echo "my rough prompt" | prompt optimize-prompt [--head N] [FILE...]
 

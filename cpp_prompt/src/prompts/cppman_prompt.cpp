@@ -1,5 +1,5 @@
-#include "prompt/prompts/cppman_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -11,18 +11,17 @@ namespace {
 
 // bash: command -v <name> >/dev/null 2>&1 — mirrors whether the shell can find
 // the tool on PATH.
-bool tool_exists(std::string const& name) noexcept {
+bool tool_exists(std::string const& name) {
     std::string cmd = "command -v " + name + " >/dev/null 2>&1";
-    std::vector<char const*> argv = {"bash", "-c", cmd.c_str(), nullptr};
-    return prompt::process::run_command(argv).exit_code == 0;
+    return prompt::process::run_command({"bash", "-c", cmd}).exit_code == 0;
 }
 
 } // namespace
 
-prompt_result execute_cppman(prompt_context&& ctx) noexcept {
+prompt_output execute_cppman(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string> pages;
@@ -35,16 +34,15 @@ prompt_result execute_cppman(prompt_context&& ctx) noexcept {
     }
 
     if (!tool_exists("cppman")) {
-        return {std::string{}, 1, false,
-                "Error: cppman is not installed. Please install it (e.g., pip install cppman or your "
-                "package manager).\n"};
+        throw soft_error{"Error: cppman is not installed. Please install it (e.g., pip install cppman or your "
+                         "package manager).\n"};
     }
 
     std::string output;
     output += "Below is the C++ documentation from cppreference (via cppman) for the requested topics.\n\n";
 
     for (auto const& page : pages) {
-        output += "Topic: " + page + "\n";
+        output += std::format("Topic: {}\n", page);
         output += "```text\n";
 
         // cppman "$page" 2>/dev/null | col -bx — col's status gates the branch;
@@ -54,11 +52,7 @@ prompt_result execute_cppman(prompt_context&& ctx) noexcept {
         storage.push_back("-c");
         storage.push_back("cppman \"$0\" 2>/dev/null | col -bx");
         storage.push_back(page);
-        std::vector<char const*> argv;
-        argv.reserve(storage.size() + 1);
-        for (auto const& s : storage) argv.push_back(s.c_str());
-        argv.push_back(nullptr);
-        auto result = prompt::process::run_command(argv);
+        auto result = prompt::process::run_command(storage);
 
         if (result.exit_code == 0) {
             std::string stripped = result.stdout_data;
@@ -66,7 +60,7 @@ prompt_result execute_cppman(prompt_context&& ctx) noexcept {
             if (!stripped.empty()) {
                 output += trim_context_nl(result.stdout_data, head_lines);
             } else {
-                output += "No documentation content found for '" + page + "'.\n";
+                output += std::format("No documentation content found for '{}'.\n", page);
             }
         } else {
             output += "Failed to fetch documentation for '" + page +
@@ -75,10 +69,10 @@ prompt_result execute_cppman(prompt_context&& ctx) noexcept {
         output += "```\n\n";
     }
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_cppman(std::ostream& os) noexcept {
+void render_help_cppman(std::ostream& os) {
     os << R"EOF(Usage: prompt cppman [--head N] [PAGE...]
        some-command | prompt cppman [--head N] [PAGE...]
 

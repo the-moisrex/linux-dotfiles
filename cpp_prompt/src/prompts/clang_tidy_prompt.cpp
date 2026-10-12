@@ -1,6 +1,6 @@
-#include "prompt/prompts/clang_tidy_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -11,30 +11,28 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string strip_trailing_newlines(std::string s) noexcept {
+std::string strip_trailing_newlines(std::string s) {
     while (!s.empty() && s.back() == '\n') s.pop_back();
     return s;
 }
 
 // Realpath, invoked as the external tool so the printed path matches bash's
 // `realpath "$check_path"` byte-for-byte.
-std::string realpath_of(std::string const& p) noexcept {
-    std::vector<char const*> argv = {"realpath", p.c_str(), nullptr};
-    return strip_trailing_newlines(prompt::process::run_command(argv).stdout_data);
+std::string realpath_of(std::string const& p) {
+    return strip_trailing_newlines(prompt::process::run_command({"realpath", p}).stdout_data);
 }
 
-std::string git_toplevel() noexcept {
-    std::vector<char const*> argv = {"git", "rev-parse", "--show-toplevel", nullptr};
-    auto r = prompt::process::run_command(argv);
+std::string git_toplevel() {
+    auto r = prompt::process::run_command({"git", "rev-parse", "--show-toplevel"});
     return r.exit_code == 0 ? strip_trailing_newlines(r.stdout_data) : std::string{};
 }
 
 } // namespace
 
-prompt_result execute_clang_tidy(prompt_context&& ctx) noexcept {
+prompt_output execute_clang_tidy(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string> file_args;
@@ -57,7 +55,7 @@ prompt_result execute_clang_tidy(prompt_context&& ctx) noexcept {
     if (ctx.args_count == 0) {
         auto selected = ctx.select_files();
         if (selected.empty()) {
-            return {std::string{}, 0, false, "No files specified or selected.\n"};
+            return {std::string{}, "No files specified or selected.\n", false, false};
         }
         for (auto const& s : selected) display_args.emplace_back(s.string());
         // Files from fzf only populate $@ (via `set --`), never ARGS.
@@ -125,11 +123,7 @@ prompt_result execute_clang_tidy(prompt_context&& ctx) noexcept {
     for (auto const& a : ct_args) storage.push_back(a);
     for (auto const& a : run_args) storage.push_back(a);
 
-    std::vector<char const*> argv;
-    argv.reserve(storage.size() + 1);
-    for (auto const& s : storage) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    auto result = prompt::process::run_command(argv);
+    auto result = prompt::process::run_command(storage);
 
     std::string output;
     output += "\n";
@@ -142,10 +136,10 @@ prompt_result execute_clang_tidy(prompt_context&& ctx) noexcept {
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "\n```\n";
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_clang_tidy(std::ostream& os) noexcept {
+void render_help_clang_tidy(std::ostream& os) {
     os << R"EOF(Usage: prompt clang-tidy [--head N] [FILE...]
        some-command | prompt clang-tidy [--head N] [FILE...]
 

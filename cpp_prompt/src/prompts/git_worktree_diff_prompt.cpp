@@ -1,5 +1,5 @@
-#include "prompt/prompts/git_worktree_diff_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <cstddef>
@@ -11,15 +11,9 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string git_raw(std::vector<std::string> const& args) noexcept {
-    std::vector<char const*> argv;
-    argv.reserve(args.size() + 1);
-    for (auto const& s : args) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return prompt::process::run_command(argv).stdout_data;
-}
+std::string git_raw(std::vector<std::string> const& args) { return prompt::process::run_command(args).stdout_data; }
 
-std::string strip_trailing_newlines(std::string_view s) noexcept {
+std::string strip_trailing_newlines(std::string_view s) {
     std::string out(s);
     while (!out.empty() && out.back() == '\n') out.pop_back();
     return out;
@@ -27,7 +21,7 @@ std::string strip_trailing_newlines(std::string_view s) noexcept {
 
 // Detect the base branch exactly like the script: upstream (@{u}), falling
 // back to origin/main. `|| true` means a failing rev-parse yields "".
-std::string detect_base_branch(std::string const& given) noexcept {
+std::string detect_base_branch(std::string const& given) {
     if (!given.empty()) return given;
     std::string upstream = strip_trailing_newlines(git_raw({"git", "rev-parse", "--abbrev-ref", "@{u}"}));
     if (upstream.empty()) return "origin/main";
@@ -36,15 +30,14 @@ std::string detect_base_branch(std::string const& given) noexcept {
 
 } // namespace
 
-prompt_result execute_git_worktree_diff(prompt_context&& ctx) noexcept {
+prompt_output execute_git_worktree_diff(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
-    std::vector<char const*> rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};
-    if (prompt::process::run_command(rev).exit_code != 0) {
-        return {std::string{}, 1, false, "prompt git.worktree.diff: Error: Not inside a git repository.\n"};
+    if (prompt::process::run_command({"git", "rev-parse", "--is-inside-work-tree"}).exit_code != 0) {
+        throw soft_error{"prompt git.worktree.diff: Error: Not inside a git repository.\n"};
     }
 
     // Custom flags: --not <commit>, --base <branch>; everything else is a file.
@@ -62,11 +55,11 @@ prompt_result execute_git_worktree_diff(prompt_context&& ctx) noexcept {
     std::vector<std::string> files;
     for (std::size_t i = 0; i < rest.size();) {
         if (rest[i] == "--not") {
-            if (i + 1 >= rest.size()) return {std::string{}, 2, false, "Missing value for --not\n"};
+            if (i + 1 >= rest.size()) throw usage_error{"Missing value for --not\n"};
             not_commit = rest[i + 1];
             i += 2;
         } else if (rest[i] == "--base") {
-            if (i + 1 >= rest.size()) return {std::string{}, 2, false, "Missing value for --base\n"};
+            if (i + 1 >= rest.size()) throw usage_error{"Missing value for --base\n"};
             base_branch = rest[i + 1];
             i += 2;
         } else {
@@ -93,17 +86,17 @@ prompt_result execute_git_worktree_diff(prompt_context&& ctx) noexcept {
     std::string diff_output = strip_trailing_newlines(git_raw(git_cmd));
     if (!diff_output.empty()) {
         std::string output;
-        output += "Diffs (" + base_branch + "..HEAD):\n";
+        output += std::format("Diffs ({}..HEAD):\n", base_branch);
         output += "\n";
         output += "```diff\n";
         output += trim_context_nl(diff_output, head_lines);
         output += "```\n";
-        return {std::move(output), 0, false};
+        return {std::move(output), std::string{}, false, false};
     }
-    return {std::string{}, 0, false, "No diffs found between current branch and " + base_branch + ".\n"};
+    return {std::string{}, "No diffs found between current branch and " + base_branch + ".\n", false, false};
 }
 
-void render_help_git_worktree_diff(std::ostream& os) noexcept {
+void render_help_git_worktree_diff(std::ostream& os) {
     os << R"EOF(Usage: prompt git.worktree.diff [--not <commit>] [--base <branch>] [--head N] [FILE...]
 
 Shows Git diffs for files changed since the upstream branch.

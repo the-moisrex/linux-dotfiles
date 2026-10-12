@@ -1,9 +1,8 @@
 #include "prompt/core/clipboard.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
-#include "prompt/core/python.hpp"
 #include "prompt/core/sanitize.hpp"
-#include "prompt/prompts/prompt_entry.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/chaining.hpp"
 #include "prompt/sdk/pipeline.hpp"
 #include "prompt/sdk/prompt_context.hpp"
@@ -20,25 +19,8 @@
 #include <unistd.h>
 #include <vector>
 
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer)
-#define PROMPT_HAS_ASAN 1
-#endif
-#elif defined(__SANITIZE_ADDRESS__)
-#define PROMPT_HAS_ASAN 1
-#endif
-
-#ifdef PROMPT_HAS_ASAN
-// The embedded CPython runtime keeps interpreter allocations alive until it is
-// finalized and never releases all of them at exit; LeakSanitizer reports them
-// as leaks (aborting before iostreams flush, which swallows stdout). They are
-// lifecycle-allocations of the interpreter, not bugs in this program.
-extern "C" const char* __lsan_default_suppressions() noexcept { return "leak:libpython\nleak:_Py\n"; }
-
-// Don't print the "Suppressions used" summary: it would otherwise pollute
-// stderr on every run that touches the embedded Python runtime.
-extern "C" const char* __lsan_default_options() noexcept { return "print_suppressions=0"; }
-#endif
+// The prompts shell out to the repository's tools (bin/tse, jq, …) — there is
+// no in-process interpreter here, so no ASan suppressions are needed.
 
 int main(int argc, char** argv) {
     // Initialize prompt registry (needed even for --help)
@@ -136,8 +118,7 @@ Notes:
     };
 
     base_ctx.select_files_fn = []() -> std::vector<std::filesystem::path> {
-        std::vector<char const*> fzf_argv = {"fzf", "-m", nullptr};
-        auto result = prompt::process::run_command(fzf_argv);
+        auto result = prompt::process::run_command({"fzf", "-m"});
         std::vector<std::filesystem::path> files;
         std::string line;
         for (char c : result.stdout_data) {
@@ -180,12 +161,7 @@ Notes:
         }
         storage.push_back(name_str);
 
-        std::vector<char const*> argv;
-        argv.reserve(storage.size() + 1);
-        for (auto const& s : storage) argv.push_back(s.c_str());
-        argv.push_back(nullptr);
-
-        auto result = prompt::process::run_command(argv, "");
+        auto result = prompt::process::run_command(storage, "");
         if (!result.stdout_data.empty()) {
             std::string line = result.stdout_data.substr(0, result.stdout_data.find('\n'));
             std::filesystem::path selected(line);
@@ -262,31 +238,33 @@ Notes:
         }
         ctx.args_count = inv.args_count;
 
-        // Execute prompt
-        auto result = desc->execute_fn(std::move(ctx));
-
-        // Sanitize output
-        std::string sanitized = prompt::sanitize::sanitize(result.output);
-
-        // Accumulate (a prompt's stdout is printed even when it failed —
-        // the bash dispatcher captures output before checking status).
-        pipeline.add_output(sanitized, result.no_clipboard);
-
-        // Diagnostics go to stderr, verbatim (bash passes `>&2` output
-        // through untouched) and are never sanitized or copied.
-        if (!result.error.empty()) {
-            std::cerr << result.error;
-        }
-
-        // First failure wins, but the chain keeps running (bash's loop
-        // records the status and continues to the next prompt). Bash does
-        // NOT feed one prompt's output into the next: every prompt in the
-        // chain sees the original stdin — until someone reads the pipe.
-        if (result.exit_code != 0 && exit_code == 0) {
-            exit_code = result.exit_code;
-        }
-        if (result.stdin_consumed) {
-            base_ctx.stdin_content.clear();
+        // Execute prompt. Prompts report failure by throwing (usage_error /
+        // soft_error / prompt_error) with the exact stdout/stderr they would
+        // have printed; the throwing prompt's partial stdout is still
+        // accumulated (bash captures output before checking status) and the
+        // chain keeps running with the remaining prompts.
+        try {
+            auto result = desc->execute_fn(std::move(ctx));
+            pipeline.add_output(prompt::sanitize::sanitize(result.text), result.no_clipboard);
+            if (!result.error.empty()) {
+                std::cerr << result.error;
+            }
+            if (result.stdin_consumed) {
+                base_ctx.stdin_content.clear();
+            }
+        } catch (prompt::prompt_error const& err) {
+            std::string partial = err.partial_output();
+            pipeline.add_output(prompt::sanitize::sanitize(partial), err.no_clipboard());
+            std::string message = err.what();
+            if (!message.empty()) {
+                std::cerr << message;
+            }
+            if (exit_code == 0) {
+                exit_code = err.exit_code();
+            }
+            if (err.stdin_consumed()) {
+                base_ctx.stdin_content.clear();
+            }
         }
     }
 

@@ -1,14 +1,14 @@
-#include "prompt/prompts/cpp_reviewer_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
 
 namespace prompt::prompts {
 
-prompt_result execute_cpp_reviewer(prompt_context&& ctx) noexcept {
+prompt_output execute_cpp_reviewer(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
     (void)head_lines; // cpp-reviewer.sh only embeds stdin, which --head never trims
 
@@ -45,10 +45,10 @@ prompt_result execute_cpp_reviewer(prompt_context&& ctx) noexcept {
               "commending good practices.\n";
     output += "\n";
 
-    return {std::move(output), 0, false, std::string{}, ctx.stdin_consumed};
+    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
 }
 
-void render_help_cpp_reviewer(std::ostream& os) noexcept {
+void render_help_cpp_reviewer(std::ostream& os) {
     os << R"EOF(Usage: prompt cpp-reviewer [--head N] [FILE...]
        some-command | prompt cpp-reviewer [--head N] [FILE...]
 

@@ -4,7 +4,7 @@
 
 namespace prompt {
 
-prompt_context make_base_context() noexcept {
+prompt_context make_base_context() {
     prompt_context ctx;
     ctx.git_root = fs::find_git_root().value_or(std::filesystem::path{});
     ctx.exe_path = fs::self_path().value_or(std::filesystem::path{});

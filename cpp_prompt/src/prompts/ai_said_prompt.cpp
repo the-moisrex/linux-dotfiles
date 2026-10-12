@@ -1,6 +1,6 @@
-#include "prompt/prompts/ai_said_prompt.hpp"
 #include "prompt/core/clipboard.hpp"
 #include "prompt/core/fs.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -22,7 +22,7 @@ void ai_said_on_signal(int) { g_ai_said_stop = 1; }
 
 // Port of ai-said.sh trim_context applied to an entry and captured through
 // $(...): first N lines joined by '\n', no trailing newline. head==0 → no cap.
-std::string head_n_lines(std::string const& s, std::size_t head) noexcept {
+std::string head_n_lines(std::string const& s, std::size_t head) {
     if (head == 0) return s;
     std::vector<std::string_view> lines;
     std::size_t start = 0;
@@ -44,18 +44,18 @@ std::string head_n_lines(std::string const& s, std::size_t head) noexcept {
     return out;
 }
 
-std::string strip_trailing_nl(std::string s) noexcept {
+std::string strip_trailing_nl(std::string s) {
     while (!s.empty() && s.back() == '\n') s.pop_back();
     return s;
 }
 
-bool only_whitespace(std::string const& s) noexcept {
+bool only_whitespace(std::string const& s) {
     for (char c : s)
         if (!std::isspace(static_cast<unsigned char>(c))) return false;
     return true;
 }
 
-std::string ordinal_word(long n) noexcept {
+std::string ordinal_word(long n) {
     if (n == 1) return "Another";
     if (n == 2) return "A second";
     if (n == 3) return "A third";
@@ -72,9 +72,9 @@ std::string ordinal_word(long n) noexcept {
     return "A " + std::to_string(n) + suffix;
 }
 
-std::string entry_label(long n) noexcept { return ordinal_word(n) + " AI said:"; }
+std::string entry_label(long n) { return ordinal_word(n) + " AI said:"; }
 
-std::string build_output(std::vector<std::string> const& entries, std::size_t head_lines) noexcept {
+std::string build_output(std::vector<std::string> const& entries, std::size_t head_lines) {
     std::string out;
     for (std::size_t i = 0; i < entries.size(); ++i) {
         std::string content = head_n_lines(entries[i], head_lines);
@@ -92,7 +92,7 @@ std::string build_output(std::vector<std::string> const& entries, std::size_t he
 }
 
 // ^[0-9]+(\.[0-9]+)?$ — an integer or a dotted decimal (nothing else).
-bool is_number_string(std::string const& s) noexcept {
+bool is_number_string(std::string const& s) {
     if (s.empty()) return false;
     std::size_t i = 0;
     while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
@@ -107,9 +107,9 @@ bool is_number_string(std::string const& s) noexcept {
     return i == s.size();
 }
 
-double to_seconds(std::string const& s) noexcept { return std::strtod(s.c_str(), nullptr); }
+double to_seconds(std::string const& s) { return std::strtod(s.c_str(), nullptr); }
 
-std::string ai_said_help() noexcept {
+std::string ai_said_help() {
     return "Usage: prompt ai-said [--interval N] [--timeout N] [--no-clear] [--head N]\n"
            "\n"
            "Collect multiple AI chat outputs via the clipboard and combine them into a single prompt.\n"
@@ -133,7 +133,7 @@ std::string ai_said_help() noexcept {
 
 } // namespace
 
-prompt_result execute_ai_said(prompt_context&& ctx) noexcept {
+prompt_output execute_ai_said(prompt_context&& ctx) {
     std::string interval = "0.5";
     std::string clip_timeout = "3";
     bool clear_on_start = true;
@@ -144,27 +144,25 @@ prompt_result execute_ai_said(prompt_context&& ctx) noexcept {
     for (std::size_t i = 0; i < ctx.args_count;) {
         std::string a(ctx.args[i]);
         if (a == "--help" || a == "-h") {
-            return {ai_said_help(), 0, false, std::string{}};
+            return {ai_said_help(), std::string{}, false, false};
         } else if (a == "--head") {
-            if (i + 1 >= ctx.args_count) return {std::string{}, 2, false, "prompt ai-said: Missing value for --head\n"};
+            if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --head\n"};
             head_str = std::string(ctx.args[++i]);
             ++i;
             head_set = true;
         } else if (a == "--interval") {
-            if (i + 1 >= ctx.args_count)
-                return {std::string{}, 2, false, "prompt ai-said: Missing value for --interval\n"};
+            if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --interval\n"};
             interval = std::string(ctx.args[++i]);
             ++i;
         } else if (a == "--timeout") {
-            if (i + 1 >= ctx.args_count)
-                return {std::string{}, 2, false, "prompt ai-said: Missing value for --timeout\n"};
+            if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --timeout\n"};
             clip_timeout = std::string(ctx.args[++i]);
             ++i;
         } else if (a == "--no-clear") {
             clear_on_start = false;
             ++i;
         } else if (a.size() >= 2 && a[0] == '-' && a[1] == '-') {
-            return {std::string{}, 2, false, "prompt ai-said: Unknown option: " + a + "\n"};
+            throw usage_error{"prompt ai-said: Unknown option: " + a + "\n"};
         } else {
             positional.push_back(a);
             ++i;
@@ -172,13 +170,13 @@ prompt_result execute_ai_said(prompt_context&& ctx) noexcept {
     }
 
     if (!positional.empty()) {
-        return {std::string{}, 2, false, "prompt ai-said: This prompt takes no positional arguments.\n"};
+        throw usage_error{"prompt ai-said: This prompt takes no positional arguments.\n"};
     }
     if (!is_number_string(interval) || interval == "0") {
-        return {std::string{}, 2, false, "prompt ai-said: --interval must be a positive number of seconds.\n"};
+        throw usage_error{"prompt ai-said: --interval must be a positive number of seconds.\n"};
     }
     if (!is_number_string(clip_timeout) || clip_timeout == "0") {
-        return {std::string{}, 2, false, "prompt ai-said: --timeout must be a positive number of seconds.\n"};
+        throw usage_error{"prompt ai-said: --timeout must be a positive number of seconds.\n"};
     }
 
     // head value is applied like `sed -n 1,Np`; a non-numeric value becomes a
@@ -198,7 +196,7 @@ prompt_result execute_ai_said(prompt_context&& ctx) noexcept {
         clipboard_path = prompt::fs::bin_tool("clipboard", ctx.exe_path, ctx.git_root).string();
     }
     if (::access(clipboard_path.c_str(), X_OK) != 0) {
-        return {std::string{}, 1, false, "prompt ai-said: Clipboard helper not found: " + clipboard_path + "\n"};
+        throw soft_error{"prompt ai-said: Clipboard helper not found: " + clipboard_path + "\n"};
     }
 
     // Capture the paste like bash's $(...): trailing newlines are stripped.
@@ -240,7 +238,7 @@ prompt_result execute_ai_said(prompt_context&& ctx) noexcept {
     bool have_last_wrote = false;
     std::string last_wrote;
 
-    err += "Watching clipboard every " + interval + "s. Copy AI outputs one by one;\n";
+    err += std::format("Watching clipboard every {}s. Copy AI outputs one by one;\n", interval);
     err += "each change is collected and re-copied. Press Ctrl+C to finish.\n";
 
     // Install the interrupt handler for the duration of the watch loop.
@@ -297,7 +295,7 @@ prompt_result execute_ai_said(prompt_context&& ctx) noexcept {
     if (!entries.empty()) {
         out = build_output(entries, head_lines);
         std::string noun = entries.size() == 1 ? "entry" : "entries";
-        err += "Collected " + std::to_string(entries.size()) + " " + noun + ". Final prompt printed to stdout.\n";
+        err += std::format("Collected {} {}. Final prompt printed to stdout.\n", std::to_string(entries.size()), noun);
     } else {
         err += "No entries collected. Nothing to output.\n";
     }
@@ -305,9 +303,9 @@ prompt_result execute_ai_said(prompt_context&& ctx) noexcept {
     sigaction(SIGINT, &old_int, nullptr);
     sigaction(SIGTERM, &old_term, nullptr);
 
-    return {std::move(out), 130, false, std::move(err)};
+    throw prompt_error{130, std::move(err), std::move(out)};
 }
 
-void render_help_ai_said(std::ostream& os) noexcept { os << ai_said_help(); }
+void render_help_ai_said(std::ostream& os) { os << ai_said_help(); }
 
 } // namespace prompt::prompts

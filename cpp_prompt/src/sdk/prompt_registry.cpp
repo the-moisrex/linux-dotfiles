@@ -28,9 +28,9 @@ bool prompt_descriptor_less(prompt_descriptor const* a, prompt_descriptor const*
     return a->name < b->name; // collation-equal keys: deterministic tiebreak
 }
 
-std::span<prompt_descriptor const> get_all_prompts() noexcept { return {prompts_storage.data(), prompts_count}; }
+std::span<prompt_descriptor const> get_all_prompts() { return {prompts_storage.data(), prompts_count}; }
 
-prompt_descriptor const* find_prompt(std::string_view name) noexcept {
+prompt_descriptor const* find_prompt(std::string_view name) {
     for (std::size_t i = 0; i < prompts_count; ++i) {
         if (prompts_storage[i].name == name) {
             return &prompts_storage[i];
@@ -39,7 +39,7 @@ prompt_descriptor const* find_prompt(std::string_view name) noexcept {
     return nullptr;
 }
 
-std::vector<std::string_view> list_prompt_names() noexcept {
+std::vector<std::string_view> list_prompt_names() {
     std::vector<prompt_descriptor const*> sorted;
     sorted.reserve(prompts_count);
     for (std::size_t i = 0; i < prompts_count; ++i) {
@@ -52,7 +52,7 @@ std::vector<std::string_view> list_prompt_names() noexcept {
     return names;
 }
 
-void assign_sort_files(std::filesystem::path const& dir) noexcept {
+void assign_sort_files(std::filesystem::path const& dir) {
     // The keys must outlive the views; a deque keeps them stable.
     static std::deque<std::string> keys;
     for (std::size_t i = 0; i < prompts_count; ++i) {
@@ -62,7 +62,7 @@ void assign_sort_files(std::filesystem::path const& dir) noexcept {
     }
 }
 
-void register_prompt(prompt_descriptor const& desc) noexcept {
+void register_prompt(prompt_descriptor const& desc) {
     if (prompts_count < prompts_storage.size()) {
         prompts_storage[prompts_count++] = desc;
     }

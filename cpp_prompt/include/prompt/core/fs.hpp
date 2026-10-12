@@ -8,12 +8,12 @@
 namespace prompt::fs {
 
 std::optional<std::filesystem::path>
-find_git_root(std::filesystem::path const& start = std::filesystem::current_path()) noexcept;
+find_git_root(std::filesystem::path const& start = std::filesystem::current_path());
 
-std::optional<std::filesystem::path> self_path() noexcept;
+std::optional<std::filesystem::path> self_path();
 
 std::filesystem::path relative_path(std::filesystem::path const& file,
-                                    std::optional<std::filesystem::path> const& git_root) noexcept;
+                                    std::optional<std::filesystem::path> const& git_root);
 
 // Resolve a repository utility (bin/run, bin/tse, bin/gtest-case, ...) without
 // going through prompts/. Search order:
@@ -23,6 +23,6 @@ std::filesystem::path relative_path(std::filesystem::path const& file,
 //   4. walk up from cwd to <dir>/bin/<name>
 //   5. bare <name> (PATH lookup by the shell)
 std::filesystem::path bin_tool(std::string_view name, std::filesystem::path const& exe_path,
-                               std::optional<std::filesystem::path> const& git_root) noexcept;
+                               std::optional<std::filesystem::path> const& git_root);
 
 } // namespace prompt::fs

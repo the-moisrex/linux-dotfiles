@@ -1,4 +1,4 @@
-#include "prompt/prompts/de_export_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -12,7 +12,7 @@ namespace {
 
 // de-export.sh is_cpp_file: extension check first, then the CMakeLists.txt
 // special case. `${base##*.}` keeps the whole name when there is no dot.
-bool is_cpp_file(std::string const& file) noexcept {
+bool is_cpp_file(std::string const& file) {
     std::string base = std::filesystem::path(file).filename().string();
     auto pos = base.rfind('.');
     std::string ext = pos == std::string::npos ? base : base.substr(pos + 1);
@@ -24,7 +24,7 @@ bool is_cpp_file(std::string const& file) noexcept {
     return false;
 }
 
-std::string strip_trailing_newlines(std::string const& content) noexcept {
+std::string strip_trailing_newlines(std::string const& content) {
     std::size_t end = content.size();
     while (end > 0 && content[end - 1] == '\n') --end;
     return content.substr(0, end);
@@ -32,7 +32,7 @@ std::string strip_trailing_newlines(std::string const& content) noexcept {
 
 // The two greps run over the accumulated content; `^` anchors every grep line,
 // so matching is done line by line.
-bool matches_any_line(std::string const& content, std::regex const& re) noexcept {
+bool matches_any_line(std::string const& content, std::regex const& re) {
     std::size_t start = 0;
     while (start <= content.size()) {
         std::size_t nl = content.find('\n', start);
@@ -46,10 +46,10 @@ bool matches_any_line(std::string const& content, std::regex const& re) noexcept
 
 } // namespace
 
-prompt_result execute_de_export(prompt_context&& ctx) noexcept {
+prompt_output execute_de_export(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     // de-export.sh reads $stdin_content, which the dispatcher never exports and
@@ -70,7 +70,7 @@ prompt_result execute_de_export(prompt_context&& ctx) noexcept {
     }
 
     if (cpp_files.empty()) {
-        return {std::string{}, 1, false, "No C++ files provided. Pass C++ files as arguments or pipe them to stdin.\n"};
+        throw soft_error{"No C++ files provided. Pass C++ files as arguments or pipe them to stdin.\n"};
     }
 
     static const std::regex modules_re(R"(^\s*module\s+\S|^\s*export\s+module\s+\S|^\s*import\s+\S|module\s*;)");
@@ -115,17 +115,17 @@ prompt_result execute_de_export(prompt_context&& ctx) noexcept {
     output += "\n";
 
     for (auto const& file : cpp_files) {
-        output += "File: " + file.filename().string() + "\n\n";
-        output += "```" + infer_lang(file) + "\n";
+        output += std::format("File: {}\n\n", file.filename().string());
+        output += std::format("```{}\n", infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n";
         output += "\n";
     }
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_de_export(std::ostream& os) noexcept {
+void render_help_de_export(std::ostream& os) {
     os << R"EOF(Usage: prompt de-export [--head N] [FILE...]
        some-command | prompt de-export [--head N] [FILE...]
 

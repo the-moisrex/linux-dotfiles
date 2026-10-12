@@ -1,4 +1,4 @@
-#include "prompt/prompts/fs8_mod_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -11,7 +11,7 @@ namespace {
 
 // Port of _common.sh infer_lang (NOT the SDK's infer_lang, whose extension
 // table differs — e.g. .ixx maps to "text" in bash but "cpp" in the SDK).
-std::string bash_infer_lang(std::string const& filename) noexcept {
+std::string bash_infer_lang(std::string const& filename) {
     std::string base = filename;
     auto slash = base.find_last_of('/');
     if (slash != std::string::npos) base = base.substr(slash + 1);
@@ -88,23 +88,23 @@ std::string bash_infer_lang(std::string const& filename) noexcept {
 // missing file; otherwise a blank line, "File: <label>", ```lang fence, the
 // head-capped body, and a closing fence. infer_lang keys off the basename.
 void embed_file(std::string& out, std::string& err, std::filesystem::path const& path, std::string_view label,
-                std::size_t head_lines) noexcept {
+                std::size_t head_lines) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec) || ec) {
-        err += "Warning: context file not found: " + path.string() + "\n";
+        err += std::format("Warning: context file not found: {}\n", path.string());
         return;
     }
     std::string base = path.filename().string();
     std::string name = label.empty() ? base : std::string(label);
     out += "\n";
-    out += "File: " + name + "\n";
-    out += "```" + bash_infer_lang(base) + "\n";
+    out += std::format("File: {}\n", name);
+    out += std::format("```{}\n", bash_infer_lang(base));
     out += trim_context_nl(read_file(path), head_lines);
     out += "```\n";
 }
 
 // Port of find_foresight_root: walk from $PWD to / looking for AGENTS.md + mods/.
-std::filesystem::path find_foresight_root() noexcept {
+std::filesystem::path find_foresight_root() {
     auto dir = std::filesystem::current_path();
     while (dir != dir.root_path() && dir != std::filesystem::path("/")) {
         if (std::filesystem::is_regular_file(dir / "AGENTS.md") && std::filesystem::is_directory(dir / "mods")) {
@@ -119,17 +119,16 @@ std::filesystem::path find_foresight_root() noexcept {
 
 } // namespace
 
-prompt_result execute_fs8_mod(prompt_context&& ctx) noexcept {
+prompt_output execute_fs8_mod(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     auto root = find_foresight_root();
     if (root.empty()) {
-        return {std::string{}, 1, false,
-                "Error: not inside the foresight git repo (could not find AGENTS.md + mods/).\n"
-                "Change to the foresight directory or a subdirectory and try again.\n"};
+        throw soft_error{"Error: not inside the foresight git repo (could not find AGENTS.md + mods/).\n"
+                         "Change to the foresight directory or a subdirectory and try again.\n"};
     }
 
     std::string out;
@@ -208,10 +207,10 @@ prompt_result execute_fs8_mod(prompt_context&& ctx) noexcept {
     out += "## Registration: mods/mods.ixx (export imports)\n";
     embed_file(out, err, root / "mods/mods.ixx", "mods/mods.ixx", head_lines);
 
-    return {std::move(out), 0, false, std::move(err)};
+    return {std::move(out), std::move(err)};
 }
 
-void render_help_fs8_mod(std::ostream& os) noexcept {
+void render_help_fs8_mod(std::ostream& os) {
     os << R"EOF(Usage: prompt fs8.mod [--head N]
        prompt fs8.mod | prompt note "Create a mod that ..."
 

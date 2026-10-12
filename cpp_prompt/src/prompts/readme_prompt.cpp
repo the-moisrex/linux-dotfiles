@@ -1,5 +1,5 @@
-#include "prompt/prompts/readme_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -8,10 +8,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_readme(prompt_context&& ctx) noexcept {
+prompt_output execute_readme(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::string output;
@@ -51,11 +51,7 @@ prompt_result execute_readme(prompt_context&& ctx) noexcept {
         storage.push_back("ls -1 \"$1\" 2>/dev/null | head -30");
         storage.push_back(root); // $0
         storage.push_back(root); // $1
-        std::vector<char const*> argv;
-        argv.reserve(storage.size() + 1);
-        for (auto const& s : storage) argv.push_back(s.c_str());
-        argv.push_back(nullptr);
-        output += prompt::process::run_command(argv).stdout_data;
+        output += prompt::process::run_command(storage).stdout_data;
         output += "```\n";
         output += "\n";
     }
@@ -68,21 +64,21 @@ prompt_result execute_readme(prompt_context&& ctx) noexcept {
         }
         std::filesystem::path file(ctx.args[i]);
         if (std::filesystem::is_regular_file(file)) {
-            output += "File: " + file.filename().string() + "\n\n";
-            output += "```" + infer_lang(file) + "\n";
+            output += std::format("File: {}\n\n", file.filename().string());
+            output += std::format("```{}\n", infer_lang(file));
             output += trim_context_nl(read_file(file), head_lines);
             // readme.sh leaves a blank line before the closing fence.
             output += "\n```\n";
             output += "\n";
         } else {
-            error += "Warning: File '" + std::string(ctx.args[i]) + "' not found.\n";
+            warn_missing_file(error, ctx.args[i]);
         }
     }
 
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_readme(std::ostream& os) noexcept {
+void render_help_readme(std::ostream& os) {
     os << R"EOF(Usage: prompt readme [--head N] [FILE...]
        echo "project description" | prompt readme [--head N] [FILE...]
 

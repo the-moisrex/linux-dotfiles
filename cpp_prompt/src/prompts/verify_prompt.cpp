@@ -1,5 +1,4 @@
-#include "prompt/prompts/verify_prompt.hpp"
-#include "prompt/prompts/git_dirty_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <cstddef>
@@ -11,7 +10,7 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string strip_trailing_newlines(std::string_view s) noexcept {
+std::string strip_trailing_newlines(std::string_view s) {
     std::string out(s);
     while (!out.empty() && out.back() == '\n') out.pop_back();
     return out;
@@ -19,10 +18,10 @@ std::string strip_trailing_newlines(std::string_view s) noexcept {
 
 } // namespace
 
-prompt_result execute_verify(prompt_context&& ctx) noexcept {
+prompt_output execute_verify(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     // verify.sh runs `bash git-dirty.sh ...` (matches byte-for-byte when we run
@@ -55,9 +54,9 @@ prompt_result execute_verify(prompt_context&& ctx) noexcept {
         for (auto const& a : git_dirty_args) sub.args[n++] = a;
         sub.args_count = n;
         auto result = prompts::execute_git_dirty(std::move(sub));
-        context = strip_trailing_newlines(result.output);
+        context = strip_trailing_newlines(result.text);
         if (context.empty()) {
-            return {std::string{}, 0, false, "No changes found in the repository. Nothing to verify.\n"};
+            throw soft_error{"No changes found in the repository. Nothing to verify.\n"};
         }
     }
 
@@ -76,10 +75,10 @@ prompt_result execute_verify(prompt_context&& ctx) noexcept {
     output += "\n";
     output += trim_context_nl(context, head_lines);
 
-    return {std::move(output), 0, false, std::string{}, piped};
+    return {std::move(output), std::string{}, false, piped};
 }
 
-void render_help_verify(std::ostream& os) noexcept {
+void render_help_verify(std::ostream& os) {
     os << R"EOF(Usage: prompt verify [--head N] [GIT-DIRTY OPTIONS...]
        some-command | prompt verify [--head N] [GIT-DIRTY OPTIONS...]
 

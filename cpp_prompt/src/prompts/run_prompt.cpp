@@ -1,8 +1,7 @@
-#include "prompt/prompts/run_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
 #include "prompt/core/sanitize.hpp"
-#include "prompt/prompts/gtest_case_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <regex>
@@ -16,7 +15,7 @@ namespace {
 
 // Port of run.sh extract_failed_gtests: `[  FAILED  ] Suite.Test` lines, each
 // test kept once, and only names that carry a suite separator.
-std::vector<std::string> extract_failed_gtests(std::string_view text) noexcept {
+std::vector<std::string> extract_failed_gtests(std::string_view text) {
     static const std::regex failed_re(R"(^\[  FAILED  \] +([[:alnum:]_][^\s(),]*))");
     std::vector<std::string> found;
     std::unordered_set<std::string> seen;
@@ -44,7 +43,7 @@ std::vector<std::string> extract_failed_gtests(std::string_view text) noexcept {
 
 // Port of `head -n N` feeding a $(...) capture: first N lines, no trailing
 // newline (a missing trailing newline in the input is preserved as-is).
-std::string head_n(std::string_view text, std::size_t n) noexcept {
+std::string head_n(std::string_view text, std::size_t n) {
     if (text.empty()) return {};
     std::vector<std::string_view> lines;
     std::size_t start = 0;
@@ -69,10 +68,10 @@ std::string head_n(std::string_view text, std::size_t n) noexcept {
 
 } // namespace
 
-prompt_result execute_run(prompt_context&& ctx) noexcept {
+prompt_output execute_run(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     bool include_gtest = false;
@@ -105,12 +104,7 @@ prompt_result execute_run(prompt_context&& ctx) noexcept {
         storage.push_back(run_path);
         for (std::size_t i = 1; i < cmd.size(); ++i) storage.push_back(cmd[i]);
 
-        std::vector<char const*> argv;
-        argv.reserve(storage.size() + 1);
-        for (auto const& s : storage) argv.push_back(s.c_str());
-        argv.push_back(nullptr);
-
-        auto result = prompt::process::run_command(argv, ctx.stdin_content);
+        auto result = prompt::process::run_command(storage, ctx.stdin_content);
         run_output = prompt::sanitize::strip_osc(result.stdout_data);
         while (!run_output.empty() && run_output.back() == '\n') run_output.pop_back();
         status_text = std::to_string(result.exit_code);
@@ -128,12 +122,13 @@ prompt_result execute_run(prompt_context&& ctx) noexcept {
     }
 
     std::string output;
+    std::string error;
     output += "Debug the output from " + description +
               ". Identify the root cause, explain the failure clearly, and suggest the smallest "
               "useful fix. If the build succeeded but the program failed at runtime, focus on the "
               "runtime issue.\n\n";
-    output += "Exit status: " + status_text + "\n\n";
-    output += "```text\n" + run_output + "\n```\n";
+    output += std::format("Exit status: {}\n\n", status_text);
+    output += std::format("```text\n{}\n```\n", run_output);
 
     if (include_gtest) {
         auto failed = extract_failed_gtests(search_output);
@@ -143,11 +138,6 @@ prompt_result execute_run(prompt_context&& ctx) noexcept {
             gtest_args.push_back("--exact");
             for (auto const& name : failed) gtest_args.push_back(name);
 
-            std::vector<char const*> argv;
-            argv.reserve(gtest_args.size() + 1);
-            for (auto const& s : gtest_args) argv.push_back(s.c_str());
-            argv.push_back(nullptr);
-
             // Native gtest-case prompt, invoked in-process exactly as the
             // script would be (`gtest-case` with --exact + the test names).
             prompt_context sub = ctx;
@@ -156,16 +146,17 @@ prompt_result execute_run(prompt_context&& ctx) noexcept {
             for (auto const& a : gtest_args) sub.args[n++] = a;
             sub.args_count = n;
             auto result = prompts::execute_gtest_case(std::move(sub));
-            output += result.output;
+            output += result.text;
+            error += result.error;
         } else {
             output += "\nNo failed Google Test cases were detected in the output.\n";
         }
     }
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_run(std::ostream& os) noexcept {
+void render_help_run(std::ostream& os) {
     os << R"EOF(Usage: prompt run [--head N] [--gtest] [run-args...]
        run target | prompt run [--head N] [--gtest]
 

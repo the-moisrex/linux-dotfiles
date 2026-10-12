@@ -1,6 +1,6 @@
-#include "prompt/prompts/cmake_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <regex>
@@ -52,12 +52,12 @@ std::string strip_source_lists(std::string const& content) {
 
 } // namespace
 
-prompt_result execute_cmake(prompt_context&& ctx) noexcept {
+prompt_output execute_cmake(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     // init_prompt -> parse_arguments runs first (validates --head); the script
     // then walks the remaining args for its own flags.
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
     std::vector<std::string_view> remaining;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
@@ -74,7 +74,7 @@ prompt_result execute_cmake(prompt_context&& ctx) noexcept {
         std::string_view a = remaining[i];
         if (a == "--exclude") {
             if (i + 1 >= remaining.size()) {
-                return {std::string{}, 2, false, "Missing value for --exclude\n"};
+                throw usage_error{"Missing value for --exclude\n"};
             }
             exclude_patterns.emplace_back(remaining[++i]);
         } else if (a == "--strip-lists") {
@@ -97,16 +97,13 @@ prompt_result execute_cmake(prompt_context&& ctx) noexcept {
         storage.push_back(ctx.git_root.string());
         storage.push_back("*CMakeLists.txt");
         storage.push_back("*.cmake");
-        std::vector<char const*> argv;
-        argv.reserve(storage.size() + 1);
-        for (auto const& s : storage) argv.push_back(s.c_str());
-        argv.push_back(nullptr);
-        files = split_lines(prompt::process::run_command(argv).stdout_data);
+        files = split_lines(prompt::process::run_command(storage).stdout_data);
         search_dir = ctx.git_root.string();
     } else {
-        std::vector<char const*> argv = {"bash", "-c",
-                                         "find . -type f \\( -name CMakeLists.txt -o -name \"*.cmake\" \\)", nullptr};
-        for (auto& f : split_lines(prompt::process::run_command(argv).stdout_data)) {
+        for (auto& f :
+             split_lines(prompt::process::run_command(
+                             {"bash", "-c", "find . -type f \\( -name CMakeLists.txt -o -name \"*.cmake\" \\)"})
+                             .stdout_data)) {
             if (f.rfind("./", 0) == 0) f = f.substr(2);
             files.push_back(f);
         }
@@ -130,16 +127,16 @@ prompt_result execute_cmake(prompt_context&& ctx) noexcept {
         std::string content = read_file(file_path);
         if (strip_lists) content = strip_source_lists(content);
 
-        output += "File: " + f + "\n";
+        output += std::format("File: {}\n", f);
         output += "\n    ```cmake\n";
         output += trim_context_nl(content, head_lines);
         output += "\n    ```\n\n";
     }
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_cmake(std::ostream& os) noexcept {
+void render_help_cmake(std::ostream& os) {
     os << R"EOF(Usage: prompt cmake [--head N] [--exclude PATTERN] [--strip-lists]
 
 Gathers all CMakeLists.txt and *.cmake files in the current project to provide full context on the CMake build setup.

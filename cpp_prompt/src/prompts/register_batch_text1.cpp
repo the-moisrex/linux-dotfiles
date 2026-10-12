@@ -1,18 +1,10 @@
-#include "prompt/prompts/api_prompt.hpp"
-#include "prompt/prompts/bigo_prompt.hpp"
-#include "prompt/prompts/branchless_prompt.hpp"
-#include "prompt/prompts/comments_prompt.hpp"
-#include "prompt/prompts/compile_time_prompt.hpp"
-#include "prompt/prompts/docstring_prompt.hpp"
-#include "prompt/prompts/explain_prompt.hpp"
-#include "prompt/prompts/hoist_if_prompt.hpp"
-#include "prompt/prompts/perf_prompt.hpp"
 #include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/security_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
+#include "prompt/sdk/prompt_registry.hpp"
 
 namespace prompt {
 
-void register_batch_text1() noexcept {
+void register_batch_text1() {
     register_prompt({"api", "Review this API design.", "", prompts::execute_api, prompts::render_help_api});
     register_prompt({"explain", "Explain this clearly and concretely.", "", prompts::execute_explain,
                      prompts::render_help_explain});

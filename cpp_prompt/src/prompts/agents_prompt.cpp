@@ -1,4 +1,4 @@
-#include "prompt/prompts/agents_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <algorithm>
@@ -17,10 +17,10 @@ namespace {
 // frequently contains ``` blocks that would break an outer markdown fence.
 // Format matches embed_agent_file: blank line, "File: <basename>", ```text,
 // file body (head-capped), ```.
-std::string embed_agent_file(std::filesystem::path const& path, std::size_t head_lines) noexcept {
+std::string embed_agent_file(std::filesystem::path const& path, std::size_t head_lines) {
     std::string out;
     out += "\n";
-    out += "File: " + path.filename().string() + "\n";
+    out += std::format("File: {}\n", path.filename().string());
     out += "```text\n";
     out += trim_context_nl(read_file(path), head_lines);
     out += "```\n";
@@ -29,7 +29,7 @@ std::string embed_agent_file(std::filesystem::path const& path, std::size_t head
 
 // `stat -Lc '%d:%i'` — device+inode of the target (symlinks followed), used to
 // dedup names that resolve to the same file. Empty on failure (skip).
-std::string target_inode_key(std::filesystem::path const& path) noexcept {
+std::string target_inode_key(std::filesystem::path const& path) {
     struct stat st{};
     if (::stat(path.c_str(), &st) != 0) return {};
     return std::to_string(st.st_dev) + ":" + std::to_string(static_cast<long long>(st.st_ino));
@@ -37,14 +37,14 @@ std::string target_inode_key(std::filesystem::path const& path) noexcept {
 
 } // namespace
 
-prompt_result execute_agents(prompt_context&& ctx) noexcept {
+prompt_output execute_agents(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     if (ctx.git_root.empty()) {
-        return {std::string{}, 1, false, "Error: not inside a git repository.\n"};
+        throw soft_error{"Error: not inside a git repository.\n"};
     }
 
     static constexpr char const* agent_files[] = {
@@ -91,10 +91,10 @@ prompt_result execute_agents(prompt_context&& ctx) noexcept {
         }
     }
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_agents(std::ostream& os) noexcept {
+void render_help_agents(std::ostream& os) {
     os << R"EOF(Usage: prompt agents [--head N]
 
 Find and embed agent instruction files (AGENTS.md, CLAUDE.md, etc.) from the current Git repository root.

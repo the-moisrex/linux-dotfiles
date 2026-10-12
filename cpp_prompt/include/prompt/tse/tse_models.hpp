@@ -21,6 +21,6 @@ struct collected_data {
     nlohmann::json errors;
 };
 
-collected_data parse_collected_data(nlohmann::json const& j) noexcept;
+collected_data parse_collected_data(nlohmann::json const& j);
 
 } // namespace prompt::tse

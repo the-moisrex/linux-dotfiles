@@ -1,6 +1,6 @@
-#include "prompt/prompts/gtest_case_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <string>
@@ -8,10 +8,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_gtest_case(prompt_context&& ctx) noexcept {
+prompt_output execute_gtest_case(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines, false); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     bool exact = false;
@@ -34,8 +34,8 @@ prompt_result execute_gtest_case(prompt_context&& ctx) noexcept {
     }
 
     if (test_names.empty()) {
-        return {std::move(output), 2, false,
-                "Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]\n", ctx.stdin_consumed};
+        throw usage_error{"Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]\n",
+                          std::move(output)};
     }
 
     std::string tool = prompt::fs::bin_tool("gtest-case", ctx.exe_path, ctx.git_root).string();
@@ -45,12 +45,7 @@ prompt_result execute_gtest_case(prompt_context&& ctx) noexcept {
     if (exact) cmd.push_back("--exact");
     for (auto const& name : test_names) cmd.push_back(name);
 
-    std::vector<char const*> argv;
-    argv.reserve(cmd.size() + 1);
-    for (auto const& s : cmd) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-
-    auto result = prompt::process::run_command(argv, ctx.stdin_content);
+    auto result = prompt::process::run_command(cmd, ctx.stdin_content);
 
     std::string tests;
     for (std::size_t i = 0; i < test_names.size(); ++i) {
@@ -59,16 +54,16 @@ prompt_result execute_gtest_case(prompt_context&& ctx) noexcept {
     }
 
     output += "Additional Google Test case context:\n\n";
-    output += "Tests: " + tests + "\n\n";
+    output += std::format("Tests: {}\n\n", tests);
     output += "```cpp\n";
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "\n```\n\n";
     output += "Use the test case context above when analyzing the issue.";
 
-    return {std::move(output), 0, false, std::move(result.stderr_data), ctx.stdin_consumed};
+    return {std::move(output), std::move(result.stderr_data), false, ctx.stdin_consumed};
 }
 
-void render_help_gtest_case(std::ostream& os) noexcept {
+void render_help_gtest_case(std::ostream& os) {
     os << R"EOF(Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]
 
 Builds a debugging prompt and embeds the original source for Google Test cases.

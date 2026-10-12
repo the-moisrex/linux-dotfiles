@@ -1,5 +1,5 @@
-#include "prompt/prompts/git_files_prompt.hpp"
 #include "prompt/core/fs.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <cstddef>
@@ -17,7 +17,7 @@ namespace {
 // Byte-identical port of `_common.sh infer_lang` so the fenced language tag
 // matches the bash script (embed.cpp's infer_lang reorders CMakeLists.txt
 // after .txt and would emit "text" instead of "cmake").
-std::string infer_lang(std::string_view base) noexcept {
+std::string infer_lang(std::string_view base) {
     auto after_last_dot = base.rfind('.');
     std::string_view ext = (after_last_dot == std::string_view::npos) ? base : base.substr(after_last_dot + 1);
 
@@ -84,7 +84,7 @@ std::string infer_lang(std::string_view base) noexcept {
     return "text";
 }
 
-std::string strip_trailing_newlines(std::string_view s) noexcept {
+std::string strip_trailing_newlines(std::string_view s) {
     std::string out(s);
     while (!out.empty() && out.back() == '\n') out.pop_back();
     return out;
@@ -92,10 +92,10 @@ std::string strip_trailing_newlines(std::string_view s) noexcept {
 
 } // namespace
 
-prompt_result execute_git_files(prompt_context&& ctx) noexcept {
+prompt_output execute_git_files(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string> file_args;
@@ -117,7 +117,7 @@ prompt_result execute_git_files(prompt_context&& ctx) noexcept {
         for (auto const& arg : file_args) {
             auto resolved = ctx.resolve_input_file(arg);
             if (!resolved) {
-                errors += "prompt git.files: file not found: " + arg + "\n";
+                errors += std::format("prompt git.files: file not found: {}\n", arg);
                 continue;
             }
             if (::access(resolved->c_str(), R_OK) != 0) {
@@ -143,19 +143,19 @@ prompt_result execute_git_files(prompt_context&& ctx) noexcept {
         // [ -n "$content" ] where content = $(cat) with trailing newlines stripped.
         if (strip_trailing_newlines(raw).empty()) continue;
 
-        output += "File " + rel.string();
+        output += std::format("File {}", rel.string());
         if (head_lines > 0) output += " (first " + std::to_string(head_lines) + " lines)";
         output += "\n\n";
-        output += "```" + lang + "\n";
+        output += std::format("```{}\n", lang);
         output += trim_context_nl(raw, head_lines);
         output += "\n```\n\n";
     }
 
-    if (!errors.empty()) return {std::move(output), 0, false, std::move(errors)};
-    return {std::move(output), 0, false};
+    if (!errors.empty()) return {std::move(output), std::move(errors), false, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_git_files(std::ostream& os) noexcept {
+void render_help_git_files(std::ostream& os) {
     os << R"EOF(Usage: prompt git.files [--head N] [FILE...]
        some-command | prompt git.files [--head N] [FILE...]
 

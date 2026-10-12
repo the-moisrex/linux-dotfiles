@@ -1,18 +1,13 @@
-#include "prompt/prompts/agents_prompt.hpp"
-#include "prompt/prompts/ai_said_prompt.hpp"
-#include "prompt/prompts/ask_for_help_prompt.hpp"
-#include "prompt/prompts/fs8_mod_prompt.hpp"
-#include "prompt/prompts/fs8_test_prompt.hpp"
-#include "prompt/prompts/opportunities_prompt.hpp"
 #include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/skill_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
+#include "prompt/sdk/prompt_registry.hpp"
 
 // The "complex" batch: prompts with nontrivial control flow (clipboard
 // watching, subcommands, repo detection, dynamic listing). Summaries match
 // `prompts/list.sh`'s first-paragraph extraction byte-for-byte.
 namespace prompt {
 
-void register_batch_complex() noexcept {
+void register_batch_complex() {
     register_prompt({"agents",
                      "Find and embed agent instruction files (AGENTS.md, CLAUDE.md, etc.) from the current Git "
                      "repository root. This gives the AI project conventions, coding standards, and architectural "

@@ -8,14 +8,14 @@ namespace prompt::clipboard {
 
 enum class backend { wayland, x11, kde, none };
 
-backend detect_backend() noexcept;
+backend detect_backend();
 
-std::string paste() noexcept;
+std::string paste();
 
-bool copy(std::string_view data) noexcept;
+bool copy(std::string_view data);
 
-bool clear() noexcept;
+bool clear();
 
-void init(std::chrono::seconds timeout = std::chrono::seconds(3)) noexcept;
+void init(std::chrono::seconds timeout = std::chrono::seconds(3));
 
 } // namespace prompt::clipboard

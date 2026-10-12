@@ -17,7 +17,7 @@ struct pipeline {
     // all-newline output produces nothing at all. The dispatcher still
     // prints its separator `echo` between consecutive prompts even when a
     // prompt produced no output.
-    void add_output(std::string_view output, bool no_clipboard) noexcept {
+    void add_output(std::string_view output, bool no_clipboard) {
         std::string_view trimmed = output;
         while (!trimmed.empty() && trimmed.back() == '\n') trimmed.remove_suffix(1);
 
@@ -36,9 +36,9 @@ struct pipeline {
         }
     }
 
-    [[nodiscard]] std::string finalize() const noexcept { return accumulated_output; }
+    [[nodiscard]] std::string finalize() const { return accumulated_output; }
 
-    [[nodiscard]] std::string for_clipboard() const noexcept { return clipboard_output; }
+    [[nodiscard]] std::string for_clipboard() const { return clipboard_output; }
 };
 
 } // namespace prompt

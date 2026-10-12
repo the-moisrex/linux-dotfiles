@@ -7,7 +7,7 @@
 
 namespace prompt {
 
-chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_descriptor const> registry) noexcept {
+chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_descriptor const> registry) {
 
     auto known = [&](std::string_view name) -> bool {
         for (auto const& d : registry) {

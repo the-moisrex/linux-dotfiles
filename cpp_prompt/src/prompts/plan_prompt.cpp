@@ -1,4 +1,4 @@
-#include "prompt/prompts/plan_prompt.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -11,14 +11,14 @@ namespace {
 
 // plan.sh embeds through _common.sh's embed_file, whose shape differs from the
 // inline loops the other prompts use (leading blank line, no trailing one).
-std::string embed_file_block(std::filesystem::path const& path, std::size_t head_lines) noexcept {
+std::string embed_file_block(std::filesystem::path const& path, std::size_t head_lines) {
     if (!std::filesystem::is_regular_file(path)) return {};
 
     std::string name = path.filename().string();
     std::string output;
     output += "\n";
-    output += "File: " + name + "\n";
-    output += "```" + infer_lang(path) + "\n";
+    output += std::format("File: {}\n", name);
+    output += std::format("```{}\n", infer_lang(path));
     output += trim_context_nl(read_file(path), head_lines);
     output += "```\n";
     return output;
@@ -26,10 +26,10 @@ std::string embed_file_block(std::filesystem::path const& path, std::size_t head
 
 } // namespace
 
-prompt_result execute_plan(prompt_context&& ctx) noexcept {
+prompt_output execute_plan(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::string output;
@@ -112,14 +112,14 @@ Produce a structured plan with these sections:
         } else if (std::filesystem::is_regular_file(file)) {
             output += embed_file_block(file, head_lines);
         } else {
-            error += "Warning: File not found: " + std::string(ctx.args[i]) + "\n";
+            error += std::format("Warning: File not found: {}\n", std::string(ctx.args[i]));
         }
     }
 
-    return {std::move(output), 0, false, std::move(error)};
+    return {std::move(output), std::move(error), false, false};
 }
 
-void render_help_plan(std::ostream& os) noexcept {
+void render_help_plan(std::ostream& os) {
     os << R"EOF(Usage: prompt plan [--head N] [FILE...]
        echo "task description" | prompt plan [--head N] [FILE...]
 

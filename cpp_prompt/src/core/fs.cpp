@@ -5,7 +5,7 @@
 
 namespace prompt::fs {
 
-std::optional<std::filesystem::path> find_git_root(std::filesystem::path const& start) noexcept {
+std::optional<std::filesystem::path> find_git_root(std::filesystem::path const& start) {
 
     auto current = start;
     while (true) {
@@ -21,7 +21,7 @@ std::optional<std::filesystem::path> find_git_root(std::filesystem::path const& 
 }
 
 std::filesystem::path relative_path(std::filesystem::path const& file,
-                                    std::optional<std::filesystem::path> const& git_root) noexcept {
+                                    std::optional<std::filesystem::path> const& git_root) {
 
     try {
         if (git_root && std::filesystem::exists(*git_root)) {
@@ -33,7 +33,7 @@ std::filesystem::path relative_path(std::filesystem::path const& file,
     }
 }
 
-std::optional<std::filesystem::path> self_path() noexcept {
+std::optional<std::filesystem::path> self_path() {
     std::error_code ec;
     auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
     if (ec) return std::nullopt;
@@ -41,7 +41,7 @@ std::optional<std::filesystem::path> self_path() noexcept {
 }
 
 std::filesystem::path bin_tool(std::string_view name, std::filesystem::path const& exe_path,
-                               std::optional<std::filesystem::path> const& git_root) noexcept {
+                               std::optional<std::filesystem::path> const& git_root) {
     std::error_code ec;
     std::filesystem::path bare(name);
 

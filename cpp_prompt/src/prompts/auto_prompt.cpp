@@ -1,11 +1,9 @@
-#include "prompt/prompts/auto_prompt.hpp"
 #include "prompt/core/clipboard.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
-#include "prompt/core/python.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/embed.hpp"
 #include "prompt/sdk/prompt_registry.hpp"
-#include "prompt/tse/tse_python.hpp"
 #include <cstdint>
 #include <regex>
 #include <string>
@@ -15,7 +13,7 @@ namespace prompt::prompts {
 
 namespace {
 
-bool is_compiler_output(std::string_view content) noexcept {
+bool is_compiler_output(std::string_view content) {
     // auto.sh tests with `grep -qiE`, so the match is case-insensitive and
     // can start on any line.
     static const std::regex compiler_regex(
@@ -25,7 +23,7 @@ bool is_compiler_output(std::string_view content) noexcept {
     return std::regex_search(content_str, compiler_regex);
 }
 
-bool is_stock_identifier(std::string_view content, std::string& out_identifier) noexcept {
+bool is_stock_identifier(std::string_view content, std::string& out_identifier) {
     static const std::regex isin_re(R"(^IR[A-Za-z0-9]{10}$)");
     static const std::regex inscode_re(R"(^[0-9]{15,}$)");
     static const std::regex easytrader_re(
@@ -50,7 +48,7 @@ bool is_stock_identifier(std::string_view content, std::string& out_identifier) 
     return false;
 }
 
-bool extract_stock_identifier(std::string_view content, std::string& out_identifier) noexcept {
+bool extract_stock_identifier(std::string_view content, std::string& out_identifier) {
     static const std::regex combined_re(
         R"(https?://d\.easytrader\.ir/(easy-chart|stock-details)/[A-Za-z0-9]{12}|https?://(www\.)?tsetmc\.com/instInfo/[0-9]{15,}|https?://(www\.)?codal\.ir/ReportList\.aspx\?([^&]*&)?Symbol=[^&[:space:]]+|IR[A-Za-z0-9]{10}|[0-9]{15,})");
     std::smatch match;
@@ -65,7 +63,7 @@ bool extract_stock_identifier(std::string_view content, std::string& out_identif
 // Approximation of the perl `\p{L}` test auto.sh runs: only letter
 // characters count, English letters and Arabic-script letters (outside the
 // Arabic-only forms ة ي ك) stay untranslated, everything else translates.
-bool is_letter_codepoint(std::uint32_t cp) noexcept {
+bool is_letter_codepoint(std::uint32_t cp) {
     if (cp < 0x80) return (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
     auto in = [cp](std::uint32_t lo, std::uint32_t hi) { return cp >= lo && cp <= hi; };
     return in(0x00C0, 0x00D6) || in(0x00D8, 0x00F6) || in(0x00F8, 0x02AF) || // Latin
@@ -85,7 +83,7 @@ bool is_letter_codepoint(std::uint32_t cp) noexcept {
            in(0xFF21, 0xFF3A) || in(0xFF41, 0xFF5A);                                               // Fullwidth
 }
 
-bool should_translate_to_english(std::string_view content) noexcept {
+bool should_translate_to_english(std::string_view content) {
     std::size_t i = 0;
     while (i < content.size()) {
         unsigned char lead = static_cast<unsigned char>(content[i]);
@@ -137,7 +135,7 @@ bool should_translate_to_english(std::string_view content) noexcept {
 
 } // namespace
 
-prompt_result execute_auto(prompt_context&& ctx) noexcept {
+prompt_output execute_auto(prompt_context&& ctx) {
     std::string input_buffer;
     bool has_stdin = ctx.stdin_consumed;
 
@@ -281,21 +279,26 @@ prompt_result execute_auto(prompt_context&& ctx) noexcept {
         // $(cat) stripped.
         sub_ctx.stdin_content = has_stdin ? input_buffer + "\n" : std::string{};
         sub_ctx.stdin_consumed = has_stdin;
-        auto result = target->execute_fn(std::move(sub_ctx));
-        result.output.insert(0, echo);
-        // auto.sh reads the pipe itself (`input_buffer="$(cat)"`), so the
-        // chain's stdin is spent regardless of what the target did.
-        result.stdin_consumed = has_stdin;
-        return result;
+        try {
+            auto result = target->execute_fn(std::move(sub_ctx));
+            result.text.insert(0, echo);
+            // chain's stdin is spent regardless of what the target did.
+            result.stdin_consumed = has_stdin;
+            return result;
+        } catch (prompt_error const& err) {
+            std::string combined = echo;
+            combined += err.partial_output();
+            throw prompt_error{err.exit_code(), err.what(), std::move(combined), err.no_clipboard(), has_stdin};
+        }
     }
 
     // Every dispatch target of this binary is implemented natively; the
     // dispatch above always resolves. (A missing target is a bug — report
     // it like the bash dispatcher reports an unknown prompt.)
-    return {"", 3, false, "prompt auto: prompt '" + std::string(target_script) + "' not found\n", has_stdin};
+    throw prompt_error{3, "prompt auto: prompt '" + std::string(target_script) + "' not found\n", {}, false, has_stdin};
 }
 
-void render_help_auto(std::ostream& os) noexcept {
+void render_help_auto(std::ostream& os) {
     os << R"EOF(Usage: prompt auto [FILE...]
        some-command | prompt auto [FILE...]
 

@@ -1,5 +1,5 @@
-#include "prompt/prompts/gh_issue_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include <string>
 #include <vector>
@@ -8,13 +8,12 @@ namespace prompt::prompts {
 
 namespace {
 
-bool tool_exists(std::string const& name) noexcept {
+bool tool_exists(std::string const& name) {
     std::string cmd = "command -v " + name + " >/dev/null 2>&1";
-    std::vector<char const*> argv = {"bash", "-c", cmd.c_str(), nullptr};
-    return prompt::process::run_command(argv).exit_code == 0;
+    return prompt::process::run_command({"bash", "-c", cmd}).exit_code == 0;
 }
 
-std::string strip_trailing_newlines(std::string s) noexcept {
+std::string strip_trailing_newlines(std::string s) {
     while (!s.empty() && s.back() == '\n') s.pop_back();
     return s;
 }
@@ -28,19 +27,15 @@ std::string gh_issue_field(std::string const& number, std::string const& field, 
     storage.push_back(number);
     storage.push_back(field);
     storage.push_back(query);
-    std::vector<char const*> argv;
-    argv.reserve(storage.size() + 1);
-    for (auto const& s : storage) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return strip_trailing_newlines(prompt::process::run_command(argv).stdout_data);
+    return strip_trailing_newlines(prompt::process::run_command(storage).stdout_data);
 }
 
 } // namespace
 
-prompt_result execute_gh_issue(prompt_context&& ctx) noexcept {
+prompt_output execute_gh_issue(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     // init_prompt --no-files: --head is the only recognized flag; everything
@@ -75,7 +70,7 @@ prompt_result execute_gh_issue(prompt_context&& ctx) noexcept {
             error += "prompt gh.issue: Warning: 'gh' CLI is not installed. Falling back to stdin.\n";
             if (stdin_content.empty()) {
                 error += "prompt gh.issue: No issue data available. Pipe issue details or install gh CLI.\n";
-                return {std::string{}, 1, false, error};
+                throw soft_error{std::move(error)};
             }
         }
     }
@@ -97,7 +92,7 @@ prompt_result execute_gh_issue(prompt_context&& ctx) noexcept {
     output += "\n";
 
     if (!issue_title.empty()) {
-        output += "# Issue #" + issue_number + ": " + issue_title + "\n\n";
+        output += std::format("# Issue #{}: {}\n\n", issue_number, issue_title);
         if (!issue_url.empty()) output += "URL: " + issue_url + "\n";
         if (!issue_labels.empty()) output += "Labels: " + issue_labels + "\n";
         output += "\n";
@@ -110,7 +105,7 @@ prompt_result execute_gh_issue(prompt_context&& ctx) noexcept {
         output += "\n";
     } else if (!stdin_content.empty()) {
         if (!issue_number.empty()) {
-            output += "# Issue #" + issue_number + " (provided via stdin)\n";
+            output += std::format("# Issue #{} (provided via stdin)\n", issue_number);
         } else {
             output += "# Issue Description (provided via stdin)\n";
         }
@@ -119,13 +114,13 @@ prompt_result execute_gh_issue(prompt_context&& ctx) noexcept {
         output += "\n";
     } else {
         error += "No issue data available.\n";
-        return {std::move(output), 1, false, error};
+        throw soft_error{std::move(error), std::move(output)};
     }
 
-    return {std::move(output), 0, false, error, ctx.stdin_consumed};
+    return {std::move(output), error, false, ctx.stdin_consumed};
 }
 
-void render_help_gh_issue(std::ostream& os) noexcept {
+void render_help_gh_issue(std::ostream& os) {
     os << R"EOF(Usage: prompt gh.issue <ISSUE_NUMBER>
        echo "issue context" | prompt gh.issue [ISSUE_NUMBER]
 

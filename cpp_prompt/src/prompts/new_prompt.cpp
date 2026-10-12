@@ -1,5 +1,5 @@
-#include "prompt/prompts/new_prompt.hpp"
 #include "prompt/prompts/prompt_assets.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <filesystem>
@@ -12,16 +12,16 @@ namespace {
 
 // Same fenced-block form for embedded snapshot assets (no filesystem access).
 std::string embed_text(std::string_view content, std::string_view lang, std::string_view label,
-                       std::size_t head_lines) noexcept {
+                       std::size_t head_lines) {
     std::string out;
-    out += "\nFile: " + std::string(label) + "\n";
-    out += "```" + std::string(lang) + "\n";
+    out += std::format("\nFile: {}\n", std::string(label));
+    out += std::format("```{}\n", std::string(lang));
     out += trim_context_nl(content, head_lines);
     out += "```\n";
     return out;
 }
 
-std::string embed_block(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) noexcept {
+std::string embed_block(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) {
     if (!std::filesystem::is_regular_file(path)) return {};
     return embed_text(read_file(path), infer_lang(path), label.empty() ? path.filename().string() : std::string(label),
                       head_lines);
@@ -29,10 +29,10 @@ std::string embed_block(std::filesystem::path const& path, std::string_view labe
 
 } // namespace
 
-prompt_result execute_new(prompt_context&& ctx) noexcept {
+prompt_output execute_new(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::string output;
@@ -93,14 +93,14 @@ Return:
         } else if (std::filesystem::is_regular_file(std::filesystem::path(wanted))) {
             output += embed_block(std::filesystem::path(wanted), {}, head_lines);
         } else {
-            error += "Warning: File not found or is not a regular file: " + std::string(wanted) + "\n";
+            error += std::format("Warning: File not found or is not a regular file: {}\n", std::string(wanted));
         }
     }
 
-    return {std::move(output), 0, false, std::move(error), ctx.stdin_consumed};
+    return {std::move(output), std::move(error), false, ctx.stdin_consumed};
 }
 
-void render_help_new(std::ostream& os) noexcept {
+void render_help_new(std::ostream& os) {
     os << R"EOF(Usage: prompt new [--head N] [FILE...]
        echo "what the prompt should do" | prompt new [--head N] [FILE...]
 

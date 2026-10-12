@@ -1,5 +1,5 @@
-#include "prompt/prompts/cli_prompt.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <sstream>
@@ -8,10 +8,10 @@
 
 namespace prompt::prompts {
 
-prompt_result execute_cli(prompt_context&& ctx) noexcept {
+prompt_output execute_cli(prompt_context&& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        return {std::string{}, 2, false, std::move(msg)};
+        throw usage_error{std::move(msg)};
     }
 
     std::vector<std::string_view> cmd_args;
@@ -24,9 +24,8 @@ prompt_result execute_cli(prompt_context&& ctx) noexcept {
     }
 
     if (cmd_args.empty()) {
-        std::ostringstream help_os;
-        render_help_cli(help_os);
-        return {std::string{}, 1, false, "prompt cli: no command provided\n" + help_os.str()};
+        std::string help_os = help_text(render_help_cli);
+        throw soft_error{"prompt cli: no command provided\n" + help_os};
     }
 
     // cli.sh: cmd_description="${ARGS[*]}" and eval "${ARGS[@]}" 2>&1 — eval
@@ -41,9 +40,9 @@ prompt_result execute_cli(prompt_context&& ctx) noexcept {
     auto result = prompt::process::run_command(argv, ctx.stdin_content);
 
     std::string output;
-    output += "Output of command `" + command + "`:\n\n";
+    output += std::format("Output of command `{}`:\n\n", command);
     if (result.exit_code != 0) {
-        output += "(Exited with status: " + std::to_string(result.exit_code) + ")\n\n";
+        output += std::format("(Exited with status: {})\n\n", std::to_string(result.exit_code));
     }
     output += "\n```text\n";
     if (!result.stdout_data.empty()) {
@@ -51,10 +50,10 @@ prompt_result execute_cli(prompt_context&& ctx) noexcept {
     }
     output += "\n```\n";
 
-    return {std::move(output), 0, false, std::string{}};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_cli(std::ostream& os) noexcept {
+void render_help_cli(std::ostream& os) {
     os << R"EOF(Usage: prompt cli [--head N] <command> [args...]
        some-input | prompt cli [--head N] <command> [args...]
 

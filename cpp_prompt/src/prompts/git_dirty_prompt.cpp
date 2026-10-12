@@ -1,6 +1,6 @@
-#include "prompt/prompts/git_dirty_prompt.hpp"
 #include "prompt/core/fs.hpp"
 #include "prompt/core/process.hpp"
+#include "prompt/prompts/prompts.hpp"
 #include "prompt/sdk/args.hpp"
 #include "prompt/sdk/embed.hpp"
 #include <cstddef>
@@ -15,23 +15,17 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string git_raw(std::vector<std::string> const& args) noexcept {
-    std::vector<char const*> argv;
-    argv.reserve(args.size() + 1);
-    for (auto const& s : args) argv.push_back(s.c_str());
-    argv.push_back(nullptr);
-    return prompt::process::run_command(argv).stdout_data;
-}
+std::string git_raw(std::vector<std::string> const& args) { return prompt::process::run_command(args).stdout_data; }
 
 // Port of `var="$(git ...)"` — trailing newlines stripped (matters for the
 // `[[ -n ]]` content checks and the `echo "$var"` renders).
-std::string capture(std::vector<std::string> const& args) noexcept {
+std::string capture(std::vector<std::string> const& args) {
     std::string out = git_raw(args);
     while (!out.empty() && out.back() == '\n') out.pop_back();
     return out;
 }
 
-std::string infer_lang(std::string_view base) noexcept {
+std::string infer_lang(std::string_view base) {
     auto dot = base.rfind('.');
     std::string_view ext = (dot == std::string_view::npos) ? base : base.substr(dot + 1);
     if (base == "Dockerfile") return "dockerfile";
@@ -98,7 +92,7 @@ std::string infer_lang(std::string_view base) noexcept {
 
 // Split an already-stripped (\n-free-trailing) string on '\n'; no trailing
 // empty entry — mirrors the `<<< "$var"` here-strings the script feeds to read.
-std::vector<std::string> split_lines(std::string_view s) noexcept {
+std::vector<std::string> split_lines(std::string_view s) {
     std::vector<std::string> out;
     if (s.empty()) return out;
     std::size_t start = 0;
@@ -117,7 +111,7 @@ std::vector<std::string> split_lines(std::string_view s) noexcept {
 
 } // namespace
 
-prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
+prompt_output execute_git_dirty(prompt_context&& ctx) {
     // git-dirty.sh parses its own flags (not via _common.sh's parse_arguments),
     // and its --head accepts any value verbatim. --help/-h are intercepted by
     // the native dispatcher before we run.
@@ -137,7 +131,7 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
             ++i; // handled by the dispatcher; unreachable in practice
         } else if (a == "--head") {
             if (i + 1 >= ctx.args_count) {
-                return {std::string{}, 2, false, "Missing value for --head\n"};
+                throw usage_error{"Missing value for --head\n"};
             }
             head_lines = static_cast<std::size_t>(std::strtoull(std::string(ctx.args[i + 1]).c_str(), nullptr, 10));
             i += 2;
@@ -166,18 +160,16 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
             output_full_diff = true;
             ++i;
         } else {
-            return {std::string{}, 1, false,
-                    "prompt git-dirty: unknown option: " + std::string(a) +
-                        "\nTry 'prompt git-dirty --help' for usage.\n"};
+            throw soft_error{"prompt git-dirty: unknown option: " + std::string(a) +
+                             "\nTry 'prompt git-dirty --help' for usage.\n"};
         }
     }
 
     if (!filter_staged && !filter_unstaged && !filter_all) filter_all = true;
     if (!output_files && !output_diff && !output_full && !output_full_diff) output_files = true;
 
-    std::vector<char const*> rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};
-    if (prompt::process::run_command(rev).exit_code != 0) {
-        return {std::string{}, 1, false, "prompt git-dirty: Error: Not inside a git repository.\n"};
+    if (prompt::process::run_command({"git", "rev-parse", "--is-inside-work-tree"}).exit_code != 0) {
+        throw soft_error{"prompt git-dirty: Error: Not inside a git repository.\n"};
     }
 
     std::filesystem::path git_root = ctx.git_root;
@@ -232,7 +224,7 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
 
     bool has_content = !staged_files.empty() || !unstaged_files.empty() || !untracked_files.empty();
     if (!has_content) {
-        return {std::string{}, 0, false, "No changes found in the repository.\n"};
+        return {std::string{}, "No changes found in the repository.\n", false, false};
     }
 
     std::string output;
@@ -246,9 +238,9 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
         if (!std::filesystem::is_regular_file(full, ec) || ec) return;
         std::string name = full.filename().string();
         std::string content = read_file(full);
-        output += "File: " + filepath + " " + heading + "\n";
+        output += std::format("File: {} {}\n", filepath, heading);
         output += "\n";
-        output += "```" + infer_lang(name) + "\n";
+        output += std::format("```{}\n", infer_lang(name));
         output += trim_context_nl(content, head_lines);
         output += "```\n";
         output += "\n";
@@ -271,10 +263,10 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
         if (!untracked_files.empty()) output += "Untracked files:\n```text\n" + untracked_files + "\n```\n\n";
     } else if (output_diff) {
         if (!staged_diff.empty()) {
-            output += "Staged diff:\n\n```diff\n" + trim_context_nl(staged_diff, head_lines) + "```\n\n";
+            output += std::format("Staged diff:\n\n```diff\n{}```\n\n", trim_context_nl(staged_diff, head_lines));
         }
         if (!unstaged_diff.empty()) {
-            output += "Unstaged diff:\n\n```diff\n" + trim_context_nl(unstaged_diff, head_lines) + "```\n\n";
+            output += std::format("Unstaged diff:\n\n```diff\n{}```\n\n", trim_context_nl(unstaged_diff, head_lines));
         }
         if (!untracked_files.empty()) {
             output += "Untracked files:\n\n";
@@ -304,7 +296,7 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
                 emit_file(fp, "(status: " + st + ")");
             });
             if (!staged_diff.empty()) {
-                output += "Diffs:\n\n```diff\n" + trim_context_nl(staged_diff, head_lines) + "```\n\n";
+                output += std::format("Diffs:\n\n```diff\n{}```\n\n", trim_context_nl(staged_diff, head_lines));
             }
         }
         if (!unstaged_files.empty()) {
@@ -313,7 +305,7 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
                 emit_file(fp, "(status: " + st + ")");
             });
             if (!unstaged_diff.empty()) {
-                output += "Diffs:\n\n```diff\n" + trim_context_nl(unstaged_diff, head_lines) + "```\n\n";
+                output += std::format("Diffs:\n\n```diff\n{}```\n\n", trim_context_nl(unstaged_diff, head_lines));
             }
         }
         if (!untracked_files.empty()) {
@@ -322,10 +314,10 @@ prompt_result execute_git_dirty(prompt_context&& ctx) noexcept {
         }
     }
 
-    return {std::move(output), 0, false};
+    return {std::move(output), std::string{}, false, false};
 }
 
-void render_help_git_dirty(std::ostream& os) noexcept {
+void render_help_git_dirty(std::ostream& os) {
     os << R"EOF(Usage: prompt git-dirty [OPTIONS]
 
 Show uncommitted/changed files in the current Git repository.
