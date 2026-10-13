@@ -1,6 +1,7 @@
-#include "prompt/tse/tse_markdown.hpp"
+#include "tse_markdown.hpp"
 #include <charconv>
 #include <nlohmann/json.hpp>
+#include <span>
 #include <sstream>
 
 namespace prompt::tse {
@@ -9,7 +10,7 @@ namespace {
 
 // Python's csv.DictWriter with QUOTE_MINIMAL: a field is quoted only when it
 // contains the delimiter, a quote, CR or LF; quotes are doubled.
-void csv_row(std::string& out, std::vector<std::string> const& cols, nlohmann::json const& row) {
+void csv_row(std::string& out, std::span<const std::string> cols, nlohmann::json const& row) {
     bool first = true;
     for (auto const& col : cols) {
         if (!first) out += ',';
@@ -40,7 +41,7 @@ void csv_row(std::string& out, std::vector<std::string> const& cols, nlohmann::j
     out += '\n';
 }
 
-std::string csv_table(std::vector<std::string> const& cols, nlohmann::json const& rows) {
+std::string csv_table(std::span<const std::string> cols, nlohmann::json const& rows) {
     std::string out;
     csv_row(out, cols, nlohmann::json::object()); // header
     if (rows.is_array()) {
@@ -146,7 +147,7 @@ std::string render_markdown(nlohmann::json const& data) {
             }
             if (!pa.empty() || !sc.empty()) {
                 std::string table;
-                csv_row(table, {"date", "type", "details"}, nlohmann::json::object());
+                csv_row(table, std::vector<std::string>{"date", "type", "details"}, nlohmann::json::object());
                 for (auto const& a : pa) {
                     nlohmann::json row;
                     row["date"] = a.value("date", std::string{});
@@ -154,7 +155,7 @@ std::string render_markdown(nlohmann::json const& data) {
                     row["details"] = "adj_ratio=" + number4(a.value("adj_ratio", 0.0)) +
                                      " (pClosing_adj=" + py_float_str(a.value("pClosing_adj", 0.0)) +
                                      ", pClosing_raw=" + py_float_str(a.value("pClosing_raw", 0.0)) + ")";
-                    csv_row(table, {"date", "type", "details"}, row);
+                    csv_row(table, std::vector<std::string>{"date", "type", "details"}, row);
                 }
                 for (auto const& s : sc) {
                     nlohmann::json row;
@@ -163,7 +164,7 @@ std::string render_markdown(nlohmann::json const& data) {
                     row["details"] = "ratio=" + number4(s.value("ratio", 0.0)) +
                                      " (old=" + number0(s.value("old_shares", 0.0)) +
                                      ", new=" + number0(s.value("new_shares", 0.0)) + ")";
-                    csv_row(table, {"date", "type", "details"}, row);
+                    csv_row(table, std::vector<std::string>{"date", "type", "details"}, row);
                 }
                 lines.emplace_back("");
                 lines.push_back("## Corporate action events / رویدادهای اقدامات شرکتی");

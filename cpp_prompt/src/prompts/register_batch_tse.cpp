@@ -1,6 +1,6 @@
-#include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/prompts.hpp"
-#include "prompt/sdk/prompt_registry.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include "prompt_entry.hpp"
+#include "prompts.hpp"
 
 // Stub registrar — filled in as prompts in this batch are ported natively.
 namespace prompt {

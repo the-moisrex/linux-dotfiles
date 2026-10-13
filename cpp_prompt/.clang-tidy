@@ -1,0 +1,21 @@
+---
+# clang-tidy checks for the cpp_prompt sources.
+# Correctness and readability first; stylistic noise disabled explicitly.
+# Run with: bin/llvm.run clang-tidy cpp_prompt/src/...
+Checks: >
+  bugprone-*,
+  concurrency-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -bugprone-easily-swappable-parameters,
+  -concurrency-mt-unsafe,
+  -performance-avoid-endl
+
+HeaderFilterRegex: '.*'
+FormatStyle: file

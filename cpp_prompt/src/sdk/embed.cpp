@@ -1,4 +1,4 @@
-#include "prompt/sdk/embed.hpp"
+#include "embed.hpp"
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -101,8 +101,7 @@ std::string embed_file_block(std::filesystem::path const& file, std::size_t head
     output += std::format("File: {}\n\n", file.filename().string());
     output += std::format("```{}\n", infer_lang(file));
     output += trim_context_nl(read_file(file), head_lines);
-    output += "```\n";
-    output += "\n";
+    output += "```\n\n";
     return output;
 }
 

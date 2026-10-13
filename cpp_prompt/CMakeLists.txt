@@ -27,9 +27,8 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     endif()
 endif()
 
-if (IS_CLANG)
-    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-endif()
+# Always: clangd and the code-spanning tools read the build directory.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(cmake/import.cmake)
 
@@ -59,8 +58,6 @@ target_include_directories(prompt_lib PUBLIC
 )
 target_link_libraries(prompt_lib PUBLIC
     nlohmann_json::nlohmann_json
-    date::date
-    fmt::fmt
 )
 
 add_executable(prompt src/main.cpp)

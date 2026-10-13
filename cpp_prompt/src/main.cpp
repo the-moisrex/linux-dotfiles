@@ -1,12 +1,12 @@
-#include "prompt/core/clipboard.hpp"
-#include "prompt/core/fs.hpp"
-#include "prompt/core/process.hpp"
-#include "prompt/core/sanitize.hpp"
-#include "prompt/prompts/prompts.hpp"
-#include "prompt/sdk/chaining.hpp"
-#include "prompt/sdk/pipeline.hpp"
-#include "prompt/sdk/prompt_context.hpp"
-#include "prompt/sdk/prompt_registry.hpp"
+#include "core/clipboard.hpp"
+#include "core/fs.hpp"
+#include "core/process.hpp"
+#include "core/sanitize.hpp"
+#include "prompts/prompts.hpp"
+#include "sdk/chaining.hpp"
+#include "sdk/pipeline.hpp"
+#include "sdk/prompt_context.hpp"
+#include "sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -118,7 +118,7 @@ Notes:
     };
 
     base_ctx.select_files_fn = []() -> std::vector<std::filesystem::path> {
-        auto result = prompt::process::run_command({"fzf", "-m"});
+        auto result = prompt::process::run_command(std::vector<std::string>{"fzf", "-m"});
         std::vector<std::filesystem::path> files;
         std::string line;
         for (char c : result.stdout_data) {
@@ -149,9 +149,7 @@ Notes:
         // stderr is silenced (fzf complains without a tty) because most
         // callers capture the function through a command substitution.
         std::string name_str(name);
-        std::vector<std::string> storage;
-        storage.push_back("bash");
-        storage.push_back("-c");
+        std::vector<std::string> storage = {"bash", "-c"};
         if (git_root) {
             storage.push_back("cd \"$0\" && git ls-files --cached --others --exclude-standard 2>/dev/null | "
                               "fzf -f \"$1\" 2>/dev/null | head -n 1");

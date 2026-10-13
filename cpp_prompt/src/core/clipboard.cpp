@@ -1,5 +1,5 @@
-#include "prompt/core/clipboard.hpp"
-#include "prompt/core/process.hpp"
+#include "clipboard.hpp"
+#include "process.hpp"
 #include <array>
 #include <chrono>
 #include <cstdio>

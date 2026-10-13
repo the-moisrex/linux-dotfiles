@@ -1,4 +1,4 @@
-#include "prompt/sdk/errors.hpp"
+#include "../src/sdk/errors.hpp"
 #include <cassert>
 #include <cstdio>
 #include <string>

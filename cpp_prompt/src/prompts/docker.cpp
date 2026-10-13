@@ -1,0 +1,65 @@
+#include "../core/fs.hpp"
+#include "../sdk/args.hpp"
+#include "../sdk/embed.hpp"
+#include "prompts.hpp"
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace prompt::prompts {
+
+prompt_output execute_docker(prompt_context&& ctx) {
+    std::size_t head_lines = 0;
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
+        throw usage_error{std::move(msg)};
+    }
+
+    std::vector<std::string> files;
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (ctx.args[i] == "--head") {
+            ++i;
+            continue;
+        }
+        files.emplace_back(ctx.args[i]);
+    }
+
+    std::string output;
+    output +=
+        "You are a Docker and container infrastructure expert.\nReview the provided Dockerfiles, docker-compose files, "
+        "or container configurations.\n\nFocus on:\n- Security: non-root users, minimal base images, secrets exposure, "
+        "COPY vs ADD\n- Layer optimization: ordering, caching, multi-stage builds, .dockerignore\n- Image size: "
+        "unnecessary packages, build artifacts, dev dependencies in production\n- docker-compose: service "
+        "dependencies, health checks, resource limits, networking\n- Runtime: signal handling, logging, volume mounts, "
+        "environment variable management\n- Best practices: LABEL metadata, ENTRYPOINT vs CMD, ARG vs ENV\n\nProvide "
+        "specific fixes as a git diff. Prioritize security and size improvements.\n\n";
+
+    std::string error;
+    for (auto const& file : files) {
+        std::filesystem::path p(file);
+        if (std::filesystem::is_regular_file(p)) {
+            std::string file_name = p.filename().string();
+            output += std::format("File: {}\n\n", file_name);
+            output += std::format("```{}\n", infer_lang(p));
+            output += trim_context_nl(read_file(p), head_lines);
+            output += "\n```\n\n";
+        } else {
+            error += std::format("Warning: File '{}' not found.\n", file);
+        }
+    }
+
+    return {std::move(output), std::move(error), false, false};
+}
+
+void render_help_docker(std::ostream& os) {
+    os << R"EOF(Usage: prompt docker [--head N] [FILE...]
+       echo "task description" | prompt docker [--head N] [FILE...]
+
+Docker and container review prompt.
+Analyzes Dockerfiles, docker-compose files, and container configurations for best practices.
+
+Options:
+  --head N   Keep only the first N lines of the embedded context
+)EOF";
+}
+
+} // namespace prompt::prompts

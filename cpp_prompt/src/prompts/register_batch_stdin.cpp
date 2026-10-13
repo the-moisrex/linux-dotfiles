@@ -1,6 +1,6 @@
-#include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/prompts.hpp"
-#include "prompt/sdk/prompt_registry.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include "prompt_entry.hpp"
+#include "prompts.hpp"
 
 // Stdin-centric prompts: translation wrappers, raw stdin embedding and the
 // URL-fetching (yt / summarize) helpers.

@@ -1,5 +1,5 @@
-#include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/prompts.hpp"
+#include "prompt_entry.hpp"
+#include "prompts.hpp"
 
 // Batch registrars. Each batch is a self-contained translation unit so
 // parallel sessions can add prompt files without touching shared files.

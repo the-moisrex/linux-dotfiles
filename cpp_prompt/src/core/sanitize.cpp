@@ -1,5 +1,5 @@
-#include "prompt/core/sanitize.hpp"
-#include "prompt/core/strings.hpp"
+#include "sanitize.hpp"
+#include "strings.hpp"
 #include <cstdlib>
 #include <regex>
 #include <string>

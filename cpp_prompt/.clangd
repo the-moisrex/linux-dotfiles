@@ -1,0 +1,33 @@
+# clangd configuration for the cpp_prompt dispatcher.
+# See: https://clangd.llvm.org/config
+CompileFlags:
+  # Pick up compile_commands.json from the build directory.
+  CompilationDatabase: build
+  Add:
+    - -std=c++26
+    - -Wall
+    - -Wextra
+    - -Wno-unused-parameter
+  Remove:
+    - -fno-*
+    - -g*
+    - -mllvm*
+    - -fconserve-stack
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+
+Diagnostics:
+  # bundled headers trip this constantly; the port is header-only by design
+  UnusedIncludes: None
+
+Index:
+  StandardLibrary: Yes
+
+Completion:
+  AllScopes: true
+
+Hover:
+  ShowAKA: true

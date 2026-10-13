@@ -1,5 +1,5 @@
-#include "prompt/sdk/chaining.hpp"
-#include "prompt/sdk/prompt_registry.hpp"
+#include "chaining.hpp"
+#include "prompt_registry.hpp"
 #include <array>
 #include <cctype>
 #include <span>

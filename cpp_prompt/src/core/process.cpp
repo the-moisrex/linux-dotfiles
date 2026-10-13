@@ -1,4 +1,4 @@
-#include "prompt/core/process.hpp"
+#include "process.hpp"
 #include <array>
 #include <cerrno>
 #include <chrono>

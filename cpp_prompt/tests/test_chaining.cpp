@@ -1,5 +1,5 @@
-#include "prompt/sdk/chaining.hpp"
-#include "prompt/sdk/prompt_registry.hpp"
+#include "../src/sdk/chaining.hpp"
+#include "../src/sdk/prompt_registry.hpp"
 #include <cassert>
 #include <cstdio>
 #include <span>

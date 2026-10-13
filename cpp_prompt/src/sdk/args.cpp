@@ -1,4 +1,4 @@
-#include "prompt/sdk/args.hpp"
+#include "args.hpp"
 #include <cstdlib>
 #include <limits>
 

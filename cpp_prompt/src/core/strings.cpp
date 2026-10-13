@@ -1,4 +1,4 @@
-#include "prompt/core/strings.hpp"
+#include "strings.hpp"
 
 #include <charconv>
 

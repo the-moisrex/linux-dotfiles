@@ -37,18 +37,6 @@ if (NOT date_FOUND)
     FetchContent_MakeAvailable(date)
 endif()
 
-# fmt
-find_package(fmt 10.2 QUIET)
-if (NOT fmt_FOUND)
-    include(FetchContent)
-    FetchContent_Declare(
-        fmt
-        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-        GIT_TAG 10.2.1
-    )
-    FetchContent_MakeAvailable(fmt)
-endif()
-
 # For benchmarking (Debug only)
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     find_package(benchmark 1.8 QUIET)

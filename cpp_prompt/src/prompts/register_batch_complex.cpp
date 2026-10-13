@@ -1,6 +1,6 @@
-#include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/prompts/prompts.hpp"
-#include "prompt/sdk/prompt_registry.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include "prompt_entry.hpp"
+#include "prompts.hpp"
 
 // The "complex" batch: prompts with nontrivial control flow (clipboard
 // watching, subcommands, repo detection, dynamic listing). Summaries match

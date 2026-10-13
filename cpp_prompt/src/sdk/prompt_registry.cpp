@@ -1,4 +1,4 @@
-#include "prompt/sdk/prompt_registry.hpp"
+#include "prompt_registry.hpp"
 #include <algorithm>
 #include <array>
 #include <clocale>

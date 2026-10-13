@@ -1,10 +1,10 @@
-#include "prompt/prompts/tse_find_impl.hpp"
+#include "tse_find_impl.hpp"
 
-#include "prompt/core/fs.hpp"
-#include "prompt/core/process.hpp"
-#include "prompt/sdk/embed.hpp"
+#include "../core/fs.hpp"
+#include "../core/process.hpp"
+#include "../sdk/embed.hpp"
 
-#include "prompt/prompts/prompts.hpp"
+#include "prompts.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>

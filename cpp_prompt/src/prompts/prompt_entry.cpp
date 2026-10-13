@@ -1,7 +1,7 @@
-#include "prompt/prompts/prompt_entry.hpp"
-#include "prompt/core/fs.hpp"
-#include "prompt/prompts/prompts.hpp"
-#include "prompt/sdk/prompt_registry.hpp"
+#include "prompt_entry.hpp"
+#include "../core/fs.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include "prompts.hpp"
 #include <filesystem>
 #include <string>
 #include <string_view>
