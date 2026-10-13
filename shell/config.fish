@@ -163,3 +163,28 @@ end
 #         sleep 1s; # So we can cancel
 #     end
 # end
+
+
+function wt --description 'Fuzzy select a git worktree and cd into it'
+    set -l selected (git worktree list | fzf \
+        --prompt 'worktree> ' \
+        --header 'Select worktree to cd into' \
+        --preview '
+            echo "Branch:";
+            git -C {1} branch --show-current;
+            echo;
+            echo "Status:";
+            git -C {1} status -sb;
+            echo;
+            echo "Recent:";
+            git -C {1} log --oneline -8
+        ' \
+        --preview-window right:45% \
+        --height 50% \
+        --reverse \
+        --border)
+
+    if test -n "$selected"
+        cd (string split -f1 ' ' $selected)
+    end
+end

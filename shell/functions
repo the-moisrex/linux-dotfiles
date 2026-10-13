@@ -4,34 +4,34 @@ functions_file_path="$0"
 
 # time the shell startup
 timezsh() {
-  shell=${1-$SHELL}
-  for i in $(seq 1 10); do time $shell -i -c exit; done
+    shell=${1-$SHELL}
+    for i in $(seq 1 10); do time $shell -i -c exit; done
 }
 
 # check the time that it takes the shell to start
 time-shell() {
-  shell=${1-$SHELL}
-  for i in $(seq 1 10); do time $shell -i -c exit; done
+    shell=${1-$SHELL}
+    for i in $(seq 1 10); do time $shell -i -c exit; done
 }
 
 function cd {
-  builtin cd "$@" && ls -F && echo && echo && pwd;
+    builtin cd "$@" && ls -F && echo && echo && pwd;
 }
 
 function en {
-  if [ "$#" -eq 0 ]; then
-    export LANG="en_US.UTF-8" LANGUAGE="en:en_US"
-  else
-    LANG="en_US.UTF-8" LANGUAGE="en:en_US" $@
-  fi
+    if [ "$#" -eq 0 ]; then
+        export LANG="en_US.UTF-8" LANGUAGE="en:en_US"
+    else
+        LANG="en_US.UTF-8" LANGUAGE="en:en_US" $@
+    fi
 }
 
 function es {
-  if [ "$#" -eq 0 ]; then
-    export LANG="es_ES.UTF-8" LANGUAGE="es:en_US"
-  else
-    LANG="es_ES.UTF-8" LANGUAGE="es:en_US" $@
-  fi
+    if [ "$#" -eq 0 ]; then
+        export LANG="es_ES.UTF-8" LANGUAGE="es:en_US"
+    else
+        LANG="es_ES.UTF-8" LANGUAGE="es:en_US" $@
+    fi
 }
 
 
@@ -40,36 +40,36 @@ function zsh-stats() {
 }
 
 function repo_path {
-  repo="."
-  until [ "$(realpath "$repo")" = "/.git" -o \
-          "$(realpath "$repo")" = "/" -o \
-          -d "$repo/.git" \
+    repo="."
+    until [ "$(realpath "$repo")" = "/.git" -o \
+        "$(realpath "$repo")" = "/" -o \
+        -d "$repo/.git" \
         ]; do
-    repo="../${repo}";
-  done;
-  repo=$(dirname "$repo");
-  echo $repo;
+        repo="../${repo}";
+    done;
+    repo=$(dirname "$repo");
+    echo $repo;
 }
 
 # git push all
 function gpush {
-  git remote | while read remote; do echo "git push $remote $(git branch --show-current)"; setsid git push $remote $(git branch --show-current); done
+    git remote | while read remote; do echo "git push $remote $(git branch --show-current)"; setsid git push $remote $(git branch --show-current); done
 }
 
 # try a command until it works.
 function try {
-  # Stack overflow issue with this command, and also un-cancelable
-  # $@ || try $@;
-  while ! $@; do
-    sleep 1s; # So we can cancel
-  done;
+    # Stack overflow issue with this command, and also un-cancelable
+    # $@ || try $@;
+    while ! $@; do
+        sleep 1s; # So we can cancel
+    done;
 }
 
 # Usage: trynot isup facebook.com && nordvpn connect
 function trynot {
-  while $@; do
-    sleep 1s; # So we can cancel
-  done;
+    while $@; do
+        sleep 1s; # So we can cancel
+    done;
 }
 
 function reset_proxies {
@@ -83,4 +83,16 @@ function reset_proxies {
     export ALL_PROXY=""
     export FTP_PROXY=""
     export NO_PROXY=""
+}
+
+
+wt() {
+    local selected
+    selected=$(git worktree list | fzf \
+        --prompt="worktree> " \
+        --header="Select worktree to cd into" \
+        --preview='echo "Branch:"; git -C {1} branch --show-current; echo; echo "Status:"; git -C {1} status -sb; echo; echo "Recent:"; git -C {1} log --oneline -8' \
+        --preview-window=right:45% \
+    --height=50% --reverse --border)
+    [[ -n $selected ]] && cd "${selected%% *}"
 }
