@@ -52,7 +52,7 @@ void append_extra(std::string& out, std::string_view extra) {
 }
 
 bool in(std::string const& cat, std::initializer_list<char const*> names) {
-    for (auto n : names)
+    for (const auto* n : names)
         if (cat == n) return true;
     return false;
 }
@@ -62,7 +62,7 @@ bool in(std::string const& cat, std::initializer_list<char const*> names) {
 prompt_output execute_opportunities(prompt_context&& ctx) {
     // CATEGORY="${1:-}"; shift; EXTRA="$*"
     if (ctx.args_count == 0 || ctx.args[0].empty()) {
-        return {opportunities_help(), std::string{}, false, false};
+        return {.text = opportunities_help(), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
     }
 
     std::string category(ctx.args[0]);
@@ -366,7 +366,7 @@ prompt_output execute_opportunities(prompt_context&& ctx) {
         throw soft_error{std::move(err)};
     }
 
-    return {std::move(out), std::string{}, false, false};
+    return {.text = std::move(out), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_opportunities(std::ostream& os) { os << opportunities_help(); }

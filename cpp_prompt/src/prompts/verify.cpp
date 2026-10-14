@@ -68,7 +68,7 @@ prompt_output execute_verify(prompt_context&& ctx) {
               "it.\n\nIf all changes are correct, state that clearly.\n\n";
     output += trim_context_nl(context, head_lines);
 
-    return {std::move(output), std::string{}, false, piped};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = piped};
 }
 
 void render_help_verify(std::ostream& os) {

@@ -43,7 +43,12 @@ prompt_output execute_note(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_note(std::ostream& os) {

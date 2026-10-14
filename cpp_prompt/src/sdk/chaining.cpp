@@ -22,7 +22,7 @@ chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_des
     bool pending_name = false;
     std::size_t matched_names = 0; // bash's ${#_prompts[@]}
 
-    auto save_current = [&]() {
+    auto save_current = [&] {
         // Only save when a prompt name was actually matched; unmatched
         // leading tokens stay in current_args and go to the auto fallback.
         if (pending_name) {

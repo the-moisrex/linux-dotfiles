@@ -91,7 +91,7 @@ prompt_output execute_agents(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_agents(std::ostream& os) {

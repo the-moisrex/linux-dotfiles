@@ -42,7 +42,7 @@ std::string drop_trailing_newlines(std::string_view text) {
 
 // Port of grep -Eq '^(https?|file)://[^[:space:]]+$' (yt.sh's URL test).
 bool is_url(std::string_view trimmed) {
-    if (trimmed.find('\n') != std::string_view::npos) return false; // multi-line input
+    if (trimmed.contains('\n')) return false; // multi-line input
     std::string_view rest;
     if (trimmed.starts_with("http://")) {
         rest = trimmed.substr(7);
@@ -155,7 +155,12 @@ prompt_output execute_yt(prompt_context&& ctx) {
                           "takeaways and summary notes at the end as well: \n\n\n";
             }
             output += result;
-            return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+            return {
+                .text = std::move(output),
+                .error = std::string{},
+                .no_clipboard = false,
+                .stdin_consumed = ctx.stdin_consumed,
+            };
         }
         // transform_url failed: fall through to the raw-input branch.
     }
@@ -163,7 +168,12 @@ prompt_output execute_yt(prompt_context&& ctx) {
     output += "Turn this into an article and remove the ads, repetition, meaningless stuff and add all key "
               "takeaways and summary notes at the end as well: \n\n\n";
     output += input;
-    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_yt(std::ostream& os) {

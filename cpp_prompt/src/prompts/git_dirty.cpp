@@ -226,7 +226,12 @@ prompt_output execute_git_dirty(prompt_context&& ctx) {
 
     bool has_content = !staged_files.empty() || !unstaged_files.empty() || !untracked_files.empty();
     if (!has_content) {
-        return {std::string{}, "No changes found in the repository.\n", false, false};
+        return {
+            .text = std::string{},
+            .error = "No changes found in the repository.\n",
+            .no_clipboard = false,
+            .stdin_consumed = false,
+        };
     }
 
     std::string output;
@@ -315,7 +320,7 @@ prompt_output execute_git_dirty(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_git_dirty(std::ostream& os) {

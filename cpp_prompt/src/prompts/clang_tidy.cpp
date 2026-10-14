@@ -55,7 +55,12 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
     if (ctx.args_count == 0) {
         auto selected = ctx.select_files();
         if (selected.empty()) {
-            return {std::string{}, "No files specified or selected.\n", false, false};
+            return {
+                .text = std::string{},
+                .error = "No files specified or selected.\n",
+                .no_clipboard = false,
+                .stdin_consumed = false,
+            };
         }
         for (auto const& s : selected) display_args.emplace_back(s.string());
         // Files from fzf only populate $@ (via `set --`), never ARGS.
@@ -70,16 +75,18 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
         std::vector<std::string> bases;
         bases.emplace_back(".");
         if (!git_root.empty()) bases.push_back(git_root);
-        static char const* common_dirs[] = {"build",
-                                            "build-dev",
-                                            "build-dev-clang",
-                                            "build-dev-gcc",
-                                            "cmake-build-debug",
-                                            "cmake-build-release",
-                                            "out",
-                                            "build/Debug",
-                                            "build/Release",
-                                            "."};
+        static char const* common_dirs[] = {
+            "build",
+            "build-dev",
+            "build-dev-clang",
+            "build-dev-gcc",
+            "cmake-build-debug",
+            "cmake-build-release",
+            "out",
+            "build/Debug",
+            "build/Release",
+            ".",
+        };
         for (auto const& base : bases) {
             std::string found;
             for (char const* dir : common_dirs) {
@@ -106,7 +113,7 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
 
     std::string command_str = "clang-tidy ";
     for (std::size_t i = 0; i < ct_args.size(); ++i) {
-        if (i) command_str += ' ';
+        if (i != 0U) command_str += ' ';
         command_str += ct_args[i];
     }
     for (auto const& a : display_args) {
@@ -131,7 +138,7 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "\n```\n";
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_clang_tidy(std::ostream& os) {

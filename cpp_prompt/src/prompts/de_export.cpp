@@ -119,7 +119,7 @@ prompt_output execute_de_export(prompt_context&& ctx) {
         output += "\n```\n\n";
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_de_export(std::ostream& os) {

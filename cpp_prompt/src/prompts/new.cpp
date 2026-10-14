@@ -97,7 +97,12 @@ Return:
         }
     }
 
-    return {std::move(output), std::move(error), false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::move(error),
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_new(std::ostream& os) {

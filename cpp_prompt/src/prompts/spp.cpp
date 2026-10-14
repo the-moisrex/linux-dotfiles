@@ -43,7 +43,7 @@ prompt_output execute_spp(prompt_context&& ctx) {
     }
 
     output += "Use the symbol context above when analyzing the issue.";
-    return {std::move(output), std::move(error), false, false};
+    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_spp(std::ostream& os) {

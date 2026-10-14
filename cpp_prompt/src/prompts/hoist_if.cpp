@@ -41,7 +41,7 @@ prompt_output execute_hoist_if(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::move(error), false, false};
+    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_hoist_if(std::ostream& os) {

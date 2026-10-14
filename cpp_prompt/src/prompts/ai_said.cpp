@@ -39,7 +39,7 @@ std::string head_n_lines(std::string const& s, std::size_t head) {
     }
     std::string out;
     for (std::size_t i = 0; i < lines.size() && i < head; ++i) {
-        if (i) out += '\n';
+        if (i != 0U) out += '\n';
         out += lines[i];
     }
     return out;
@@ -52,7 +52,7 @@ std::string strip_trailing_nl(std::string s) {
 
 bool only_whitespace(std::string const& s) {
     for (char c : s)
-        if (!std::isspace(static_cast<unsigned char>(c))) return false;
+        if (std::isspace(static_cast<unsigned char>(c)) == 0) return false;
     return true;
 }
 
@@ -96,13 +96,13 @@ std::string build_output(std::span<const std::string> entries, std::size_t head_
 bool is_number_string(std::string const& s) {
     if (s.empty()) return false;
     std::size_t i = 0;
-    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
+    while (i < s.size() && (std::isdigit(static_cast<unsigned char>(s[i])) != 0)) ++i;
     if (i == 0) return false;
     if (i < s.size()) {
         if (s[i] != '.') return false;
         ++i;
         std::size_t frac = i;
-        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
+        while (i < s.size() && (std::isdigit(static_cast<unsigned char>(s[i])) != 0)) ++i;
         if (i == frac) return false;
     }
     return i == s.size();
@@ -145,8 +145,9 @@ prompt_output execute_ai_said(prompt_context&& ctx) {
     for (std::size_t i = 0; i < ctx.args_count;) {
         std::string a(ctx.args[i]);
         if (a == "--help" || a == "-h") {
-            return {ai_said_help(), std::string{}, false, false};
-        } else if (a == "--head") {
+            return {.text = ai_said_help(), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+        }
+        if (a == "--head") {
             if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --head\n"};
             head_str = std::string(ctx.args[++i]);
             ++i;
@@ -201,7 +202,7 @@ prompt_output execute_ai_said(prompt_context&& ctx) {
     }
 
     // Capture the paste like bash's $(...): trailing newlines are stripped.
-    auto paste = []() -> std::string { return strip_trailing_nl(prompt::clipboard::paste()); };
+    auto paste = [] -> std::string { return strip_trailing_nl(prompt::clipboard::paste()); };
 
     prompt::clipboard::init();
 
@@ -247,13 +248,14 @@ prompt_output execute_ai_said(prompt_context&& ctx) {
     sa.sa_handler = &ai_said_on_signal;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0; // no SA_RESTART: wake the polling sleeps on signals
-    struct sigaction old_int, old_term;
+    struct sigaction old_int;
+    struct sigaction old_term;
     sigaction(SIGINT, &sa, &old_int);
     sigaction(SIGTERM, &sa, &old_term);
 
     double interval_s = to_seconds(interval);
 
-    while (!g_ai_said_stop) {
+    while (g_ai_said_stop == 0) {
         // clipboard::paste cannot distinguish "empty" from "backend failed";
         // the failing-backend path is not deterministically reachable here.
         std::string raw = paste();

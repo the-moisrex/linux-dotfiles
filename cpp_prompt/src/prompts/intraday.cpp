@@ -113,13 +113,13 @@ prompt_output execute_intraday(prompt_context&& ctx) {
 
     std::vector<std::string> fetch_args = {"all", config.symbol, "--top", std::to_string(config.top), "--markdown"};
     if (config.days_set) {
-        fetch_args.push_back("--days");
+        fetch_args.emplace_back("--days");
         fetch_args.push_back(std::to_string(config.days));
     } else {
-        fetch_args.push_back("--full");
+        fetch_args.emplace_back("--full");
     }
-    if (config.no_codal) fetch_args.push_back("--no-codal");
-    if (config.unadjusted) fetch_args.push_back("--unadjusted");
+    if (config.no_codal) fetch_args.emplace_back("--no-codal");
+    if (config.unadjusted) fetch_args.emplace_back("--unadjusted");
     std::vector<std::string> tool_argv = {"python3", prompt::fs::bin_tool("tse", ctx.exe_path, std::nullopt).string()};
     for (auto const& a : fetch_args) tool_argv.push_back(a);
     auto fetch = prompt::process::run_command(tool_argv);
@@ -149,7 +149,7 @@ prompt_output execute_intraday(prompt_context&& ctx) {
 
     output += trim_context(fetch.stdout_data, config.head_lines);
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_intraday(std::ostream& os) {

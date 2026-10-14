@@ -7,8 +7,6 @@
 
 namespace prompt {
 
-void init_prompt_registry();
-
 // Batch registrars (see src/prompts/register_batches.cpp).
 void register_batches();
 

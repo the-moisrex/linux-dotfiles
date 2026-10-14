@@ -71,7 +71,7 @@ std::string trim_context_nl(std::string_view content, std::size_t head_lines) {
 std::string read_file(std::filesystem::path const& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return "";
-    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
 std::string embed_file(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) {

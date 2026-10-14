@@ -93,7 +93,12 @@ prompt_output execute_git_diff(prompt_context&& ctx) {
             output += trim_context_nl(diff_output, head_lines);
             output += "```\n";
         } else {
-            return {std::string{}, "No diffs found for the specified files.\n", false, false};
+            return {
+                .text = std::string{},
+                .error = "No diffs found for the specified files.\n",
+                .no_clipboard = false,
+                .stdin_consumed = false,
+            };
         }
     } else {
         std::string unstaged_diff = strip_trailing_newlines(git_raw(std::vector<std::string>{"git", "diff"}));
@@ -133,11 +138,16 @@ prompt_output execute_git_diff(prompt_context&& ctx) {
         }
 
         if (unstaged_diff.empty() && untracked_stripped.empty()) {
-            return {std::string{}, "No changes found in the working tree.\n", false, false};
+            return {
+                .text = std::string{},
+                .error = "No changes found in the working tree.\n",
+                .no_clipboard = false,
+                .stdin_consumed = false,
+            };
         }
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_git_diff(std::ostream& os) {

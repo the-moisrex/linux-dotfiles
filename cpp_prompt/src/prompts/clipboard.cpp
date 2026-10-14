@@ -20,7 +20,12 @@ prompt_output execute_clipboard(prompt_context&& ctx) {
         throw soft_error{"prompt clipboard: Clipboard is empty or unavailable.\n"};
     }
 
-    return {trim_context_nl(content, head_lines), std::string{}, false, false};
+    return {
+        .text = trim_context_nl(content, head_lines),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = false,
+    };
 }
 
 void render_help_clipboard(std::ostream& os) {

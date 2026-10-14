@@ -32,7 +32,7 @@ prompt_output execute_cli(prompt_context&& ctx) {
     // joins its arguments with spaces, so a single joined string is faithful.
     std::string command;
     for (std::size_t i = 0; i < cmd_args.size(); ++i) {
-        if (i) command += ' ';
+        if (i != 0U) command += ' ';
         command += cmd_args[i];
     }
 
@@ -50,7 +50,7 @@ prompt_output execute_cli(prompt_context&& ctx) {
     }
     output += "\n```\n";
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_cli(std::ostream& os) {

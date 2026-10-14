@@ -30,7 +30,7 @@ prompt_output execute_man(prompt_context&& ctx) {
 
     std::string man_pages;
     for (std::size_t i = 0; i < pages.size(); ++i) {
-        if (i) man_pages += ' ';
+        if (i != 0U) man_pages += ' ';
         man_pages += pages[i];
     }
 
@@ -54,7 +54,7 @@ prompt_output execute_man(prompt_context&& ctx) {
     }
     output += "\n```\n\n";
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_man(std::ostream& os) {

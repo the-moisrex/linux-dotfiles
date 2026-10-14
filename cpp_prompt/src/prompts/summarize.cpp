@@ -42,7 +42,7 @@ std::string drop_trailing_newlines(std::string_view text) {
 
 // Port of grep -Eq '^https?://[^[:space:]]+$' (summarize.sh's URL test).
 bool is_url(std::string_view trimmed) {
-    if (trimmed.find('\n') != std::string_view::npos) return false; // multi-line input
+    if (trimmed.contains('\n')) return false; // multi-line input
     std::string_view rest;
     if (trimmed.starts_with("http://")) {
         rest = trimmed.substr(7);
@@ -136,13 +136,23 @@ prompt_output execute_summarize(prompt_context&& ctx) {
         std::string result = transform_url(trimmed, tools, ok);
         if (ok) {
             output += result;
-            return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+            return {
+                .text = std::move(output),
+                .error = std::string{},
+                .no_clipboard = false,
+                .stdin_consumed = ctx.stdin_consumed,
+            };
         }
         // transform_url failed: fall back to the raw input.
     }
 
     output += input;
-    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_summarize(std::ostream& os) {

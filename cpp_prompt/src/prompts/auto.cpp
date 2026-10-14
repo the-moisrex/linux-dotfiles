@@ -36,7 +36,7 @@ bool is_stock_identifier(std::string_view content, std::string& out_identifier) 
     auto end = content.find_last_not_of(" \t\r\n");
     content = content.substr(start, end - start + 1);
 
-    if (content.find('\n') != std::string_view::npos) return false;
+    if (content.contains('\n')) return false;
 
     std::string content_str(content);
     if (std::regex_match(content_str, isin_re) || std::regex_match(content_str, inscode_re) ||
@@ -64,7 +64,7 @@ bool extract_stock_identifier(std::string_view content, std::string& out_identif
 // characters count, English letters and Arabic-script letters (outside the
 // Arabic-only forms ة ي ك) stay untranslated, everything else translates.
 bool is_letter_codepoint(std::uint32_t cp) {
-    if (cp < 0x80) return (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
+    if (cp < 0x80U) return (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
     auto in = [cp](std::uint32_t lo, std::uint32_t hi) { return cp >= lo && cp <= hi; };
     return in(0x00C0, 0x00D6) || in(0x00D8, 0x00F6) || in(0x00F8, 0x02AF) || // Latin
            in(0x0370, 0x03FF) || in(0x1F00, 0x1FFF) ||                       // Greek
@@ -86,19 +86,19 @@ bool is_letter_codepoint(std::uint32_t cp) {
 bool should_translate_to_english(std::string_view content) {
     std::size_t i = 0;
     while (i < content.size()) {
-        unsigned char lead = static_cast<unsigned char>(content[i]);
+        auto lead = static_cast<unsigned char>(content[i]);
         std::uint32_t cp = 0;
         std::size_t len = 1;
-        if (lead < 0x80) {
+        if (lead < 0x80U) {
             cp = lead;
-        } else if ((lead & 0xE0) == 0xC0) {
-            cp = lead & 0x1F;
+        } else if ((lead & 0xE0U) == 0xC0U) {
+            cp = lead & 0x1FU;
             len = 2;
-        } else if ((lead & 0xF0) == 0xE0) {
-            cp = lead & 0x0F;
+        } else if ((lead & 0xF0U) == 0xE0U) {
+            cp = lead & 0x0FU;
             len = 3;
-        } else if ((lead & 0xF8) == 0xF0) {
-            cp = lead & 0x07;
+        } else if ((lead & 0xF8U) == 0xF0U) {
+            cp = lead & 0x07U;
             len = 4;
         } else {
             ++i;
@@ -107,12 +107,12 @@ bool should_translate_to_english(std::string_view content) {
         if (i + len > content.size()) break;
         bool valid = true;
         for (std::size_t k = 1; k < len; ++k) {
-            unsigned char cont = static_cast<unsigned char>(content[i + k]);
-            if ((cont & 0xC0) != 0x80) {
+            auto cont = static_cast<unsigned char>(content[i + k]);
+            if ((cont & 0xC0U) != 0x80U) {
                 valid = false;
                 break;
             }
-            cp = (cp << 6) | (cont & 0x3F);
+            cp = (cp << 6U) | (static_cast<unsigned>(cont) & 0x3FU);
         }
         i += len;
         if (!valid) continue;
@@ -158,8 +158,7 @@ prompt_output execute_auto(prompt_context&& ctx) {
     if (!input_buffer.empty()) {
         if (is_compiler_output(input_buffer)) {
             target_script = "cpp";
-        } else if (input_buffer.find("youtube.com") != std::string::npos ||
-                   input_buffer.find("youtu.be") != std::string::npos) {
+        } else if (input_buffer.contains("youtube.com") || input_buffer.contains("youtu.be")) {
             target_script = "yt";
         } else if (std::regex_search(input_buffer,
                                      std::regex(R"((^|\n)(FROM |RUN |COPY |CMD |ENTRYPOINT |docker-compose|services:))",
@@ -183,9 +182,8 @@ prompt_output execute_auto(prompt_context&& ctx) {
         } else if (extract_stock_identifier(input_buffer, stock_identifier)) {
             target_script = "stock";
             extra_args.push_back(stock_identifier);
-        } else if (input_buffer.find("class ") != std::string::npos ||
-                   input_buffer.find("struct ") != std::string::npos ||
-                   input_buffer.find("#include <") != std::string::npos) {
+        } else if (input_buffer.contains("class ") || input_buffer.contains("struct ") ||
+                   input_buffer.contains("#include <")) {
             target_script = "cpp-reviewer";
         } else if (should_translate_to_english(input_buffer)) {
             target_script = "english";
@@ -203,7 +201,7 @@ prompt_output execute_auto(prompt_context&& ctx) {
             extra_args.clear();
             break;
         }
-        if (arg.find("youtube.com") != std::string_view::npos || arg.find("youtu.be") != std::string_view::npos) {
+        if (arg.contains("youtube.com") || arg.contains("youtu.be")) {
             target_script = "yt";
             break;
         }
@@ -220,9 +218,9 @@ prompt_output execute_auto(prompt_context&& ctx) {
                        ext == ".swift" || ext == ".ts" || ext == ".js") {
                 target_script = "review";
             } else if (ext == ".yml" || ext == ".yaml") {
-                if (fname.find("docker-compose") != std::string::npos || fname.find("compose") != std::string::npos) {
+                if (fname.contains("docker-compose") || fname.contains("compose")) {
                     target_script = "docker";
-                } else if (fname.find(".gitlab-ci") != std::string::npos) {
+                } else if (fname.contains(".gitlab-ci")) {
                     target_script = "ci";
                 } else {
                     target_script = "review";
@@ -231,7 +229,7 @@ prompt_output execute_auto(prompt_context&& ctx) {
                 target_script = "review";
             } else if (ext == ".md") {
                 target_script = "readme";
-            } else if (p.filename() == "Dockerfile" || fname.find("Dockerfile") != std::string::npos) {
+            } else if (p.filename() == "Dockerfile" || fname.contains("Dockerfile")) {
                 target_script = "docker";
             } else if (fname == "Jenkinsfile" || fname == ".gitlab-ci.yml" || fname == "Makefile" ||
                        fname == "CMakeLists.txt") {
@@ -259,7 +257,7 @@ prompt_output execute_auto(prompt_context&& ctx) {
 
     // Dispatch in-process when the target prompt is implemented in this
     // binary; avoid re-spawning `prompt` which would recurse.
-    if (auto* target = prompt::find_prompt(target_script)) {
+    if (const auto* target = prompt::find_prompt(target_script)) {
         auto sub_ctx = std::move(ctx);
         sub_ctx.name = target_script;
         auto orig_args = sub_ctx.args;

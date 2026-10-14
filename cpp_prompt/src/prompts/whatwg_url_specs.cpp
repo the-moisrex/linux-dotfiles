@@ -38,14 +38,17 @@ prompt_output execute_whatwg_url_specs(prompt_context&& ctx) {
         output += "```text\n";
         output += result.stdout_data;
         output += "```\n\n";
-        return {std::move(output),
-                "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n", false,
-                false};
+        return {
+            .text = std::move(output),
+            .error = "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n",
+            .no_clipboard = false,
+            .stdin_consumed = false,
+        };
     }
 
     std::string joined;
     for (std::size_t i = 0; i < sections.size(); ++i) {
-        if (i) joined += ' ';
+        if (i != 0U) joined += ' ';
         joined += sections[i];
     }
     output += std::format("Querying WHATWG URL specification for: {}\n\n", joined);
@@ -58,7 +61,7 @@ prompt_output execute_whatwg_url_specs(prompt_context&& ctx) {
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "```\n\n";
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_whatwg_url_specs(std::ostream& os) {

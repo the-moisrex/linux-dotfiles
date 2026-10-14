@@ -40,7 +40,7 @@ prompt_output execute_metadata(prompt_context&& ctx) {
               "parsed.\n";
     output += "\n";
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_metadata(std::ostream& os) {

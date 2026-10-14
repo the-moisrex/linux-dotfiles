@@ -20,8 +20,9 @@ std::string strip_trailing_newlines(std::string s) {
 
 // gh issue view <num> --json <field> -q <query> 2>/dev/null || true
 std::string gh_issue_field(std::string const& number, std::string const& field, std::string const& query) {
-    std::vector<std::string> storage = {"bash", "-c",  "gh issue view \"$0\" --json \"$1\" -q \"$2\" 2>/dev/null",
-                                        number, field, query};
+    std::vector<std::string> storage = {
+        "bash", "-c", R"(gh issue view "$0" --json "$1" -q "$2" 2>/dev/null)", number, field, query,
+    };
     return strip_trailing_newlines(prompt::process::run_command(storage).stdout_data);
 }
 
@@ -104,7 +105,7 @@ prompt_output execute_gh_issue(prompt_context&& ctx) {
         throw soft_error{std::move(error), std::move(output)};
     }
 
-    return {std::move(output), error, false, ctx.stdin_consumed};
+    return {.text = std::move(output), .error = error, .no_clipboard = false, .stdin_consumed = ctx.stdin_consumed};
 }
 
 void render_help_gh_issue(std::ostream& os) {

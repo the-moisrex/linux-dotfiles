@@ -19,7 +19,7 @@ prompt_output execute_english(prompt_context&& ctx) {
     if (!ctx.stdin_consumed) throw soft_error{std::string{}, std::move(output)};
 
     output += embed_stdin(ctx.stdin_content, head_lines);
-    return {std::move(output), std::string{}, false, true};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = true};
 }
 
 void render_help_english(std::ostream& os) {

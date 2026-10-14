@@ -16,8 +16,6 @@
 #include <unistd.h>
 #include <vector>
 
-extern char** environ;
-
 namespace prompt::process {
 
 namespace {
@@ -185,7 +183,7 @@ command_result command::run() {
         ::close(in_pipe[1]);
         in_pipe[1] = -1;
     } else {
-        writer = std::thread([&]() {
+        writer = std::thread([&] {
             std::size_t off = 0;
             while (off < in_copy.size()) {
                 auto n = ::write(in_pipe[1], in_copy.data() + off, in_copy.size() - off);
@@ -259,13 +257,13 @@ command_result run_command(std::vector<std::string> const& argv, std::string_vie
 command_result run_command(std::span<char const* const> argv, std::string_view stdin_data,
                            std::span<char const* const> env, std::chrono::milliseconds timeout) {
     std::vector<std::string> args;
-    for (auto p : argv) {
-        if (!p) break;
+    for (const auto* p : argv) {
+        if (p == nullptr) break;
         args.emplace_back(p);
     }
     std::vector<std::string> envs;
-    for (auto e : env) {
-        if (!e) break;
+    for (const auto* e : env) {
+        if (e == nullptr) break;
         envs.emplace_back(e);
     }
     return run_command(args, stdin_data, envs, timeout);

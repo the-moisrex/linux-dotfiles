@@ -1,7 +1,14 @@
 ---
-# clang-tidy checks for the cpp_prompt sources.
-# Correctness and readability first; stylistic noise disabled explicitly.
-# Run with: bin/llvm.run clang-tidy cpp_prompt/src/...
+# clang-tidy checks for the cpp_prompt dispatcher.
+# Two groups: correctness checks we fix on sight, and style checks this
+# project deliberately declines. Run with:
+#   clang-tidy -p build src/*.cpp src/*/*.cpp tests/*.cpp
+#   clang-tidy -p build <file> --fix      # one file at a time
+#
+# The fixer can garble a long single-line statement when two rewrites land on
+# the same line (it mangles argument lists in headers, and has deleted
+# function bodies). Fix per file and compile after each; never one giant
+# --fix run.
 Checks: >
   bugprone-*,
   concurrency-*,
@@ -10,12 +17,25 @@ Checks: >
   performance-*,
   portability-*,
   readability-*,
-  -modernize-use-trailing-return-type,
-  -readability-identifier-length,
-  -readability-magic-numbers,
   -bugprone-easily-swappable-parameters,
   -concurrency-mt-unsafe,
-  -performance-avoid-endl
+  -misc-const-correctness,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -misc-use-internal-linkage,
+  -modernize-use-ranges,
+  -modernize-use-string-view,
+  -modernize-use-std-print,
+  -modernize-use-trailing-return-type,
+  -performance-avoid-endl,
+  -performance-move-const-arg,
+  -portability-avoid-pragma-once,
+  -readability-braces-around-statements,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -*uppercase-literal-suffix
 
+WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 FormatStyle: file

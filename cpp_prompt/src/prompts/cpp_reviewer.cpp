@@ -40,7 +40,12 @@ prompt_output execute_cpp_reviewer(prompt_context&& ctx) {
               "commending good practices.\n";
     output += "\n";
 
-    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_cpp_reviewer(std::ostream& os) {

@@ -61,7 +61,7 @@ void test_all_prompts_registered() {
     check(find_prompt("git.worktree.files") != nullptr, "dotted name registered");
 
     auto const* summarize = find_prompt("summarize");
-    if (summarize) {
+    if (summarize != nullptr) {
         check(!summarize->help_summary.empty(), "summarize has a help summary");
         check(summarize->execute_fn != nullptr, "summarize has an executor");
     }

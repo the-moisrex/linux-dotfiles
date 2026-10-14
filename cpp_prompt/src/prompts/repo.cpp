@@ -71,7 +71,7 @@ prompt_output execute_repo(prompt_context&& ctx) {
 
     std::vector<std::string> tree_args;
     if (!depth.empty()) {
-        tree_args.push_back("-L");
+        tree_args.emplace_back("-L");
         tree_args.push_back(depth);
     }
 
@@ -81,7 +81,7 @@ prompt_output execute_repo(prompt_context&& ctx) {
         for (auto const& dir : dirs) output += run_tree({dir}, tree_args);
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_repo(std::ostream& os) {

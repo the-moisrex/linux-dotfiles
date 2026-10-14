@@ -40,15 +40,16 @@ struct stdin_tmpfile {
 } // namespace
 
 backend detect_backend() {
-    if (std::getenv("WAYLAND_DISPLAY")) return backend::wayland;
-    if (std::getenv("KDE_SESSION_VERSION")) return backend::kde;
-    if (std::getenv("DISPLAY")) return backend::x11;
+    if (std::getenv("WAYLAND_DISPLAY") != nullptr) return backend::wayland;
+    if (std::getenv("KDE_SESSION_VERSION") != nullptr) return backend::kde;
+    if (std::getenv("DISPLAY") != nullptr) return backend::x11;
     return backend::none;
 }
 
-std::string run_with_timeout(char const* const* argv, std::string_view stdin_data = {}, bool discard_output = false) {
+static std::string run_with_timeout(char const* const* argv, std::string_view stdin_data = {},
+                                    bool discard_output = false) {
     std::string cmd;
-    for (int i = 0; argv[i]; ++i) {
+    for (int i = 0; argv[i] != nullptr; ++i) {
         if (i > 0) cmd += ' ';
         cmd += "'";
         cmd += argv[i];
@@ -73,11 +74,11 @@ std::string run_with_timeout(char const* const* argv, std::string_view stdin_dat
     }
 
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return "";
+    if (pipe == nullptr) return "";
 
     std::array<char, 4096> buffer;
     std::string output;
-    while (fgets(buffer.data(), buffer.size(), pipe)) {
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
         output += buffer.data();
     }
     pclose(pipe);
@@ -109,8 +110,9 @@ std::string paste() {
         return result;
     }
     case backend::kde: {
-        char const* argv[] = {"qdbus6", "org.kde.klipper", "/klipper", "org.kde.klipper.klipper.getClipboardContents",
-                              nullptr};
+        char const* argv[] = {
+            "qdbus6", "org.kde.klipper", "/klipper", "org.kde.klipper.klipper.getClipboardContents", nullptr,
+        };
         auto result = run_with_timeout(argv);
         if (!result.empty() && result.back() == '\n') result.pop_back();
         return result;
@@ -137,8 +139,9 @@ bool copy(std::string_view data) {
     case backend::kde: {
         // bash's bin/clipboard prefers the dbus-send/qdbus call over its
         // python-dbus client; klipper takes the text as an argv element.
-        prompt::process::command cmd{"qdbus", "org.kde.klipper", "/klipper",
-                                     "org.kde.klipper.klipper.setClipboardContents", std::string(data)};
+        prompt::process::command cmd{
+            "qdbus", "org.kde.klipper", "/klipper", "org.kde.klipper.klipper.setClipboardContents", std::string(data),
+        };
         cmd.timeout(std::chrono::seconds(5));
         cmd.run();
         return true;
@@ -163,8 +166,9 @@ bool clear() {
         return true;
     }
     case backend::kde: {
-        char const* argv[] = {"qdbus6", "org.kde.klipper", "/klipper", "org.kde.klipper.klipper.clearClipboardContents",
-                              nullptr};
+        char const* argv[] = {
+            "qdbus6", "org.kde.klipper", "/klipper", "org.kde.klipper.klipper.clearClipboardContents", nullptr,
+        };
         run_with_timeout(argv);
         return true;
     }

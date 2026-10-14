@@ -197,7 +197,7 @@ prompt_output execute_fs8_mod(prompt_context&& ctx) {
     out += "\n## Registration: mods/mods.ixx (export imports)\n";
     embed_file(out, err, root / "mods/mods.ixx", "mods/mods.ixx", head_lines);
 
-    return {std::move(out), std::move(err)};
+    return {.text = std::move(out), .error = std::move(err)};
 }
 
 void render_help_fs8_mod(std::ostream& os) {

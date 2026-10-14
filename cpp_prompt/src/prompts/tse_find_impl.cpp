@@ -339,7 +339,7 @@ bool is_positive_int_token(std::string_view text) {
 std::size_t parse_head_value(std::string_view text) {
     std::string copy(text);
     unsigned long long parsed = std::strtoull(copy.c_str(), nullptr, 10);
-    if (parsed > 0x7fffffffffffffffULL) parsed = 0x7fffffffffffffffULL;
+    parsed = std::min(parsed, 0x7fffffffffffffffULL);
     return static_cast<std::size_t>(parsed);
 }
 
@@ -360,8 +360,8 @@ snippet_result run_snippet(std::string_view script, std::string_view stdin_data)
     // payload must still read an empty stream, like `printf '%s' "" |` does.
     if (stdin_data.empty()) command += " < /dev/null";
 
-    auto result = prompt::process::run_command({"bash", "-c", command, script_storage}, std::string(stdin_data));
-    return {captured(result.stdout_data), result.exit_code};
+    auto result = prompt::process::run_command({"bash", "-c", command, script_storage}, stdin_data);
+    return {.output = captured(result.stdout_data), .exit_code = result.exit_code};
 }
 
 // ---------------------------------------------------------------------------
@@ -511,7 +511,7 @@ classified_input classify_input(prompt_context const& ctx, parsed_args const& pa
 
     constexpr std::string_view kNoQuery =
         "prompt tse.find: no query given (pass it as arguments or pipe it on stdin)\n";
-    auto no_query = [&kNoQuery]() {
+    auto no_query = [&kNoQuery] {
         std::string help = help_text(render_help_tse_find_impl);
         return std::string(kNoQuery) + help;
     };
@@ -519,7 +519,7 @@ classified_input classify_input(prompt_context const& ctx, parsed_args const& pa
     if (!screen_files.empty()) {
         if (has_dash) {
             out.source_kind = "run";
-            out.run_args = screen_files;
+            out.run_args = std::move(screen_files);
             out.run_args.insert(out.run_args.end(), screen_rest.begin(), screen_rest.end());
         } else if (!screen_rest.empty()) {
             out.error = "prompt tse.find: cannot combine a screen file with a query\n";
@@ -531,7 +531,7 @@ classified_input classify_input(prompt_context const& ctx, parsed_args const& pa
                 if (ends_with(file, ".tse.args")) has_args_file = true;
             if (has_args_file) {
                 out.source_kind = "run";
-                out.run_args = screen_files;
+                out.run_args = std::move(screen_files);
             } else {
                 for (auto const& file : screen_files) {
                     auto resolved = resolve_exact_file(file, ctx.git_root);
@@ -547,11 +547,11 @@ classified_input classify_input(prompt_context const& ctx, parsed_args const& pa
         }
     } else if (has_dash) {
         out.source_kind = "run";
-        out.run_args = screen_rest;
+        out.run_args = std::move(screen_rest);
     } else if (!screen_rest.empty()) {
         std::string query;
         for (std::size_t i = 0; i < screen_rest.size(); ++i) {
-            if (i) query += ' ';
+            if (i != 0U) query += ' ';
             query += screen_rest[i];
         }
         out.query = std::move(query);
@@ -622,7 +622,7 @@ emit_result emit_review(std::string_view kind, std::string_view label, std::stri
             lines.push_back(info.output.substr(start, nl - start));
             start = nl + 1;
         }
-        while (lines.size() < 3) lines.emplace_back(std::string{});
+        while (lines.size() < 3) lines.emplace_back();
 
         std::string header = "## Screen snapshot: " + std::string(label);
         if (!lines[0].empty()) header += " — screened " + lines[0];
@@ -738,7 +738,13 @@ std::string screener_to_run(screener_paths const& paths, prompt_context const& c
 
 prompt_output execute_tse_find_impl(prompt_context&& ctx) {
     auto parsed = parse_args(ctx);
-    if (parsed.wants_help) return {std::move(parsed.help_text), std::string{}, false, false};
+    if (parsed.wants_help)
+        return {
+            .text = std::move(parsed.help_text),
+            .error = std::string{},
+            .no_clipboard = false,
+            .stdin_consumed = false,
+        };
     if (!parsed.error.empty()) throw prompt_error{parsed.exit_code, std::move(parsed.error)};
 
     auto screener = locate_screener(ctx);
@@ -777,7 +783,12 @@ prompt_output execute_tse_find_impl(prompt_context&& ctx) {
                 throw usage_error{std::move(rendered.error), std::move(output)};
             }
         }
-        return {std::move(output), std::string{}, false, stdin_consumed};
+        return {
+            .text = std::move(output),
+            .error = std::string{},
+            .no_clipboard = false,
+            .stdin_consumed = stdin_consumed,
+        };
     }
 
     if (input.source_kind == "run") {
@@ -804,11 +815,16 @@ prompt_output execute_tse_find_impl(prompt_context&& ctx) {
         if (rendered.exit_code != 0) {
             throw usage_error{std::move(rendered.error), std::move(output)};
         }
-        return {std::move(output), std::string{}, false, stdin_consumed};
+        return {
+            .text = std::move(output),
+            .error = std::string{},
+            .no_clipboard = false,
+            .stdin_consumed = stdin_consumed,
+        };
     }
 
     // Generator: embed the tool's own --help as the flag reference.
-    auto help_run = prompt::process::run_command({"bash", "-c", "NO_COLOR=1 \"$0\" \"$@\" 2>&1", tool, "--help"});
+    auto help_run = prompt::process::run_command({"bash", "-c", R"(NO_COLOR=1 "$0" "$@" 2>&1)", tool, "--help"});
     if (help_run.exit_code != 0) {
         throw soft_error{"prompt tse.find: tse.find --help failed:\n" + captured(help_run.stdout_data) + "\n",
                          {},
@@ -834,7 +850,7 @@ prompt_output execute_tse_find_impl(prompt_context&& ctx) {
     }
     output += kGroundRules;
 
-    return {std::move(output), std::string{}, false, stdin_consumed};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = stdin_consumed};
 }
 
 void render_help_tse_find_impl(std::ostream& os) { os << kHelpText; }

@@ -13,7 +13,7 @@ namespace {
 
 // git -C <root> ls-files -- <patterns...> 2>/dev/null, non-empty lines only.
 std::vector<std::string> git_ls_files(prompt_context const& ctx, std::vector<std::string> const& patterns) {
-    std::vector<std::string> storage = {"bash", "-c", "git -C \"$0\" ls-files -- \"$@\" 2>/dev/null"};
+    std::vector<std::string> storage = {"bash", "-c", R"(git -C "$0" ls-files -- "$@" 2>/dev/null)"};
     storage.push_back(ctx.git_root.string());
     for (auto const& p : patterns) storage.push_back(p);
 
@@ -37,7 +37,7 @@ bool contains_ci_path(std::string const& line) {
     std::string lower;
     lower.reserve(line.size());
     for (char c : line) lower += static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
-    return lower.find(needle) != std::string::npos;
+    return lower.contains(needle);
 }
 
 } // namespace
@@ -65,8 +65,12 @@ prompt_output execute_ci(prompt_context&& ctx) {
         for (auto const& f : git_ls_files(ctx, std::vector<std::string>{"*.yml", "*.yaml"})) {
             if (contains_ci_path(f)) ci_files.push_back(ctx.git_root.string() + "/" + f);
         }
-        append(git_ls_files(ctx, std::vector<std::string>{".gitlab-ci.yml", ".gitlab-ci.yaml", "**/.gitlab-ci.yml",
-                                                          "**/.gitlab-ci.yaml"}));
+        append(git_ls_files(ctx, std::vector<std::string>{
+                                     ".gitlab-ci.yml",
+                                     ".gitlab-ci.yaml",
+                                     "**/.gitlab-ci.yml",
+                                     "**/.gitlab-ci.yaml",
+                                 }));
         append(git_ls_files(ctx, std::vector<std::string>{"*Jenkinsfile*"}));
         append(git_ls_files(
             ctx, std::vector<std::string>{"*Dockerfile*", "*dockerfile*", "*docker-compose*", "*compose.y*"}));
@@ -77,7 +81,7 @@ prompt_output execute_ci(prompt_context&& ctx) {
     if (ci_files.empty()) {
         output += "No CI/CD configuration files found in this repository.\nSearched for: GitHub Actions, GitLab CI, "
                   "Jenkins, Docker, CircleCI, Travis CI.\n";
-        return {std::move(output), std::string{}, false, false};
+        return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
     }
 
     std::vector<std::string> seen;
@@ -103,7 +107,7 @@ prompt_output execute_ci(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_ci(std::ostream& os) {

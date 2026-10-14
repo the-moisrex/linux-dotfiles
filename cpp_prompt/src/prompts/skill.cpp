@@ -99,7 +99,7 @@ std::string parse_frontmatter(std::filesystem::path const& file) {
         std::string key = line.substr(0, colon);
         bool ok = (std::isalnum(static_cast<unsigned char>(key[0])) != 0) || key[0] == '_';
         for (char c : key) {
-            if (!(std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '-')) ok = false;
+            if (std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_' && c != '-') ok = false;
         }
         if (!ok) continue;
         std::string value = prompt::text::strip(line.substr(colon + 1));
@@ -281,14 +281,14 @@ prompt_output execute_skill(prompt_context&& ctx) {
     std::string first = ctx.args_count > 0 ? std::string(ctx.args[0]) : std::string();
 
     // Build the positional arg list (parse_arguments drops --head + value).
-    auto positionals = [&]() {
+    auto positionals = [&] {
         std::vector<std::string> pos;
         for (std::size_t i = 0; i < ctx.args_count;) {
             if (ctx.args[i] == "--head") {
                 ++i;
                 if (i < ctx.args_count) ++i;
             } else {
-                pos.push_back(std::string(ctx.args[i++]));
+                pos.emplace_back(ctx.args[i++]);
             }
         }
         return pos;
@@ -302,7 +302,7 @@ prompt_output execute_skill(prompt_context&& ctx) {
             std::string out;
             out += "Cached skills:\n\n";
             list_cached_skills(out);
-            return {std::move(out), std::string{}};
+            return {.text = std::move(out), .error = std::string{}};
         }
 
         if (subcommand == "uninstall") {
@@ -325,7 +325,7 @@ prompt_output execute_skill(prompt_context&& ctx) {
             if (!found) {
                 throw soft_error{"error: skill '" + name + "' not found in any cache directory\n"};
             }
-            return {std::move(out), std::string{}};
+            return {.text = std::move(out), .error = std::string{}};
         }
 
         if (subcommand == "install") {
@@ -360,7 +360,7 @@ prompt_output execute_skill(prompt_context&& ctx) {
             std::string out;
             out += "\nInstalled skill content:\n\n";
             out += read_file(std::filesystem::path(skills_dir()) / skill_name / "SKILL.md");
-            return {std::move(out), std::move(err)};
+            return {.text = std::move(out), .error = std::move(err)};
         }
     }
 
@@ -425,7 +425,7 @@ prompt_output execute_skill(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(out), std::move(err)};
+    return {.text = std::move(out), .error = std::move(err)};
 }
 
 void render_help_skill(std::ostream& os) {

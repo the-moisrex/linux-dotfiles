@@ -90,16 +90,16 @@ prompt_output execute_cmake(prompt_context&& ctx) {
     std::vector<std::string> files;
     std::string search_dir;
     if (!ctx.git_root.empty()) {
-        std::vector<std::string> storage = {"bash", "-c", "git -C \"$0\" ls-files -- \"$@\" 2>/dev/null"};
+        std::vector<std::string> storage = {"bash", "-c", R"(git -C "$0" ls-files -- "$@" 2>/dev/null)"};
         storage.push_back(ctx.git_root.string());
-        storage.push_back("*CMakeLists.txt");
-        storage.push_back("*.cmake");
+        storage.emplace_back("*CMakeLists.txt");
+        storage.emplace_back("*.cmake");
         files = split_lines(prompt::process::run_command(storage).stdout_data);
         search_dir = ctx.git_root.string();
     } else {
         for (auto& f :
              split_lines(prompt::process::run_command(
-                             {"bash", "-c", "find . -type f \\( -name CMakeLists.txt -o -name \"*.cmake\" \\)"})
+                             {"bash", "-c", R"(find . -type f \( -name CMakeLists.txt -o -name "*.cmake" \))"})
                              .stdout_data)) {
             if (f.rfind("./", 0) == 0) f = f.substr(2);
             files.push_back(f);
@@ -110,7 +110,7 @@ prompt_output execute_cmake(prompt_context&& ctx) {
     for (auto const& f : files) {
         bool exclude = false;
         for (auto const& pat : exclude_patterns) {
-            if (f.find(pat) != std::string::npos) {
+            if (f.contains(pat)) {
                 exclude = true;
                 break;
             }
@@ -130,7 +130,7 @@ prompt_output execute_cmake(prompt_context&& ctx) {
         output += "\n    ```\n\n";
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_cmake(std::ostream& os) {

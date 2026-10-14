@@ -22,7 +22,7 @@ bool is_excluded(std::string const& name) {
         "english", "farsi", "auto",         "summarize",    "metadata", "tweets", "diagram",
         "explain", "list",  "list-prompts", "ask-for-help", "ai-said",  "yt",
     };
-    return excluded.count(name) > 0;
+    return excluded.contains(name);
 }
 
 // Locate the prompts/ directory whose list.sh the bash prompt runs (its own
@@ -120,7 +120,7 @@ prompt_output execute_ask_for_help(prompt_context&& ctx) {
            "Make sure to properly escape characters.\n"
            "\n";
 
-    return {std::move(out), std::string{}, true, false};
+    return {.text = std::move(out), .error = std::string{}, .no_clipboard = true, .stdin_consumed = false};
 }
 
 void render_help_ask_for_help(std::ostream& os) {

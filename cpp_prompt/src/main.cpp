@@ -80,7 +80,7 @@ Notes:
 
     // Wire up services
     base_ctx.clipboard_content_fn = &prompt::clipboard::paste;
-    base_ctx.clipboard_identifier_fn = []() -> std::optional<std::string> {
+    base_ctx.clipboard_identifier_fn = [] -> std::optional<std::string> {
         auto content = prompt::clipboard::paste();
         if (content.empty()) return std::nullopt;
 
@@ -117,7 +117,7 @@ Notes:
         return std::nullopt;
     };
 
-    base_ctx.select_files_fn = []() -> std::vector<std::filesystem::path> {
+    base_ctx.select_files_fn = [] -> std::vector<std::filesystem::path> {
         auto result = prompt::process::run_command(std::vector<std::string>{"fzf", "-m"});
         std::vector<std::filesystem::path> files;
         std::string line;
@@ -151,11 +151,11 @@ Notes:
         std::string name_str(name);
         std::vector<std::string> storage = {"bash", "-c"};
         if (git_root) {
-            storage.push_back("cd \"$0\" && git ls-files --cached --others --exclude-standard 2>/dev/null | "
-                              "fzf -f \"$1\" 2>/dev/null | head -n 1");
+            storage.emplace_back("cd \"$0\" && git ls-files --cached --others --exclude-standard 2>/dev/null | "
+                                 "fzf -f \"$1\" 2>/dev/null | head -n 1");
             storage.push_back(git_root->string());
         } else {
-            storage.push_back("rg --files 2>/dev/null || find . -type f | fzf -f \"$0\" 2>/dev/null | head -n 1");
+            storage.emplace_back("rg --files 2>/dev/null || find . -type f | fzf -f \"$0\" 2>/dev/null | head -n 1");
         }
         storage.push_back(name_str);
 
@@ -171,7 +171,7 @@ Notes:
 
     // Read stdin if available. The bash dispatcher only tests for a pipe
     // ([ -t 0 ]), so an empty pipe still counts as piped stdin.
-    if (!isatty(STDIN_FILENO)) {
+    if (isatty(STDIN_FILENO) == 0) {
         std::string stdin_content;
         std::string line;
         while (std::getline(std::cin, line)) {
@@ -199,8 +199,8 @@ Notes:
     // Execute each prompt in chain
     for (std::size_t i = 0; i < chain.count; ++i) {
         auto const& inv = chain.invocations[i];
-        auto* desc = prompt::find_prompt(inv.name);
-        if (!desc) {
+        const auto* desc = prompt::find_prompt(inv.name);
+        if (desc == nullptr) {
             std::cerr << "prompt: prompt '" << inv.name << "' not found\n";
             return 3;
         }
@@ -220,7 +220,7 @@ Notes:
             std::ostringstream help_os;
             if (!desc->help_full.empty()) {
                 help_os << desc->help_full;
-            } else if (desc->render_help_fn) {
+            } else if (desc->render_help_fn != nullptr) {
                 desc->render_help_fn(help_os);
             }
             pipeline.add_output(prompt::sanitize::sanitize(help_os.str()), false);
@@ -251,7 +251,7 @@ Notes:
                 base_ctx.stdin_content.clear();
             }
         } catch (prompt::prompt_error const& err) {
-            std::string partial = err.partial_output();
+            const std::string& partial = err.partial_output();
             pipeline.add_output(prompt::sanitize::sanitize(partial), err.no_clipboard());
             std::string message = err.what();
             if (!message.empty()) {

@@ -36,7 +36,7 @@ prompt_output execute_cpp(prompt_context&& ctx) {
 
     std::string output;
     if (!content.empty()) {
-        if (content.find("```") == std::string::npos) {
+        if (!content.contains("```")) {
             output += "```\n";
             output += content + "\n\n";
             output += "```\n";
@@ -69,7 +69,12 @@ prompt_output execute_cpp(prompt_context&& ctx) {
     }
     output += "\n";
 
-    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_cpp(std::ostream& os) {

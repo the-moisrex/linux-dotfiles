@@ -75,14 +75,14 @@ prompt_output execute_git_worktree_diff(prompt_context&& ctx) {
 
     std::vector<std::string> diff_args = {base_branch};
     if (!not_commit.empty()) {
-        diff_args.push_back("--not");
+        diff_args.emplace_back("--not");
         diff_args.push_back(not_commit);
     }
 
     std::vector<std::string> git_cmd = {"git", "diff"};
     for (auto const& a : diff_args) git_cmd.push_back(a);
     if (!files.empty()) {
-        git_cmd.push_back("--");
+        git_cmd.emplace_back("--");
         for (auto const& f : files) git_cmd.push_back(f);
     }
 
@@ -93,9 +93,14 @@ prompt_output execute_git_worktree_diff(prompt_context&& ctx) {
         output += "\n```diff\n";
         output += trim_context_nl(diff_output, head_lines);
         output += "```\n";
-        return {std::move(output), std::string{}, false, false};
+        return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
     }
-    return {std::string{}, "No diffs found between current branch and " + base_branch + ".\n", false, false};
+    return {
+        .text = std::string{},
+        .error = "No diffs found between current branch and " + base_branch + ".\n",
+        .no_clipboard = false,
+        .stdin_consumed = false,
+    };
 }
 
 void render_help_git_worktree_diff(std::ostream& os) {

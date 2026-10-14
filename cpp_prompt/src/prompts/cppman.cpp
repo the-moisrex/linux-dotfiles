@@ -65,7 +65,7 @@ prompt_output execute_cppman(prompt_context&& ctx) {
         output += "```\n\n";
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_cppman(std::ostream& os) {

@@ -29,8 +29,11 @@ class prompt_error : public std::runtime_error {
   public:
     prompt_error(int exit_code, std::string message, std::string partial_output = {}, bool no_clipboard = false,
                  bool stdin_consumed = false)
-        : std::runtime_error(message), exit_code_(exit_code), partial_(std::move(partial_output)),
-          no_clipboard_(no_clipboard), stdin_consumed_(stdin_consumed) {}
+        // runtime_error's ctor takes a const& and copies; the message is
+        // consumed there, partial_ still moves. NOLINT: no way to move into it.
+        : std::runtime_error(std::move(message)), // NOLINT(performance-move-const-arg)
+          exit_code_(exit_code), partial_(std::move(partial_output)), no_clipboard_(no_clipboard),
+          stdin_consumed_(stdin_consumed) {}
 
     [[nodiscard]] int exit_code() const { return exit_code_; }
     [[nodiscard]] std::string const& partial_output() const { return partial_; }

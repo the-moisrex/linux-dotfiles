@@ -73,20 +73,24 @@ std::string compute_stale(std::string const& fetched) {
         for (int i = 0; i < width; ++i) {
             char c = s[pos + static_cast<std::size_t>(i)];
             if (c < '0' || c > '9') return false;
-            value = value * 10 + (c - '0');
+            value = (value * 10) + (c - '0');
         }
         out = value;
         pos += static_cast<std::size_t>(width);
         return true;
     };
 
-    int year = 0, month = 0, day = 0;
+    int year = 0;
+    int month = 0;
+    int day = 0;
     if (!read_num(4, year) || pos >= s.size() || s[pos++] != '-' || !read_num(2, month) || pos >= s.size() ||
         s[pos++] != '-' || !read_num(2, day)) {
         return "?";
     }
 
-    int hour = 0, minute = 0, second = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
     if (pos >= s.size() || (s[pos] != 'T' && s[pos] != ' ')) return "?";
     ++pos;
     if (!read_num(2, hour) || pos >= s.size() || s[pos++] != ':' || !read_num(2, minute)) {
@@ -106,13 +110,14 @@ std::string compute_stale(std::string const& fetched) {
     if (pos < s.size() && (s[pos] == '+' || s[pos] == '-')) {
         int sign = s[pos] == '-' ? -1 : 1;
         ++pos;
-        int off_hours = 0, off_minutes = 0;
+        int off_hours = 0;
+        int off_minutes = 0;
         if (!read_num(2, off_hours)) return "?";
         if (pos < s.size() && s[pos] == ':') {
             ++pos;
             if (!read_num(2, off_minutes)) return "?";
         }
-        offset_seconds = sign * (off_hours * 3600L + off_minutes * 60L);
+        offset_seconds = sign * ((off_hours * 3600L) + (off_minutes * 60L));
         has_offset = true;
     }
 
@@ -186,7 +191,7 @@ snapshot_info read_snapshot_info(std::filesystem::path const& path) {
     if (!bits.empty()) {
         std::string joined;
         for (std::size_t i = 0; i < bits.size(); ++i) {
-            if (i) joined += " — ";
+            if (i != 0U) joined += " — ";
             joined += bits[i];
         }
         info.instrument = "Instrument: " + joined;
@@ -375,15 +380,17 @@ prompt_output execute_stock(prompt_context&& ctx) {
         // without printing anything.
         std::vector<std::string> fetch_args = {"all", config.symbol, "--top", std::to_string(config.top), "--markdown"};
         if (config.days_set) {
-            fetch_args.push_back("--days");
+            fetch_args.emplace_back("--days");
             fetch_args.push_back(std::to_string(config.days));
         } else {
-            fetch_args.push_back("--full");
+            fetch_args.emplace_back("--full");
         }
-        if (config.no_codal) fetch_args.push_back("--no-codal");
-        if (config.unadjusted) fetch_args.push_back("--unadjusted");
-        std::vector<std::string> tool_argv = {"python3",
-                                              prompt::fs::bin_tool("tse", ctx.exe_path, std::nullopt).string()};
+        if (config.no_codal) fetch_args.emplace_back("--no-codal");
+        if (config.unadjusted) fetch_args.emplace_back("--unadjusted");
+        std::vector<std::string> tool_argv = {
+            "python3",
+            prompt::fs::bin_tool("tse", ctx.exe_path, std::nullopt).string(),
+        };
         for (auto const& a : fetch_args) tool_argv.push_back(a);
         auto fetch = prompt::process::run_command(tool_argv);
         if (fetch.exit_code != 0) {
@@ -417,8 +424,9 @@ prompt_output execute_stock(prompt_context&& ctx) {
         output += trim_context(context, config.head_lines);
     }
 
-    if (!errors.empty()) return {std::move(output), std::move(errors), false, false};
-    return {std::move(output), std::string{}, false, false};
+    if (!errors.empty())
+        return {.text = std::move(output), .error = std::move(errors), .no_clipboard = false, .stdin_consumed = false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_stock(std::ostream& os) {

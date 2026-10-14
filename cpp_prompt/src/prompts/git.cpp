@@ -101,8 +101,9 @@ prompt_output execute_git(prompt_context&& ctx) {
         }
     }
 
-    if (!error.empty()) return {std::move(output), std::move(error), false, false};
-    return {std::move(output), std::string{}, false, false};
+    if (!error.empty())
+        return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_git(std::ostream& os) {

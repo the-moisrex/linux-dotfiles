@@ -55,7 +55,7 @@ prompt_output execute_commit(prompt_context&& ctx) {
     output += trim_context_nl(diff, head_lines);
     output += "\n```\n\n";
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_commit(std::ostream& os) {

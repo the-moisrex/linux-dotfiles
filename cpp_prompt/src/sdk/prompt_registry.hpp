@@ -22,7 +22,7 @@ struct prompt_descriptor {
     // LC_COLLATE — the file part influences the collation result. This build
     // keeps the same key (prompt files lived in <repo>/prompts/) purely so
     // the ordering matches the bash dispatcher; it never opens the file.
-    std::string_view sort_file{};
+    std::string_view sort_file;
 };
 
 std::span<prompt_descriptor const> get_all_prompts();

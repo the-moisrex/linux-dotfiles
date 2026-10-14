@@ -57,7 +57,7 @@ prompt_output execute_diagram(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::move(error), false, false};
+    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_diagram(std::ostream& os) {

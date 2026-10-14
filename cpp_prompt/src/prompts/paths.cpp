@@ -4,6 +4,7 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
 #include "prompts.hpp"
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <unistd.h>
@@ -194,7 +195,12 @@ prompt_output execute_paths(prompt_context&& ctx) {
         auto files_result = prompts::execute_files(std::move(sub));
         output += files_result.text;
         sed_warnings += files_result.error;
-        return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+        return {
+            .text = std::move(output),
+            .error = std::string{},
+            .no_clipboard = false,
+            .stdin_consumed = ctx.stdin_consumed,
+        };
     }
 
     for (auto const& resolved : resolved_files) {
@@ -216,9 +222,9 @@ prompt_output execute_paths(prompt_context&& ctx) {
             long long total = count_newlines(content);
             long long ln = prompt::text::to_ll(line_num, 0);
             long long start = ln - context_lines;
-            if (start < 1) start = 1;
+            start = std::max<long long>(start, 1);
             long long end = ln + context_lines;
-            if (end > total) end = total;
+            end = std::min(end, total);
             auto lines = to_sed_lines(content);
 
             output += "File " + rel.string() + " around line " + std::to_string(ln) + " (lines " +
@@ -245,7 +251,12 @@ prompt_output execute_paths(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_paths(std::ostream& os) {

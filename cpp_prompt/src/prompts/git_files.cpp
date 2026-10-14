@@ -151,8 +151,9 @@ prompt_output execute_git_files(prompt_context&& ctx) {
         output += "\n```\n\n";
     }
 
-    if (!errors.empty()) return {std::move(output), std::move(errors), false, false};
-    return {std::move(output), std::string{}, false, false};
+    if (!errors.empty())
+        return {.text = std::move(output), .error = std::move(errors), .no_clipboard = false, .stdin_consumed = false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_git_files(std::ostream& os) {

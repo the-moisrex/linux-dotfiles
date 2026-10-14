@@ -30,7 +30,7 @@ std::vector<std::string> extract_failed_gtests(std::string_view text) {
         std::string line_str(line);
         if (std::regex_search(line_str, match, failed_re)) {
             std::string test = match[1];
-            if (test.find('.') != std::string::npos && seen.insert(test).second) {
+            if (test.contains('.') && seen.insert(test).second) {
                 found.push_back(std::move(test));
             }
         }
@@ -60,7 +60,7 @@ std::string head_n(std::string_view text, std::size_t n) {
     if (lines.size() <= n) return std::string(text);
     std::string out;
     for (std::size_t i = 0; i < n; ++i) {
-        if (i) out += '\n';
+        if (i != 0U) out += '\n';
         out += lines[i];
     }
     return out;
@@ -97,7 +97,7 @@ prompt_output execute_run(prompt_context&& ctx) {
         for (auto const& arg : run_args) cmd.push_back(arg);
 
         // run.sh redirects both streams into one file: >tmp 2>&1
-        std::vector<std::string> storage = {"bash", "-c", "\"$0\" \"$@\" 2>&1", run_path};
+        std::vector<std::string> storage = {"bash", "-c", R"("$0" "$@" 2>&1)", run_path};
         for (std::size_t i = 1; i < cmd.size(); ++i) storage.push_back(cmd[i]);
 
         auto result = prompt::process::run_command(storage, ctx.stdin_content);
@@ -131,7 +131,7 @@ prompt_output execute_run(prompt_context&& ctx) {
         if (!failed.empty()) {
             output += "\n";
             std::vector<std::string> gtest_args;
-            gtest_args.push_back("--exact");
+            gtest_args.emplace_back("--exact");
             for (auto const& name : failed) gtest_args.push_back(name);
 
             // Native gtest-case prompt, invoked in-process exactly as the
@@ -149,7 +149,7 @@ prompt_output execute_run(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::string{}, false, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_run(std::ostream& os) {

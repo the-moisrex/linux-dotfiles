@@ -29,7 +29,7 @@ prompt_output execute_list_prompts(prompt_context&& ctx) {
             // Static help extracted from the script (or, for file-less
             // native prompts, the embedded fallback text).
             body = desc->help_full;
-        } else if (desc->render_help_fn) {
+        } else if (desc->render_help_fn != nullptr) {
             std::ostringstream oss;
             desc->render_help_fn(oss);
             body = oss.str();
@@ -40,7 +40,7 @@ prompt_output execute_list_prompts(prompt_context&& ctx) {
         output += "\n";
     }
 
-    return {std::move(output), std::string{}, true, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = true, .stdin_consumed = false};
 }
 
 void render_help_list_prompts(std::ostream& os) {

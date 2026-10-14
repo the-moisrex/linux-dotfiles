@@ -26,7 +26,12 @@ prompt_output execute_tweets(prompt_context&& ctx) {
               "5 strong, ready-to-post ideas. Keep them concise.\n";
     output += "\n";
 
-    return {std::move(output), std::string{}, false, ctx.stdin_consumed};
+    return {
+        .text = std::move(output),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = ctx.stdin_consumed,
+    };
 }
 
 void render_help_tweets(std::ostream& os) {

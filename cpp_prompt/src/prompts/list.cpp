@@ -32,7 +32,7 @@ prompt_output execute_list(prompt_context&& ctx) {
             output += std::string(desc->name) + "\n";
         }
     } else {
-        bool is_tty = isatty(STDOUT_FILENO);
+        bool is_tty = isatty(STDOUT_FILENO) != 0;
 
         if (is_tty) {
             output += "Prompt              Description\n------              -----------\n";
@@ -49,7 +49,7 @@ prompt_output execute_list(prompt_context&& ctx) {
         }
     }
 
-    return {std::move(output), std::string{}, true, false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = true, .stdin_consumed = false};
 }
 
 void render_help_list(std::ostream& os) {

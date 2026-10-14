@@ -74,7 +74,7 @@ std::string number0(double v) {
 std::string py_float_str(double v) {
     char buf[32];
     auto res = std::to_chars(buf, buf + sizeof(buf), v);
-    return std::string(buf, res.ptr);
+    return {buf, res.ptr};
 }
 
 } // namespace
@@ -85,7 +85,7 @@ std::string render_markdown(nlohmann::json const& data) {
     lines.push_back(
         "Market session open by schedule: " + std::string(data.value("market_session_open", false) ? "True" : "False") +
         " (does not guarantee an instrument is trading)");
-    lines.push_back("Prices and traded value are in rial, not toman. Missing values are unknown, not zero.");
+    lines.emplace_back("Prices and traded value are in rial, not toman. Missing values are unknown, not zero.");
 
     // Each section: blank line, "## <heading>", the JSON dump in a json fence.
     struct section {
@@ -93,14 +93,14 @@ std::string render_markdown(nlohmann::json const& data) {
         char const* key;
     };
     static constexpr section sections[] = {
-        {"Symbol / نماد", "instrument"},
-        {"Live quote / قیمت و وضعیت", "quote"},
-        {"Order book / صف خرید و فروش", "order_book"},
-        {"Money flow / حقیقی و حقوقی", "client_type"},
-        {"Market benchmarks / شاخص‌های بازار", "indexes"},
-        {"Market context / دلار، اقتصاد و عمق بازار", "market_context"},
-        {"Fundamentals / اطلاعات بنیادی", "fundamentals"},
-        {"Codal / اطلاعیه‌ها و صورت‌های مالی", "codal"},
+        {.heading = "Symbol / نماد", .key = "instrument"},
+        {.heading = "Live quote / قیمت و وضعیت", .key = "quote"},
+        {.heading = "Order book / صف خرید و فروش", .key = "order_book"},
+        {.heading = "Money flow / حقیقی و حقوقی", .key = "client_type"},
+        {.heading = "Market benchmarks / شاخص‌های بازار", .key = "indexes"},
+        {.heading = "Market context / دلار، اقتصاد و عمق بازار", .key = "market_context"},
+        {.heading = "Fundamentals / اطلاعات بنیادی", .key = "fundamentals"},
+        {.heading = "Codal / اطلاعیه‌ها و صورت‌های مالی", .key = "codal"},
     };
     for (auto const& [heading, key] : sections) {
         if (data.contains(key) && !data.at(key).is_null()) {
@@ -121,14 +121,18 @@ std::string render_markdown(nlohmann::json const& data) {
             std::vector<std::string> cols;
             std::string heading;
             if (!a_rows.empty()) {
-                cols = {"date",          "first_rial",     "high_rial",        "low_rial",      "closing_rial",
-                        "last_rial",     "adj_first_rial", "adj_high_rial",    "adj_low_rial",  "adj_closing_rial",
-                        "adj_last_rial", "adj_factor",     "corporate_action", "volume_shares", "value_rial",
-                        "trade_count"};
+                cols = {
+                    "date",          "first_rial",     "high_rial",        "low_rial",      "closing_rial",
+                    "last_rial",     "adj_first_rial", "adj_high_rial",    "adj_low_rial",  "adj_closing_rial",
+                    "adj_last_rial", "adj_factor",     "corporate_action", "volume_shares", "value_rial",
+                    "trade_count",
+                };
                 heading = "## Price history / تاریخچه قیمت";
             } else {
-                cols = {"date",      "first_rial",    "high_rial",  "low_rial",   "closing_rial",
-                        "last_rial", "volume_shares", "value_rial", "trade_count"};
+                cols = {
+                    "date",      "first_rial",    "high_rial",  "low_rial",    "closing_rial",
+                    "last_rial", "volume_shares", "value_rial", "trade_count",
+                };
                 heading = "## Price history / تاریخچه قیمت (بدون تعدیل)";
             }
             lines.emplace_back("");
@@ -167,17 +171,19 @@ std::string render_markdown(nlohmann::json const& data) {
                     csv_row(table, std::vector<std::string>{"date", "type", "details"}, row);
                 }
                 lines.emplace_back("");
-                lines.push_back("## Corporate action events / رویدادهای اقدامات شرکتی");
+                lines.emplace_back("## Corporate action events / رویدادهای اقدامات شرکتی");
                 lines.emplace_back("```csv");
                 lines.push_back(rstrip(table));
                 lines.emplace_back("```");
             }
         } else {
             lines.emplace_back("");
-            lines.push_back("## Price history / تاریخچه قیمت (unadjusted)");
+            lines.emplace_back("## Price history / تاریخچه قیمت (unadjusted)");
             lines.emplace_back("```csv");
-            std::vector<std::string> cols = {"date",      "first_rial",    "high_rial",  "low_rial",   "closing_rial",
-                                             "last_rial", "volume_shares", "value_rial", "trade_count"};
+            std::vector<std::string> cols = {
+                "date",      "first_rial",    "high_rial",  "low_rial",    "closing_rial",
+                "last_rial", "volume_shares", "value_rial", "trade_count",
+            };
             lines.push_back(rstrip(csv_table(cols, hist)));
             lines.emplace_back("```");
         }
@@ -185,7 +191,7 @@ std::string render_markdown(nlohmann::json const& data) {
 
     if (data.contains("errors") && !data.at("errors").empty()) {
         lines.emplace_back("");
-        lines.push_back("## Missing or failed sources / داده‌های ناموجود");
+        lines.emplace_back("## Missing or failed sources / داده‌های ناموجود");
         lines.emplace_back("```json");
         lines.push_back(data.at("errors").dump());
         lines.emplace_back("```");
@@ -193,7 +199,7 @@ std::string render_markdown(nlohmann::json const& data) {
 
     std::string out;
     for (std::size_t i = 0; i < lines.size(); ++i) {
-        if (i) out += '\n';
+        if (i != 0U) out += '\n';
         out += lines[i];
     }
     return out;

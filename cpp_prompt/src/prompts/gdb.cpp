@@ -67,8 +67,8 @@ Running the command: `gdb -q --nh -batch -ex "help" -ex "help data" -ex "help br
 )GDBEOF";
 
     std::vector<std::string> storage = {"bash", "-c"};
-    storage.push_back("gdb -q --nh -batch -ex \"help\" -ex \"help data\" -ex \"help breakpoints\" -ex "
-                      "\"help tracepoint\" | grep -Ev \"^(Type|Command name|Making program|set )\"");
+    storage.emplace_back("gdb -q --nh -batch -ex \"help\" -ex \"help data\" -ex \"help breakpoints\" -ex "
+                         "\"help tracepoint\" | grep -Ev \"^(Type|Command name|Making program|set )\"");
     output += prompt::process::run_command(storage).stdout_data;
 
     std::string error;
@@ -85,7 +85,7 @@ Running the command: `gdb -q --nh -batch -ex "help" -ex "help data" -ex "help br
         }
     }
 
-    return {std::move(output), std::move(error), false, false};
+    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_gdb(std::ostream& os) {

@@ -16,7 +16,12 @@ prompt_output execute_stdin(prompt_context&& ctx) {
         throw soft_error{"prompt stdin: No input. Pipe something to stdin.\n"};
     }
 
-    return {embed_stdin(ctx.stdin_content, head_lines), std::string{}, false, true};
+    return {
+        .text = embed_stdin(ctx.stdin_content, head_lines),
+        .error = std::string{},
+        .no_clipboard = false,
+        .stdin_consumed = true,
+    };
 }
 
 void render_help_stdin(std::ostream& os) {

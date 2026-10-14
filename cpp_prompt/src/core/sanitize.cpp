@@ -34,17 +34,17 @@ std::string clean_privacy(std::string_view input) {
     char hostname[256];
     gethostname(hostname, sizeof(hostname));
     char const* tmpdir = std::getenv("TMPDIR");
-    if (!tmpdir) tmpdir = "/tmp";
+    if (tmpdir == nullptr) tmpdir = "/tmp";
 
     if (std::string(tmpdir) != "/tmp") {
         replace_all_re(quote_re(tmpdir) + "/", "/tmp/");
         replace_all_re(quote_re(tmpdir), "/tmp");
     }
-    if (home) {
+    if (home != nullptr) {
         replace_all_re(quote_re(home) + "/Projects/", "");
         replace_all_re(quote_re(home), "HOME");
     }
-    if (user) {
+    if (user != nullptr) {
         replace_all_re(quote_re(user), "USER");
     }
     replace_all_re(quote_re(hostname), "HOSTNAME");

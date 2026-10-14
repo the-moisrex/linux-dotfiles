@@ -72,7 +72,7 @@ std::vector<std::string> word_split(std::string_view s) {
     while (i < s.size()) {
         while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) ++i;
         std::size_t start = i;
-        while (i < s.size() && !(s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) ++i;
+        while (i < s.size() && s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r') ++i;
         if (i > start) out.emplace_back(s.substr(start, i - start));
     }
     return out;
@@ -134,18 +134,22 @@ prompt_output execute_git_worktree_files(prompt_context&& ctx) {
     } else {
         std::vector<std::string> diff_args = {base_branch};
         if (!not_commit.empty()) {
-            diff_args.push_back("--not");
+            diff_args.emplace_back("--not");
             diff_args.push_back(not_commit);
         }
         std::vector<std::string> git_cmd = {"git", "diff"};
         for (auto const& a : diff_args) git_cmd.push_back(a);
-        git_cmd.push_back("--name-only");
+        git_cmd.emplace_back("--name-only");
         changed_files = word_split(git_raw(git_cmd));
     }
 
     if (changed_files.empty()) {
-        return {std::string{}, "No changed files found between current branch and " + base_branch + ".\n", false,
-                false};
+        return {
+            .text = std::string{},
+            .error = "No changed files found between current branch and " + base_branch + ".\n",
+            .no_clipboard = false,
+            .stdin_consumed = false,
+        };
     }
 
     std::optional<std::filesystem::path> git_root;
@@ -178,8 +182,9 @@ prompt_output execute_git_worktree_files(prompt_context&& ctx) {
         output += "\n```\n\n";
     }
 
-    if (!error.empty()) return {std::move(output), std::move(error), false, false};
-    return {std::move(output), std::string{}, false, false};
+    if (!error.empty())
+        return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
 }
 
 void render_help_git_worktree_files(std::ostream& os) {
