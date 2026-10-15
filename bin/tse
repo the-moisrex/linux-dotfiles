@@ -349,6 +349,58 @@ def flow(client, code):
     }
 
 
+CLIENT_TYPE_HISTORY_FIELDS = (
+    "individual_buy_shares",
+    "individual_sell_shares",
+    "legal_buy_shares",
+    "legal_sell_shares",
+    "legal_net_shares",
+    "individual_buyers",
+    "individual_sellers",
+    "legal_buyers",
+    "legal_sellers",
+)
+
+
+def client_type_history(client, code):
+    """Daily حقیقی/حقوقی breakdown keyed by date.
+
+    Backs the /History/<insCode>/<date> page: one record per session day with
+    the buy/sell volume and the number of buyers/sellers split by individual
+    (I) and legal (N) traders. The live GetClientType endpoint spells the
+    counts `buy_CountI`/`buy_CountN`; this one spells them `buy_I_Count`/
+    `buy_N_Count`. The series starts 2018-11-26, non-trading days have no
+    record, and a few isolated trading days are missing upstream too, so the
+    join in history() leaves those cells empty rather than zero.
+    """
+    rows = client.api(f"ClientType/GetClientTypeHistory/{code}", "clientType")
+    if not isinstance(rows, list):
+        raise DataError("Unexpected client-type history result")
+    result = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        date = trade_date(pick(row, "recDate"))
+        if not date:
+            continue
+        buy_i = value(row, "buy_I_Volume")
+        sell_i = value(row, "sell_I_Volume")
+        buy_n = value(row, "buy_N_Volume")
+        sell_n = value(row, "sell_N_Volume")
+        result[date] = {
+            "individual_buy_shares": buy_i,
+            "individual_sell_shares": sell_i,
+            "legal_buy_shares": buy_n,
+            "legal_sell_shares": sell_n,
+            "legal_net_shares": buy_n - sell_n if buy_n is not None and sell_n is not None else None,
+            "individual_buyers": value(row, "buy_I_Count"),
+            "individual_sellers": value(row, "sell_I_Count"),
+            "legal_buyers": value(row, "buy_N_Count"),
+            "legal_sellers": value(row, "sell_N_Count"),
+        }
+    return result
+
+
 def price_adjustments(client, code):
     rows = client.api(f"ClosingPrice/GetPriceAdjustList/{code}", "priceAdjust")
     if not isinstance(rows, list):
@@ -460,8 +512,19 @@ def adjust_history(unadjusted_history, price_adjustments, share_changes):
     return adjusted
 
 
-def history(client, code, days, adjusted=True):
+def history(client, code, days, adjusted=True, errors=None, with_client_type=True):
+    # Deliberately sequential: nesting a pool inside the callers' pool doubles
+    # the number of in-flight connections, and concurrent getaddrinfo() on this
+    # box is unstable (stack smashing / bogus NameErrors in workers).
     rows = client.api(f"ClosingPrice/GetClosingPriceDailyList/{code}/{days}", "closingPriceDaily")
+    flow_by_date = {}
+    if with_client_type:
+        # A failed client-type fetch must not cost the caller the price table.
+        try:
+            flow_by_date = client_type_history(client, code)
+        except DataError as exc:
+            if errors is not None:
+                errors["client_type_history"] = str(exc)
     if not isinstance(rows, list):
         raise DataError("Unexpected daily history result")
     unadjusted = []
@@ -482,6 +545,9 @@ def history(client, code, days, adjusted=True):
     unadjusted.sort(key=lambda row: row["date"] or "")
     if days != 0:
         unadjusted = unadjusted[-days:]
+    # Daily حقیقی/حقوقی breakdown, joined on date; unknown stays empty, never 0.
+    for row in unadjusted:
+        row.update(flow_by_date.get(row["date"]) or {field: None for field in CLIENT_TYPE_HISTORY_FIELDS})
     if not adjusted:
         return {"unadjusted": unadjusted}
     pa = price_adjustments(client, code)
@@ -888,7 +954,7 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
             "order_book": pool.submit(book, client, code),
             "client_type": pool.submit(flow, client, code),
             "indexes": pool.submit(indexes, client),
-            "history": pool.submit(history, client, code, days, adjusted),
+            "history": pool.submit(history, client, code, days, adjusted, errors),
             "currencies": pool.submit(market_currencies, client),
             "economy": pool.submit(economy, client),
             "breadth": pool.submit(market_breadth, client),
@@ -957,15 +1023,16 @@ def markdown(data):
             buffer = io.StringIO()
             if a_rows:
                 # adjusted rows already carry the raw fields plus adj_* columns
-                cols = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial",
-                        "adj_first_rial", "adj_high_rial", "adj_low_rial", "adj_closing_rial", "adj_last_rial",
-                        "adj_factor", "corporate_action", "volume_shares", "value_rial", "trade_count")
+                cols = (("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial",
+                         "adj_first_rial", "adj_high_rial", "adj_low_rial", "adj_closing_rial", "adj_last_rial",
+                         "adj_factor", "corporate_action", "volume_shares", "value_rial", "trade_count")
+                         + CLIENT_TYPE_HISTORY_FIELDS)
                 writer = csv.DictWriter(buffer, fieldnames=cols, lineterminator="\n")
                 writer.writeheader()
                 writer.writerows(a_rows)
                 heading = "## Price history / تاریخچه قیمت"
             else:
-                cols = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count")
+                cols = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count") + CLIENT_TYPE_HISTORY_FIELDS
                 writer = csv.DictWriter(buffer, fieldnames=cols, lineterminator="\n")
                 writer.writeheader()
                 writer.writerows(hist["unadjusted"])
@@ -987,7 +1054,7 @@ def markdown(data):
         else:
             rows = hist
             buffer = io.StringIO()
-            columns = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count")
+            columns = ("date", "first_rial", "high_rial", "low_rial", "closing_rial", "last_rial", "volume_shares", "value_rial", "trade_count") + CLIENT_TYPE_HISTORY_FIELDS
             writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
             writer.writeheader()
             writer.writerows(rows)
@@ -1020,7 +1087,7 @@ History options: --full (all records) is the default; --days N overrides it.""",
         "quote": "Show the latest price, trading activity, and instrument state",
         "book": "Show the five best bid and ask levels (صف خرید/فروش)",
         "flow": "Show individual/legal buyer and seller activity (حقیقی/حقوقی)",
-        "history": "Show daily price history and trading volume (raw plus split/dividend-adjusted columns)",
+        "history": "Show daily price history, trading volume, individual/legal (حقیقی/حقوقی) buy and sell volume and trader counts per day (raw plus split/dividend-adjusted columns)",
         "info": "Show industry, EPS, P/E, share count, market cap, price ranges, and fund NAV",
         "codal": "Show recent Codal announcements and extracted financial statements",
         "all": "Collect all available data as JSON or Markdown for an AI prompt",
@@ -1065,7 +1132,10 @@ History options: --full (all records) is the default; --days N overrides it.""",
             elif args.command == "flow":
                 result = flow(client, code)
             elif args.command == "history":
-                result = history(client, code, history_days, not getattr(args, "unadjusted", False))
+                history_errors = {}
+                result = history(client, code, history_days, not getattr(args, "unadjusted", False), history_errors)
+                if history_errors:
+                    result["errors"] = history_errors
             elif args.command == "info":
                 errors = {}
                 try:

@@ -555,7 +555,7 @@ def cross_flag(closes, fast, slow, direction):
 
 
 def fetch_history(client, record, days, cross_specs, sma_periods):
-    data = tse.history(client, record["code"], days, False)
+    data = tse.history(client, record["code"], days, False, with_client_type=False)
     rows = data.get("unadjusted") if isinstance(data, dict) else data
     if not isinstance(rows, list):
         raise tse.DataError("Unexpected history")
