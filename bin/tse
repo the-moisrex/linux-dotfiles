@@ -1064,6 +1064,66 @@ def markdown(data):
     return "\n".join(lines)
 
 
+def snapshot_meta_text(meta, data):
+    """The four header lines stock.sh derives from a .stock snapshot."""
+    fetched = data.get("fetched_at") or meta.get("fetched_at") or ""
+    stale = ""
+    if isinstance(fetched, str) and fetched:
+        try:
+            when = datetime.fromisoformat(fetched)
+            age = datetime.now(when.tzinfo) - when
+            stale = "yes" if age.total_seconds() > 86400 else "no"
+        except ValueError:
+            stale = "?"
+    note = meta.get("note")
+    note = "" if note in (None, "") else " ".join(str(note).split())
+    bits = []
+    for value, label in (
+        (meta.get("symbol"), ""),
+        (meta.get("name"), ""),
+        (meta.get("isin"), "ISIN "),
+        (meta.get("ins_code"), "insCode "),
+        (meta.get("market"), ""),
+        (meta.get("source"), "source: "),
+    ):
+        if value not in (None, ""):
+            bits.append(f"{label}{value}")
+    return "\n".join((fetched or "unknown", stale, note, "Instrument: " + " — ".join(bits) if bits else ""))
+
+
+def render_snapshot_command(command, path):
+    """Handle `tse snapshot` / `tse markdown`: read a .stock file and print its
+    header lines or its Markdown. Errors keep the wording of the inline probes
+    `prompt stock` used before (no `tse: ` prefix)."""
+    try:
+        if path == "-":
+            doc = json.load(sys.stdin)
+        else:
+            with open(path, encoding="utf-8") as handle:
+                doc = json.load(handle)
+    except (OSError, ValueError) as exc:
+        print(f"{path}: not valid JSON: {exc}" if command == "snapshot" else str(exc), file=sys.stderr)
+        return 1
+    meta = doc.get("meta") if isinstance(doc, dict) else None
+    data = doc.get("data") if isinstance(doc, dict) else None
+    if command == "snapshot":
+        if not isinstance(meta, dict) or not isinstance(data, dict):
+            print(f"{path}: not a .stock snapshot (expected top-level meta and data objects)", file=sys.stderr)
+            return 1
+        print(snapshot_meta_text(meta, data))
+        return 0
+    if not isinstance(data, dict):
+        print("data is not an object", file=sys.stderr)
+        return 1
+    try:
+        output = markdown(data)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(output)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Fetch public Tehran Stock Exchange and Codal data (requires an Iranian IP).",
@@ -1091,14 +1151,18 @@ History options: --full (all records) is the default; --days N overrides it.""",
         "info": "Show industry, EPS, P/E, share count, market cap, price ranges, and fund NAV",
         "codal": "Show recent Codal announcements and extracted financial statements",
         "all": "Collect all available data as JSON or Markdown for an AI prompt",
+        "snapshot": "Print the cached-snapshot header (fetched time, staleness, note, instrument line) for a .stock file",
+        "markdown": "Render a .stock snapshot file (written by tse.snapshot) as Markdown for an AI prompt",
     }
     for name, description in commands.items():
         command = sub.add_parser(name, help=description, description=description)
         if name == "search":
             command.add_argument("symbol", metavar="QUERY", help="Persian symbol, ISIN, insCode, URL, or company-name text to search")
+        elif name in ("snapshot", "markdown"):
+            command.add_argument("path", metavar="FILE", help=".stock snapshot file written by tse.snapshot, or - for stdin")
         else:
             command.add_argument("symbol", metavar="SYMBOL", help="Persian symbol (e.g. فولاد), ISIN, TSETMC insCode, or easytrader/tsetmc/codal URL")
-        if name not in ("search", "all"):
+        if name not in ("search", "all", "snapshot", "markdown"):
             command.add_argument("--json", action="store_true", help="Output JSON instead of Markdown")
         if name in ("history", "all"):
             history_options = command.add_mutually_exclusive_group()
