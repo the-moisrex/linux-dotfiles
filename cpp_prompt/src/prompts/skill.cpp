@@ -3,7 +3,7 @@
 #include "../core/strings.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -91,18 +91,18 @@ std::string parse_frontmatter(std::filesystem::path const& file) {
     // not matter, only the keys and values.
     nlohmann::ordered_json data = nlohmann::ordered_json::object();
     std::istringstream lines_in(stdin_data);
-    for (std::string line; std::getline(lines_in, line);) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        line = prompt::text::rstrip(line);
-        auto colon = line.find(':');
+    for (std::string raw; std::getline(lines_in, raw);) {
+        if (!raw.empty() && raw.back() == '\r') raw.pop_back();
+        raw = prompt::text::rstrip(raw);
+        auto colon = raw.find(':');
         if (colon == std::string::npos || colon == 0) continue;
-        std::string key = line.substr(0, colon);
+        std::string key = raw.substr(0, colon);
         bool ok = (std::isalnum(static_cast<unsigned char>(key[0])) != 0) || key[0] == '_';
         for (char c : key) {
             if (std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_' && c != '-') ok = false;
         }
         if (!ok) continue;
-        std::string value = prompt::text::strip(line.substr(colon + 1));
+        std::string value = prompt::text::strip(raw.substr(colon + 1));
         if (value.size() >= 2 && value.front() == value.back() && (value.front() == '"' || value.front() == '\'')) {
             value = value.substr(1, value.size() - 2);
         }
@@ -265,7 +265,7 @@ std::string find_rec(std::string const& results, std::string const& name) {
 
 } // namespace
 
-prompt_output execute_skill(prompt_context&& ctx) {
+static void execute_skill(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -302,7 +302,8 @@ prompt_output execute_skill(prompt_context&& ctx) {
             std::string out;
             out += "Cached skills:\n\n";
             list_cached_skills(out);
-            return {.text = std::move(out), .error = std::string{}};
+            ctx.out = std::move(out);
+            return;
         }
 
         if (subcommand == "uninstall") {
@@ -325,7 +326,8 @@ prompt_output execute_skill(prompt_context&& ctx) {
             if (!found) {
                 throw soft_error{"error: skill '" + name + "' not found in any cache directory\n"};
             }
-            return {.text = std::move(out), .error = std::string{}};
+            ctx.out = std::move(out);
+            return;
         }
 
         if (subcommand == "install") {
@@ -360,7 +362,9 @@ prompt_output execute_skill(prompt_context&& ctx) {
             std::string out;
             out += "\nInstalled skill content:\n\n";
             out += read_file(std::filesystem::path(skills_dir()) / skill_name / "SKILL.md");
-            return {.text = std::move(out), .error = std::move(err)};
+            ctx.out = std::move(out);
+            ctx.err = std::move(err);
+            return;
         }
     }
 
@@ -392,7 +396,7 @@ prompt_output execute_skill(prompt_context&& ctx) {
         // registry match found is surfaced verbatim so callers can retry.
         err += "Downloaded to ";
         err += (std::filesystem::path(skills_dir()) / downloaded_skill / "SKILL.md").string();
-        err += "\n";
+        err += '\n';
         skill_file = (std::filesystem::path(skills_dir()) / downloaded_skill / "SKILL.md").string();
     }
 
@@ -402,9 +406,9 @@ prompt_output execute_skill(prompt_context&& ctx) {
         std::string content = ctx.stdin_content;
         while (!content.empty() && content.back() == '\n') content.pop_back();
         if (!content.empty()) {
-            out += "\n";
+            out += '\n';
             out += content;
-            out += "\n";
+            out += '\n';
         }
     }
 
@@ -414,9 +418,9 @@ prompt_output execute_skill(prompt_context&& ctx) {
         std::filesystem::path fp(file);
         if (std::filesystem::is_regular_file(fp, ec)) {
             std::string file_name = fp.filename().string();
-            out += "\n";
+            out += '\n';
             out += std::format("File: {}\n", file_name);
-            out += "\n";
+            out += '\n';
             out += std::format("```{}\n", bash_infer_lang(file_name));
             out += trim_context_nl(read_file(fp), head_lines);
             out += "```\n";
@@ -425,10 +429,11 @@ prompt_output execute_skill(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(out), .error = std::move(err)};
+    ctx.out = std::move(out);
+    ctx.err = std::move(err);
 }
 
-void render_help_skill(std::ostream& os) {
+static void render_help_skill(std::ostream& os) {
     os << R"EOF(Usage: prompt skill <name> [--head N] [FILE...]
        some-command | prompt skill <name> [--head N] [FILE...]
        prompt skill list [--remote <query>]
@@ -457,5 +462,14 @@ Examples:
   prompt skill install docker              # download docker skill
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "skill",
+    "Loads a cached skill and outputs its content as an AI prompt. If the skill is not cached, it is "
+    "downloaded automatically. Piped stdin and file arguments are embedded as context. It also "
+    "manages skills: list, install, and uninstall (see below).",
+    &execute_skill, &render_help_skill);
 
 } // namespace prompt::prompts

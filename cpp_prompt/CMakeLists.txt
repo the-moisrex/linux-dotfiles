@@ -34,21 +34,22 @@ include(cmake/import.cmake)
 
 file(GLOB PROMPT_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prompts/*.cpp")
 
-add_library(prompt_lib
+# OBJECT, not a static library: every prompt registers itself from its own
+# translation unit (see sdk/prompt_registry.hpp), and a static archive only
+# pulls in members that resolve some undefined symbol — the registrar of a
+# prompt nothing references would be dropped, silently unregistering it.
+add_library(prompt_lib OBJECT
     src/core/fs.cpp
     src/core/process.cpp
     src/core/clipboard.cpp
     src/core/sanitize.cpp
     src/core/strings.cpp
-    src/tse/tse_markdown.cpp
     src/sdk/prompt_context.cpp
     src/sdk/prompt_registry.cpp
     src/sdk/chaining.cpp
     src/sdk/pipeline.cpp
     src/sdk/embed.cpp
     src/sdk/args.cpp
-    src/prompts/prompt_entry.cpp
-    src/prompts/register_batches.cpp
     ${PROMPT_SRCS}
 )
 

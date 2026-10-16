@@ -1,6 +1,7 @@
 #include "../core/fs.hpp"
 #include "../core/process.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <span>
@@ -44,20 +45,15 @@ std::string drop_trailing_newlines(std::string_view text) {
 bool is_url(std::string_view trimmed) {
     if (trimmed.contains('\n')) return false; // multi-line input
     std::string_view rest;
-    if (trimmed.starts_with("http://")) {
+    if (trimmed.starts_with("http://") || trimmed.starts_with("file://")) {
         rest = trimmed.substr(7);
     } else if (trimmed.starts_with("https://")) {
         rest = trimmed.substr(8);
-    } else if (trimmed.starts_with("file://")) {
-        rest = trimmed.substr(7);
     } else {
         return false;
     }
     if (rest.empty()) return false; // the + needs at least one character
-    for (char c : rest) {
-        if (std::isspace(static_cast<unsigned char>(c)) != 0) return false;
-    }
-    return true;
+    return std::ranges::all_of(rest, [](char c) { return std::isspace(static_cast<unsigned char>(c)) == 0; });
 }
 
 std::string run_tool(std::filesystem::path const& tool, std::vector<std::string> const& args,
@@ -120,7 +116,7 @@ std::string transform_url(std::string_view url, std::span<const std::string> too
 
 } // namespace
 
-prompt_output execute_yt(prompt_context&& ctx) {
+static void execute_yt(prompt_context& ctx) {
     std::vector<std::string> tools;
     tools.reserve(3);
     for (char const* name : {"yt.links", "subtitle", "srt2text"}) {
@@ -155,12 +151,8 @@ prompt_output execute_yt(prompt_context&& ctx) {
                           "takeaways and summary notes at the end as well: \n\n\n";
             }
             output += result;
-            return {
-                .text = std::move(output),
-                .error = std::string{},
-                .no_clipboard = false,
-                .stdin_consumed = ctx.stdin_consumed,
-            };
+            ctx.out = std::move(output);
+            return;
         }
         // transform_url failed: fall through to the raw-input branch.
     }
@@ -168,20 +160,23 @@ prompt_output execute_yt(prompt_context&& ctx) {
     output += "Turn this into an article and remove the ads, repetition, meaningless stuff and add all key "
               "takeaways and summary notes at the end as well: \n\n\n";
     output += input;
-    return {
-        .text = std::move(output),
-        .error = std::string{},
-        .no_clipboard = false,
-        .stdin_consumed = ctx.stdin_consumed,
-    };
+    ctx.out = std::move(output);
 }
 
-void render_help_yt(std::ostream& os) {
+static void render_help_yt(std::ostream& os) {
     os << R"EOF(Usage: prompt yt
 
 Builds an article-writing prompt from stdin.
 If stdin is a single YouTube URL, it tries to fetch subtitles/text first.
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("yt",
+                            "Builds an article-writing prompt from stdin. If stdin is a single YouTube URL, it "
+                            "tries to fetch subtitles/text first.",
+                            &execute_yt, &render_help_yt);
 
 } // namespace prompt::prompts

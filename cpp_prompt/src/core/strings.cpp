@@ -80,7 +80,7 @@ long long to_ll(std::string_view s, long long fallback) {
 }
 
 std::string regex_escape(std::string_view s) {
-    static constexpr char const* meta = "\^$.|?*+()[]{}";
+    static constexpr char const* meta = "\\^$.|?*+()[]{}";
     std::string out;
     out.reserve(s.size() + 8);
     for (char c : s) {

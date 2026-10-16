@@ -1,7 +1,7 @@
 #include "../core/fs.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -92,7 +92,7 @@ std::string strip_trailing_newlines(std::string_view s) {
 
 } // namespace
 
-prompt_output execute_git_files(prompt_context&& ctx) {
+static void execute_git_files(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -151,12 +151,13 @@ prompt_output execute_git_files(prompt_context&& ctx) {
         output += "\n```\n\n";
     }
 
-    if (!errors.empty())
-        return {.text = std::move(output), .error = std::move(errors), .no_clipboard = false, .stdin_consumed = false};
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    if (!errors.empty()) {
+        ctx.err = std::move(errors);
+    }
+    ctx.out = std::move(output);
 }
 
-void render_help_git_files(std::ostream& os) {
+static void render_help_git_files(std::ostream& os) {
     os << R"EOF(Usage: prompt git.files [--head N] [FILE...]
        some-command | prompt git.files [--head N] [FILE...]
 
@@ -168,5 +169,13 @@ Options:
   --head N   Keep only the first N lines of each embedded file
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "git.files",
+    "Embeds the given files as Markdown code blocks. File headings are printed relative to the Git "
+    "repository root. If no files are provided, `fzf -m` is used to choose from tracked files.",
+    &execute_git_files, &render_help_git_files);
 
 } // namespace prompt::prompts

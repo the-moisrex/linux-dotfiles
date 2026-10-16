@@ -2,7 +2,7 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
@@ -112,7 +112,7 @@ std::vector<std::string> split_lines(std::string_view s) {
 
 } // namespace
 
-prompt_output execute_git_dirty(prompt_context&& ctx) {
+static void execute_git_dirty(prompt_context& ctx) {
     // git-dirty.sh parses its own flags (not via _common.sh's parse_arguments),
     // and its --head accepts any value verbatim. --help/-h are intercepted by
     // the native dispatcher before we run.
@@ -226,16 +226,13 @@ prompt_output execute_git_dirty(prompt_context&& ctx) {
 
     bool has_content = !staged_files.empty() || !unstaged_files.empty() || !untracked_files.empty();
     if (!has_content) {
-        return {
-            .text = std::string{},
-            .error = "No changes found in the repository.\n",
-            .no_clipboard = false,
-            .stdin_consumed = false,
-        };
+        ctx.out.clear();
+        ctx.err = "No changes found in the repository.\n";
+        return;
     }
 
     std::string output;
-    output += "\n"; // the unconditional `echo` after the content check
+    output += '\n'; // the unconditional `echo` after the content check
 
     // Reads GIT_ROOT/filepath as a full file block with the given heading
     // suffix (e.g. "(new)" or "(status: M)"); a no-op when the file is absent.
@@ -246,7 +243,7 @@ prompt_output execute_git_dirty(prompt_context&& ctx) {
         std::string name = full.filename().string();
         std::string content = read_file(full);
         output += std::format("File: {} {}\n", filepath, heading);
-        output += "\n";
+        output += '\n';
         output += std::format("```{}\n", infer_lang(name));
         output += trim_context_nl(content, head_lines);
         output += "```\n\n";
@@ -320,10 +317,10 @@ prompt_output execute_git_dirty(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_git_dirty(std::ostream& os) {
+static void render_help_git_dirty(std::ostream& os) {
     os << R"EOF(Usage: prompt git-dirty [OPTIONS]
 
 Show uncommitted/changed files in the current Git repository.
@@ -358,5 +355,13 @@ EXAMPLES:
   prompt git-dirty --full-diff              # Full files with diff markers
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "git-dirty",
+    "Show uncommitted/changed files in the current Git repository. By default it lists all staged "
+    "and unstaged changes (--all --files); the options below switch to diffs or full file contents.",
+    &execute_git_dirty, &render_help_git_dirty);
 
 } // namespace prompt::prompts

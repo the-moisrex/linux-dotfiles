@@ -1,7 +1,7 @@
 #include "../core/fs.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <string>
 #include <unistd.h>
@@ -9,7 +9,7 @@
 
 namespace prompt::prompts {
 
-prompt_output execute_files(prompt_context&& ctx) {
+static void execute_files(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -65,12 +65,13 @@ prompt_output execute_files(prompt_context&& ctx) {
         }
     }
 
-    if (!errors.empty())
-        return {.text = std::move(output), .error = std::move(errors), .no_clipboard = false, .stdin_consumed = false};
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    if (!errors.empty()) {
+        ctx.err = std::move(errors);
+    }
+    ctx.out = std::move(output);
 }
 
-void render_help_files(std::ostream& os) {
+static void render_help_files(std::ostream& os) {
     os << R"EOF(Usage: prompt files [--head N] [FILE...]
        some-command | prompt files [--head N] [FILE...]
 
@@ -83,5 +84,14 @@ Options:
   --head N   Keep only the first N lines of each embedded file
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "files",
+    "Appends the given fuzzily found files as Markdown code blocks. If you're inside a Git "
+    "repository, file headings are printed relative to the repository root. If no files are provided, "
+    "`fzf -m` is used to choose them interactively.",
+    &execute_files, &render_help_files);
 
 } // namespace prompt::prompts

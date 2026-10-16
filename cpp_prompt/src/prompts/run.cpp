@@ -3,7 +3,7 @@
 #include "../core/sanitize.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <regex>
 #include <string>
 #include <unordered_set>
@@ -68,7 +68,7 @@ std::string head_n(std::string_view text, std::size_t n) {
 
 } // namespace
 
-prompt_output execute_run(prompt_context&& ctx) {
+static void execute_run(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -129,7 +129,7 @@ prompt_output execute_run(prompt_context&& ctx) {
     if (include_gtest) {
         auto failed = extract_failed_gtests(search_output);
         if (!failed.empty()) {
-            output += "\n";
+            output += '\n';
             std::vector<std::string> gtest_args;
             gtest_args.emplace_back("--exact");
             for (auto const& name : failed) gtest_args.push_back(name);
@@ -141,18 +141,21 @@ prompt_output execute_run(prompt_context&& ctx) {
             std::size_t n = 0;
             for (auto const& a : gtest_args) sub.args[n++] = a;
             sub.args_count = n;
-            auto result = prompts::execute_gtest_case(std::move(sub));
-            output += result.text;
-            error += result.error;
+            sub.clear_output();
+            if (const auto* gtest_case = prompt::find_prompt("gtest-case")) {
+                gtest_case->execute_fn(sub);
+                output += sub.out;
+                error += sub.err;
+            }
         } else {
             output += "\nNo failed Google Test cases were detected in the output.\n";
         }
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_run(std::ostream& os) {
+static void render_help_run(std::ostream& os) {
     os << R"EOF(Usage: prompt run [--head N] [--gtest] [run-args...]
        run target | prompt run [--head N] [--gtest]
 
@@ -165,5 +168,13 @@ Options:
   -h, --help Show this help
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "run",
+    "Runs `bin/run` with the provided arguments and builds a debugging prompt from its output. If "
+    "stdin is piped in, it debugs the piped run output instead.",
+    &execute_run, &render_help_run);
 
 } // namespace prompt::prompts

@@ -1,7 +1,8 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <algorithm>
+#include <array>
 #include <set>
 #include <string>
 #include <string_view>
@@ -19,7 +20,7 @@ namespace {
 // file body (head-capped), ```.
 std::string embed_agent_file(std::filesystem::path const& path, std::size_t head_lines) {
     std::string out;
-    out += "\n";
+    out += '\n';
     out += std::format("File: {}\n", path.filename().string());
     out += "```text\n";
     out += trim_context_nl(read_file(path), head_lines);
@@ -37,7 +38,7 @@ std::string target_inode_key(std::filesystem::path const& path) {
 
 } // namespace
 
-prompt_output execute_agents(prompt_context&& ctx) {
+static void execute_agents(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -47,7 +48,7 @@ prompt_output execute_agents(prompt_context&& ctx) {
         throw soft_error{"Error: not inside a git repository.\n"};
     }
 
-    static constexpr char const* agent_files[] = {
+    static constexpr std::array<char const*, 7> agent_files = {
         "AGENTS.md",      "CLAUDE.md",       "COPILOT.md", ".cursorrules", ".github/copilot-instructions.md",
         "CONVENTIONS.md", "ARCHITECTURE.md",
     };
@@ -91,10 +92,10 @@ prompt_output execute_agents(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_agents(std::ostream& os) {
+static void render_help_agents(std::ostream& os) {
     os << R"EOF(Usage: prompt agents [--head N]
 
 Find and embed agent instruction files (AGENTS.md, CLAUDE.md, etc.) from the current Git repository root.
@@ -110,5 +111,14 @@ Options:
   -h, --help Show this help
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "agents",
+    "Find and embed agent instruction files (AGENTS.md, CLAUDE.md, etc.) from the current Git "
+    "repository root. This gives the AI project conventions, coding standards, and architectural "
+    "context before it answers a question.",
+    &execute_agents, &render_help_agents);
 
 } // namespace prompt::prompts

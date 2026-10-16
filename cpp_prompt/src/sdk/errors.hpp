@@ -6,17 +6,6 @@
 
 namespace prompt {
 
-// What a successful prompt execution returns: the text for stdout (sanitized
-// and pipelined by the dispatcher), optional diagnostics for stderr (bash's
-// `>&2` output on the success path — exit code stays 0), and the two flags
-// the dispatcher needs.
-struct prompt_output {
-    std::string text;
-    std::string error;
-    bool no_clipboard = false;
-    bool stdin_consumed = false;
-};
-
 // A failing prompt throws this; the dispatcher catches it once and turns it
 // back into exactly what the bash dispatcher produced: `message` on stderr
 // (verbatim, unsanitized, including its trailing newline), `partial_output`
@@ -27,6 +16,7 @@ struct prompt_output {
 // exactly like the bash loop.
 class prompt_error : public std::runtime_error {
   public:
+    // NOLINTNEXTLINE(performance-unnecessary-value-param) — by value on purpose: callers std::move the message in.
     prompt_error(int exit_code, std::string message, std::string partial_output = {}, bool no_clipboard = false,
                  bool stdin_consumed = false)
         // runtime_error's ctor takes a const& and copies; the message is
@@ -47,7 +37,7 @@ class prompt_error : public std::runtime_error {
     bool stdin_consumed_;
 };
 
-// Argument/usage failures (bash `exit 2`) — 89 call sites.
+// Argument/usage failures (bash `exit 2`).
 class usage_error : public prompt_error {
   public:
     explicit usage_error(std::string message, std::string partial_output = {}, bool no_clipboard = false,

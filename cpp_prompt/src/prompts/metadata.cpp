@@ -1,10 +1,10 @@
 #include "../sdk/args.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <string>
 
 namespace prompt::prompts {
 
-prompt_output execute_metadata(prompt_context&& ctx) {
+static void execute_metadata(prompt_context& ctx) {
     // metadata.sh calls init_prompt (validating --head) but never uses ARGS,
     // so --head errors are the only failure mode besides --format's.
     std::size_t head_lines = 0;
@@ -38,12 +38,12 @@ prompt_output execute_metadata(prompt_context&& ctx) {
     output += "Ensure the output is well-structured, valid " + format +
               ", and enclosed in a single markdown code block so it can be easily extracted and "
               "parsed.\n";
-    output += "\n";
+    output += '\n';
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_metadata(std::ostream& os) {
+static void render_help_metadata(std::ostream& os) {
     os << R"EOF(Usage: prompt metadata [--head N] [--format FORMAT] [FILE...]
        some-command | prompt metadata [--head N] [--format FORMAT] [FILE...]
 
@@ -54,5 +54,13 @@ Options:
   --format, -f     Output format for the metadata (e.g., json, xml, yaml, toml, conf). Default: json
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("metadata",
+                            "Analyze the provided inputs and generate structured metadata representing "
+                            "them.",
+                            &execute_metadata, &render_help_metadata);
 
 } // namespace prompt::prompts

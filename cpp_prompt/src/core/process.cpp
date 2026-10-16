@@ -36,16 +36,12 @@ std::string drain(int fd) {
         auto n = ::read(fd, buf.data(), buf.size());
         if (n > 0) {
             data.append(buf.data(), static_cast<std::size_t>(n));
-        } else if (n == 0) {
-            break;
-        } else if (errno != EINTR) {
+        } else if (n == 0 || errno != EINTR) {
             break;
         }
     }
     return data;
 }
-
-std::string quote_for(std::string const& s) { return "'" + s + "'"; }
 
 } // namespace
 
@@ -94,6 +90,11 @@ command& command::stderr_to_stdout() {
     return *this;
 }
 
+command& command::discard_stderr() {
+    stderr_mode_ = stderr_mode::discard;
+    return *this;
+}
+
 command& command::inherit_stderr() {
     stderr_mode_ = stderr_mode::inherit;
     return *this;
@@ -107,16 +108,16 @@ command_result command::run() {
         return result;
     }
 
-    int in_pipe[2];  // parent -> child
-    int out_pipe[2]; // child -> parent
-    int err_pipe[2]; // child -> parent (capture mode only)
-    if (::pipe(in_pipe) != 0 || ::pipe(out_pipe) != 0) {
+    std::array<int, 2> in_pipe{};  // parent -> child
+    std::array<int, 2> out_pipe{}; // child -> parent
+    std::array<int, 2> err_pipe{}; // child -> parent (capture mode only)
+    if (::pipe(in_pipe.data()) != 0 || ::pipe(out_pipe.data()) != 0) {
         result.exit_code = -1;
         result.stderr_data = "pipe failed";
         return result;
     }
     bool capture_err = stderr_mode_ == stderr_mode::capture;
-    if (capture_err && ::pipe(err_pipe) != 0) {
+    if (capture_err && ::pipe(err_pipe.data()) != 0) {
         result.exit_code = -1;
         result.stderr_data = "pipe failed";
         return result;
@@ -162,6 +163,12 @@ command_result command::run() {
             ::dup2(err_pipe[1], STDERR_FILENO);
         } else if (stderr_mode_ == stderr_mode::to_stdout) {
             ::dup2(out_pipe[1], STDERR_FILENO);
+        } else if (stderr_mode_ == stderr_mode::discard) {
+            int null_fd = ::open("/dev/null", O_WRONLY);
+            if (null_fd >= 0) {
+                ::dup2(null_fd, STDERR_FILENO);
+                ::close(null_fd);
+            }
         }
         ::close(in_pipe[1]);
         ::close(out_pipe[0]);

@@ -1,4 +1,5 @@
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,17 +53,16 @@ void append_extra(std::string& out, std::string_view extra) {
 }
 
 bool in(std::string const& cat, std::initializer_list<char const*> names) {
-    for (const auto* n : names)
-        if (cat == n) return true;
-    return false;
+    return std::ranges::any_of(names, [&](char const* n) { return cat == n; });
 }
 
 } // namespace
 
-prompt_output execute_opportunities(prompt_context&& ctx) {
+static void execute_opportunities(prompt_context& ctx) {
     // CATEGORY="${1:-}"; shift; EXTRA="$*"
     if (ctx.args_count == 0 || ctx.args[0].empty()) {
-        return {.text = opportunities_help(), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+        ctx.out = opportunities_help();
+        return;
     }
 
     std::string category(ctx.args[0]);
@@ -366,9 +366,17 @@ prompt_output execute_opportunities(prompt_context&& ctx) {
         throw soft_error{std::move(err)};
     }
 
-    return {.text = std::move(out), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(out);
 }
 
-void render_help_opportunities(std::ostream& os) { os << opportunities_help(); }
+static void render_help_opportunities(std::ostream& os) { os << opportunities_help(); }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "opportunities",
+    "Find opportunities in a specific category such as money, tech, cpp, career, or business. Use "
+    "the category `all` for a brief overview of every category.",
+    &execute_opportunities, &render_help_opportunities);
 
 } // namespace prompt::prompts

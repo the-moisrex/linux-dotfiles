@@ -1,6 +1,6 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -18,7 +18,7 @@ std::string strip_trailing_newlines(std::string_view s) {
 
 } // namespace
 
-prompt_output execute_verify(prompt_context&& ctx) {
+static void execute_verify(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -53,8 +53,9 @@ prompt_output execute_verify(prompt_context&& ctx) {
         std::size_t n = 0;
         for (auto const& a : git_dirty_args) sub.args[n++] = a;
         sub.args_count = n;
-        auto result = prompts::execute_git_dirty(std::move(sub));
-        context = strip_trailing_newlines(result.text);
+        sub.clear_output();
+        if (const auto* dirty = prompt::find_prompt("git-dirty")) dirty->execute_fn(sub);
+        context = strip_trailing_newlines(sub.out);
         if (context.empty()) {
             throw soft_error{"No changes found in the repository. Nothing to verify.\n"};
         }
@@ -68,10 +69,10 @@ prompt_output execute_verify(prompt_context&& ctx) {
               "it.\n\nIf all changes are correct, state that clearly.\n\n";
     output += trim_context_nl(context, head_lines);
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = piped};
+    ctx.out = std::move(output);
 }
 
-void render_help_verify(std::ostream& os) {
+static void render_help_verify(std::ostream& os) {
     os << R"EOF(Usage: prompt verify [--head N] [GIT-DIRTY OPTIONS...]
        some-command | prompt verify [--head N] [GIT-DIRTY OPTIONS...]
 
@@ -93,5 +94,11 @@ Options:
   -h, --help Show this help
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("verify", "Verify uncommitted changes in the current Git repository for correctness.",
+                            &execute_verify, &render_help_verify);
 
 } // namespace prompt::prompts

@@ -2,7 +2,8 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -29,7 +30,7 @@ std::string git_toplevel() {
 
 } // namespace
 
-prompt_output execute_clang_tidy(prompt_context&& ctx) {
+static void execute_clang_tidy(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -55,12 +56,9 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
     if (ctx.args_count == 0) {
         auto selected = ctx.select_files();
         if (selected.empty()) {
-            return {
-                .text = std::string{},
-                .error = "No files specified or selected.\n",
-                .no_clipboard = false,
-                .stdin_consumed = false,
-            };
+            ctx.out.clear();
+            ctx.err = "No files specified or selected.\n";
+            return;
         }
         for (auto const& s : selected) display_args.emplace_back(s.string());
         // Files from fzf only populate $@ (via `set --`), never ARGS.
@@ -75,7 +73,7 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
         std::vector<std::string> bases;
         bases.emplace_back(".");
         if (!git_root.empty()) bases.push_back(git_root);
-        static char const* common_dirs[] = {
+        static constexpr std::array<char const*, 10> common_dirs = {
             "build",
             "build-dev",
             "build-dev-clang",
@@ -129,7 +127,7 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
     auto result = prompt::process::run_command(storage);
 
     std::string output;
-    output += "\n";
+    output += '\n';
     output += "Review the following `" + command_str +
               "` output. Identify the issues, explain why they were flagged, and provide the most robust "
               "and idiomatic fixes. Suggest small git patches or refactored code blocks where "
@@ -138,10 +136,10 @@ prompt_output execute_clang_tidy(prompt_context&& ctx) {
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "\n```\n";
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_clang_tidy(std::ostream& os) {
+static void render_help_clang_tidy(std::ostream& os) {
     os << R"EOF(Usage: prompt clang-tidy [--head N] [FILE...]
        some-command | prompt clang-tidy [--head N] [FILE...]
 
@@ -153,5 +151,13 @@ Options:
   -h, --help Show this help
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("clang-tidy",
+                            "Runs `clang-tidy` on the provided files and outputs a prompt to fix the identified "
+                            "issues. If no files are provided, `fzf -m` is used to choose them interactively.",
+                            &execute_clang_tidy, &render_help_clang_tidy);
 
 } // namespace prompt::prompts

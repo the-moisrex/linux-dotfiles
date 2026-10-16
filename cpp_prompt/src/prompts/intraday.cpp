@@ -1,10 +1,14 @@
+#include "../core/fs.hpp"
+#include "../core/process.hpp"
 #include "../sdk/embed.hpp"
-#include "../tse/tse_markdown.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include <algorithm>
 #include <sstream>
 #include <string>
 
 namespace prompt::prompts {
+
+static void render_help_intraday(std::ostream& os);
 
 namespace {
 
@@ -24,10 +28,7 @@ struct basic_intraday_prompt_config {
 
 bool is_positive_int(std::string_view s) {
     if (s.empty()) return false;
-    for (char c : s) {
-        if (c < '0' || c > '9') return false;
-    }
-    return true;
+    return std::ranges::all_of(s, [](char c) { return c >= '0' && c <= '9'; });
 }
 
 basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) {
@@ -101,7 +102,7 @@ basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) {
 
 } // namespace
 
-prompt_output execute_intraday(prompt_context&& ctx) {
+static void execute_intraday(prompt_context& ctx) {
     auto config = parse_intraday_args(ctx);
     if (config.failed) {
         throw prompt_error{config.exit_code, std::move(config.error), ""};
@@ -149,10 +150,10 @@ prompt_output execute_intraday(prompt_context&& ctx) {
 
     output += trim_context(fetch.stdout_data, config.head_lines);
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_intraday(std::ostream& os) {
+static void render_help_intraday(std::ostream& os) {
     os << R"EOF(Usage: prompt intraday [<symbol|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
 
 Fetch TSETMC market data, order-book/flow snapshot, recent daily history, market context (free-market USD/IRR, Iran macro indicators, large-cap breadth) and Codal news for an Iranian بورس instrument and build an AI prompt that decides a same-day trade: buy tomorrow and sell the same day (LONG) or stand aside (NO-TRADE). Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), TSETMC insCode, or an easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one.
@@ -177,5 +178,17 @@ Options:
   -h, --help   Show this help
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "intraday",
+    "Fetch TSETMC market data, order-book/flow snapshot, recent daily history, market context (free-market "
+    "USD/IRR, Iran macro indicators, large-cap breadth) and Codal news for an Iranian بورس instrument and "
+    "build "
+    "an AI prompt that decides a same-day trade: buy tomorrow and sell the same day (LONG) or stand aside "
+    "(NO-TRADE). Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), TSETMC insCode, or an "
+    "easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one.",
+    &execute_intraday, &render_help_intraday);
 
 } // namespace prompt::prompts

@@ -1,13 +1,13 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <string>
 #include <vector>
 
 namespace prompt::prompts {
 
-prompt_output execute_diagram(prompt_context&& ctx) {
+static void execute_diagram(prompt_context& ctx) {
     // diagram.sh runs init_prompt (which already validated --head) before its
     // own --type loop, so --head errors win.
     std::size_t head_lines = 0;
@@ -37,7 +37,7 @@ prompt_output execute_diagram(prompt_context&& ctx) {
               "show decision points and error paths\n- Include a brief legend or title if the diagram is complex\n\n";
     output += "If the code is complex, produce multiple focused diagrams rather than one "
               "overwhelming diagram.\n";
-    output += "\n";
+    output += '\n';
 
     std::string error;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
@@ -57,10 +57,11 @@ prompt_output execute_diagram(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.err = std::move(error);
 }
 
-void render_help_diagram(std::ostream& os) {
+static void render_help_diagram(std::ostream& os) {
     os << R"EOF(Usage: prompt diagram [--head N] [--type TYPE] [FILE...]
        echo "task description" | prompt diagram [--head N] [--type TYPE] [FILE...]
 
@@ -71,5 +72,13 @@ Options:
   --type, -t     Diagram type: mermaid (default), plantuml, ascii, flowchart, sequence, class
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("diagram",
+                            "Generates code diagrams (Mermaid, PlantUML, ASCII) from source code or "
+                            "descriptions.",
+                            &execute_diagram, &render_help_diagram);
 
 } // namespace prompt::prompts

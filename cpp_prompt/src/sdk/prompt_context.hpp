@@ -19,6 +19,8 @@ struct prompt_context {
     std::size_t args_count = 0;
     std::size_t head_lines = 0;
     std::string stdin_content;
+    // Set when stdin was piped, and by a prompt that reads it: the dispatcher
+    // spends the shared pipe once either flag is set (see main.cpp).
     bool stdin_consumed = false;
     std::filesystem::path git_root;
     // Path of the running executable (for locating repo bin/ utilities).
@@ -28,6 +30,24 @@ struct prompt_context {
     std::optional<std::string> (*clipboard_identifier_fn)() = nullptr;
     std::vector<std::filesystem::path> (*select_files_fn)() = nullptr;
     std::optional<std::filesystem::path> (*resolve_input_file_fn)(std::string_view) = nullptr;
+
+    // --- outputs ---------------------------------------------------------
+    // A prompt fills these instead of returning a value: `out` is the prompt
+    // text for stdout (sanitized, pipelined, clipboard), `err` is stderr on
+    // the *success* path (bash's `>&2` output with exit 0), and the flags
+    // tell the dispatcher how to treat the result. Failure does not use
+    // them: it throws (see sdk/errors.hpp).
+    std::string out;
+    std::string err;
+    bool no_clipboard = false;
+
+    // In-process sub-dispatch (paths -> files, verify -> git-dirty) copies the
+    // context; the child must not append to the parent's accumulated text.
+    void clear_output() {
+        out.clear();
+        err.clear();
+        no_clipboard = false;
+    }
 
     [[nodiscard]] std::string clipboard_content() const {
         return (clipboard_content_fn != nullptr) ? clipboard_content_fn() : "";

@@ -1,11 +1,11 @@
 #include "../core/strings.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <string>
 
 namespace prompt::prompts {
 
-prompt_output execute_note(prompt_context&& ctx) {
+static void execute_note(prompt_context& ctx) {
     std::size_t head_lines = 0;
     bool prepend = false;
     std::vector<std::string_view> notes;
@@ -37,21 +37,16 @@ prompt_output execute_note(prompt_context&& ctx) {
         if (ctx.stdin_consumed) {
             output += embed_stdin(ctx.stdin_content, head_lines);
         }
-        if (!notes.empty()) output += "\n";
+        if (!notes.empty()) output += '\n';
         for (auto note : notes) {
             output += std::string(note) + "\n\n";
         }
     }
 
-    return {
-        .text = std::move(output),
-        .error = std::string{},
-        .no_clipboard = false,
-        .stdin_consumed = ctx.stdin_consumed,
-    };
+    ctx.out = std::move(output);
 }
 
-void render_help_note(std::ostream& os) {
+static void render_help_note(std::ostream& os) {
     os << R"EOF(Usage: prompt note [--head N] [NOTE...]
        some-command | prompt note [--head N] [NOTE...]
 
@@ -65,5 +60,9 @@ Options:
   --prepend|-p  Add before everything
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt("note", "Add a note to the prompt.", &execute_note, &render_help_note);
 
 } // namespace prompt::prompts

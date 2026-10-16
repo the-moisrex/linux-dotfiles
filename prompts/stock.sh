@@ -129,6 +129,8 @@ if [[ ${#ident_inputs[@]} -gt 1 ]]; then
 fi
 symbol="${ident_inputs[0]:-}"
 
+prompt_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 cache_mode=false
 resolved_files=()
 snap_infos=()
@@ -143,48 +145,7 @@ if [[ ${#file_inputs[@]} -gt 0 ]]; then
             printf 'prompt stock: snapshot file not readable: %s\n' "$resolved" >&2
             exit 2
         fi
-        if ! info="$(python3 - "$resolved" 2>&1 <<'PY'
-import json, sys
-from datetime import datetime
-
-path = sys.argv[1]
-try:
-    with open(path, encoding="utf-8") as handle:
-        doc = json.load(handle)
-except Exception as exc:
-    sys.exit(f"{path}: not valid JSON: {exc}")
-meta = doc.get("meta")
-data = doc.get("data")
-if not isinstance(meta, dict) or not isinstance(data, dict):
-    sys.exit(f"{path}: not a .stock snapshot (expected top-level meta and data objects)")
-fetched = data.get("fetched_at") or meta.get("fetched_at") or ""
-stale = ""
-if isinstance(fetched, str) and fetched:
-    try:
-        when = datetime.fromisoformat(fetched)
-        age = datetime.now(when.tzinfo) - when
-        stale = "yes" if age.total_seconds() > 86400 else "no"
-    except ValueError:
-        stale = "?"
-note = meta.get("note")
-note = "" if note in (None, "") else " ".join(str(note).split())
-bits = []
-for value, label in (
-    (meta.get("symbol"), ""),
-    (meta.get("name"), ""),
-    (meta.get("isin"), "ISIN "),
-    (meta.get("ins_code"), "insCode "),
-    (meta.get("market"), ""),
-    (meta.get("source"), "source: "),
-):
-    if value not in (None, ""):
-        bits.append(f"{label}{value}")
-print(fetched or "unknown")
-print(stale)
-print(note)
-print("Instrument: " + " — ".join(bits) if bits else "")
-PY
-)"; then
+        if ! info="$(python3 "$prompt_dir/../bin/tse" snapshot "$resolved" 2>&1)"; then
             printf 'prompt stock: %s\n' "$info" >&2
             exit 2
         fi
@@ -193,7 +154,6 @@ PY
     done
 fi
 
-prompt_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 context=""
 if ! $cache_mode; then
     fetch_args=(all "$symbol" --top "$top" --markdown)
@@ -243,28 +203,7 @@ if $cache_mode; then
         if [[ -n "$instrument" ]]; then
             printf '%s\n' "$instrument"
         fi
-        if rendered="$(python3 - "$resolved" "$prompt_dir/../bin/tse" 2>&1 <<'PY'
-import importlib.machinery
-import importlib.util
-import json
-import sys
-
-path, tse_path = sys.argv[1], sys.argv[2]
-try:
-    with open(path, encoding="utf-8") as handle:
-        doc = json.load(handle)
-    data = doc["data"]
-    if not isinstance(data, dict):
-        raise TypeError("data is not an object")
-    loader = importlib.machinery.SourceFileLoader("tse_snapshot_render", tse_path)
-    spec = importlib.util.spec_from_loader("tse_snapshot_render", loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    sys.stdout.write(module.markdown(data))
-except Exception as exc:
-    sys.exit(str(exc))
-PY
-)"; then
+        if rendered="$(python3 "$prompt_dir/../bin/tse" markdown "$resolved" 2>&1)"; then
             printf '\n'
             trim_context "$rendered"
             printf '\n'

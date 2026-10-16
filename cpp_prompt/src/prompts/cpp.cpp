@@ -1,6 +1,6 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <regex>
 #include <string>
 
@@ -25,7 +25,7 @@ std::string strip_trailing_newlines(std::string_view content) {
 
 } // namespace
 
-prompt_output execute_cpp(prompt_context&& ctx) {
+static void execute_cpp(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -67,17 +67,12 @@ prompt_output execute_cpp(prompt_context&& ctx) {
             "be ignored\n- Prefer RAII and smart pointers for resource management\n- Leverage templates and concepts "
             "for generic programming\n- Write efficient, safe, readable, and maintainable code\n";
     }
-    output += "\n";
+    output += '\n';
 
-    return {
-        .text = std::move(output),
-        .error = std::string{},
-        .no_clipboard = false,
-        .stdin_consumed = ctx.stdin_consumed,
-    };
+    ctx.out = std::move(output);
 }
 
-void render_help_cpp(std::ostream& os) {
+static void render_help_cpp(std::ostream& os) {
     os << R"EOF(Usage: prompt cpp [--head N] [FILE...]
        make 2>&1 | prompt cpp [--head N] [FILE...]
 
@@ -88,5 +83,13 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "cpp",
+    "Builds a prompt for generating or editing C++ code. If C++ compiler errors are detected on "
+    "stdin, it automatically simplifies the prompt to focus on fixing the compilation issues.",
+    &execute_cpp, &render_help_cpp);
 
 } // namespace prompt::prompts

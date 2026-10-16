@@ -9,6 +9,14 @@
 # the same line (it mangles argument lists in headers, and has deleted
 # function bodies). Fix per file and compile after each; never one giant
 # --fix run.
+#
+# Declined with a reason: use-anonymous-namespace / use-internal-linkage (the
+# prompt entry points are file-local `static` functions referenced by the
+# registrar in the same TU — anonymous namespaces would only add nesting),
+# braces-around-statements (short single-line ifs), const-correctness on
+# locals (parameters are already const&), cognitive complexity (bash-ported
+# functions are long by nature), magic numbers and identifier length (the
+# ports keep the scripts' literals and names), brackets/uppercase-literal-suffix.
 Checks: >
   bugprone-*,
   concurrency-*,
@@ -22,6 +30,7 @@ Checks: >
   -misc-const-correctness,
   -misc-include-cleaner,
   -misc-non-private-member-variables-in-classes,
+  -misc-use-anonymous-namespace,
   -misc-use-internal-linkage,
   -modernize-use-ranges,
   -modernize-use-string-view,

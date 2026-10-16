@@ -3,7 +3,6 @@
 #include "../core/process.hpp"
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
-#include "prompts.hpp"
 #include <cstdint>
 #include <regex>
 #include <string>
@@ -135,7 +134,7 @@ bool should_translate_to_english(std::string_view content) {
 
 } // namespace
 
-prompt_output execute_auto(prompt_context&& ctx) {
+static void execute_auto(prompt_context& ctx) {
     std::string input_buffer;
     bool has_stdin = ctx.stdin_consumed;
 
@@ -176,10 +175,8 @@ prompt_output execute_auto(prompt_context&& ctx) {
                     R"(Traceback \(most recent call last\)|File ".*", line|Fatal error|panic:|Segmentation fault|stack trace|Exception in)",
                     std::regex::icase))) {
             target_script = "debug";
-        } else if (is_stock_identifier(input_buffer, stock_identifier)) {
-            target_script = "stock";
-            extra_args.push_back(stock_identifier);
-        } else if (extract_stock_identifier(input_buffer, stock_identifier)) {
+        } else if (is_stock_identifier(input_buffer, stock_identifier) ||
+                   extract_stock_identifier(input_buffer, stock_identifier)) {
             target_script = "stock";
             extra_args.push_back(stock_identifier);
         } else if (input_buffer.contains("class ") || input_buffer.contains("struct ") ||
@@ -209,13 +206,14 @@ prompt_output execute_auto(prompt_context&& ctx) {
         if (std::filesystem::exists(p)) {
             auto ext = p.extension().string();
             auto fname = p.filename().string();
+            // bash auto.sh lists these as separate `case` arms whose bodies
+            // are identical; keep them separate for a 1:1 port.
+            // NOLINTBEGIN(bugprone-branch-clone)
             if (ext == ".cpp" || ext == ".hpp" || ext == ".cxx" || ext == ".hxx" || ext == ".cc" || ext == ".c" ||
                 ext == ".h") {
                 target_script = "cpp-reviewer";
-            } else if (ext == ".sh" || ext == ".bash") {
-                target_script = "review";
-            } else if (ext == ".py" || ext == ".rb" || ext == ".go" || ext == ".rs" || ext == ".java" || ext == ".kt" ||
-                       ext == ".swift" || ext == ".ts" || ext == ".js") {
+            } else if (ext == ".sh" || ext == ".bash" || ext == ".py" || ext == ".rb" || ext == ".go" || ext == ".rs" ||
+                       ext == ".java" || ext == ".kt" || ext == ".swift" || ext == ".ts" || ext == ".js") {
                 target_script = "review";
             } else if (ext == ".yml" || ext == ".yaml") {
                 if (fname.contains("docker-compose") || fname.contains("compose")) {
@@ -235,6 +233,7 @@ prompt_output execute_auto(prompt_context&& ctx) {
                        fname == "CMakeLists.txt") {
                 target_script = "review";
             }
+            // NOLINTEND(bugprone-branch-clone)
         }
     }
 
@@ -258,7 +257,10 @@ prompt_output execute_auto(prompt_context&& ctx) {
     // Dispatch in-process when the target prompt is implemented in this
     // binary; avoid re-spawning `prompt` which would recurse.
     if (const auto* target = prompt::find_prompt(target_script)) {
-        auto sub_ctx = std::move(ctx);
+        // A copy: `ctx` is still needed below to carry the sub-prompt's
+        // result out (and it holds the chain's stdin if the target doesn't
+        // read it).
+        prompt_context sub_ctx = ctx;
         sub_ctx.name = target_script;
         auto orig_args = sub_ctx.args;
         auto orig_count = sub_ctx.args_count;
@@ -275,14 +277,19 @@ prompt_output execute_auto(prompt_context&& ctx) {
         sub_ctx.args_count = n;
         // `printf '%s\n' "$input_buffer"` re-adds the trailing newline that
         // $(cat) stripped.
+        sub_ctx.clear_output();
         sub_ctx.stdin_content = has_stdin ? input_buffer + "\n" : std::string{};
         sub_ctx.stdin_consumed = has_stdin;
         try {
-            auto result = target->execute_fn(std::move(sub_ctx));
-            result.text.insert(0, echo);
-            // chain's stdin is spent regardless of what the target did.
-            result.stdin_consumed = has_stdin;
-            return result;
+            target->execute_fn(sub_ctx);
+            // Prepend the decision line the script echoes before the
+            // target's output. The chain's stdin is spent regardless of what
+            // the target did.
+            ctx.out = echo + sub_ctx.out;
+            ctx.err = sub_ctx.err;
+            ctx.no_clipboard = sub_ctx.no_clipboard;
+            ctx.stdin_consumed = has_stdin;
+            return;
         } catch (prompt_error const& err) {
             std::string combined = echo;
             combined += err.partial_output();
@@ -296,7 +303,7 @@ prompt_output execute_auto(prompt_context&& ctx) {
     throw prompt_error{3, "prompt auto: prompt '" + std::string(target_script) + "' not found\n", {}, false, has_stdin};
 }
 
-void render_help_auto(std::ostream& os) {
+static void render_help_auto(std::ostream& os) {
     os << R"EOF(Usage: prompt auto [FILE...]
        some-command | prompt auto [FILE...]
 
@@ -311,5 +318,16 @@ Options:
   (Any other options like --head are passed through to the selected script)
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "auto",
+    "Automatically chooses and executes the most appropriate prompt script based on the input. For "
+    "example, if it detects YouTube URLs, it delegates to the 'yt' prompt. If it detects C++ files, "
+    "it delegates to 'cpp-reviewer'. A bare stock identifier (ISIN, insCode, or "
+    "easytrader/tsetmc/codal URL) delegates to 'stock'. Defaults to 'summarize' for English and Farsi "
+    "text, or 'english' (translate) for other languages like Arabic.",
+    &execute_auto, &render_help_auto);
 
 } // namespace prompt::prompts

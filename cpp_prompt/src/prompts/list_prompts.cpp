@@ -1,5 +1,4 @@
 #include "../sdk/prompt_registry.hpp"
-#include "prompts.hpp"
 #include <algorithm>
 #include <sstream>
 #include <string>
@@ -7,9 +6,9 @@
 
 namespace prompt::prompts {
 
-prompt_output execute_list_prompts(prompt_context&& ctx) {
+static void execute_list_prompts(prompt_context& ctx) {
     if (ctx.args_count > 0) {
-        throw usage_error{std::string{}, "prompt list-prompts: takes no arguments\n"};
+        throw usage_error{"prompt list-prompts: takes no arguments\n"};
     }
     auto prompts = get_all_prompts();
 
@@ -25,11 +24,7 @@ prompt_output execute_list_prompts(prompt_context&& ctx) {
         output += std::format("=== {} ===\n", std::string(desc->name));
 
         std::string body;
-        if (!desc->help_full.empty()) {
-            // Static help extracted from the script (or, for file-less
-            // native prompts, the embedded fallback text).
-            body = desc->help_full;
-        } else if (desc->render_help_fn != nullptr) {
+        if (desc->render_help_fn != nullptr) {
             std::ostringstream oss;
             desc->render_help_fn(oss);
             body = oss.str();
@@ -37,13 +32,14 @@ prompt_output execute_list_prompts(prompt_context&& ctx) {
         if (body.empty()) body = "(no help)";
         if (body.back() != '\n') body += '\n';
         output += body;
-        output += "\n";
+        output += '\n';
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = true, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.no_clipboard = true;
 }
 
-void render_help_list_prompts(std::ostream& os) {
+static void render_help_list_prompts(std::ostream& os) {
     os << R"EOF(Usage: prompt list-prompts
 
 Print the full help text of every available prompt, one after another.
@@ -53,5 +49,13 @@ printed in full.
 See also: prompt list (short descriptions, one line per prompt).
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "list-prompts",
+    "Print the full help text of every available prompt, one after another. Bash prompts are shown "
+    "via their --help output; .txt/.md prompts are printed in full.",
+    &execute_list_prompts, &render_help_list_prompts);
 
 } // namespace prompt::prompts

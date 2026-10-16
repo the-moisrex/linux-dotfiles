@@ -1,12 +1,12 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <string>
 
 namespace prompt::prompts {
 
-prompt_output execute_branchless(prompt_context&& ctx) {
+static void execute_branchless(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -44,7 +44,7 @@ OUTPUT:
 - Briefly explain which branches you removed and why.
 - Provide a git diff for the changes.
 )PROMPT";
-    output += "\n";
+    output += '\n';
 
     std::string error;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
@@ -60,10 +60,11 @@ OUTPUT:
         }
     }
 
-    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.err = std::move(error);
 }
 
-void render_help_branchless(std::ostream& os) {
+static void render_help_branchless(std::ostream& os) {
     os << R"EOF(Usage: prompt branchless [--head N] [FILE...]
        some-command | prompt branchless [--head N] [FILE...]
 
@@ -73,5 +74,10 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt("branchless", "Rewrite this C++ code to be branchless.",
+                                                &execute_branchless, &render_help_branchless);
 
 } // namespace prompt::prompts

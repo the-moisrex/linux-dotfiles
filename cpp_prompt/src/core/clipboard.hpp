@@ -1,12 +1,13 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 
 namespace prompt::clipboard {
 
-enum class backend { wayland, x11, kde, none };
+enum class backend : std::uint8_t { wayland, x11, kde, none };
 
 backend detect_backend();
 

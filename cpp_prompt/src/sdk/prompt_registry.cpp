@@ -1,4 +1,5 @@
 #include "prompt_registry.hpp"
+#include "../core/fs.hpp"
 #include <algorithm>
 #include <array>
 #include <clocale>
@@ -62,10 +63,21 @@ void assign_sort_files(std::filesystem::path const& dir) {
     }
 }
 
-void register_prompt(prompt_descriptor const& desc) {
-    if (prompts_count < prompts_storage.size()) {
-        prompts_storage[prompts_count++] = desc;
-    }
+bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
+                     void (*render_help_fn)(std::ostream&)) noexcept {
+    if (prompts_count >= prompts_storage.size()) return false;
+    prompts_storage[prompts_count++] = prompt_descriptor{
+        .name = name,
+        .help_summary = help_summary,
+        .execute_fn = execute_fn,
+        .render_help_fn = render_help_fn,
+        .sort_file = {},
+    };
+    return true;
+}
+
+void init_prompt_registry() {
+    assign_sort_files(fs::find_git_root().value_or(std::filesystem::current_path()) / "prompts");
 }
 
 } // namespace prompt

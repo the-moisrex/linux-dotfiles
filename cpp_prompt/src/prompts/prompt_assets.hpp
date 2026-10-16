@@ -4,9 +4,7 @@
 
 // embedded so this binary never reads the prompts/ directory.
 
-namespace prompt {
-
-namespace prompt_assets {
+namespace prompt::prompt_assets {
 
 inline constexpr char const* common =
     R"PROMPT_COMMON(#!/bin/bash
@@ -521,6 +519,4 @@ for file_path in "${ARGS[@]}"; do
 done
 )PROMPT_SYMBOLS";
 
-} // namespace prompt_assets
-
-} // namespace prompt
+} // namespace prompt::prompt_assets

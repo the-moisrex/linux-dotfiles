@@ -2,13 +2,13 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <string>
 #include <vector>
 
 namespace prompt::prompts {
 
-prompt_output execute_gtest_case(prompt_context&& ctx) {
+static void execute_gtest_case(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines, false); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -59,15 +59,11 @@ prompt_output execute_gtest_case(prompt_context&& ctx) {
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "\n```\n\nUse the test case context above when analyzing the issue.";
 
-    return {
-        .text = std::move(output),
-        .error = std::move(result.stderr_data),
-        .no_clipboard = false,
-        .stdin_consumed = ctx.stdin_consumed,
-    };
+    ctx.out = std::move(output);
+    ctx.err = std::move(result.stderr_data);
 }
 
-void render_help_gtest_case(std::ostream& os) {
+static void render_help_gtest_case(std::ostream& os) {
     os << R"EOF(Usage: prompt gtest-case [--head N] [--exact] <test-name> [test-name...]
 
 Builds a debugging prompt and embeds the original source for Google Test cases.
@@ -78,5 +74,13 @@ Options:
   --exact    Match each given test name exactly
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "gtest-case",
+    "Builds a debugging prompt and embeds the original source for Google Test cases. By default, test "
+    "names are prefix matches.",
+    &execute_gtest_case, &render_help_gtest_case);
 
 } // namespace prompt::prompts

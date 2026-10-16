@@ -1,6 +1,6 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <string>
 #include <vector>
 
@@ -28,7 +28,7 @@ std::string gh_issue_field(std::string const& number, std::string const& field, 
 
 } // namespace
 
-prompt_output execute_gh_issue(prompt_context&& ctx) {
+static void execute_gh_issue(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -83,32 +83,33 @@ prompt_output execute_gh_issue(prompt_context&& ctx) {
         output += std::format("# Issue #{}: {}\n\n", issue_number, issue_title);
         if (!issue_url.empty()) output += "URL: " + issue_url + "\n";
         if (!issue_labels.empty()) output += "Labels: " + issue_labels + "\n";
-        output += "\n";
+        output += '\n';
         if (!issue_body.empty()) output += issue_body + "\n";
         if (!issue_comments.empty()) {
             output += "\n## Comments\n\n";
             output += issue_comments;
-            output += "\n";
+            output += '\n';
         }
-        output += "\n";
+        output += '\n';
     } else if (!stdin_content.empty()) {
         if (!issue_number.empty()) {
             output += std::format("# Issue #{} (provided via stdin)\n", issue_number);
         } else {
             output += "# Issue Description (provided via stdin)\n";
         }
-        output += "\n";
+        output += '\n';
         output += stdin_content + "\n";
-        output += "\n";
+        output += '\n';
     } else {
         error += "No issue data available.\n";
         throw soft_error{std::move(error), std::move(output)};
     }
 
-    return {.text = std::move(output), .error = error, .no_clipboard = false, .stdin_consumed = ctx.stdin_consumed};
+    ctx.out = std::move(output);
+    ctx.err = error;
 }
 
-void render_help_gh_issue(std::ostream& os) {
+static void render_help_gh_issue(std::ostream& os) {
     os << R"EOF(Usage: prompt gh.issue <ISSUE_NUMBER>
        echo "issue context" | prompt gh.issue [ISSUE_NUMBER]
 
@@ -120,5 +121,14 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("gh.issue",
+                            "Fetch a GitHub issue and generate a prompt asking the AI to implement it. Uses `gh issue "
+                            "view` to retrieve issue details. If `gh` is unavailable, reads issue context from stdin "
+                            "or produces a generic implementation prompt.",
+                            &execute_gh_issue, &render_help_gh_issue);
 
 } // namespace prompt::prompts

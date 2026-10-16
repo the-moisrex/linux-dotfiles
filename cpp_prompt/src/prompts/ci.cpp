@@ -2,7 +2,7 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <span>
 #include <string>
 #include <vector>
@@ -42,7 +42,7 @@ bool contains_ci_path(std::string const& line) {
 
 } // namespace
 
-prompt_output execute_ci(prompt_context&& ctx) {
+static void execute_ci(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -81,7 +81,8 @@ prompt_output execute_ci(prompt_context&& ctx) {
     if (ci_files.empty()) {
         output += "No CI/CD configuration files found in this repository.\nSearched for: GitHub Actions, GitLab CI, "
                   "Jenkins, Docker, CircleCI, Travis CI.\n";
-        return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+        ctx.out = std::move(output);
+        return;
     }
 
     std::vector<std::string> seen;
@@ -107,10 +108,10 @@ prompt_output execute_ci(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_ci(std::ostream& os) {
+static void render_help_ci(std::ostream& os) {
     os << R"EOF(Usage: prompt ci [--head N]
        echo "task description" | prompt ci [--head N]
 
@@ -122,5 +123,13 @@ Options:
   --head N   Keep only the first N lines of each embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("ci",
+                            "CI/CD pipeline review prompt. Automatically finds and embeds all CI/CD configuration "
+                            "files from the repository (GitHub Actions, GitLab CI, Jenkins, Docker, etc.).",
+                            &execute_ci, &render_help_ci);
 
 } // namespace prompt::prompts

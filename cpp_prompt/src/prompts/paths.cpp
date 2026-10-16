@@ -3,7 +3,7 @@
 #include "../core/strings.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <optional>
 #include <string>
@@ -85,7 +85,7 @@ std::vector<std::string> to_sed_lines(std::string const& content) {
 
 } // namespace
 
-prompt_output execute_paths(prompt_context&& ctx) {
+static void execute_paths(prompt_context& ctx) {
     // paths.sh parses its own args (no init_prompt): --context/--head are NOT
     // integer-validated, and --head is only consumed so it is not a path.
     std::string mode = "context";
@@ -192,15 +192,14 @@ prompt_output execute_paths(prompt_context&& ctx) {
         std::size_t n = 0;
         for (auto const& r : resolved_files) sub.args[n++] = r;
         sub.args_count = n;
-        auto files_result = prompts::execute_files(std::move(sub));
-        output += files_result.text;
-        sed_warnings += files_result.error;
-        return {
-            .text = std::move(output),
-            .error = std::string{},
-            .no_clipboard = false,
-            .stdin_consumed = ctx.stdin_consumed,
-        };
+        sub.clear_output();
+        if (const auto* files = prompt::find_prompt("files")) {
+            files->execute_fn(sub);
+            output += sub.out;
+            sed_warnings += sub.err;
+        }
+        ctx.out = std::move(output);
+        return;
     }
 
     for (auto const& resolved : resolved_files) {
@@ -251,15 +250,10 @@ prompt_output execute_paths(prompt_context&& ctx) {
         }
     }
 
-    return {
-        .text = std::move(output),
-        .error = std::string{},
-        .no_clipboard = false,
-        .stdin_consumed = ctx.stdin_consumed,
-    };
+    ctx.out = std::move(output);
 }
 
-void render_help_paths(std::ostream& os) {
+static void render_help_paths(std::ostream& os) {
     os << R"EOF(Usage: prompt paths [--context N] [--full] [--head N] [FILE...]
        make 2>&1 | prompt paths [--context N] [--full] [--head N]
 
@@ -275,5 +269,13 @@ Options:
   --head N     Keep only the first N lines (full mode only)
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("paths",
+                            "Extracts file paths from stdin (via bin/paths) and/or arguments, resolves each, and "
+                            "embeds only Git-tracked files.",
+                            &execute_paths, &render_help_paths);
 
 } // namespace prompt::prompts

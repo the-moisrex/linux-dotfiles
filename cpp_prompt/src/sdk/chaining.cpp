@@ -1,5 +1,6 @@
 #include "chaining.hpp"
 #include "prompt_registry.hpp"
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <span>
@@ -10,10 +11,7 @@ namespace prompt {
 chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_descriptor const> registry) {
 
     auto known = [&](std::string_view name) -> bool {
-        for (auto const& d : registry) {
-            if (d.name == name) return true;
-        }
-        return false;
+        return std::ranges::any_of(registry, [&](auto const& d) { return d.name == name; });
     };
 
     chain_result result;

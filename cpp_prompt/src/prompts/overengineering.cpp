@@ -1,8 +1,9 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <sstream>
 #include <string>
@@ -10,6 +11,8 @@
 #include <vector>
 
 namespace prompt::prompts {
+
+static void render_help_overengineering(std::ostream& os);
 
 namespace {
 
@@ -19,93 +22,95 @@ struct overengineering_pattern {
 };
 
 // overengineering.sh's PATTERNS map, in the script's declaration order.
-constexpr overengineering_pattern kPatterns[] = {
+constexpr std::array<overengineering_pattern, 12> kPatterns = {
     {
-        .name = "general",
-        .text = "General over-engineering critique. Identify unnecessary complexity, premature abstractions, "
-                "speculative flexibility, and violations of YAGNI. Prefer straightforward solutions, concrete "
-                "over abstract, inline simple functions, remove unused capabilities. Provide specific "
-                "simplifications as git diffs where possible.",
-    },
-    {
-        .name = "premature-abstraction",
-        .text = "Premature abstraction critique. Flag interfaces with single implementations, base classes with "
-                "no derived classes yet, template parameters used in only one way, strategy patterns where a "
-                "function pointer or lambda would do, visitor patterns for simple type switches. Suggest "
-                "inlining, removing indirection, using concrete types.",
-    },
-    {
-        .name = "yagni",
-        .text = "YAGNI (You Aren't Gonna Need It) critique. Identify unused parameters, speculative hooks, "
-                "plugin architectures not yet needed, configuration options never used, feature flags for "
-                "undeployed features, generic repositories for single entity types, event systems with no "
-                "subscribers. Suggest removing dead code paths and simplifying to current requirements.",
-    },
-    {
-        .name = "pattern-abuse",
-        .text = "Design pattern overuse critique. Flag Factory/AbstractFactory for simple object creation, "
-                "Strategy for single-algorithm cases, Visitor for simple type dispatch, Observer for direct "
-                "calls, Command for simple callbacks, Builder for <4 parameters, Singleton where dependency "
-                "injection works, Decorator for single decoration. Suggest replacing with direct calls, "
-                "functions, or simpler constructs.",
-    },
-    {
-        .name = "excessive-di",
-        .text = "Excessive dependency injection critique. Flag service locators, containers for simple apps, "
-                "constructor injection with 5+ params, interfaces created solely for mocking, "
-                "provider/manager/factory indirection chains, scoped lifetimes where transient works. Suggest "
-                "manual wiring, simple structs, or removing unnecessary abstraction layers.",
-    },
-    {
-        .name = "cpp-templates",
-        .text = "C++ template metaprogramming critique. Flag excessive template parameters, CRTP used where "
-                "virtual works, policy classes with single policy, expression templates for simple ops, SFINAE "
-                "mazes replaceable with concepts/if constexpr, variadic templates for fixed arity, template "
-                "specialization explosion. Suggest runtime polymorphism, std::variant, plain functions, or "
-                "concepts.",
-    },
-    {
-        .name = "cpp-inheritance",
-        .text = "C++ inheritance hierarchy critique. Flag deep hierarchies (>3 levels), virtual functions with "
-                "single override, base classes with no virtual destructor, multiple inheritance without "
-                "diamond, virtual where CRTP/static polymorphism works, interface segregation violations. "
-                "Suggest composition, CRTP, concepts, or flattening hierarchy.",
-    },
-    {
-        .name = "cpp-overloads",
-        .text = "C++ overload/overload set critique. Flag excessive overloads (>4), ambiguous overload sets, "
-                "SFINAE-based enable_if chains, tag dispatching where if constexpr works, perfect forwarding "
-                "for non-template functions, concept overuse for simple constraints. Suggest default "
-                "parameters, single function with branches, or concepts.",
-    },
-    {
-        .name = "cpp-header-only",
-        .text = "C++ header-only bloat critique. Flag header-only libraries forcing full recompilation, inline "
-                "on large functions, missing compilation firewalls (pimpl), template implementation in headers "
-                "for non-templates, heavy includes in public headers. Suggest explicit instantiation, pimpl, "
-                "moving impl to .cpp, forward declarations.",
-    },
-    {
-        .name = "enterprise-java",
-        .text = "Enterprise Java pattern critique. Flag AbstractFactoryBean, Manager/Provider/Service suffixes "
-                "for simple objects, Builder for <4 fields, DTO/Entity mapping boilerplate, @Autowired "
-                "everywhere, @Configuration for simple beans, Repository for single table, "
-                "Specification/QueryDSL for simple queries. Suggest records, plain functions, constructor "
-                "injection, direct SQL.",
-    },
-    {
-        .name = "microservice-premature",
-        .text = "Premature microservice critique. Flag distributed transactions for simple consistency, service "
-                "mesh for 2-3 services, event sourcing for CRUD, CQRS where read=write, saga pattern for local "
-                "transactions, API gateway for internal services, distributed tracing for monolith. Suggest "
-                "modular monolith, shared library, or direct calls.",
-    },
-    {
-        .name = "config-over-code",
-        .text = "Configuration over code critique. Flag YAML/JSON/TOML configs for logic, rule engines for "
-                "<10 rules, DSLs for simple expressions, feature flags for permanent features, database-driven "
-                "config for static values, complex config validation schemas. Suggest hardcoded constants, "
-                "simple structs, compile-time config, or code.",
+        {
+            .name = "general",
+            .text = "General over-engineering critique. Identify unnecessary complexity, premature abstractions, "
+                    "speculative flexibility, and violations of YAGNI. Prefer straightforward solutions, concrete "
+                    "over abstract, inline simple functions, remove unused capabilities. Provide specific "
+                    "simplifications as git diffs where possible.",
+        },
+        {
+            .name = "premature-abstraction",
+            .text = "Premature abstraction critique. Flag interfaces with single implementations, base classes with "
+                    "no derived classes yet, template parameters used in only one way, strategy patterns where a "
+                    "function pointer or lambda would do, visitor patterns for simple type switches. Suggest "
+                    "inlining, removing indirection, using concrete types.",
+        },
+        {
+            .name = "yagni",
+            .text = "YAGNI (You Aren't Gonna Need It) critique. Identify unused parameters, speculative hooks, "
+                    "plugin architectures not yet needed, configuration options never used, feature flags for "
+                    "undeployed features, generic repositories for single entity types, event systems with no "
+                    "subscribers. Suggest removing dead code paths and simplifying to current requirements.",
+        },
+        {
+            .name = "pattern-abuse",
+            .text = "Design pattern overuse critique. Flag Factory/AbstractFactory for simple object creation, "
+                    "Strategy for single-algorithm cases, Visitor for simple type dispatch, Observer for direct "
+                    "calls, Command for simple callbacks, Builder for <4 parameters, Singleton where dependency "
+                    "injection works, Decorator for single decoration. Suggest replacing with direct calls, "
+                    "functions, or simpler constructs.",
+        },
+        {
+            .name = "excessive-di",
+            .text = "Excessive dependency injection critique. Flag service locators, containers for simple apps, "
+                    "constructor injection with 5+ params, interfaces created solely for mocking, "
+                    "provider/manager/factory indirection chains, scoped lifetimes where transient works. Suggest "
+                    "manual wiring, simple structs, or removing unnecessary abstraction layers.",
+        },
+        {
+            .name = "cpp-templates",
+            .text = "C++ template metaprogramming critique. Flag excessive template parameters, CRTP used where "
+                    "virtual works, policy classes with single policy, expression templates for simple ops, SFINAE "
+                    "mazes replaceable with concepts/if constexpr, variadic templates for fixed arity, template "
+                    "specialization explosion. Suggest runtime polymorphism, std::variant, plain functions, or "
+                    "concepts.",
+        },
+        {
+            .name = "cpp-inheritance",
+            .text = "C++ inheritance hierarchy critique. Flag deep hierarchies (>3 levels), virtual functions with "
+                    "single override, base classes with no virtual destructor, multiple inheritance without "
+                    "diamond, virtual where CRTP/static polymorphism works, interface segregation violations. "
+                    "Suggest composition, CRTP, concepts, or flattening hierarchy.",
+        },
+        {
+            .name = "cpp-overloads",
+            .text = "C++ overload/overload set critique. Flag excessive overloads (>4), ambiguous overload sets, "
+                    "SFINAE-based enable_if chains, tag dispatching where if constexpr works, perfect forwarding "
+                    "for non-template functions, concept overuse for simple constraints. Suggest default "
+                    "parameters, single function with branches, or concepts.",
+        },
+        {
+            .name = "cpp-header-only",
+            .text = "C++ header-only bloat critique. Flag header-only libraries forcing full recompilation, inline "
+                    "on large functions, missing compilation firewalls (pimpl), template implementation in headers "
+                    "for non-templates, heavy includes in public headers. Suggest explicit instantiation, pimpl, "
+                    "moving impl to .cpp, forward declarations.",
+        },
+        {
+            .name = "enterprise-java",
+            .text = "Enterprise Java pattern critique. Flag AbstractFactoryBean, Manager/Provider/Service suffixes "
+                    "for simple objects, Builder for <4 fields, DTO/Entity mapping boilerplate, @Autowired "
+                    "everywhere, @Configuration for simple beans, Repository for single table, "
+                    "Specification/QueryDSL for simple queries. Suggest records, plain functions, constructor "
+                    "injection, direct SQL.",
+        },
+        {
+            .name = "microservice-premature",
+            .text = "Premature microservice critique. Flag distributed transactions for simple consistency, service "
+                    "mesh for 2-3 services, event sourcing for CRUD, CQRS where read=write, saga pattern for local "
+                    "transactions, API gateway for internal services, distributed tracing for monolith. Suggest "
+                    "modular monolith, shared library, or direct calls.",
+        },
+        {
+            .name = "config-over-code",
+            .text = "Configuration over code critique. Flag YAML/JSON/TOML configs for logic, rule engines for "
+                    "<10 rules, DSLs for simple expressions, feature flags for permanent features, database-driven "
+                    "config for static values, complex config validation schemas. Suggest hardcoded constants, "
+                    "simple structs, compile-time config, or code.",
+        },
     },
 };
 
@@ -122,6 +127,7 @@ bool is_known_pattern(std::string_view name) { return !pattern_text(name).empty(
 // (the padded names are unique, so byte order over names is the order).
 std::string render_pattern_list() {
     std::vector<std::string_view> names;
+    names.reserve(kPatterns.size());
     for (auto const& pattern : kPatterns) names.push_back(pattern.name);
     std::sort(names.begin(), names.end());
 
@@ -132,7 +138,7 @@ std::string render_pattern_list() {
         output += "  ";
         output += name;
         if (name.size() < 25) output.append(25 - name.size(), ' ');
-        output += " ";
+        output += ' ';
         output += brief;
         output += ".\n";
     }
@@ -151,7 +157,7 @@ std::string run_head(std::string_view spec, std::filesystem::path const& file) {
 
 } // namespace
 
-prompt_output execute_overengineering(prompt_context&& ctx) {
+static void execute_overengineering(prompt_context& ctx) {
     // overengineering.sh parses "$@" itself (never init_prompt), so its loop
     // sees the unprocessed arguments.
     std::vector<std::string_view> selected;
@@ -162,7 +168,8 @@ prompt_output execute_overengineering(prompt_context&& ctx) {
         std::string_view arg = ctx.args[i];
         if (arg == "--help" || arg == "-h") {
             std::string help = help_text(render_help_overengineering);
-            return {.text = help, .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+            ctx.out = help;
+            return;
         }
         if (arg == "--head") {
             if (i + 1 >= ctx.args_count) {
@@ -173,12 +180,8 @@ prompt_output execute_overengineering(prompt_context&& ctx) {
             continue;
         }
         if (arg == "list") {
-            return {
-                .text = render_pattern_list(),
-                .error = std::string{},
-                .no_clipboard = false,
-                .stdin_consumed = false,
-            };
+            ctx.out = render_pattern_list();
+            return;
         }
         if (arg.starts_with('-')) {
             std::string help = help_text(render_help_overengineering);
@@ -210,10 +213,11 @@ prompt_output execute_overengineering(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.err = std::move(error);
 }
 
-void render_help_overengineering(std::ostream& os) {
+static void render_help_overengineering(std::ostream& os) {
     os << R"EOF(Usage: prompt overengineering [PATTERN...] [--head N] [FILE...]
        prompt overengineering list
 
@@ -237,5 +241,10 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt("overengineering", "Critique code for over-engineering patterns.",
+                                                &execute_overengineering, &render_help_overengineering);
 
 } // namespace prompt::prompts

@@ -1,5 +1,6 @@
 #include "sanitize.hpp"
 #include "strings.hpp"
+#include <array>
 #include <cstdlib>
 #include <regex>
 #include <string>
@@ -23,16 +24,15 @@ std::string clean_privacy(std::string_view input) {
     std::string output(input);
     auto replace_all_re = [&output](std::string_view pattern, std::string_view replacement) {
         try {
-            output = std::regex_replace(output, std::regex(std::string(pattern)), replacement.data());
-        } catch (...) {
-            // Uncompilable pattern: leave the text untouched rather than die.
+            output = std::regex_replace(output, std::regex(std::string(pattern)), std::string(replacement));
+        } catch (...) { // NOLINT(bugprone-empty-catch) — uncompilable pattern: leave the text untouched.
         }
     };
 
     char const* user = std::getenv("USER");
     char const* home = std::getenv("HOME");
-    char hostname[256];
-    gethostname(hostname, sizeof(hostname));
+    std::array<char, 256> hostname{};
+    gethostname(hostname.data(), hostname.size());
     char const* tmpdir = std::getenv("TMPDIR");
     if (tmpdir == nullptr) tmpdir = "/tmp";
 
@@ -47,7 +47,7 @@ std::string clean_privacy(std::string_view input) {
     if (user != nullptr) {
         replace_all_re(quote_re(user), "USER");
     }
-    replace_all_re(quote_re(hostname), "HOSTNAME");
+    replace_all_re(quote_re(hostname.data()), "HOSTNAME");
 
     replace_all_re(R"(\b([0-9]{1,3}\.){3}[0-9]{1,3}\b)", "IP_ADDRESS");
     replace_all_re(R"(\b([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})\b)", "MAC_ADDRESS");

@@ -1,5 +1,4 @@
 #include "../sdk/prompt_registry.hpp"
-#include "prompts.hpp"
 #include <algorithm>
 #include <iostream>
 #include <string>
@@ -8,7 +7,7 @@
 
 namespace prompt::prompts {
 
-prompt_output execute_list(prompt_context&& ctx) {
+static void execute_list(prompt_context& ctx) {
     bool names_only = false;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         if (ctx.args[i] == "--names") {
@@ -49,10 +48,11 @@ prompt_output execute_list(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = true, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.no_clipboard = true;
 }
 
-void render_help_list(std::ostream& os) {
+static void render_help_list(std::ostream& os) {
     os << R"EOF(Usage: prompt list [--names]
 
 List all available prompts with a short description.
@@ -65,5 +65,10 @@ Options:
   -h, --help     Show this help
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt("list", "List all available prompts with a short description.",
+                                                &execute_list, &render_help_list);
 
 } // namespace prompt::prompts

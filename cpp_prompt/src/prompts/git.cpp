@@ -1,7 +1,7 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <span>
@@ -44,7 +44,7 @@ std::string head_lines_raw(std::string_view s, std::size_t n) {
 
 } // namespace
 
-prompt_output execute_git(prompt_context&& ctx) {
+static void execute_git(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -92,7 +92,7 @@ prompt_output execute_git(prompt_context&& ctx) {
             std::string lang = infer_lang(path);
             std::string content = read_file(path);
             output += std::format("File: {}\n", name);
-            output += "\n";
+            output += '\n';
             output += std::format("```{}\n", lang);
             output += trim_context_nl(content, head_lines);
             output += "\n```\n\n";
@@ -101,12 +101,13 @@ prompt_output execute_git(prompt_context&& ctx) {
         }
     }
 
-    if (!error.empty())
-        return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    if (!error.empty()) {
+        ctx.err = std::move(error);
+    }
+    ctx.out = std::move(output);
 }
 
-void render_help_git(std::ostream& os) {
+static void render_help_git(std::ostream& os) {
     os << R"EOF(Usage: prompt git [--head N] [FILE...]
        echo "task description" | prompt git [--head N] [FILE...]
 
@@ -117,5 +118,13 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "git",
+    "Git workflow assistance prompt. Helps with branching strategies, merge conflicts, rebasing, "
+    "bisecting, and other git operations.",
+    &execute_git, &render_help_git);
 
 } // namespace prompt::prompts

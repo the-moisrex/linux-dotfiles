@@ -1,12 +1,12 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <string>
 
 namespace prompt::prompts {
 
-prompt_output execute_security(prompt_context&& ctx) {
+static void execute_security(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -21,7 +21,7 @@ prompt_output execute_security(prompt_context&& ctx) {
               "crashes, or harmful behavior.\n";
     output += "List findings by severity, explain the risk briefly, and suggest the smallest "
               "effective fix for each one.\n";
-    output += "\n";
+    output += '\n';
 
     std::string error;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
@@ -40,10 +40,11 @@ prompt_output execute_security(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.err = std::move(error);
 }
 
-void render_help_security(std::ostream& os) {
+static void render_help_security(std::ostream& os) {
     os << R"EOF(Usage: prompt security [--head N] [FILE...]
        some-command | prompt security [--head N] [FILE...]
 
@@ -53,5 +54,10 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt("security", "Review this for security and safety issues.",
+                                                &execute_security, &render_help_security);
 
 } // namespace prompt::prompts

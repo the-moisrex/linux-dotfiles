@@ -2,7 +2,7 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <regex>
 #include <string>
 #include <vector>
@@ -52,7 +52,7 @@ std::string strip_source_lists(std::string const& content) {
 
 } // namespace
 
-prompt_output execute_cmake(prompt_context&& ctx) {
+static void execute_cmake(prompt_context& ctx) {
     std::size_t head_lines = 0;
     // init_prompt -> parse_arguments runs first (validates --head); the script
     // then walks the remaining args for its own flags.
@@ -101,7 +101,7 @@ prompt_output execute_cmake(prompt_context&& ctx) {
              split_lines(prompt::process::run_command(
                              {"bash", "-c", R"(find . -type f \( -name CMakeLists.txt -o -name "*.cmake" \))"})
                              .stdout_data)) {
-            if (f.rfind("./", 0) == 0) f = f.substr(2);
+            if (f.starts_with("./")) f = f.substr(2);
             files.push_back(f);
         }
         search_dir = ".";
@@ -130,10 +130,10 @@ prompt_output execute_cmake(prompt_context&& ctx) {
         output += "\n    ```\n\n";
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_cmake(std::ostream& os) {
+static void render_help_cmake(std::ostream& os) {
     os << R"EOF(Usage: prompt cmake [--head N] [--exclude PATTERN] [--strip-lists]
 
 Gathers all CMakeLists.txt and *.cmake files in the current project to provide full context on the CMake build setup.
@@ -144,5 +144,13 @@ Options:
   --strip-lists     Replace long lists of source files (.c, .cpp, .h, etc.) with a comment to save context window space
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("cmake",
+                            "Gathers all CMakeLists.txt and *.cmake files in the current project to provide full "
+                            "context on the CMake build setup.",
+                            &execute_cmake, &render_help_cmake);
 
 } // namespace prompt::prompts

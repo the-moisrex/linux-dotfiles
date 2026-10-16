@@ -63,7 +63,7 @@ std::filesystem::path bin_tool(std::string_view name, std::filesystem::path cons
     }
 
     for (auto const& cand : candidates) {
-        if ((std::filesystem::is_regular_file(cand, ec)) &&
+        if (std::filesystem::is_regular_file(cand, ec) &&
             ((std::filesystem::status(cand, ec).permissions() & std::filesystem::perms::owner_exec) !=
              std::filesystem::perms::none)) {
             return cand;

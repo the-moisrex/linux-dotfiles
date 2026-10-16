@@ -3,7 +3,6 @@
 
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
 #include <set>
 #include <string>
 #include <string_view>
@@ -52,7 +51,7 @@ std::string build_prompt_list() {
 
 } // namespace
 
-prompt_output execute_ask_for_help(prompt_context&& ctx) {
+static void execute_ask_for_help(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -120,10 +119,11 @@ prompt_output execute_ask_for_help(prompt_context&& ctx) {
            "Make sure to properly escape characters.\n"
            "\n";
 
-    return {.text = std::move(out), .error = std::string{}, .no_clipboard = true, .stdin_consumed = false};
+    ctx.out = std::move(out);
+    ctx.no_clipboard = true;
 }
 
-void render_help_ask_for_help(std::ostream& os) {
+static void render_help_ask_for_help(std::ostream& os) {
     os << R"EOF(Usage: prompt ask-for-help [--head N]
        echo "I'm stuck on this problem..." | prompt ask-for-help [--head N]
 
@@ -139,5 +139,13 @@ Options:
   --head N   Keep only the first N lines of each embedded context file
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("ask-for-help",
+                            "Generates a ready-to-run `prompt` command line that bundles all the context needed to ask "
+                            "another AI for help with a coding problem.",
+                            &execute_ask_for_help, &render_help_ask_for_help);
 
 } // namespace prompt::prompts

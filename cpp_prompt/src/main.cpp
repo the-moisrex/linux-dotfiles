@@ -2,7 +2,6 @@
 #include "core/fs.hpp"
 #include "core/process.hpp"
 #include "core/sanitize.hpp"
-#include "prompts/prompts.hpp"
 #include "sdk/chaining.hpp"
 #include "sdk/pipeline.hpp"
 #include "sdk/prompt_context.hpp"
@@ -23,7 +22,8 @@
 // no in-process interpreter here, so no ASan suppressions are needed.
 
 int main(int argc, char** argv) {
-    // Initialize prompt registry (needed even for --help)
+    // Every prompt registers itself before main (see sdk/prompt_registry.hpp);
+    // this only fills in the sort keys list/list-prompts order by.
     prompt::init_prompt_registry();
 
     // Handle --help and --version early (only as first argument)
@@ -218,9 +218,7 @@ Notes:
         }
         if (wants_help) {
             std::ostringstream help_os;
-            if (!desc->help_full.empty()) {
-                help_os << desc->help_full;
-            } else if (desc->render_help_fn != nullptr) {
+            if (desc->render_help_fn != nullptr) {
                 desc->render_help_fn(help_os);
             }
             pipeline.add_output(prompt::sanitize::sanitize(help_os.str()), false);
@@ -236,18 +234,21 @@ Notes:
         }
         ctx.args_count = inv.args_count;
 
-        // Execute prompt. Prompts report failure by throwing (usage_error /
-        // soft_error / prompt_error) with the exact stdout/stderr they would
-        // have printed; the throwing prompt's partial stdout is still
-        // accumulated (bash captures output before checking status) and the
-        // chain keeps running with the remaining prompts.
+        // Execute prompt. Prompts fill the output fields on the context
+        // (ctx.out / ctx.err / ctx.no_clipboard) and report failure by
+        // throwing (usage_error / soft_error / prompt_error) with the exact
+        // stdout/stderr they would have printed; the throwing prompt's
+        // partial stdout is still accumulated (bash captures output before
+        // checking status) and the chain keeps running with the remaining
+        // prompts.
         try {
-            auto result = desc->execute_fn(std::move(ctx));
-            pipeline.add_output(prompt::sanitize::sanitize(result.text), result.no_clipboard);
-            if (!result.error.empty()) {
-                std::cerr << result.error;
+            ctx.clear_output();
+            desc->execute_fn(ctx);
+            pipeline.add_output(prompt::sanitize::sanitize(ctx.out), ctx.no_clipboard);
+            if (!ctx.err.empty()) {
+                std::cerr << ctx.err;
             }
-            if (result.stdin_consumed) {
+            if (ctx.stdin_consumed) {
                 base_ctx.stdin_content.clear();
             }
         } catch (prompt::prompt_error const& err) {

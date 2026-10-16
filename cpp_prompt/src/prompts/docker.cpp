@@ -1,14 +1,14 @@
 #include "../core/fs.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <string>
 #include <vector>
 
 namespace prompt::prompts {
 
-prompt_output execute_docker(prompt_context&& ctx) {
+static void execute_docker(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -47,10 +47,11 @@ prompt_output execute_docker(prompt_context&& ctx) {
         }
     }
 
-    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.err = std::move(error);
 }
 
-void render_help_docker(std::ostream& os) {
+static void render_help_docker(std::ostream& os) {
     os << R"EOF(Usage: prompt docker [--head N] [FILE...]
        echo "task description" | prompt docker [--head N] [FILE...]
 
@@ -61,5 +62,13 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("docker",
+                            "Docker and container review prompt. Analyzes Dockerfiles, docker-compose files, and "
+                            "container configurations for best practices.",
+                            &execute_docker, &render_help_docker);
 
 } // namespace prompt::prompts

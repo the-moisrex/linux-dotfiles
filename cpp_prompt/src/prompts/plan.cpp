@@ -1,6 +1,6 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -16,7 +16,7 @@ std::string embed_file_block(std::filesystem::path const& path, std::size_t head
 
     std::string name = path.filename().string();
     std::string output;
-    output += "\n";
+    output += '\n';
     output += std::format("File: {}\n", name);
     output += std::format("```{}\n", infer_lang(path));
     output += trim_context_nl(read_file(path), head_lines);
@@ -26,7 +26,7 @@ std::string embed_file_block(std::filesystem::path const& path, std::size_t head
 
 } // namespace
 
-prompt_output execute_plan(prompt_context&& ctx) {
+static void execute_plan(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -96,7 +96,7 @@ Produce a structured plan with these sections:
   execute without further questions.
 )HELP";
     // The heredoc ends with a blank line before its terminator.
-    output += "\n";
+    output += '\n';
 
     std::string error;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
@@ -116,10 +116,11 @@ Produce a structured plan with these sections:
         }
     }
 
-    return {.text = std::move(output), .error = std::move(error), .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
+    ctx.err = std::move(error);
 }
 
-void render_help_plan(std::ostream& os) {
+static void render_help_plan(std::ostream& os) {
     os << R"EOF(Usage: prompt plan [--head N] [FILE...]
        echo "task description" | prompt plan [--head N] [FILE...]
 
@@ -134,5 +135,15 @@ Options:
   --head N   Keep only the first N lines of embedded context files
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("plan",
+                            "Generates a structured plan mode prompt for an AI assistant. The AI will be "
+                            "instructed to ask clarifying questions, analyze provided code, and produce a "
+                            "detailed implementation plan before writing any code. Designed for chat mode "
+                            "where the AI cannot access files directly.",
+                            &execute_plan, &render_help_plan);
 
 } // namespace prompt::prompts

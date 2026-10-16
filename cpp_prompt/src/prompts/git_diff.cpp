@@ -2,7 +2,7 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <span>
@@ -61,7 +61,7 @@ std::string infer_lang(std::string_view base) {
 
 } // namespace
 
-prompt_output execute_git_diff(prompt_context&& ctx) {
+static void execute_git_diff(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -93,12 +93,9 @@ prompt_output execute_git_diff(prompt_context&& ctx) {
             output += trim_context_nl(diff_output, head_lines);
             output += "```\n";
         } else {
-            return {
-                .text = std::string{},
-                .error = "No diffs found for the specified files.\n",
-                .no_clipboard = false,
-                .stdin_consumed = false,
-            };
+            ctx.out.clear();
+            ctx.err = "No diffs found for the specified files.\n";
+            return;
         }
     } else {
         std::string unstaged_diff = strip_trailing_newlines(git_raw(std::vector<std::string>{"git", "diff"}));
@@ -127,7 +124,7 @@ prompt_output execute_git_diff(prompt_context&& ctx) {
                     std::string lang = infer_lang(name);
                     std::string content = read_file(full);
                     output += std::format("File: {} (new)\n", filepath);
-                    output += "\n";
+                    output += '\n';
                     output += std::format("```{}\n", lang);
                     output += trim_context_nl(content, head_lines);
                     output += "```\n\n";
@@ -138,19 +135,16 @@ prompt_output execute_git_diff(prompt_context&& ctx) {
         }
 
         if (unstaged_diff.empty() && untracked_stripped.empty()) {
-            return {
-                .text = std::string{},
-                .error = "No changes found in the working tree.\n",
-                .no_clipboard = false,
-                .stdin_consumed = false,
-            };
+            ctx.out.clear();
+            ctx.err = "No changes found in the working tree.\n";
+            return;
         }
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_git_diff(std::ostream& os) {
+static void render_help_git_diff(std::ostream& os) {
     os << R"EOF(Usage: prompt git.diff [--head N] [FILE...]
 
 Shows Git diffs for the specified files.
@@ -160,5 +154,13 @@ Options:
   --head N   Keep only the first N lines of embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "git.diff",
+    "Shows Git diffs for the specified files. If no files are provided, shows all unstaged changes "
+    "and untracked files.",
+    &execute_git_diff, &render_help_git_diff);
 
 } // namespace prompt::prompts

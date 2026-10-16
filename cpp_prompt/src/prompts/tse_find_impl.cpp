@@ -4,7 +4,7 @@
 #include "../core/process.hpp"
 #include "../sdk/embed.hpp"
 
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
@@ -322,18 +322,14 @@ std::string trim_like_bash(std::string_view text, bool head_set, std::size_t hea
 
 bool is_all_digits(std::string_view text) {
     if (text.empty()) return false;
-    for (char c : text)
-        if (c < '0' || c > '9') return false;
-    return true;
+    return std::ranges::all_of(text, [](char c) { return c >= '0' && c <= '9'; });
 }
 
 // bash's `[[ "$2" -lt 1 ]]` reads leading-zero tokens in base 8 (and errors out
 // on 08-style tokens, which bash treats as false), so only all-zero values fail.
 bool is_positive_int_token(std::string_view text) {
     if (!is_all_digits(text)) return false;
-    for (char c : text)
-        if (c != '0') return true;
-    return false;
+    return std::ranges::any_of(text, [](char c) { return c != '0'; });
 }
 
 std::size_t parse_head_value(std::string_view text) {
@@ -736,15 +732,12 @@ std::string screener_to_run(screener_paths const& paths, prompt_context const& c
 
 } // namespace
 
-prompt_output execute_tse_find_impl(prompt_context&& ctx) {
+void execute_tse_find_impl(prompt_context& ctx) {
     auto parsed = parse_args(ctx);
-    if (parsed.wants_help)
-        return {
-            .text = std::move(parsed.help_text),
-            .error = std::string{},
-            .no_clipboard = false,
-            .stdin_consumed = false,
-        };
+    if (parsed.wants_help) {
+        ctx.out = std::move(parsed.help_text);
+        return;
+    }
     if (!parsed.error.empty()) throw prompt_error{parsed.exit_code, std::move(parsed.error)};
 
     auto screener = locate_screener(ctx);
@@ -773,7 +766,7 @@ prompt_output execute_tse_find_impl(prompt_context&& ctx) {
                 if (rendered.exit_code != 0) {
                     throw usage_error{std::move(rendered.error), std::move(output)};
                 }
-                output += "\n";
+                output += '\n';
             }
         } else {
             auto rendered = emit_review(input.review_kind, input.review_label, input.review_payload, parsed.head_set,
@@ -783,12 +776,9 @@ prompt_output execute_tse_find_impl(prompt_context&& ctx) {
                 throw usage_error{std::move(rendered.error), std::move(output)};
             }
         }
-        return {
-            .text = std::move(output),
-            .error = std::string{},
-            .no_clipboard = false,
-            .stdin_consumed = stdin_consumed,
-        };
+        ctx.out = std::move(output);
+        ctx.stdin_consumed = stdin_consumed;
+        return;
     }
 
     if (input.source_kind == "run") {
@@ -815,12 +805,9 @@ prompt_output execute_tse_find_impl(prompt_context&& ctx) {
         if (rendered.exit_code != 0) {
             throw usage_error{std::move(rendered.error), std::move(output)};
         }
-        return {
-            .text = std::move(output),
-            .error = std::string{},
-            .no_clipboard = false,
-            .stdin_consumed = stdin_consumed,
-        };
+        ctx.out = std::move(output);
+        ctx.stdin_consumed = stdin_consumed;
+        return;
     }
 
     // Generator: embed the tool's own --help as the flag reference.
@@ -850,7 +837,8 @@ prompt_output execute_tse_find_impl(prompt_context&& ctx) {
     }
     output += kGroundRules;
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = stdin_consumed};
+    ctx.out = std::move(output);
+    ctx.stdin_consumed = stdin_consumed;
 }
 
 void render_help_tse_find_impl(std::ostream& os) { os << kHelpText; }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <initializer_list>
 #include <optional>
 #include <span>
@@ -21,11 +22,12 @@ struct command_result {
 };
 
 // How a child's stderr is handled.
-enum class stderr_mode {
+enum class stderr_mode : std::uint8_t {
     inherit,   // the child writes straight to our stderr — what bash's `$(...)`
                // capture does (the tool's diagnostics appear as they run).
     capture,   // piped into command_result::stderr_data.
     to_stdout, // `2>&1` — merged into command_result::stdout_data.
+    discard,   // `2>/dev/null` — thrown away.
 };
 
 // A subprocess, built fluently:
@@ -53,6 +55,7 @@ class command {
     command& capture_stderr();   // stderr_mode::capture
     command& stderr_to_stdout(); // stderr_mode::to_stdout
     command& inherit_stderr();   // stderr_mode::inherit (default)
+    command& discard_stderr();   // stderr_mode::discard (`2>/dev/null`)
 
     command_result run();
 

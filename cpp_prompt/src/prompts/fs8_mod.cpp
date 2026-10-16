@@ -1,6 +1,6 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -96,7 +96,7 @@ void embed_file(std::string& out, std::string& err, std::filesystem::path const&
     }
     std::string base = path.filename().string();
     std::string name = label.empty() ? base : std::string(label);
-    out += "\n";
+    out += '\n';
     out += std::format("File: {}\n", name);
     out += std::format("```{}\n", bash_infer_lang(base));
     out += trim_context_nl(read_file(path), head_lines);
@@ -119,7 +119,7 @@ std::filesystem::path find_foresight_root() {
 
 } // namespace
 
-prompt_output execute_fs8_mod(prompt_context&& ctx) {
+static void execute_fs8_mod(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -197,10 +197,11 @@ prompt_output execute_fs8_mod(prompt_context&& ctx) {
     out += "\n## Registration: mods/mods.ixx (export imports)\n";
     embed_file(out, err, root / "mods/mods.ixx", "mods/mods.ixx", head_lines);
 
-    return {.text = std::move(out), .error = std::move(err)};
+    ctx.out = std::move(out);
+    ctx.err = std::move(err);
 }
 
-void render_help_fs8_mod(std::ostream& os) {
+static void render_help_fs8_mod(std::ostream& os) {
     os << R"EOF(Usage: prompt fs8.mod [--head N]
        prompt fs8.mod | prompt note "Create a mod that ..."
 
@@ -214,5 +215,13 @@ Options:
   --head N   Keep only the first N lines of each embedded context file
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "fs8.mod",
+    "Builds a prompt for writing a new pipeline mod for the foresight project. Must be run from "
+    "inside the foresight git repo (or a subdirectory of it).",
+    &execute_fs8_mod, &render_help_fs8_mod);
 
 } // namespace prompt::prompts

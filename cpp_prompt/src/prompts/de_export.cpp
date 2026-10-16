@@ -1,6 +1,6 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <filesystem>
 #include <regex>
 #include <string>
@@ -46,7 +46,7 @@ bool matches_any_line(std::string const& content, std::regex const& re) {
 
 } // namespace
 
-prompt_output execute_de_export(prompt_context&& ctx) {
+static void execute_de_export(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -83,7 +83,7 @@ prompt_output execute_de_export(prompt_context&& ctx) {
     std::string output;
     output += "You are an expert C++ developer specializing in C++20 modules, build hygiene, and "
               "header design.\n";
-    output += "\n";
+    output += '\n';
 
     if (has_modules && has_exports) {
         output += "The code below uses C++20 modules and contains `export` declarations.\n\n- De-exporting:\n";
@@ -95,9 +95,9 @@ prompt_output execute_de_export(prompt_context&& ctx) {
                   "or to the implementation unit if it is not part of the public API.\n";
         output += "   - Preserve `export` on the module interface unit itself and on anything that "
                   "truly forms the public API.\n";
-        output += "\n";
+        output += '\n';
     } else {
-        output += "\n";
+        output += '\n';
     }
 
     output += "- Moving implementations out of headers:\n";
@@ -110,7 +110,7 @@ prompt_output execute_de_export(prompt_context&& ctx) {
               "implementation details as internal (non-exported).\n";
     output += "   - If a header is not part of a module, prefer forward declarations and moving "
               "definitions to .cpp files where feasible.\n";
-    output += "\n";
+    output += '\n';
 
     for (auto const& file : cpp_files) {
         output += std::format("File: {}\n\n", file.filename().string());
@@ -119,10 +119,10 @@ prompt_output execute_de_export(prompt_context&& ctx) {
         output += "\n```\n\n";
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_de_export(std::ostream& os) {
+static void render_help_de_export(std::ostream& os) {
     os << R"EOF(Usage: prompt de-export [--head N] [FILE...]
        some-command | prompt de-export [--head N] [FILE...]
 
@@ -134,5 +134,13 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("de-export",
+                            "Reduce unnecessary exports from C++20 modules and move implementations out "
+                            "of headers.",
+                            &execute_de_export, &render_help_de_export);
 
 } // namespace prompt::prompts

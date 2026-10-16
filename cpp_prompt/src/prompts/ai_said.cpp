@@ -1,6 +1,7 @@
 #include "../core/clipboard.hpp"
 #include "../core/fs.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -19,7 +20,10 @@ namespace {
 // SIGINT/SIGTERM request a graceful stop: the watch loop notices and the
 // EXIT-equivalent finalize prints the collected entries then exits 130.
 volatile std::sig_atomic_t g_ai_said_stop = 0;
-void ai_said_on_signal(int) { g_ai_said_stop = 1; }
+void ai_said_on_signal(int signum) {
+    (void)signum;
+    g_ai_said_stop = 1;
+}
 
 // Port of ai-said.sh trim_context applied to an entry and captured through
 // $(...): first N lines joined by '\n', no trailing newline. head==0 → no cap.
@@ -51,9 +55,7 @@ std::string strip_trailing_nl(std::string s) {
 }
 
 bool only_whitespace(std::string const& s) {
-    for (char c : s)
-        if (std::isspace(static_cast<unsigned char>(c)) == 0) return false;
-    return true;
+    return std::ranges::all_of(s, [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; });
 }
 
 std::string ordinal_word(long n) {
@@ -86,7 +88,7 @@ std::string build_output(std::span<const std::string> entries, std::size_t head_
         if (i + 1 < entries.size()) {
             out += "\n\n\n";
             out += std::string(66, '-');
-            out += "\n";
+            out += '\n';
         }
     }
     return out;
@@ -134,7 +136,7 @@ std::string ai_said_help() {
 
 } // namespace
 
-prompt_output execute_ai_said(prompt_context&& ctx) {
+static void execute_ai_said(prompt_context& ctx) {
     std::string interval = "0.5";
     std::string clip_timeout = "3";
     bool clear_on_start = true;
@@ -145,7 +147,8 @@ prompt_output execute_ai_said(prompt_context&& ctx) {
     for (std::size_t i = 0; i < ctx.args_count;) {
         std::string a(ctx.args[i]);
         if (a == "--help" || a == "-h") {
-            return {.text = ai_said_help(), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+            ctx.out = ai_said_help();
+            return;
         }
         if (a == "--head") {
             if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --head\n"};
@@ -309,6 +312,12 @@ prompt_output execute_ai_said(prompt_context&& ctx) {
     throw prompt_error{130, std::move(err), std::move(out)};
 }
 
-void render_help_ai_said(std::ostream& os) { os << ai_said_help(); }
+static void render_help_ai_said(std::ostream& os) { os << ai_said_help(); }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "ai-said", "Collect multiple AI chat outputs via the clipboard and combine them into a single prompt.",
+    &execute_ai_said, &render_help_ai_said);
 
 } // namespace prompt::prompts

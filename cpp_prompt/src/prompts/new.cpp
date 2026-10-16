@@ -1,7 +1,7 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include "prompt_assets.hpp"
-#include "prompts.hpp"
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -29,7 +29,7 @@ std::string embed_block(std::filesystem::path const& path, std::string_view labe
 
 } // namespace
 
-prompt_output execute_new(prompt_context&& ctx) {
+static void execute_new(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -97,15 +97,11 @@ Return:
         }
     }
 
-    return {
-        .text = std::move(output),
-        .error = std::move(error),
-        .no_clipboard = false,
-        .stdin_consumed = ctx.stdin_consumed,
-    };
+    ctx.out = std::move(output);
+    ctx.err = std::move(error);
 }
 
-void render_help_new(std::ostream& os) {
+static void render_help_new(std::ostream& os) {
     os << R"EOF(Usage: prompt new [--head N] [FILE...]
        echo "what the prompt should do" | prompt new [--head N] [FILE...]
 
@@ -121,5 +117,13 @@ Options:
   --head N   Keep only the first N lines of each embedded context file
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "new",
+    "Builds a prompt that asks an AI to write a new bash prompt script following this repository's "
+    "prompt conventions.",
+    &execute_new, &render_help_new);
 
 } // namespace prompt::prompts

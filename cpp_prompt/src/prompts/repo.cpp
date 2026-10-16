@@ -1,5 +1,5 @@
 #include "../core/process.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <cstddef>
 #include <span>
 #include <string>
@@ -20,7 +20,7 @@ std::string sh_quote(std::string const& s) {
         else
             out += c;
     }
-    out += "'";
+    out += '\'';
     return out;
 }
 
@@ -32,10 +32,10 @@ std::string run_tree(std::vector<std::string> const& ls_dirs, std::span<const st
     std::string ls = "git ls-files";
     if (!ls_dirs.empty()) {
         ls += " --";
-        for (auto const& d : ls_dirs) ls += " " + sh_quote(d);
+        for (auto const& d : ls_dirs) ls += ' ' + sh_quote(d);
     }
     std::string tr = "tree";
-    for (auto const& a : tree_args) tr += " " + sh_quote(a);
+    for (auto const& a : tree_args) tr += ' ' + sh_quote(a);
     tr += " --fromfile";
     std::vector<std::string> storage = {"bash", "-c", ls + " | " + tr};
     return prompt::process::run_command(storage).stdout_data;
@@ -43,7 +43,7 @@ std::string run_tree(std::vector<std::string> const& ls_dirs, std::span<const st
 
 } // namespace
 
-prompt_output execute_repo(prompt_context&& ctx) {
+static void execute_repo(prompt_context& ctx) {
     // repo.sh scans every arg for --help/-h itself (before the git check);
     // the native dispatcher already intercepted those before we run.
 
@@ -81,10 +81,10 @@ prompt_output execute_repo(prompt_context&& ctx) {
         for (auto const& dir : dirs) output += run_tree({dir}, tree_args);
     }
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_repo(std::ostream& os) {
+static void render_help_repo(std::ostream& os) {
     os << R"EOF(Usage: prompt repo [--depth N] [DIR...]
 
 Displays the repository's file structure using only git-tracked files.
@@ -98,5 +98,13 @@ Arguments:
   DIR...      Optional directory prefixes to limit the view (e.g., bin/ prompts/)
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered = prompt::register_prompt(
+    "repo",
+    "Displays the repository's file structure using only git-tracked files. Useful for giving an AI "
+    "a high-level view of the codebase.",
+    &execute_repo, &render_help_repo);
 
 } // namespace prompt::prompts

@@ -1,5 +1,6 @@
 #include "../src/sdk/chaining.hpp"
 #include "../src/sdk/prompt_registry.hpp"
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <span>
@@ -22,15 +23,15 @@ void check(bool cond, char const* what) {
 void test_bare_prompt_name() {
     // Regression: a bare "prompt fix" (no args) must select "fix", not fall
     // back to "auto".
-    char const* argv[] = {"prompt", "fix"};
-    auto chain = parse_chain(std::span<char const* const>(argv, 2), get_all_prompts());
+    std::array<char const*, 2> argv = {"prompt", "fix"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
     check(chain.count == 1, "bare name: one invocation");
     check(chain.count == 1 && chain.invocations[0].name == "fix", "bare name resolves to fix");
 }
 
 void test_prompt_with_args() {
-    char const* argv[] = {"prompt", "fix", "--head", "10"};
-    auto chain = parse_chain(std::span<char const* const>(argv, 4), get_all_prompts());
+    std::array<char const*, 4> argv = {"prompt", "fix", "--head", "10"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
     check(chain.count == 1, "args: one invocation");
     check(chain.count == 1 && chain.invocations[0].name == "fix", "args: name is fix");
     check(chain.count == 1 && chain.invocations[0].args_count == 2, "args: --head 10 kept");
@@ -38,8 +39,8 @@ void test_prompt_with_args() {
 }
 
 void test_chain_two_prompts() {
-    char const* argv[] = {"prompt", "stock", "فولاد", ".note", "compare"};
-    auto chain = parse_chain(std::span<char const* const>(argv, 5), get_all_prompts());
+    std::array<char const*, 5> argv = {"prompt", "stock", "فولاد", ".note", "compare"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
     check(chain.count == 2, "chain: two invocations");
     check(chain.count == 2 && chain.invocations[0].name == "stock", "chain: first is stock");
     check(chain.count == 2 && chain.invocations[1].name == "note", "chain: second is note");
@@ -47,8 +48,8 @@ void test_chain_two_prompts() {
 }
 
 void test_unknown_defaults_to_auto() {
-    char const* argv[] = {"prompt"};
-    auto chain = parse_chain(std::span<char const* const>(argv, 1), get_all_prompts());
+    std::array<char const*, 1> argv = {"prompt"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
     check(chain.count == 1, "empty argv: one invocation");
     check(chain.count == 1 && chain.invocations[0].name == "auto", "empty argv: defaults to auto");
 }
@@ -77,8 +78,8 @@ void test_all_prompts_registered() {
     }
 
     // Dotted names resolve through the chain parser directly.
-    char const* argv[] = {"prompt", "explain"};
-    auto chain = parse_chain(std::span<char const* const>(argv, 2), get_all_prompts());
+    std::array<char const*, 2> argv = {"prompt", "explain"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
     check(chain.count == 1, "dotted name: one invocation");
     check(chain.count == 1 && chain.invocations[0].name == "explain", "dotted name resolves to explain, not auto");
 }

@@ -2,13 +2,13 @@
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include "prompts.hpp"
+#include "../sdk/prompt_registry.hpp"
 #include <string>
 #include <vector>
 
 namespace prompt::prompts {
 
-prompt_output execute_whatwg_url_specs(prompt_context&& ctx) {
+static void execute_whatwg_url_specs(prompt_context& ctx) {
     std::size_t head_lines = 0;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
@@ -38,12 +38,9 @@ prompt_output execute_whatwg_url_specs(prompt_context&& ctx) {
         output += "```text\n";
         output += result.stdout_data;
         output += "```\n\n";
-        return {
-            .text = std::move(output),
-            .error = "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n",
-            .no_clipboard = false,
-            .stdin_consumed = false,
-        };
+        ctx.out = std::move(output);
+        ctx.err = "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n";
+        return;
     }
 
     std::string joined;
@@ -61,10 +58,10 @@ prompt_output execute_whatwg_url_specs(prompt_context&& ctx) {
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "```\n\n";
 
-    return {.text = std::move(output), .error = std::string{}, .no_clipboard = false, .stdin_consumed = false};
+    ctx.out = std::move(output);
 }
 
-void render_help_whatwg_url_specs(std::ostream& os) {
+static void render_help_whatwg_url_specs(std::ostream& os) {
     os << R"EOF(Usage: prompt whatwg-url-specs [--head N] [SECTIONS...]
        some-command | prompt whatwg-url-specs [--head N] [SECTIONS...]
 
@@ -77,5 +74,13 @@ Options:
   --head N   Keep only the first N lines of the embedded context
 )EOF";
 }
+
+// This file is the prompt: it implements it and registers it at static-init time
+// (no central list — see sdk/prompt_registry.hpp).
+bool const registered =
+    prompt::register_prompt("whatwg-url-specs",
+                            "Fetches relevant sections of the WHATWG URL specification using `whatwg-url-specs` and "
+                            "adds them to the prompt context.",
+                            &execute_whatwg_url_specs, &render_help_whatwg_url_specs);
 
 } // namespace prompt::prompts

@@ -15,14 +15,13 @@ namespace prompt::clipboard {
 
 namespace {
 backend current_backend = backend::none;
-std::chrono::seconds clipboard_timeout = std::chrono::seconds(3);
 bool initialized = false;
 
 struct stdin_tmpfile {
     std::filesystem::path path;
     explicit stdin_tmpfile(std::string_view data) {
-        char tmpl[] = "/tmp/prompt_clip_XXXXXX";
-        int fd = mkstemp(tmpl);
+        std::string tmpl = "/tmp/prompt_clip_XXXXXX";
+        int fd = mkstemp(tmpl.data());
         if (fd >= 0) {
             auto n = ::write(fd, data.data(), data.size());
             (void)n;
@@ -51,9 +50,9 @@ static std::string run_with_timeout(char const* const* argv, std::string_view st
     std::string cmd;
     for (int i = 0; argv[i] != nullptr; ++i) {
         if (i > 0) cmd += ' ';
-        cmd += "'";
+        cmd += '\'';
         cmd += argv[i];
-        cmd += "'";
+        cmd += '\'';
     }
 
     std::unique_ptr<stdin_tmpfile> tmp;
@@ -61,19 +60,21 @@ static std::string run_with_timeout(char const* const* argv, std::string_view st
         tmp = std::make_unique<stdin_tmpfile>(stdin_data);
         cmd += " < '";
         cmd += tmp->path.string();
-        cmd += "'";
+        cmd += '\'';
     }
 
     // Copy backends (wl-copy, xclip) daemonize and inherit our pipe, so
     // popen would never see EOF — discard their output instead.
     if (discard_output) {
         cmd += " >/dev/null 2>&1";
-        int rc = std::system(cmd.c_str());
+        // The clipboard helpers are the user's session tools, not shell input.
+        int rc = std::system(cmd.c_str()); // NOLINT(bugprone-command-processor)
         (void)rc;
         return "";
     }
 
-    FILE* pipe = popen(cmd.c_str(), "r");
+    // The command is a fixed backend argv built above, never caller-supplied.
+    FILE* pipe = popen(cmd.c_str(), "r"); // NOLINT(bugprone-command-processor)
     if (pipe == nullptr) return "";
 
     std::array<char, 4096> buffer;
@@ -85,9 +86,8 @@ static std::string run_with_timeout(char const* const* argv, std::string_view st
     return output;
 }
 
-void init(std::chrono::seconds timeout) {
+void init([[maybe_unused]] std::chrono::seconds timeout) {
     if (initialized) return;
-    clipboard_timeout = timeout;
     current_backend = detect_backend();
     initialized = true;
 }
@@ -97,23 +97,23 @@ std::string paste() {
 
     switch (current_backend) {
     case backend::wayland: {
-        char const* argv[] = {"wl-paste", "--no-newline", nullptr};
-        return run_with_timeout(argv);
+        std::array<char const*, 3> argv = {"wl-paste", "--no-newline", nullptr};
+        return run_with_timeout(argv.data());
     }
     case backend::x11: {
-        char const* argv[] = {"xclip", "-selection", "clipboard", "-o", nullptr};
-        auto result = run_with_timeout(argv);
+        std::array<char const*, 5> argv = {"xclip", "-selection", "clipboard", "-o", nullptr};
+        auto result = run_with_timeout(argv.data());
         if (result.empty()) {
-            char const* argv2[] = {"xsel", "--clipboard", "--output", nullptr};
-            result = run_with_timeout(argv2);
+            std::array<char const*, 4> argv2 = {"xsel", "--clipboard", "--output", nullptr};
+            result = run_with_timeout(argv2.data());
         }
         return result;
     }
     case backend::kde: {
-        char const* argv[] = {
+        std::array<char const*, 5> argv = {
             "qdbus6", "org.kde.klipper", "/klipper", "org.kde.klipper.klipper.getClipboardContents", nullptr,
         };
-        auto result = run_with_timeout(argv);
+        auto result = run_with_timeout(argv.data());
         if (!result.empty() && result.back() == '\n') result.pop_back();
         return result;
     }
@@ -127,13 +127,13 @@ bool copy(std::string_view data) {
 
     switch (current_backend) {
     case backend::wayland: {
-        char const* argv[] = {"wl-copy", "--type", "text/plain", nullptr};
-        run_with_timeout(argv, data, true);
+        std::array<char const*, 4> argv = {"wl-copy", "--type", "text/plain", nullptr};
+        run_with_timeout(argv.data(), data, true);
         return true;
     }
     case backend::x11: {
-        char const* argv[] = {"xclip", "-selection", "clipboard", "-i", nullptr};
-        run_with_timeout(argv, data, true);
+        std::array<char const*, 5> argv = {"xclip", "-selection", "clipboard", "-i", nullptr};
+        run_with_timeout(argv.data(), data, true);
         return true;
     }
     case backend::kde: {
@@ -156,20 +156,20 @@ bool clear() {
 
     switch (current_backend) {
     case backend::wayland: {
-        char const* argv[] = {"wl-copy", "--clear", nullptr};
-        run_with_timeout(argv, {}, true);
+        std::array<char const*, 3> argv = {"wl-copy", "--clear", nullptr};
+        run_with_timeout(argv.data(), {}, true);
         return true;
     }
     case backend::x11: {
-        char const* argv[] = {"xclip", "-selection", "clipboard", "-i", "/dev/null", nullptr};
-        run_with_timeout(argv, {}, true);
+        std::array<char const*, 6> argv = {"xclip", "-selection", "clipboard", "-i", "/dev/null", nullptr};
+        run_with_timeout(argv.data(), {}, true);
         return true;
     }
     case backend::kde: {
-        char const* argv[] = {
+        std::array<char const*, 5> argv = {
             "qdbus6", "org.kde.klipper", "/klipper", "org.kde.klipper.klipper.clearClipboardContents", nullptr,
         };
-        run_with_timeout(argv);
+        run_with_timeout(argv.data());
         return true;
     }
     default:
