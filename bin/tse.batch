@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""Parallel batch downloader for Tehran Stock Exchange instruments via `tse`.
+
+Reads a text file of symbols / ISINs / insCodes / URLs (one per line) and
+runs `tse all --markdown` for each in parallel.  Results are stored under a
+directory named with today's date (YYYY-MM-DD) in the current working
+directory.
+
+Usage:
+  tse-batch symbols.txt
+  tse-batch symbols.txt -j 8 --days 90
+  tse-batch symbols.txt --outdir /data/tse --json
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
+from pathlib import Path
+
+
+HERE = Path(__file__).resolve().parent
+DEFAULT_TSE = HERE / "tse"
+if not DEFAULT_TSE.is_file():
+    # fall back to PATH
+    DEFAULT_TSE = Path("tse")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="tse-batch",
+        description=(
+            "Download TSE instrument snapshots in parallel using the `tse` tool. "
+            "Each line of the input file is treated as a symbol, ISIN, insCode, "
+            "or easytrader/tsetmc/codal URL.  Results are written under a "
+            "directory named with today's date (YYYY-MM-DD)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  tse-batch symbols.txt
+  tse-batch symbols.txt -j 8
+  tse-batch symbols.txt --days 90 --outdir /data/tse
+  tse-batch symbols.txt --json --no-codal
+  tse-batch symbols.txt --tse /path/to/tse --timeout 120
+
+Input file format (one instrument per line):
+  فولاد
+  IRO1FOLD0001
+  46348559193224090
+  https://d.easytrader.ir/easy-chart/IRT1DARA0001
+  # lines starting with # or empty lines are ignored
+
+Example usage:
+  tse.find --price-min 1000 --price-max 2000 --format tse | jq -r .results.[].isin | asfile -- tse.batch
+""",
+    )
+    p.add_argument(
+        "input_file",
+        metavar="FILE",
+        help="Text file with one symbol / ISIN / insCode / URL per line",
+    )
+    p.add_argument(
+        "-j", "--jobs",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Number of parallel downloads (default: 4)",
+    )
+    p.add_argument(
+        "--outdir",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Parent directory for the dated output folder (default: current directory)",
+    )
+    p.add_argument(
+        "--tse",
+        type=str,
+        default=str(DEFAULT_TSE),
+        metavar="PATH",
+        help=f"Path to the tse executable (default: {DEFAULT_TSE})",
+    )
+    p.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Pass --days N to tse (limit history length; default is full history)",
+    )
+    p.add_argument(
+        "--top",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Maximum Codal announcements to fetch (default: 5)",
+    )
+    p.add_argument(
+        "--no-codal",
+        action="store_true",
+        help="Skip Codal announcements and financial statements",
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="Store raw JSON instead of Markdown (default: Markdown)",
+    )
+    p.add_argument(
+        "--unadjusted",
+        action="store_true",
+        help="Request unadjusted price history only",
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=180,
+        metavar="SEC",
+        help="Per-instrument timeout in seconds (default: 180)",
+    )
+    p.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Keep going after individual failures (default: yes, always continues)",
+    )
+    p.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Only print summary and errors",
+    )
+    return p.parse_args(argv)
+
+
+def load_symbols(path: Path) -> list[str]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    with path.open(encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            # allow optional trailing comments
+            if "#" in s:
+                s = s.split("#", 1)[0].strip()
+            if not s:
+                continue
+            if s in seen:
+                continue
+            seen.add(s)
+            symbols.append(s)
+    if not symbols:
+        raise SystemExit(f"No symbols found in {path}")
+    return symbols
+
+
+def safe_filename(symbol: str) -> str:
+    """Turn a symbol / URL into a filesystem-safe base name."""
+    # keep Persian letters, alphanumerics, dash, underscore
+    out = []
+    for ch in symbol:
+        if ch.isalnum() or ch in "-_" or ("\u0600" <= ch <= "\u06FF"):
+            out.append(ch)
+        else:
+            out.append("_")
+    name = "".join(out).strip("_")
+    return name[:120] or "unknown"
+
+
+def run_one(
+    tse: str,
+    symbol: str,
+    out_dir: Path,
+    *,
+    days: int | None,
+    top: int,
+    no_codal: bool,
+    as_json: bool,
+    unadjusted: bool,
+    timeout: int,
+    quiet: bool,
+) -> tuple[str, bool, str]:
+    """Run tse for one symbol. Returns (symbol, success, message)."""
+    base = safe_filename(symbol)
+    ext = ".json" if as_json else ".md"
+    out_path = out_dir / f"{base}{ext}"
+
+    cmd = [tse, "all", symbol]
+    if days is not None:
+        cmd.extend(["--days", str(days)])
+    else:
+        cmd.append("--full")
+    cmd.extend(["--top", str(top)])
+    if no_codal:
+        cmd.append("--no-codal")
+    if unadjusted:
+        cmd.append("--unadjusted")
+    if as_json:
+        # tse all without --markdown emits JSON
+        pass
+    else:
+        cmd.append("--markdown")
+
+    if not quiet:
+        print(f"  → {symbol}", flush=True)
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+    except subprocess.TimeoutExpired:
+        return symbol, False, f"timeout after {timeout}s"
+    except FileNotFoundError:
+        return symbol, False, f"tse executable not found: {tse}"
+    except OSError as exc:
+        return symbol, False, str(exc)
+
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        # keep only the last few lines of error
+        err_lines = [ln for ln in err.splitlines() if ln.strip()][-5:]
+        msg = " | ".join(err_lines) if err_lines else f"exit {proc.returncode}"
+        return symbol, False, msg
+
+    data = proc.stdout
+    if not data.strip():
+        return symbol, False, "empty output"
+
+    try:
+        out_path.write_text(data, encoding="utf-8")
+    except OSError as exc:
+        return symbol, False, f"write failed: {exc}"
+
+    return symbol, True, str(out_path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    input_path = Path(args.input_file)
+    if not input_path.is_file():
+        print(f"tse-batch: input file not found: {input_path}", file=sys.stderr)
+        return 1
+
+    tse_path = Path(args.tse)
+    if not tse_path.is_file() and args.tse == str(DEFAULT_TSE):
+        # try PATH
+        from shutil import which
+        found = which("tse")
+        if found:
+            tse_path = Path(found)
+        else:
+            print(
+                f"tse-batch: cannot find tse executable at {args.tse}\n"
+                "  Pass --tse /path/to/tse or place tse next to this script.",
+                file=sys.stderr,
+            )
+            return 1
+
+    try:
+        symbols = load_symbols(input_path)
+    except SystemExit as exc:
+        print(f"tse-batch: {exc}", file=sys.stderr)
+        return 1
+
+    today = date.today().isoformat()  # YYYY-MM-DD
+    parent = Path(args.outdir) if args.outdir else Path.cwd()
+    out_dir = parent / today
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    jobs = max(1, args.jobs)
+    if not args.quiet:
+        print(
+            f"tse-batch: {len(symbols)} instrument(s) → {out_dir}/  "
+            f"(jobs={jobs}, tse={tse_path})",
+            flush=True,
+        )
+
+    ok_count = 0
+    fail_count = 0
+    failures: list[tuple[str, str]] = []
+    t0 = time.monotonic()
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {
+            pool.submit(
+                run_one,
+                str(tse_path),
+                sym,
+                out_dir,
+                days=args.days,
+                top=args.top,
+                no_codal=args.no_codal,
+                as_json=args.json,
+                unadjusted=args.unadjusted,
+                timeout=args.timeout,
+                quiet=args.quiet,
+            ): sym
+            for sym in symbols
+        }
+        for fut in as_completed(futures):
+            symbol, success, msg = fut.result()
+            if success:
+                ok_count += 1
+                if not args.quiet:
+                    print(f"  ✓ {symbol} → {msg}", flush=True)
+            else:
+                fail_count += 1
+                failures.append((symbol, msg))
+                print(f"  ✗ {symbol}: {msg}", file=sys.stderr, flush=True)
+
+    elapsed = time.monotonic() - t0
+    print(
+        f"\ntse-batch: done in {elapsed:.1f}s — "
+        f"{ok_count} ok, {fail_count} failed → {out_dir}/",
+        flush=True,
+    )
+    if failures:
+        print("Failed:", file=sys.stderr)
+        for sym, msg in failures:
+            print(f"  {sym}: {msg}", file=sys.stderr)
+        return 2 if ok_count == 0 else 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
