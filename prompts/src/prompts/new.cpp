@@ -52,7 +52,7 @@ Requirements for the generated prompt:
 - The prompt is invoked as `prompt <name> ...`, so the help's Usage line must say `Usage: prompt <name>`.
 - Write the result onto the prompt_context handed in: ctx.out for stdout (it is sanitised, piped onward and copied to the clipboard), ctx.err for stderr (the exit status stays 0). Set ctx.no_clipboard = true to opt this output out of the clipboard.
 - Report failures by throwing usage_error (exit 2) or soft_error (exit 1) with a message ending in a newline; never call std::exit and never return a non-zero status directly.
-- Accept `--head N` with parse_head_option and pass the result to the embedding helpers; embed files with embed_file_block (or trim_context_nl + infer_lang) and stdin with embed_stdin when ctx.stdin_consumed.
+- Accept `--head N` with head_lines_or_throw(ctx) and pass the result to the embedding helpers; split the file arguments with collect_file_args(ctx) (or positional_args(ctx) when each token needs custom handling); embed files with embed_file_block (or trim_context_nl + infer_lang) and stdin with embed_stdin when ctx.stdin_consumed.
 - Locate repository tools with prompt::fs::bin_tool and run subprocesses with prompt::process::command / run_command (argv arrays, no shell quoting).
 - Keep the prompt focused, minimal, and consistent with the prompts already in src/prompts/.
 - Do not invent SDK helpers that are not in the references embedded below.

@@ -194,6 +194,9 @@ Notes:
     // Pipeline for output accumulation
     prompt::pipeline pipeline;
     int exit_code = 0;
+    // Whether clean_privacy rewrote anything in any segment; if so the
+    // dispatcher prepends the redaction legend once, before the whole output.
+    bool redacted = false;
 
     // Execute each prompt in chain
     for (std::size_t i = 0; i < chain.count; ++i) {
@@ -220,7 +223,9 @@ Notes:
             if (desc->render_help_fn != nullptr) {
                 desc->render_help_fn(help_os);
             }
-            pipeline.add_output(prompt::sanitize::sanitize(help_os.str()), false);
+            auto help = prompt::sanitize::sanitize(help_os.str());
+            redacted = redacted || help.redacted;
+            pipeline.add_output(help.text, false);
             continue;
         }
 
@@ -243,7 +248,9 @@ Notes:
         try {
             clear_output(ctx);
             desc->execute_fn(ctx);
-            pipeline.add_output(prompt::sanitize::sanitize(ctx.out), ctx.no_clipboard);
+            auto clean = prompt::sanitize::sanitize(ctx.out);
+            redacted = redacted || clean.redacted;
+            pipeline.add_output(clean.text, ctx.no_clipboard);
             if (!ctx.err.empty()) {
                 std::cerr << ctx.err;
             }
@@ -252,7 +259,9 @@ Notes:
             }
         } catch (prompt::prompt_error const& err) {
             const std::string& partial = err.partial_output();
-            pipeline.add_output(prompt::sanitize::sanitize(partial), err.no_clipboard());
+            auto clean = prompt::sanitize::sanitize(partial);
+            redacted = redacted || clean.redacted;
+            pipeline.add_output(clean.text, err.no_clipboard());
             std::string message = err.what();
             if (!message.empty()) {
                 std::cerr << message;
@@ -268,10 +277,16 @@ Notes:
 
     // Finalize and output
     std::string final_output = pipeline.finalize();
+    if (redacted && !final_output.empty()) {
+        final_output = std::string(prompt::sanitize::kRedactionLegend) + "\n" + final_output;
+    }
     std::cout << final_output;
 
     // Copy to clipboard (respecting per-prompt no-clipboard opt-outs)
     auto clip = pipeline.for_clipboard();
+    if (redacted && !clip.empty()) {
+        clip = std::string(prompt::sanitize::kRedactionLegend) + "\n" + clip;
+    }
     if (!clip.empty()) {
         prompt::clipboard::copy(clip);
     }

@@ -15,7 +15,7 @@ std::string strip_osc(std::string_view input) {
     return std::regex_replace(std::string(input), osc_regex, "");
 }
 
-std::string clean_privacy(std::string_view input) {
+std::string clean_privacy_impl(std::string_view input, bool* redacted) {
     // $HOME/$USER/$TMPDIR are interpolated into regular expressions: any regex
     // metacharacter they contain would throw std::regex_error. Escaping keeps
     // a hostile environment from aborting the dispatcher.
@@ -61,9 +61,16 @@ std::string clean_privacy(std::string_view input) {
 
     replace_all_re(R"([0-9]{3}-[0-9]{2}-[0-9]{4})", "SSN");
 
+    if (redacted != nullptr) *redacted = (output != input);
     return output;
 }
 
-std::string sanitize(std::string_view input) { return clean_privacy(strip_osc(input)); }
+std::string clean_privacy(std::string_view input) { return clean_privacy_impl(input, nullptr); }
+
+result sanitize(std::string_view input) {
+    bool redacted = false;
+    std::string text = clean_privacy_impl(strip_osc(input), &redacted);
+    return {.text = std::move(text), .redacted = redacted};
+}
 
 } // namespace prompt::sanitize
