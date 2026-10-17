@@ -58,44 +58,88 @@ load-balancing proxy over all healthy tunnels (`127.0.0.1:1080`), and
 `exec <name> cmd` to run a single command inside one tunnel. `route <name>`
 optionally sends all host traffic through a chosen tunnel (nftables fwmark +
 policy routing; `unroute` puts it back) — it is off unless asked for, switching
-between tunnels is safe (`route` unroutes the old one first), and while it is on
-IPv6 is killed rather than leaked (`VPNSWARM_ROUTE_IPV6=pass` to let it out).
+between tunnels is safe (`route` drops whatever was routed before it installs
+its own rules, even when the state file is gone), and it refuses to install a
+route it could not keep its own tunnel alive through: the VPN server's address
+comes from the live socket or the line's `--config`/`--remote` `remote` entries,
+and without one `route` stops and says so instead of quietly cutting the
+connection (`--allow-no-server-exclusion` overrides, at your own risk). Every
+failure prints the `unroute` that undoes it, and the route is recorded before it
+goes in, so a half-finished one is still undone. While it is on IPv6 is killed
+rather than leaked (`VPNSWARM_ROUTE_IPV6=pass` to let it out).
 
 The swarm file is declarative — one line per VPN holding its name and the whole
-`openvpn` command (a leading `--` pins a patched/openvpn3 binary); `add`/`remove`
-edit it for you. A line may also read `name <program> args…` to run any
-OpenVPN-compatible program, such as a launcher wrapper that does DPI evasion
+`openvpn` command (a leading `--` pins a patched/openvpn3 binary); `add` writes
+that line for you, quoting every word so a path with a space survives, and
+`remove` takes it out again. A line may also read `name <program> args…` to run
+any OpenVPN-compatible program, such as a launcher wrapper that does DPI evasion
 (`any1 ./surfshark-connect.sh --ladder udp:2433,tcp:443 --`) — vpnswarm appends
 its own options to the end, so a wrapper must hand what follows its own `--` to
 openvpn. A tunnel's name comes from its `--config` file stem unless the
-line names one. Tunnels run in the host netns with a generated `--up`/`--down`
+line names one (a line that spells out the binary, `openvpn --config x.ovpn`,
+is named after that file too). Tunnels run in the host netns with a generated
+`--up`/`--down`
 script that moves the tun into its namespace and applies the address, routes and
-DNS there. `supervise up` restarts dead tunnels (but not ones you stopped),
-`status --check` probes each tunnel, and `prune` tears everything down. Pass the
-swarm file with `-c`; without one the last used file is reused.
+DNS there: the address is read as a peer under `topology net30` and as
+`local/prefix` under `topology subnet` (a netmask is never used as a peer), and
+a full tunnel whose server pushed no gateway still gets a default route — at the
+device itself — so a subnet-style VPN is not quietly limited to its own /24.
+`supervise up` restarts dead tunnels (but not ones you stopped),
+`status --check` probes each tunnel and records the verdict, and `prune` tears
+everything down: it stops the supervisor and the tunnels, takes host routing
+back before the tunnel it points at disappears, then sweeps what a lost state
+directory would otherwise leave running — the namespaces (`vsw-*`), their
+`/etc/netns` directories and the veth pairs — and says where the logs
+(`logs/`) and the saved credentials (`creds/`) were kept, since neither is
+deleted. Pass the swarm file with `-c`; without one the last used file is reused,
+and a relative `-c` is made absolute before the root re-exec so it means the
+same file there.
 
 `start` brings the tunnels up one at a time and waits for each to become
 healthy, printing what it is waiting for and where the log is (`--no-wait`
-returns immediately instead and lets the supervisor finish the job) — worth it
-with a launcher that walks a DPI-evasion ladder, since the supervisor gives
-every fresh start `VPNSWARM_UP_TIMEOUT` seconds to connect before deciding it is
-dead, and never fights a client that is still negotiating. `reload` compares both
+returns immediately instead) — a wrapper line is never waited for at all, since
+it negotiates on its own clock and the supervisor is the right owner. The
+supervisor tells a client that is still working from a stuck one by watching its
+log: it waits as long as the launcher keeps writing, gives up after
+`VPNSWARM_STALL_TIMEOUT` seconds of silence (60) or the hard cap
+`VPNSWARM_UP_TIMEOUT` seconds (180) whatever happens, restarts a client that is
+gone at once, and backs off further after each failure while resetting the
+backoff as soon as a probe succeeds. `reload` compares both
 the openvpn arguments of a line *and* its meta options (`--socks-port`,
-`--no-proxy`, …), so editing either restarts that tunnel, and only drops tunnels
+`--no-proxy`, …), so editing either restarts that tunnel, only drops tunnels
 that came from the file it is given, so tunnels belonging to another swarm file
-are left alone; `supervise` is likewise shared by all files.
+are left alone, and never resurrects a tunnel you stopped; `supervise` is
+likewise shared by all files.
 
 The file is data, not a shell script: quotes and backslashes group words, but
 nothing in it is expanded, globbed or executed. `status`, `logs`, `env`, `proxy`,
 `exec`, `rr` and `stop` work from the recorded state alone — even after the swarm
 file is moved or deleted — while `start`/`reload`/`list` say plainly that the file
-is gone. `--help` needs no root. The state directory is root-only (0700, credentials
+is gone (`list` names the swarm file it is reading and tags every tunnel `up`,
+`down`, `off` or `-` when it was never started). `env <name>` prints every
+setting as an `export`, quoted so `eval "$(vpnswarm env x)"` puts the whole set
+into the shell, and `proxy [name]` prints the proxy urls of one tunnel or of the
+whole swarm — a line with `--no-proxy` says "no proxy (--no-proxy)" instead of an
+empty port. `status` reports the client process and the tunnel device separately
+(`CLIENT`/`TUN`, so a launcher that is still negotiating is visible as such) next
+to the age of its last health verdict; `status --check` re-probes and records
+that verdict, `logs <name|all>` takes `-f`/`--full` in any position, and `-q`
+drops the banners. `--help` needs no root (it is also the only thing that runs
+before the root check), and `help <command>` prints just that command's synopsis
+and the paragraph about it. The state directory is root-only (0700, credentials
 0600); the balancer's upstreams are the per-tunnel SOCKS proxies only, and
 `VPNSWARM_STRATEGY` picks `roundrobin` (default), `random` or `sticky`
-(one tunnel per destination host). A tunnel is healthy when a TCP connect to
-`VPNSWARM_PROBE_HOST:VPNSWARM_PROBE_PORT` (1.1.1.1:443) succeeds from inside its
-namespace — no DNS, no TLS — and `status` shows how long ago that verdict was
-taken.
+(one tunnel per destination host); `lb up` refuses to start a balancer when no
+tunnel is healthy yet (it would have nothing to send through) and `lb restart`
+warns the same before starting one anyway. A tunnel is healthy when a TCP
+connect to `VPNSWARM_PROBE_HOST:VPNSWARM_PROBE_PORT` (1.1.1.1:443) succeeds from
+inside its namespace — no DNS, no TLS — and, when its proxies are on, a SOCKS5
+CONNECT through the published `127.0.0.1` port succeeds as well, so the verdict
+covers the whole path a client actually takes. A proxy that died is restarted by the
+supervisor (a pidfile is only believed when the process behind it really is that
+proxy, which a rebuilt namespace otherwise makes easy to get wrong), and one that
+cannot bind marks its tunnel down instead of looking alive; `status` shows how
+long ago the verdict was taken.
 
 ### Other Networking tools
 
