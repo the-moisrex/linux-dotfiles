@@ -4,7 +4,7 @@ show_help() {
     cat <<'EOF'
 Usage: install-services.sh [service...]
 
-Install systemd services (user or system) by creating symlinks.
+Install systemd services (user or system).
 
 Arguments:
   service...    Service names or paths to .service files to install
@@ -15,6 +15,10 @@ Services are searched in this order:
   3. services/user/<name>.service
   4. services/system/<name>
   5. services/system/<name>.service
+
+Unit files may contain an @REPO@ placeholder; it is replaced with this
+repository's root when the unit is installed (installed as a rendered copy
+rather than a symlink). Units without it are symlinked as before.
 
 Examples:
   install-services.sh myservice
@@ -28,7 +32,17 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
 fi
 
 dir=$(dirname "$0")
+repo_root=$(cd -- "$dir/.." && pwd -P)
+service_file=""
 services="$@"
+
+# Print a unit file with any @REPO@ placeholder replaced by the repository root.
+render_unit() {
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        printf '%s\n' "${line//@REPO@/$repo_root}"
+    done < "$service_file"
+}
 
 if [ $# -eq 0 ]; then
     echo "Error: No services specified." >&2
@@ -69,22 +83,39 @@ for service in $services; do
     service_name=$(basename "$service_file")
     service_name="${service_name%.*}"
 
+    template=false
+    if grep -q '@REPO@' "$service_file" 2>/dev/null; then
+        template=true
+    fi
+
     echo "service file: $service_file"
     echo "service name: $service_name"
 
     if $user_service; then
-        echo "linking $HOME/.config/systemd/user/$service_name.service"
+        target="$HOME/.config/systemd/user/$service_name.service"
+        echo "installing $target"
         mkdir -p "$HOME/.config/systemd/user"
         systemctl --user stop "$service_name.service" 2>/dev/null || true
-        ln -f -s "$service_file" "$HOME/.config/systemd/user/$service_name.service"
+        if $template; then
+            rm -f "$target"
+            render_unit > "$target"
+        else
+            ln -f -s "$service_file" "$target"
+        fi
         systemctl --user daemon-reload
         systemctl --user enable "$service_name.service"
         systemctl --user start "$service_name.service"
         echo "Service $service_name enabled and started in user space."
     else
-        echo "linking /etc/systemd/system/$service_name.service"
+        target="/etc/systemd/system/$service_name.service"
+        echo "installing $target"
         sudo systemctl stop "$service_name.service" 2>/dev/null || true
-        sudo ln -f -s "$service_file" "/etc/systemd/system/$service_name.service"
+        if $template; then
+            sudo rm -f "$target"
+            render_unit | sudo tee "$target" >/dev/null
+        else
+            sudo ln -f -s "$service_file" "$target"
+        fi
         sudo systemctl daemon-reload
         sudo systemctl enable "$service_name.service"
         sudo systemctl start "$service_name.service"
