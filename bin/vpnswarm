@@ -45,7 +45,7 @@ SELF=$(readlink -f -- "$0" 2>/dev/null || printf '%s' "$0")
 : "${VPNSWARM_LB_PORT:=1080}"         # load balancing proxy
 : "${VPNSWARM_LB_HTTP_PORT:=1081}"
 : "${VPNSWARM_LB_BIND:=127.0.0.1}"
-: "${VPNSWARM_STRATEGY:=roundrobin}"  # roundrobin | random
+: "${VPNSWARM_STRATEGY:=roundrobin}"  # roundrobin | random | sticky
 : "${VPNSWARM_SUBNET:=172.16}"        # first two octets of the per-tunnel /30 (host<->netns veth)
 : "${VPNSWARM_PROBE_HOST:=1.1.1.1}"   # tunnel liveness probe
 : "${VPNSWARM_PROBE_PORT:=443}"
@@ -109,7 +109,8 @@ commands:
   proxy [name]                       print proxy urls (one tunnel, or the balancer)
   lb <up|down|restart|status>        the load-balancing proxy
   supervise <up|down|status|once>    keep-alive daemon
-  route <name> [seconds]             shove ALL host traffic through one tunnel (risky)
+  route <name> [seconds]             send host traffic (IPv4) through one tunnel
+  unroute                            undo 'route' and restore the host's routing
   logs <name> [-f|--full]            tunnel and proxy logs
   add <name-or-config> [args...]     append a line to the file and start it
   remove <name>                      drop the line from the file and tear it down
@@ -135,6 +136,10 @@ swarm file format (one tunnel per line, # starts a comment):
     # one) is left alone while it connects: the supervisor gives every fresh
     # start VPNSWARM_UP_TIMEOUT seconds to produce a tunnel before it restarts
 
+    # the file is data, not a shell script: quotes and backslashes group words,
+    # but nothing is expanded, globbed or executed.  Use absolute paths (a
+    # leading ~/ is the one convenience that is resolved for you).
+
 per-line meta options (stripped before openvpn sees them):
     --name NAME          force the tunnel name
     --socks-port N       SOCKS port of this tunnel (default: auto)
@@ -142,13 +147,41 @@ per-line meta options (stripped before openvpn sees them):
     --no-proxy           no per-tunnel proxies (namespace only)
     --no-full-tunnel     only use routes pushed by the server (no default route)
 
+proxies (per tunnel, and the 'lb' balancer):
+    the host side of every proxy binds loopback only (127.0.0.1; the balancer
+    honours VPNSWARM_LB_BIND) and has no authentication, so anything that can
+    reach that port may use the tunnel.  SOCKS5 CONNECT and HTTP
+    CONNECT/absolute-form are implemented -- no UDP ASSOCIATE, no BIND, no
+    HTTPS interception: an https:// client uses CONNECT and its TLS stays end
+    to end.  When several tunnels are healthy the balancer sends new
+    connections across them (VPNSWARM_STRATEGY=roundrobin|random|sticky:
+    roundrobin is the default; random picks per connection; sticky keeps one
+    tunnel per destination host, so a site sees a stable egress address).
+
+health: a tunnel is healthy when a TCP connect to
+    VPNSWARM_PROBE_HOST:VPNSWARM_PROBE_PORT succeeds from inside its namespace
+    (the default is 1.1.1.1:443): no DNS and no TLS, so a captive portal that
+    answers still looks healthy.  With VPNSWARM_AUTO_SUPERVISE=1 the
+    supervisor re-checks every VPNSWARM_SUPERVISE_INTERVAL seconds.
+
 credentials:
     a bare --auth-user-pass (no file) makes openvpn ask for user and password,
     so the tunnel is started in the foreground and the prompt appears in your
     terminal.  Put them in a file instead to stay usable from a script:
     line 1 = user, line 2 = password, and pass --auth-user-pass <file>.
+    when it has to ask, vpnswarm keeps its own copy under the state directory
+    (creds/<name>.pass, mode 0600); the state directory is root-only (0700).
 
 environment: every VPNSWARM_* variable above can be exported to override it.
+
+host routing ('route'): all *IPv4* host traffic is sent through the chosen
+    tunnel with nftables + policy routing; the VPN server's own addresses, the
+    LAN and loopback stay direct.  IPv6 has no route through this tunnel, so
+    while a route is active the host's own IPv6 egress is *dropped* instead of
+    leaking around the tunnel (VPNSWARM_ROUTE_IPV6=pass leaves IPv6 untouched,
+    and then IPv6 bypasses the tunnel).  Switch tunnels by running 'route'
+    again; 'unroute' restores everything; 'route <name> <seconds>' auto-undoes
+    after that many seconds unless another tunnel took over in the meantime.
 EOF
 }
 
@@ -160,7 +193,11 @@ root_check() {
 
 ensure_layout() {
   mkdir -p "$STATE_DIR" "$SCRIPTS_DIR" "$LOGS_DIR" "$CREDS_DIR"
+  # the state directory holds the tunnels' environment, the generated scripts
+  # and the credentials: root only, like the tunnels themselves
+  chmod 700 "$STATE_DIR" "$SCRIPTS_DIR" "$CREDS_DIR" "$LOGS_DIR" 2>/dev/null || true
   [ -f "$LAST_CONFIG_FILE" ] || : > "$LAST_CONFIG_FILE"
+  chmod 600 "$LAST_CONFIG_FILE" 2>/dev/null || true
 }
 
 name_hash() { local h; h=$(printf '%s' "$1" | md5sum); printf '%s' "${h:0:8}"; }
@@ -189,7 +226,9 @@ veth_names() {      # name -> "peerInNs peerOnHost"  (both <= 15 chars)
 netns_name() { local h; h=$(printf '%s' "$1" | md5sum); printf 'vsw-%s' "${h:0:10}"; }
 
 # ------------------------------------------------------------ config parser --
-# parse_config FILE  ->  "NAME<TAB>args<TAB>lineno<TAB>binary"  (args is %q)
+# parse_config FILE -> "NAME<TAB>args<TAB>lineno<TAB>binary<TAB>socks<TAB>http<TAB>no_proxy<TAB>full_tunnel"
+# (args is %q; the last four are the line's per-line meta options and are the
+#  only source of them -- nothing re-reads them out of the raw text)
 
 # resolve_program TOKEN [DIR] -> print the path to run when TOKEN names a
 # program rather than an option or plain data, and fail otherwise.  A relative
@@ -199,6 +238,9 @@ resolve_program() {
   local t=$1 dir=${2:-} p
   case "$t" in
     ''|-*) return 1;;
+    \~/*) t=$HOME/${t#\~/};;      # the tokenizer does not expand tildes
+  esac
+  case "$t" in
     */*)
       if [ -x "$t" ]; then printf '%s' "$t"; return 0; fi
       if [ -n "$dir" ] && [ -x "$dir/$t" ]; then printf '%s' "$dir/${t#./}"; return 0; fi
@@ -207,6 +249,31 @@ resolve_program() {
       p=$(command -v -- "$t" 2>/dev/null) || return 1
       printf '%s' "$p";;
   esac
+}
+
+# tokenize STRING -> one token per line.  Shell-like quoting and backslash
+# escapes, but *nothing else*: no globbing, no command substitution and no
+# variable expansion, so a swarm file cannot run or expand anything.  A
+# leading "~/" is resolved by resolve_program instead.
+tokenize() {
+  local s=$1 out=() cur="" i=0 n=${#1} c q="" seen=0
+  while [ "$i" -lt "$n" ]; do
+    c=${s:i:1}; i=$((i+1))
+    if [ -n "$q" ]; then
+      if [ "$c" = "$q" ]; then q=""; continue; fi
+      if [ "$c" = "\\" ] && [ "$q" = '"' ]; then c=${s:i:1}; i=$((i+1)); fi
+      cur+=$c; seen=1; continue
+    fi
+    case "$c" in
+      ' '|$'\t') if [ "$seen" = 1 ]; then out+=("$cur"); cur=""; seen=0; fi;;
+      "'"|'"')   q=$c; seen=1;;
+      \\)        c=${s:i:1}; i=$((i+1)); cur+=$c; seen=1;;
+      *)         cur+=$c; seen=1;;
+    esac
+  done
+  [ "$seen" = 1 ] && out+=("$cur")
+  [ "${#out[@]}" -gt 0 ] && printf '%s\n' "${out[@]}"
+  return 0
 }
 
 parse_config() {
@@ -221,7 +288,7 @@ parse_config() {
     case "$raw" in '#'*|';'*) continue;; esac
 
     local -a tok=()
-    eval "tok=( $raw )" 2>/dev/null || tok=()
+    mapfile -t tok < <(tokenize "$raw")
     [ "${#tok[@]}" -gt 0 ] || continue
 
     # the first words are the program to run and/or the tunnel name:
@@ -257,7 +324,7 @@ parse_config() {
     [ "$rest_ok" -eq 1 ] || continue
     [ "${#tok[@]}" -gt 0 ] || continue
 
-    local name="$name_pre" socks="" http="" no_proxy=0
+    local name="$name_pre" socks="" http="" no_proxy=0 full=1
     local -a keep=()
     local i=0 n=${#tok[@]}
     while [ "$i" -lt "$n" ]; do
@@ -266,10 +333,13 @@ parse_config() {
       t=${tok[$i]}
       case "$t" in
         --name)           name=${tok[$((i+1))]:-}; i=$((i+2));;
+        --name=*)         name=${t#--name=}; i=$((i+1));;
         --socks-port)     socks=${tok[$((i+1))]:-}; i=$((i+2));;
+        --socks-port=*)   socks=${t#--socks-port=}; i=$((i+1));;
         --http-port)      http=${tok[$((i+1))]:-}; i=$((i+2));;
+        --http-port=*)    http=${t#--http-port=}; i=$((i+1));;
         --no-proxy)       no_proxy=1; i=$((i+1));;
-        --no-full-tunnel) i=$((i+1));;   # honoured via meta_of full_tunnel
+        --no-full-tunnel) full=0; i=$((i+1));;
         *)                keep+=("$t"); i=$((i+1));;
       esac
     done
@@ -287,7 +357,9 @@ parse_config() {
     fi
 
     nm=$(derive_name "$name" "${keep[@]}")
-    printf '%s\t%s\t%d\t%s\n' "$nm" "$(printf '%q ' "${keep[@]}")" "$lineno" "$ovpn"
+    printf '%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n' \
+      "$nm" "$(printf '%q ' "${keep[@]}")" "$lineno" "$ovpn" \
+      "$socks" "$http" "$no_proxy" "$full"
   done < "$file"
 }
 
@@ -332,45 +404,56 @@ sanitize_name() {
   printf '%s' "$n"
 }
 
-config_names() { parse_config "$CONFIG" | cut -f1; }
+config_lines() {     # the parsed config, or nothing when there is no (live) file
+  [ -n "${CONFIG:-}" ] && [ -f "$CONFIG" ] || return 0
+  parse_config "$CONFIG"
+}
 
-args_of_name() { parse_config "$CONFIG" | awk -F'\t' -v n="$1" '$1==n {print $2; exit}' || true; }
+config_names() { config_lines | cut -f1; }
+
+args_of_name() { config_lines | awk -F'\t' -v n="$1" '$1==n {print $2; exit}' || true; }
 
 raw_line_of_name() {
   local ln
-  ln=$(parse_config "$CONFIG" | awk -F'\t' -v n="$1" '$1==n {print $3; exit}' || true)
+  ln=$(config_lines | awk -F'\t' -v n="$1" '$1==n {print $3; exit}' || true)
   [ -n "${ln:-}" ] && sed -n "${ln}p" "$CONFIG"
 }
 
-meta_of() {          # name field -> value of a file meta option
-  local nm=$1 field=$2 raw
-  raw=$(raw_line_of_name "$nm")
-  case $field in
-    bin)        parse_config "$CONFIG" | awk -F'\t' -v n="$nm" '$1==n {print $4; exit}' || true;;
-    socks_port) sed -n 's/.*--socks-port[= ][[:space:]]*\([0-9]\{1,5\}\).*/\1/p' <<<"$raw" | head -1 || true;;
-    http_port)  sed -n 's/.*--http-port[= ][[:space:]]*\([0-9]\{1,5\}\).*/\1/p' <<<"$raw" | head -1 || true;;
-    no_proxy)   grep -q -- '--no-proxy' <<<"$raw" && echo 1 || echo 0;;
-    full_tunnel) grep -q -- '--no-full-tunnel' <<<"$raw" && echo 0 || echo 1;;
-  esac
+line_fp_of_name() {  # name -> fingerprint of its whole line (program, args, meta)
+  local raw
+  raw=$(raw_line_of_name "$1" || true)
+  printf '%s' "$raw" | md5sum | cut -c1-12
 }
 
+meta_of() {          # name field -> value of a file meta option
+  local nm=$1 field=$2 col
+  case $field in
+    bin)         col=4;;
+    socks_port)  col=5;;
+    http_port)   col=6;;
+    no_proxy)    col=7;;
+    full_tunnel) col=8;;
+    *) return 1;;
+  esac
+  config_lines | awk -F'\t' -v n="$nm" -v c="$col" '$1==n {print $c; exit}' || true
+}
 # a query (name, index, "us-east", "us-east.ovpn", or a config path) -> name
 resolve_any() {
   local q=$1 n stem
   if [[ $q =~ ^[0-9]+$ ]]; then
-    n=$(parse_config "$CONFIG" | sed -n "$((q+1))p" | cut -f1)
+    n=$(config_lines | sed -n "$((q+1))p" | cut -f1)
     [ -n "$n" ] && { printf '%s' "$n"; return 0; }
   fi
   while IFS=$'\t' read -r n _ _ _; do
     [ "$n" = "$q" ] && { printf '%s' "$n"; return 0; }
-  done < <(parse_config "$CONFIG")
+  done < <(config_lines)
   stem=$(base_stem "${q##*/}")
   while IFS=$'\t' read -r n _ _ _; do
     [ "$n" = "$stem" ] && { printf '%s' "$n"; return 0; }
-  done < <(parse_config "$CONFIG")
+  done < <(config_lines)
   while IFS=$'\t' read -r n args _ _; do
     case "$args" in *"$q"*) printf '%s' "$n"; return 0;; esac
-  done < <(parse_config "$CONFIG")
+  done < <(config_lines)
   for n in $(known_names); do
     [ "$n" = "$q" ] && { printf '%s' "$n"; return 0; }
     [ "$n" = "$stem" ] && { printf '%s' "$n"; return 0; }
@@ -416,6 +499,7 @@ EOF
   printf 'VSW_FULL_TUNNEL=%q\n' "$VSW_FULL_TUNNEL"
   printf 'VSW_ARGS=%q\n'        "$VSW_ARGS"
   printf 'VSW_SOURCE=%q\n'      "$VSW_SOURCE"
+  printf 'VSW_LINE_FP=%q\n'     "$VSW_LINE_FP"
   printf 'VSW_FAILS=%q\n'       "$VSW_FAILS"
   printf 'VSW_NEXT_TRY=%q\n'    "$VSW_NEXT_TRY"
   printf 'VSW_STARTED_AT=%q\n'  "$VSW_STARTED_AT"
@@ -424,14 +508,14 @@ EOF
 load_env() {
   VSW_NAME='' VSW_NETNS='' VSW_DEV='' VSW_NSIP='' VSW_HOSTIP='' VSW_VETHNS='' VSW_VETHHOST=''
   VSW_BIN='' VSW_SOCKS_PORT='' VSW_HTTP_PORT='' VSW_PROXY=1 VSW_FULL_TUNNEL=1 VSW_ARGS=''
-  VSW_SOURCE='' VSW_FAILS=0 VSW_NEXT_TRY=0
+  VSW_SOURCE='' VSW_LINE_FP='' VSW_FAILS=0 VSW_NEXT_TRY=0 VSW_STARTED_AT=0
   # shellcheck source=/dev/null
   . "$1"
 }
 
 save_env() {
   local tmp="$1.tmp"
-  render_env > "$tmp" && mv -f "$tmp" "$1"
+  render_env > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$1"
 }
 
 # ------------------------------------------------------------ free slots --
@@ -521,15 +605,13 @@ tunnel_up() {        # netns veth -> is the tunnel really up?
   return 0
 }
 
-probe() {            # netns -> can the namespace reach the internet?
-  local ns=$1
-  timeout "$VPNSWARM_PROBE_TIMEOUT" bash -c \
-    "exec 3<>/dev/tcp/$VPNSWARM_PROBE_HOST/$VPNSWARM_PROBE_PORT" 2>/dev/null
-}
-
 # ---------------------------------------------------- the proxy (python3) --
 write_proxy_py() {
-  cat > "$PROXY_PY" <<'PYEOF'
+  local tmp
+  # written aside and renamed: a running proxy keeps its old inode, and nobody
+  # can ever exec a half-written script
+  tmp=$(mktemp "$SCRIPTS_DIR/.proxy.py.XXXXXX") || die "cannot create $SCRIPTS_DIR/.proxy.py.*"
+  cat > "$tmp" <<'PYEOF'
 #!/usr/bin/env python3
 """vpnswarm proxy -- a SOCKS5 + HTTP proxy with a pluggable outbound path.
 
@@ -541,6 +623,7 @@ write_proxy_py() {
                   protocol agnostic pipe (so 127.0.0.1:BASE works too)
 """
 import argparse
+import hashlib
 import os
 import random
 import select
@@ -592,8 +675,12 @@ def socks_handshake(client):
         raise ConnectionError("bad greeting")
     if ver != 5:
         raise ConnectionError("not socks5")
-    if nm:
-        recv_exact(client, nm)
+    methods = recv_exact(client, nm) if nm else b""
+    if b"\x00" not in methods:
+        # we only do no-auth: refuse instead of naming a method the client
+        # never offered (a strict client would treat that as a protocol error)
+        client.sendall(b"\x05\xff")
+        raise ConnectionError("no acceptable auth method")
     client.sendall(b"\x05\x00")
     ver, cmd, _rsv, atyp = recv_exact(client, 4)
     if cmd != 1:
@@ -623,7 +710,7 @@ def split_hostport(text, default_port):
 
 
 SKIP = (b"proxy-connection", b"connection", b"keep-alive", b"proxy-authorization",
-        b"te", b"trailer", b"upgrade", b"proxy-authenticate", b"content-length")
+        b"te", b"trailer", b"upgrade", b"proxy-authenticate")
 
 
 def http_request(client):
@@ -770,7 +857,14 @@ def serve_pipe(pairs):
 
 
 class Pool:
-    """round-robin over the healthy per-tunnel proxies of the swarm"""
+    """the healthy per-tunnel proxies of the swarm, in the configured order
+
+    strategy:
+      roundrobin  every new connection goes to the next tunnel (even spread)
+      random      ... to a random one (no shared cursor)
+      sticky      ... to the same one for the same destination host, so a site
+                  keeps seeing one egress address while the set is unchanged
+    """
 
     def __init__(self, path, timeout, strategy):
         self.path = path
@@ -813,10 +907,21 @@ class Pool:
         with self.lock:
             self._load()
             pool = [it for it in self.items if it[0] == proto]
+            if not pool and proto != "socks":
+                # a socks upstream can serve any request kind: the pool asks it
+                # for the destination and then speaks to it directly, so an
+                # http-kinded request does not need an http proxy upstream
+                pool = [it for it in self.items if it[0] == "socks"]
             if not pool:
                 raise RuntimeError("no %s upstream advertised (yet)" % proto)
             if self.strategy == "random":
                 start = random.randrange(len(pool))
+            elif self.strategy == "sticky":
+                # the same destination always leaves through the same tunnel
+                # (a stable digest, so it survives a proxy restart and does
+                # not depend on PYTHONHASHSEED)
+                digest = hashlib.md5(host.encode("utf-8", "replace")).digest()
+                start = int.from_bytes(digest[:4], "big") % len(pool)
             else:
                 start = self.cursor
                 self.cursor = (self.cursor + 1) % len(pool)
@@ -922,7 +1027,7 @@ def main():
     ap.add_argument("--socks-port", type=int, default=0)
     ap.add_argument("--http-port", type=int, default=0)
     ap.add_argument("--upstreams")
-    ap.add_argument("--strategy", choices=["roundrobin", "random"], default="roundrobin")
+    ap.add_argument("--strategy", choices=["roundrobin", "random", "sticky"], default="roundrobin")
     ap.add_argument("--forward-socks-to", help="host:port, --mode forward")
     ap.add_argument("--forward-http-to", help="host:port, --mode forward")
     ap.add_argument("--connect-timeout", type=float, default=15.0)
@@ -966,20 +1071,25 @@ def main():
 if __name__ == "__main__":
     main()
 PYEOF
-  chmod +x "$PROXY_PY"
+  chmod 700 "$tmp"
+  mv -f "$tmp" "$PROXY_PY"
 }
 
 # ------------------------------------------------- openvpn up/down scripts --
 write_up_scripts() {   # name
-  local name=$1 slug envf up down
+  local name=$1 slug envf up down uptmp downtmp
   slug=$(slug_of "$name")
   envf=$(env_file_of "$name")
   [ -f "$envf" ] || return 1
   load_env "$envf"
   up="$SCRIPTS_DIR/up-$slug.sh"
   down="$SCRIPTS_DIR/down-$slug.sh"
+  # both are written aside and renamed after substitution: openvpn re-runs
+  # --up on every reconnect, so it must never see a half-substituted script
+  uptmp=$(mktemp "$SCRIPTS_DIR/.up-$slug.XXXXXX") || die "cannot create $SCRIPTS_DIR/.up-$slug.*"
+  downtmp=$(mktemp "$SCRIPTS_DIR/.down-$slug.XXXXXX") || die "cannot create $SCRIPTS_DIR/.down-$slug.*"
 
-  cat > "$up" <<'UPEOF'
+  cat > "$uptmp" <<'UPEOF'
 #!/usr/bin/env bash
 # generated by vpnswarm -- the --up script of one tunnel
 set -u
@@ -989,10 +1099,13 @@ ETCNETNS='@ETCNETNS@'
 FULL_TUNNEL=@FULL_TUNNEL@
 
 err() { printf 'vpnswarm-up[%s]: %s\n' "$NETNS" "$*" >&2; }
-mask2cidr() {
+mask2cidr() {            # "24" -> 24, "255.255.255.0" -> 24
   local m=$1 o c=0
   case "$m" in ''|*[!0-9.]*) return 1;; esac
-  [ -n "${m//[!0-9]/}" ] && { printf '%s' "$m"; return 0; }
+  case "$m" in
+    *.*) ;;                        # a dotted netmask: count the bits below
+    *) printf '%s' "$m"; return 0;;  # already a prefix length ("30")
+  esac
   local IFS=.
   for o in $m; do
     case "$o" in
@@ -1098,13 +1211,19 @@ fi
 mkdir -p "$ETCNETNS/$NETNS" 2>/dev/null
 dns=""; search=""; i=1
 while :; do
-  eval "opt=\"\${foreign_option_$i:-}\""
+  # server-controlled text: read it, never evaluate it
+  fov="foreign_option_$i"; opt=${!fov:-}
   [ -n "$opt" ] || break
-  # shellcheck disable=SC2086
-  eval "set -- $opt"
-  case "${2:-}" in
-    DNS|DNS6) dns="$dns ${3:-}";;
-    DOMAIN)   search="$search ${3:-}";;
+  rest=${opt#dhcp-option }              # openvpn usually prefixes the option
+  key=${rest%%[[:space:]]*}
+  val=${rest#"$key"}
+  val=${val#"${val%%[![:space:]]*}"}     # trim around the value ...
+  val=${val%"${val##*[![:space:]]}"}
+  case "$key" in
+    # and only take values that look like an address/domain: a pushed option
+    # is server-controlled text and must never end up as a resolv.conf keyword
+    DNS|DNS6) case "$val" in ''|*[!0-9a-fA-F:.]*) :;; *) dns="$dns $val";; esac;;
+    DOMAIN)   case "$val" in ''|*[!A-Za-z0-9._-]*) :;; *) search="$search $val";; esac;;
   esac
   i=$((i+1))
 done
@@ -1123,7 +1242,7 @@ fi
 exit 0
 UPEOF
 
-  cat > "$down" <<'DOWNEOF'
+  cat > "$downtmp" <<'DOWNEOF'
 #!/usr/bin/env bash
 # generated by vpnswarm -- the --down script of one tunnel
 set -u
@@ -1137,10 +1256,12 @@ exit 0
 DOWNEOF
 
   sed -i -e "s|@IP@|$IP|g" -e "s|@NETNS@|$VSW_NETNS|g" \
-         -e "s|@ETCNETNS@|$ETC_NETNS|g" -e "s|@FULL_TUNNEL@|$VSW_FULL_TUNNEL|g" "$up"
+         -e "s|@ETCNETNS@|$ETC_NETNS|g" -e "s|@FULL_TUNNEL@|$VSW_FULL_TUNNEL|g" "$uptmp"
   sed -i -e "s|@IP@|$IP|g" -e "s|@NETNS@|$VSW_NETNS|g" \
-         -e "s|@ETCNETNS@|$ETC_NETNS|g" "$down"
-  chmod +x "$up" "$down"
+         -e "s|@ETCNETNS@|$ETC_NETNS|g" "$downtmp"
+  chmod 700 "$uptmp" "$downtmp"
+  mv -f "$uptmp" "$up"
+  mv -f "$downtmp" "$down"
 }
 
 # --------------------------------------------------------------- netns ----
@@ -1157,7 +1278,7 @@ port_busy_for() {    # name port -> 0 when another tunnel listens on it
 }
 
 prepare_slots() {    # name -> settles every field of its .env file
-  local name=$1 envf socks http no_proxy ft bin
+  local name=$1 envf socks http bin
   envf=$(env_file_of "$name")
   if [ -f "$envf" ]; then
     load_env "$envf"
@@ -1171,12 +1292,14 @@ prepare_slots() {    # name -> settles every field of its .env file
     VSW_ARGS=""
     VSW_PROXY=1 VSW_FULL_TUNNEL=1
     VSW_SOCKS_PORT="" VSW_HTTP_PORT=""
+    VSW_SOURCE="" VSW_LINE_FP=""
     VSW_FAILS=0 VSW_NEXT_TRY=0
   fi
   # when this tunnel was last (re)started -- a client that negotiates slowly
   # (a DPI-evading launcher walking its transport ladder) must not be declared
   # broken before it has had its own up-timeout
   : "${VSW_STARTED_AT:=0}"
+  : "${VSW_LINE_FP:=}"
   # one supervisor serves every swarm file, so a tunnel can be restarted by a
   # vpnswarm whose -c is a *different* file: only the owning file may re-read
   # the per-line options and claim the tunnel as its own
@@ -1185,10 +1308,13 @@ prepare_slots() {    # name -> settles every field of its .env file
   if grep -qxF -- "$name" <<<"$cnames"; then
     VSW_SOURCE=$CONFIG
     bin=$(meta_of "$name" bin)           && [ -n "$bin" ]     && VSW_BIN=$bin
+    # an explicit port sticks until the line changes it (it is what clients
+    # were told); the booleans are settled in both directions, so *removing*
+    # --no-proxy / --no-full-tunnel from the line really turns them back on
     socks=$(meta_of "$name" socks_port)  && [ -n "$socks" ]   && VSW_SOCKS_PORT=$socks
     http=$(meta_of "$name" http_port)    && [ -n "$http" ]    && VSW_HTTP_PORT=$http
-    no_proxy=$(meta_of "$name" no_proxy) && [ "$no_proxy" = "1" ] && VSW_PROXY=0
-    ft=$(meta_of "$name" full_tunnel)    && VSW_FULL_TUNNEL=$ft
+    if [ "$(meta_of "$name" no_proxy)" = 1 ]; then VSW_PROXY=0; else VSW_PROXY=1; fi
+    VSW_FULL_TUNNEL=$(meta_of "$name" full_tunnel); : "${VSW_FULL_TUNNEL:=1}"
     if [ "$VSW_PROXY" != "1" ]; then VSW_SOCKS_PORT=""; VSW_HTTP_PORT=""; fi
   fi
 
@@ -1250,7 +1376,13 @@ user_args_filtered() {   # args string -> filtered %q args string
       --dev|--dev-type|--dev-node|--up|--down|--up-restart|--route-up|--cd|--log|\
       --log-append|--writepid)
         if [ $# -ge 2 ]; then shift 2; else shift; fi;;
-      --*=*) shift;;
+      # only the options vpnswarm injects itself are dropped in their --opt=value
+      # spelling: anything else with an '=' is left for openvpn (or for a
+      # launcher wrapper) to accept or reject loudly, instead of being lost here
+      --daemon=*|--persist-tun=*|--persist-key=*|--persist-local-ip=*|--persist-remote-ip=*|\
+      --dev=*|--dev-type=*|--dev-node=*|--up=*|--down=*|--up-restart=*|--route-up=*|\
+      --cd=*|--log=*|--log-append=*|--writepid=*)
+        shift;;
       *) out+=("$1"); shift;;
     esac
   done
@@ -1284,13 +1416,10 @@ dco_flag() {             # only openvpn knows --disable-dco, so probe the line's
   local bin=${VSW_BIN:-$OVPN} base=${VSW_BIN:-$OVPN}
   base=${base##*/}
   case "$base" in openvpn*) ;; *) return 1;; esac
-  if [ -z "${VSW_DCO:-}" ]; then
-    # capture, then match: a pipe would let the binary's own exit status (and
-    # any early-exiting consumer) decide the answer under pipefail
-    local help; help=$($bin --help 2>&1 || true)
-    case "$help" in *--disable-dco*) VSW_DCO=1;; *) VSW_DCO=0;; esac
-  fi
-  [ "$VSW_DCO" = 1 ]
+  # captured, never cached in a shell global: two different openvpn* binaries
+  # in one process must not inherit each other's answer
+  local help; help=$($bin --help 2>&1 || true)
+  case "$help" in *--disable-dco*) return 0;; *) return 1;; esac
 }
 
 ask_credentials() {      # name -> writes $CREDS_DIR/<slug>.pass when it can
@@ -1391,10 +1520,27 @@ healthcheck() {          # name -> 0 when the tunnel really works
   return 0
 }
 
-mark_health() {          # name ok|down
-  local name=$1 state=$2 slug
+mark_health() {          # name ok|down [why]
+  local name=$1 state=$2 reason=${3:-} slug
   slug=$(slug_of "$name")
-  printf '%s\n' "$state" > "$STATE_DIR/$slug.health"
+  reason=${reason//$'\n'/ }
+  # "<state> <unix time> <why>": the age tells the user whether a "down" is a
+  # fresh verdict or a leftover from before the tunnel was even started again
+  printf '%s %s %s\n' "$state" "$(date +%s)" "$reason" > "$STATE_DIR/$slug.health"
+}
+
+health_state() {         # name -> ok|down|"" (the last recorded verdict)
+  local s
+  s=$(cat "$STATE_DIR/$(slug_of "$1").health" 2>/dev/null || true)
+  printf '%s' "${s%% *}"
+}
+
+health_age() {           # name -> seconds since that verdict, failure if unknown
+  local s ts
+  s=$(cat "$STATE_DIR/$(slug_of "$1").health" 2>/dev/null || true)
+  ts=${s#* }; ts=${ts%% *}
+  case "$ts" in ''|*[!0-9]*) return 1;; esac
+  printf '%s' "$(( $(date +%s) - ts ))"
 }
 
 # ------------------------------------------------------------ the balancer --
@@ -1406,11 +1552,13 @@ refresh_upstreams() {
       [ -e "$f" ] || continue
       load_env "$f"
       slug=$(basename "$f" .env)
-      [ "$(cat "$STATE_DIR/$slug.health" 2>/dev/null || true)" = "ok" ] || continue
+      [ "$(health_state "$VSW_NAME")" = "ok" ] || continue
       is_running_pid "$STATE_DIR/$slug.proxy.pid" || continue
       [ -n "$VSW_SOCKS_PORT" ] || continue
+      # socks only: an `http:` upstream would need an absolute-form request,
+      # which the balancer does not speak -- it asks a socks upstream for the
+      # destination instead (see Pool.connect)
       echo "socks:127.0.0.1:$VSW_SOCKS_PORT"
-      if [ -n "$VSW_HTTP_PORT" ]; then echo "http:127.0.0.1:$VSW_HTTP_PORT"; fi
     done
   } > "$tmp"
   # keep the inode when nothing changed: the balancer reloads (and would
@@ -1438,7 +1586,8 @@ lb_start() {             # [force] -- without upstreams nothing starts
     is_running_pid "$LB_PIDFILE" && return 0
     sleep 0.1; i=$((i+1))
   done
-  return 0
+  warn "the balancer did not come up (see $LOGS_DIR/lb.log)"
+  return 1
 }
 
 lb_stop() { stop_pidfile "$LB_PIDFILE" 5; }
@@ -1527,7 +1676,11 @@ ensure_helpers() {        # name -> proxies running + health marked
   load_env "$envf"
   start_proxy "$name"
   start_forward "$name"
-  if healthcheck "$name"; then mark_health "$name" ok; else mark_health "$name" down; fi
+  if healthcheck "$name"; then
+    mark_health "$name" ok "tcp $VPNSWARM_PROBE_HOST:$VPNSWARM_PROBE_PORT reachable"
+  else
+    mark_health "$name" down "tcp $VPNSWARM_PROBE_HOST:$VPNSWARM_PROBE_PORT unreachable"
+  fi
 }
 
 start_one() { with_lock "t-$1" _start_one "$@"; }
@@ -1566,6 +1719,7 @@ _start_one() {            # name [args] [no-wait]
   prepare_slots "$name"
   load_env "$envf"
   VSW_ARGS=$args
+  VSW_LINE_FP=$(line_fp_of_name "$name")
   VSW_STARTED_AT=$(date +%s)
   save_env "$envf"
   write_proxy_py
@@ -1577,20 +1731,20 @@ _start_one() {            # name [args] [no-wait]
   if [ "$nowait" = 1 ]; then
     # the client negotiates on its own (a launcher walks its transport ladder),
     # so hand over to the supervisor and say where to watch
-    mark_health "$name" down
+    mark_health "$name" down "not waited for (--no-wait)"
     start_proxy "$name"
     start_forward "$name"
     [ "${QUIET:-0}" = 1 ] || say "  $name: started, not waiting for it (vpnswarm logs $name -f)"
   elif wait_healthy "$name"; then
     load_env "$envf"
-    mark_health "$name" ok
+    mark_health "$name" ok "tcp $VPNSWARM_PROBE_HOST:$VPNSWARM_PROBE_PORT reachable"
     start_proxy "$name"
     start_forward "$name"
     [ "${QUIET:-0}" = 1 ] || say "  $name: up  ($VSW_NSIP)  socks5h://127.0.0.1:$VSW_SOCKS_PORT  http://127.0.0.1:$VSW_HTTP_PORT"
     VSW_FAILS=0; VSW_NEXT_TRY=0; save_env "$envf"
   else
     load_env "$envf"
-    mark_health "$name" down
+    mark_health "$name" down "did not come up within ${VPNSWARM_UP_TIMEOUT}s"
     warn "$name: did not come up, see $LOGS_DIR/$name.log"
     rc=1
   fi
@@ -1645,7 +1799,7 @@ restart_delay() {         # fail count -> seconds of backoff
 
 # ---------------------------------------------------------------- status ----
 cmd_status() {
-  local check=${1:-} n slug envf vpn health pid socks http netns
+  local check=${1:-} n slug envf vpn health pid socks http netns age
   printf '%-20s %-6s %-7s %-6s %-6s %-8s %s\n' NAME VPN HEALTH SOCKS HTTP PID NETNS
   for n in $(known_or_config_names); do
     slug=$(slug_of "$n"); envf=$(env_file_of "$n")
@@ -1664,14 +1818,18 @@ cmd_status() {
       if [ "$vpn" = up ] && healthcheck "$n"; then health="ok"; else health="down"; fi
     else
       case "$vpn" in
-        up) health=$(cat "$STATE_DIR/$slug.health" 2>/dev/null || echo "?");;
+        up)
+          health=$(health_state "$n"); health=${health:-?}
+          age=$(health_age "$n" 2>/dev/null || true)
+          [ -n "$age" ] && health="$health(${age}s)";;
         *) health="-";;
       esac
     fi
-    printf '%-20s %-6s %-7s %-6s %-6s %-8s %s\n' "$n" "$vpn" "$health" "$socks" "$http" "$pid" "$netns"
+    printf '%-20s %-6s %-11s %-6s %-6s %-8s %s\n' "$n" "$vpn" "$health" "$socks" "$http" "$pid" "$netns"
   done
   echo
   lb_status
+  supervise_status
 }
 
 # the $@ below lives inside an eval, so shellcheck cannot see it is unused
@@ -1705,8 +1863,7 @@ cmd_rr() {
   [ -f "$counter" ] && idx=$(cat "$counter" 2>/dev/null || echo 0) || idx=0
   local -a healthy=()
   for n in $(known_or_config_names); do
-    if is_tunnel_up "$n" \
-       && [ "$(cat "$STATE_DIR/$(slug_of "$n").health" 2>/dev/null || true)" = "ok" ]; then
+    if is_tunnel_up "$n" && [ "$(health_state "$n")" = "ok" ]; then
       healthy+=("$n")
     fi
   done
@@ -1793,8 +1950,18 @@ cmd_logs() {
 # ------------------------------------------------------------ supervise ----
 supervise_running() { is_running_pid "$SUPERVISE_PIDFILE"; }
 
+supervise_status() {
+  if supervise_running; then
+    say "supervise: up (pid $(cat "$SUPERVISE_PIDFILE" 2>/dev/null), every ${VPNSWARM_SUPERVISE_INTERVAL}s)"
+  else
+    say "supervise: down"
+  fi
+}
+
 write_supervise_script() {
-  cat > "$SCRIPTS_DIR/supervise.sh" <<EOF
+  local tmp
+  tmp=$(mktemp "$SCRIPTS_DIR/.supervise.sh.XXXXXX") || die "cannot create $SCRIPTS_DIR/.supervise.sh.*"
+  cat > "$tmp" <<EOF
 #!/usr/bin/env bash
 # generated by $PROG
 set -u
@@ -1805,7 +1972,8 @@ while :; do
   sleep ${VPNSWARM_SUPERVISE_INTERVAL}
 done
 EOF
-  chmod +x "$SCRIPTS_DIR/supervise.sh"
+  chmod 700 "$tmp"
+  mv -f "$tmp" "$SCRIPTS_DIR/supervise.sh"
 }
 
 supervise_up() {
@@ -1867,14 +2035,14 @@ _tick() {
       start_forward "$name"
     fi
     if healthcheck "$name"; then
-      mark_health "$name" ok
+      mark_health "$name" ok "tcp $VPNSWARM_PROBE_HOST:$VPNSWARM_PROBE_PORT reachable"
       load_env "$envf"
       if [ "$VSW_FAILS" != 0 ] || [ "$VSW_NEXT_TRY" != 0 ]; then
         VSW_FAILS=0; VSW_NEXT_TRY=0; save_env "$envf"
       fi
     else
-      mark_health "$name" down
       load_env "$envf"
+      mark_health "$name" down "probe failed (${VSW_FAILS:-0}/3)"
       VSW_FAILS=$((VSW_FAILS+1))
       say "[tick] $name: probe failed (${VSW_FAILS}/3)"
       if [ "$VSW_FAILS" -ge 3 ]; then
@@ -1889,7 +2057,7 @@ _tick() {
   done
   refresh_upstreams
   if [ "$VPNSWARM_AUTOSTART_LB" = 1 ] && grep -qv '^#' "$UPSTREAMS_FILE" 2>/dev/null; then
-    lb_start
+    lb_start || warn "the balancer did not start (see $LOGS_DIR/lb.log)"
   fi
 }
 
@@ -1941,30 +2109,75 @@ vpn_server_ips() {       # name -> every ip its openvpn talks to
 }
 
 do_unroute() {
-  local name envf
+  local name envf quiet=0
+  [ "${1:-}" = quiet ] && quiet=1
   name=$(cat "$STATE_DIR/routed" 2>/dev/null || true)
   $IP rule del fwmark 0x100/0x100 lookup 2000 pref 1000 2>/dev/null || true
+  $IP -6 rule del fwmark 0x100/0x100 lookup 2000 pref 1000 2>/dev/null || true
   $IP route flush table 2000 2>/dev/null || true
+  $IP -6 route flush table 2000 2>/dev/null || true
   nft delete table ip vsw_route 2>/dev/null || true
-  if [ -n "$name" ]; then
-    envf=$(env_file_of "$name")
-    if [ -f "$envf" ]; then
-      load_env "$envf"
+  nft delete table ip6 vsw_route 2>/dev/null || true
+  if [ -n "$name" ] && [ -f "$(env_file_of "$name")" ]; then
+    # in a subshell: do_unroute is also called from the middle of cmd_route,
+    # where loading the *old* tunnel's env must not overwrite the new one
+    (
+      load_env "$(env_file_of "$name")"
       if $IP netns list | awk '{print $1}' | grep -cx "$VSW_NETNS" >/dev/null; then
         $IP netns exec "$VSW_NETNS" nft delete table ip vsw_nat 2>/dev/null || true
       fi
-    fi
+    )
   fi
-  rm -f "$STATE_DIR/routed"
-  say "host routing is back to normal"
+  rm -f "$STATE_DIR/routed" "$STATE_DIR/routed.lease"
+  [ "$quiet" = 1 ] || say "host routing is back to normal"
+}
+
+host_lan_subnets6() {    # directly reachable ipv6 networks the host keeps
+  $IP -o -6 route show table main 2>/dev/null | awk '
+    $1 == "default" { next }
+    { dev = ""; for (i = 1; i < NF; i++) if ($i == "dev") dev = $(i+1);
+      if (dev ~ /^(tun|tap|vsw|wg|ppp|tailscale|zt)/) next;
+      if ($1 ~ /^[0-9a-fA-F:]+\/[0-9]+$/) print $1 }' | sort -u
+}
+
+vpn_server_ips6() {      # name -> ipv6 addresses its openvpn talks to
+  local name=$1 slug envf pid ips="" ips2="" h
+  slug=$(slug_of "$name"); envf=$(env_file_of "$name")
+  [ -f "$envf" ] || return 0
+  load_env "$envf"
+  pid=$(cat "$STATE_DIR/$slug.pid" 2>/dev/null || true)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    ips=$($SS -unap 2>/dev/null | grep -F "pid=$pid," \
+          | awk '{print $5}' | sed -n 's/.*\[\([0-9a-fA-F:]*\)\].*/\1/p' | sort -u | tr '\n' ' ')
+  fi
+  local -a remotes=()
+  eval "set -- $VSW_ARGS" 2>/dev/null || true
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --remote)   remotes+=("$2"); shift 2;;
+      --remote=*) remotes+=("${1#--remote=}"); shift;;
+      *) shift;;
+    esac
+  done
+  for h in "${remotes[@]:-}"; do
+    case "$h" in
+      *:*) ips2="$ips2 $h";;
+      *) ips2="$ips2 $(getent ahostsv6 "$h" 2>/dev/null \
+                    | awk '{print $1}' | sort -u | tr '\n' ' ')";;
+    esac
+  done
+  # shellcheck disable=SC2046
+  printf '%s\n' $(printf '%s %s\n' "$ips" "$ips2" | tr ' ' '\n' | sort -u) \
+    | grep -E '^[0-9a-fA-F:]+$' | grep -F ':' || true
 }
 
 cmd_route() {
-  local q ttl name envf tundev excl rules_host rules_ns
+  local q ttl name envf tundev excl rules_host rules_ns lease prev
   q=${1:-}
   if [ -z "$q" ] || [ "$q" = none ] || [ "$q" = off ] || [ "$q" = "-" ]; then
     do_unroute; return 0
   fi
+  command -v nft >/dev/null 2>&1 || die "'route' needs nftables; install nft first"
   ttl=${2:-0}
   case "$ttl" in ''|*[!0-9]*) ttl=0;; esac
   name=$(resolve_any "$q") || die "no tunnel called '$q'"
@@ -1975,9 +2188,21 @@ cmd_route() {
   [ -n "$tundev" ] || die "no tunnel device inside $VSW_NETNS"
   healthcheck "$name" || warn "$name is not healthy right now, routing anyway"
 
+  # switching tunnels is a supported operation: drop whatever is active first.
+  # Without this an existing table makes `nft -f` fail and, under set -e, the
+  # host is left with the *old* tunnel's rules and none of the new ones.
+  if [ -f "$STATE_DIR/routed" ]; then
+    prev=$(cat "$STATE_DIR/routed" 2>/dev/null || true)
+    [ "$prev" = "$VSW_NAME" ] || warn "switching host routing from $prev to $VSW_NAME"
+    do_unroute quiet
+  fi
+
   excl="127.0.0.0/8 $(subnet_cidr) $(host_lan_subnets | tr '\n' ' ') $(vpn_server_ips "$name" | tr '\n' ' ')"
   # shellcheck disable=SC2086
   excl=$(printf '%s\n' $excl | grep -E '^[0-9]+(\.[0-9]+){0,3}(/[0-9]+)?$' | sort -u | paste -sd, -)
+  excl6="::1/128 fe80::/10 ff00::/8 $(host_lan_subnets6 | tr '\n' ' ') $(vpn_server_ips6 "$name" | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  excl6=$(printf '%s\n' $excl6 | grep -E '^[0-9a-fA-F:]+(/[0-9]+)?$' | sort -u | paste -sd, -)
 
   rules_host="$SCRIPTS_DIR/route-host.nft"
   cat > "$rules_host" <<EOF
@@ -1990,6 +2215,21 @@ table ip vsw_route {
   }
 }
 EOF
+  # IPv6 cannot go through this IPv4-only tunnel: while routing is active the
+  # host's own IPv6 egress is dropped rather than leaked around the tunnel
+  # (VPNSWARM_ROUTE_IPV6=pass opts out and keeps IPv6 as it was).
+  if [ "${VPNSWARM_ROUTE_IPV6:-block}" != pass ]; then
+    cat >> "$rules_host" <<EOF
+table ip6 vsw_route {
+  chain blockout {
+    type filter hook output priority -150; policy accept;
+    oifname "lo" return
+    ip6 daddr { $excl6 } return
+    drop
+  }
+}
+EOF
+  fi
   rules_ns="$SCRIPTS_DIR/route-ns.nft"
   cat > "$rules_ns" <<EOF
 # generated by $PROG -- snats whatever the host pushes into the tunnel
@@ -2001,18 +2241,24 @@ table ip vsw_nat {
 }
 EOF
 
-  warn "ALL host traffic now leaves through $name ($VSW_NAME)"
+  warn "ALL IPv4 host traffic will leave through $name ($VSW_NAME)"
   warn "you may cut yourself off.  undo right away with: $PROG unroute"
-  nft -f "$rules_host"
-  $IP netns exec "$VSW_NETNS" nft -f "$rules_ns"
+  nft -f "$rules_host" || die "cannot apply the host routing rules (nft failed)"
+  $IP netns exec "$VSW_NETNS" nft -f "$rules_ns" \
+    || die "cannot apply the namespace nat rules (nft failed)"
   $IP netns exec "$VSW_NETNS" sysctl -qw net.ipv4.ip_forward=1
   $IP route replace default via "$VSW_NSIP" dev "$VSW_VETHHOST" table 2000
   $IP rule add fwmark 0x100/0x100 lookup 2000 pref 1000 2>/dev/null || true
+  lease="$$-$RANDOM-$(date +%s)"
   printf '%s\n' "$VSW_NAME" > "$STATE_DIR/routed"
+  printf '%s\n' "$lease" > "$STATE_DIR/routed.lease"
+  say "host routing now leaves through $name"
   if [ "$ttl" != 0 ]; then
-    setsid bash -c "sleep $ttl; '$SELF' -c '$CONFIG' unroute" \
+    # the timer only undoes *its own* lease: an older timer must not tear down
+    # a route that a later `vpnswarm route` installed
+    setsid bash -c "sleep $ttl; [ \"\$(cat '$STATE_DIR/routed.lease' 2>/dev/null)\" = '$lease' ] && exec '$SELF' -c '$CONFIG' unroute" \
       >>"$LOGS_DIR/route.log" 2>&1 </dev/null 9>&- &
-    say "it will be undone automatically in ${ttl}s"
+    say "it will be undone automatically in ${ttl}s unless another tunnel takes over"
   fi
 }
 
@@ -2023,10 +2269,15 @@ cmd_add() {
   first=$1
   case "$first" in
     --config)
+      [ "$#" -ge 2 ] || die "usage: $PROG add --config <file.ovpn> [openvpn args...]"
       line="$*"
       name=$(base_stem "$2");;
     --config=*)
-      line="$*"
+      # openvpn only accepts the separate-argument form, so normalise it: a
+      # line written as `--config=x` would be rejected at start time
+      line="--config ${first#--config=}"
+      shift
+      [ "$#" -gt 0 ] && line="$line $*"
       name=$(base_stem "${first#--config=}");;
     openvpn|openvpn2|openvpn3|/usr/bin/openvpn|/usr/sbin/openvpn)
       line="$*"; name="";;
@@ -2110,7 +2361,9 @@ _cmd_prune() {
 }
 
 # -------------------------------------------------------------- dispatcher --
-resolve_config() {
+resolve_config() {       # [--optional] -- settle $CONFIG; --optional tolerates a
+  local optional=0       # file that is gone (state-only commands need none)
+  [ "${1:-}" = "--optional" ] && optional=1
   if [ -z "$CONFIG" ]; then CONFIG=$VPNSWARM_CONFIG; fi
   if [ -z "$CONFIG" ] && [ -s "$LAST_CONFIG_FILE" ]; then
     CONFIG=$(head -1 "$LAST_CONFIG_FILE")
@@ -2122,12 +2375,21 @@ resolve_config() {
       [ -f "$c" ] && { CONFIG=$c; break; }
     done
   fi
-  [ -n "$CONFIG" ] || die "no swarm file given: -c FILE (it is remembered afterwards)"
+  if [ -z "$CONFIG" ]; then
+    [ "$optional" = 1 ] && return 0
+    die "no swarm file given: -c FILE (it is remembered afterwards)"
+  fi
   case "$CONFIG" in
     /*) ;;
     *) CONFIG="$PWD/$CONFIG";;
   esac
-  [ -f "$CONFIG" ] || die "no such swarm file: $CONFIG"
+  if [ ! -f "$CONFIG" ]; then
+    # status/list-from-state/logs/stop/exec only need what the state dir
+    # already records, so losing the swarm file must not lock the user out of
+    # the machine's only living record of the tunnels
+    [ "$optional" = 1 ] && { warn "swarm file is gone: $CONFIG (using the recorded state)"; return 0; }
+    die "no such swarm file: $CONFIG"
+  fi
   printf '%s\n' "$CONFIG" > "$LAST_CONFIG_FILE"
 }
 
@@ -2140,7 +2402,7 @@ names_of_args() {        # [name...] -> resolved names, or everything in the fil
     done
     [ "${#out[@]}" -eq 0 ] && mapfile -t out < <(config_names)
   fi
-  [ "${#out[@]}" -gt 0 ] || die "$CONFIG has no tunnels"
+  [ "${#out[@]}" -gt 0 ] || die "${CONFIG:-the swarm file} has no tunnels"
   printf '%s\n' "${out[@]}"
 }
 
@@ -2158,13 +2420,21 @@ cmd_start() {
     if [ "$nowait" = 1 ]; then start_one "$n" "" 1 || rc=1; else start_one "$n" || rc=1; fi
   done
   [ "$VPNSWARM_AUTO_SUPERVISE" = 1 ] && supervise_up
-  [ "$VPNSWARM_AUTOSTART_LB" = 1 ] && lb_start
+  if [ "$VPNSWARM_AUTOSTART_LB" = 1 ]; then lb_start || warn "the balancer did not start (see $LOGS_DIR/lb.log)"; fi
   cmd_status
   return "$rc"
 }
 
 cmd_stop() {
-  local -a want=(); mapfile -t want < <(names_of_args "$@")
+  local -a want=()
+  if [ "$#" -eq 0 ] || [ "$1" = all ]; then
+    # "stop everything" must work from the state directory alone: the swarm
+    # file it came from may have been moved or deleted since
+    mapfile -t want < <(known_or_config_names)
+    [ "${#want[@]}" -gt 0 ] || die "nothing to stop: no tunnel in $STATE_DIR"
+  else
+    mapfile -t want < <(names_of_args "$@")
+  fi
   local n
   for n in "${want[@]}"; do
     note "stopping $n"
@@ -2187,12 +2457,12 @@ cmd_restart() {
   mapfile -t want < <(names_of_args ${rest[@]+"${rest[@]}"})
   for n in "${want[@]}"; do note "restarting $n"; restart_one "$n" "$nowait"; done
   [ "$VPNSWARM_AUTO_SUPERVISE" = 1 ] && supervise_up
-  [ "$VPNSWARM_AUTOSTART_LB" = 1 ] && lb_start
+  if [ "$VPNSWARM_AUTOSTART_LB" = 1 ]; then lb_start || warn "the balancer did not start (see $LOGS_DIR/lb.log)"; fi
   cmd_status
 }
 
 cmd_reload() {
-  local n envf args
+  local n envf args fp
   while IFS= read -r n; do
     [ -n "$n" ] || continue
     envf=$(env_file_of "$n")
@@ -2215,7 +2485,12 @@ cmd_reload() {
       note "not running: $n"; start_one "$n" "$args"
     else
       load_env "$envf"
-      if [ "$VSW_ARGS" != "$args" ]; then
+      # compare the whole line, not just the openvpn args: per-line meta
+      # options (--socks-port, --no-proxy, --no-full-tunnel) are stripped out
+      # of the args, so an edit that only touches one of those must still
+      # restart the tunnel for it to take effect
+      fp=$(line_fp_of_name "$n")
+      if [ "$VSW_ARGS" != "$args" ] || [ "${VSW_LINE_FP:-}" != "$fp" ]; then
         note "changed: $n"; restart_one "$n"
       else
         ensure_helpers "$n"
@@ -2223,7 +2498,7 @@ cmd_reload() {
     fi
   done
   [ "$VPNSWARM_AUTO_SUPERVISE" = 1 ] && supervise_up
-  [ "$VPNSWARM_AUTOSTART_LB" = 1 ] && lb_start
+  if [ "$VPNSWARM_AUTOSTART_LB" = 1 ]; then lb_start || warn "the balancer did not start (see $LOGS_DIR/lb.log)"; fi
   cmd_status
 }
 
@@ -2236,10 +2511,10 @@ cmd_lb() {
         warn "nothing healthy to balance yet: start a tunnel first"
         return 1
       fi
-      lb_start force
+      lb_start force || return 1
       say "balancer: up  socks5h://$VPNSWARM_LB_BIND:$VPNSWARM_LB_PORT  http://$VPNSWARM_LB_BIND:$VPNSWARM_LB_HTTP_PORT";;
     down|stop) lb_stop; say "balancer: down";;
-    restart)   lb_stop; refresh_upstreams; lb_start force; say "balancer: restarted";;
+    restart)   lb_stop; refresh_upstreams; lb_start force || return 1; say "balancer: restarted";;
     status)    lb_status;;
     *) die "usage: $PROG lb up|down|restart|status";;
   esac
@@ -2255,17 +2530,18 @@ cmd_supervise() {
       pkill -f "[v]pnswarm.*_tick" 2>/dev/null || true
       say "supervise: down";;
     status)
-      if supervise_running; then
-        say "supervise: up (pid $(cat "$SUPERVISE_PIDFILE"))"
-      else
-        say "supervise: down"
-      fi;;
+      supervise_status;;
     once) cmd_tick;;
     *) die "usage: $PROG supervise up|down|status|once";;
   esac
 }
 
 main() {
+  # -h/-V first: reading the help must not need root (nor a password prompt)
+  case "${1:-}" in
+    -h|--help)    usage; exit 0;;
+    -V|--version) say "$PROG $VERSION"; exit 0;;
+  esac
   root_check "$@"
   QUIET=0
   while [ $# -gt 0 ]; do
@@ -2286,8 +2562,10 @@ main() {
   write_proxy_py
 
   case "$cmd" in
-    start|stop|restart|reload|status|list|exec|shell|rr|env|proxy|route|logs|add|remove|supervise)
+    start|restart|reload|list|add|remove|supervise)
       resolve_config;;
+    stop|status|exec|shell|rr|env|proxy|logs|route)
+      resolve_config --optional;;
   esac
 
   case "$cmd" in
