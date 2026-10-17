@@ -88,7 +88,7 @@ std::string bash_infer_lang(std::string const& filename) {
 // missing file; otherwise a blank line, "File: <label>", ```lang fence, the
 // head-capped body, and a closing fence. infer_lang keys off the basename.
 void embed_file(std::string& out, std::string& err, std::filesystem::path const& path, std::string_view label,
-                std::size_t head_lines) {
+                std::optional<std::size_t> head_lines) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec) || ec) {
         err += std::format("Warning: context file not found: {}\n", path.string());
@@ -120,7 +120,7 @@ std::filesystem::path find_foresight_root() {
 } // namespace
 
 static void execute_fs8_mod(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }

@@ -40,14 +40,15 @@ std::vector<std::string> cache_dirs() {
     return dirs;
 }
 
-// Run a command, capturing stdout (stderr is inherited/discarded like a
-// $() capture that hides nothing). Returns stdout and the exit code.
-std::string run_capture(std::vector<std::string> const& cmd, std::string const& stdin_data, int& exit_code) {
-    std::vector<char const*> argv;
-    argv.reserve(cmd.size() + 1);
-    for (auto const& c : cmd) argv.push_back(c.c_str());
-    argv.push_back(nullptr);
-    auto r = prompt::process::run_command(cmd, stdin_data);
+// Run a command, capturing stdout. stderr is inherited like a plain `$(...)`
+// capture, or discarded (`2>/dev/null`) when the bash call site redirects it.
+// Returns stdout and the exit code.
+std::string run_capture(std::vector<std::string> const& cmd, std::string const& stdin_data, int& exit_code,
+                        bool discard_stderr = false) {
+    prompt::process::command c(cmd);
+    c.stdin_data(stdin_data);
+    if (discard_stderr) c.discard_stderr();
+    auto r = c.run();
     exit_code = r.exit_code;
     return r.stdout_data;
 }
@@ -231,12 +232,14 @@ std::string ai_find_skills_tool(std::filesystem::path const& exe_path, std::file
     return p.string();
 }
 
-// search_skills: run ai-find-skills --json --no-scan <query>, suppress stderr.
-std::string search_skills(std::string const& query, std::string const& tool) {
+// search_skills: run ai-find-skills --json --no-scan <query>. The download path
+// calls it as `search_skills ... 2>/dev/null`, so callers can discard its
+// stderr (which carries the tool's `# full JSON: <tmpfile>` note).
+std::string search_skills(std::string const& query, std::string const& tool, bool discard_stderr = false) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(tool, ec) || ec) return {};
     int ec2 = 0;
-    return run_capture({tool, "--json", "--no-scan", query}, "", ec2);
+    return run_capture({tool, "--json", "--no-scan", query}, "", ec2, discard_stderr);
 }
 
 std::string merge_results(std::string const& json) {
@@ -266,7 +269,7 @@ std::string find_rec(std::string const& results, std::string const& name) {
 } // namespace
 
 static void execute_skill(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }
@@ -384,7 +387,7 @@ static void execute_skill(prompt_context& ctx) {
         err += std::format("Skill '{}' not cached, downloading...\n", skill_name);
         // download_by_name: search registries and download if a match exists.
         std::string tool = ai_find_skills_tool(ctx.exe_path, ctx.git_root);
-        std::string results = merge_results(search_skills(skill_name, tool));
+        std::string results = merge_results(search_skills(skill_name, tool, /*discard_stderr=*/true));
         std::string rec = find_rec(results, skill_name);
         std::string downloaded_skill = rec.empty() ? std::string() : jq_extract(rec, ".name");
         if (downloaded_skill.empty()) {

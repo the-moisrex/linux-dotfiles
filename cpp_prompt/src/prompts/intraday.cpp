@@ -1,5 +1,6 @@
 #include "../core/fs.hpp"
 #include "../core/process.hpp"
+#include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
@@ -13,7 +14,7 @@ static void render_help_intraday(std::ostream& os);
 namespace {
 
 struct basic_intraday_prompt_config {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     std::string symbol;
     int days = 0;
     bool days_set = false;
@@ -33,6 +34,15 @@ bool is_positive_int(std::string_view s) {
 
 basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) {
     basic_intraday_prompt_config config;
+
+    // intraday.sh runs init_prompt --no-files, so parse_arguments validates
+    // --head (and rejects a missing/invalid value) before the script's own
+    // loop — which never sees it — runs.
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, config.head_lines); !msg.empty()) {
+        config.failed = true;
+        config.error = std::move(msg);
+        return config;
+    }
 
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         std::string_view arg = ctx.args[i];

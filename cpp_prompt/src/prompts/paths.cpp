@@ -90,7 +90,7 @@ static void execute_paths(prompt_context& ctx) {
     // integer-validated, and --head is only consumed so it is not a path.
     std::string mode = "context";
     long long context_lines = 10;
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     std::string head_value;
     std::string sed_error;
     std::string sed_warnings;
@@ -101,19 +101,21 @@ static void execute_paths(prompt_context& ctx) {
             if (i + 1 >= ctx.args_count) {
                 throw usage_error{"Missing value for --context\n"};
             }
-            context_lines = prompt::text::to_ll(ctx.args[i], 0); // bash $((word)) treats a bare word as 0
+            context_lines = prompt::text::to_ll(ctx.args[i + 1], 0); // bash $((word)) treats a bare word as 0
+            ++i;
         } else if (a == "--full") {
             mode = "full";
         } else if (a == "--head") {
             if (i + 1 >= ctx.args_count) {
                 throw usage_error{"Missing value for --head\n"};
             }
-            head_value = std::string(ctx.args[i]);
+            head_value = std::string(ctx.args[i + 1]);
             if (head_value.find_first_not_of("0123456789") != std::string::npos) {
                 sed_error = "sed: -e expression #1, char 3: unexpected ','\n";
             } else {
                 head_lines = prompt::text::to_size(head_value, 0);
             }
+            ++i;
         } else {
             file_args.push_back(a);
         }

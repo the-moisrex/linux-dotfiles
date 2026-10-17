@@ -19,7 +19,7 @@ bool tool_exists(std::string const& name) {
 } // namespace
 
 static void execute_cppman(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }

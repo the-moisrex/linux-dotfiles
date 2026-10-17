@@ -43,33 +43,12 @@ std::vector<std::string> extract_failed_gtests(std::string_view text) {
 
 // Port of `head -n N` feeding a $(...) capture: first N lines, no trailing
 // newline (a missing trailing newline in the input is preserved as-is).
-std::string head_n(std::string_view text, std::size_t n) {
-    if (text.empty()) return {};
-    std::vector<std::string_view> lines;
-    std::size_t start = 0;
-    while (start <= text.size()) {
-        std::size_t end = text.find('\n', start);
-        if (end == std::string_view::npos) {
-            lines.push_back(text.substr(start));
-            break;
-        }
-        lines.push_back(text.substr(start, end - start));
-        start = end + 1;
-        if (start == text.size()) break;
-    }
-    if (lines.size() <= n) return std::string(text);
-    std::string out;
-    for (std::size_t i = 0; i < n; ++i) {
-        if (i != 0U) out += '\n';
-        out += lines[i];
-    }
-    return out;
-}
+std::string head_n(std::string_view text, std::size_t n) { return head_output(text, n); }
 
 } // namespace
 
 static void execute_run(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }
@@ -113,8 +92,8 @@ static void execute_run(prompt_context& ctx) {
     }
 
     std::string search_output = run_output;
-    if (head_lines > 0) {
-        run_output = head_n(run_output, head_lines);
+    if (head_lines) {
+        run_output = head_n(run_output, *head_lines);
     }
 
     std::string output;

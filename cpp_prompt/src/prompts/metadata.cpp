@@ -7,7 +7,7 @@ namespace prompt::prompts {
 static void execute_metadata(prompt_context& ctx) {
     // metadata.sh calls init_prompt (validating --head) but never uses ARGS,
     // so --head errors are the only failure mode besides --format's.
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }

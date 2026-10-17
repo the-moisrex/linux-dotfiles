@@ -34,6 +34,40 @@ include(cmake/import.cmake)
 
 file(GLOB PROMPT_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prompts/*.cpp")
 
+# The `new` prompt embeds the SDK headers and an example prompt so an AI can
+# write a consistent new one. They are baked into the binary as raw strings at
+# build time rather than read from the source tree at run time, so the binary
+# stays self-contained; the header is regenerated whenever one of them changes.
+set(PROMPT_ASSETS
+    prompt_registry_hpp|src/sdk/prompt_registry.hpp
+    prompt_context_hpp|src/sdk/prompt_context.hpp
+    errors_hpp|src/sdk/errors.hpp
+    embed_hpp|src/sdk/embed.hpp
+    args_hpp|src/sdk/args.hpp
+    process_hpp|src/core/process.hpp
+    fs_hpp|src/core/fs.hpp
+    example_fix_cpp|src/prompts/fix.cpp
+)
+set(PROMPT_ASSET_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(PROMPT_ASSET_HPP ${PROMPT_ASSET_DIR}/prompt_assets.hpp)
+set(PROMPT_ASSET_DEPS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-assets.cmake)
+foreach(asset IN LISTS PROMPT_ASSETS)
+    string(FIND "${asset}" "|" bar)
+    math(EXPR asset_start "${bar} + 1")
+    string(SUBSTRING "${asset}" ${asset_start} -1 asset_relpath)
+    list(APPEND PROMPT_ASSET_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/${asset_relpath}")
+endforeach()
+add_custom_command(
+    OUTPUT ${PROMPT_ASSET_HPP}
+    COMMAND ${CMAKE_COMMAND}
+        "-DASSET_OUT=${PROMPT_ASSET_HPP}"
+        "-DASSET_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DASSET_FILES=${PROMPT_ASSETS}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-assets.cmake"
+    DEPENDS ${PROMPT_ASSET_DEPS}
+    VERBATIM
+)
+
 # OBJECT, not a static library: every prompt registers itself from its own
 # translation unit (see sdk/prompt_registry.hpp), and a static archive only
 # pulls in members that resolve some undefined symbol — the registrar of a
@@ -52,10 +86,12 @@ add_library(prompt_lib OBJECT
     src/sdk/args.cpp
     ${PROMPT_SRCS}
 )
+target_sources(prompt_lib PRIVATE ${PROMPT_ASSET_HPP})
 
 target_compile_features(prompt_lib PUBLIC cxx_std_26)
 target_include_directories(prompt_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${PROMPT_ASSET_DIR}
 )
 target_link_libraries(prompt_lib PUBLIC
     nlohmann_json::nlohmann_json

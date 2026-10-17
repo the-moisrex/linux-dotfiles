@@ -3,6 +3,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace prompt {
 
@@ -38,12 +39,14 @@ std::string infer_lang(std::filesystem::path const& file) {
     return "text";
 }
 
-std::string trim_context(std::string_view content, std::size_t head_lines) {
-    if (head_lines == 0) return std::string(content);
+std::string trim_context(std::string_view content, std::optional<std::size_t> head_lines) {
+    if (!head_lines) return std::string(content);
 
+    // sed's `1,0p` prints line 1, so a 0 cap keeps a single line.
+    std::size_t limit = *head_lines == 0 ? 1 : *head_lines;
     std::size_t lines = 0;
     std::size_t pos = 0;
-    while (pos < content.size() && lines < head_lines) {
+    while (pos < content.size() && lines < limit) {
         pos = content.find('\n', pos);
         if (pos == std::string_view::npos) break;
         pos++;
@@ -52,20 +55,46 @@ std::string trim_context(std::string_view content, std::size_t head_lines) {
     return std::string(content.substr(0, pos));
 }
 
-std::string trim_context_nl(std::string_view content, std::size_t head_lines) {
+std::string trim_context_nl(std::string_view content, std::optional<std::size_t> head_lines) {
     while (!content.empty() && content.back() == '\n') content.remove_suffix(1);
-    if (head_lines == 0) return std::string(content) + "\n";
+    if (!head_lines) return std::string(content) + "\n";
 
+    std::size_t limit = *head_lines == 0 ? 1 : *head_lines;
     std::size_t lines = 0;
     std::size_t pos = 0;
-    while (pos < content.size() && lines < head_lines) {
+    while (pos < content.size() && lines < limit) {
         pos = content.find('\n', pos);
         if (pos == std::string_view::npos) break;
         ++pos;
         ++lines;
     }
-    if (lines == head_lines) return std::string(content.substr(0, pos));
+    if (lines == limit) return std::string(content.substr(0, pos));
     return std::string(content) + "\n";
+}
+
+std::string head_output(std::string_view text, std::size_t n) {
+    if (text.empty()) return {};
+
+    std::vector<std::string_view> lines;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        std::size_t end = text.find('\n', start);
+        if (end == std::string_view::npos) {
+            lines.push_back(text.substr(start));
+            break;
+        }
+        lines.push_back(text.substr(start, end - start));
+        start = end + 1;
+        if (start == text.size()) break;
+    }
+    if (lines.size() <= n) return std::string(text);
+
+    std::string out;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i != 0U) out += '\n';
+        out += lines[i];
+    }
+    return out;
 }
 
 std::string read_file(std::filesystem::path const& path) {
@@ -74,7 +103,8 @@ std::string read_file(std::filesystem::path const& path) {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
-std::string embed_file(std::filesystem::path const& path, std::string_view label, std::size_t head_lines) {
+std::string embed_file(std::filesystem::path const& path, std::string_view label,
+                       std::optional<std::size_t> head_lines) {
 
     if (!std::filesystem::exists(path)) return "";
 
@@ -90,13 +120,13 @@ std::string embed_file(std::filesystem::path const& path, std::string_view label
     return output;
 }
 
-std::string embed_stdin(std::string_view content, std::size_t head_lines) {
+std::string embed_stdin(std::string_view content, std::optional<std::size_t> head_lines) {
     (void)head_lines; // bash's embed_stdin does not apply --head
     while (!content.empty() && content.back() == '\n') content.remove_suffix(1);
     return std::string(content) + "\n\n";
 }
 
-std::string embed_file_block(std::filesystem::path const& file, std::size_t head_lines) {
+std::string embed_file_block(std::filesystem::path const& file, std::optional<std::size_t> head_lines) {
     std::string output;
     output += std::format("File: {}\n\n", file.filename().string());
     output += std::format("```{}\n", infer_lang(file));

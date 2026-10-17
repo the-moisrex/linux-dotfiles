@@ -93,7 +93,7 @@ std::string detect_base_branch(std::string const& given) {
 } // namespace
 
 static void execute_git_worktree_files(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }
@@ -176,7 +176,7 @@ static void execute_git_worktree_files(prompt_context& ctx) {
         if (strip_trailing_newlines(raw).empty()) continue;
 
         output += std::format("File {}", rel.string());
-        if (head_lines > 0) output += " (first " + std::to_string(head_lines) + " lines)";
+        if (head_lines) output += " (first " + std::to_string(*head_lines) + " lines)";
         output += "\n\n";
         output += std::format("```{}\n", lang);
         output += trim_context_nl(raw, head_lines);

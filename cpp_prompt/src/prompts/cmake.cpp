@@ -53,7 +53,7 @@ std::string strip_source_lists(std::string const& content) {
 } // namespace
 
 static void execute_cmake(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     // init_prompt -> parse_arguments runs first (validates --head); the script
     // then walks the remaining args for its own flags.
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {

@@ -6,13 +6,16 @@
 namespace prompt::prompts {
 
 static void execute_note(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     bool prepend = false;
     std::vector<std::string_view> notes;
 
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head" && i + 1 < ctx.args_count) {
-            head_lines = prompt::text::to_size(ctx.args[++i], 0); // unvalidated in bash, never read
+        if (ctx.args[i] == "--head") {
+            // note.sh's own parser rejects a missing --head value with exit 2
+            // (unlike its value, which it never validates or reads).
+            if (i + 1 >= ctx.args_count) throw usage_error{"Missing value for --head\n"};
+            head_lines = prompt::text::to_size(ctx.args[++i], 0);
         } else if (ctx.args[i] == "--prepend" || ctx.args[i] == "-p") {
             prepend = true;
         } else {

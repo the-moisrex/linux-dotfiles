@@ -10,7 +10,7 @@
 namespace prompt::prompts {
 
 static void execute_files(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }
@@ -54,8 +54,8 @@ static void execute_files(prompt_context& ctx) {
         auto content = read_file(file);
 
         if (!content.empty()) {
-            if (head_lines > 0) {
-                output += std::format("File {} (first {} lines)\n\n", rel.string(), std::to_string(head_lines));
+            if (head_lines) {
+                output += std::format("File {} (first {} lines)\n\n", rel.string(), std::to_string(*head_lines));
             } else {
                 output += std::format("File {}\n\n", rel.string());
             }

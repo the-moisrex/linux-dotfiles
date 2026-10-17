@@ -26,9 +26,11 @@ void ai_said_on_signal(int signum) {
 }
 
 // Port of ai-said.sh trim_context applied to an entry and captured through
-// $(...): first N lines joined by '\n', no trailing newline. head==0 → no cap.
-std::string head_n_lines(std::string const& s, std::size_t head) {
-    if (head == 0) return s;
+// $(...): first N lines joined by '\n', no trailing newline. sed's `1,0p`
+// means a --head of 0 keeps one line; an absent --head leaves the entry whole.
+std::string head_n_lines(std::string const& s, std::optional<std::size_t> head) {
+    if (!head) return s;
+    std::size_t limit = *head == 0 ? 1 : *head;
     std::vector<std::string_view> lines;
     std::size_t start = 0;
     while (start <= s.size()) {
@@ -42,7 +44,7 @@ std::string head_n_lines(std::string const& s, std::size_t head) {
         if (start == s.size()) break;
     }
     std::string out;
-    for (std::size_t i = 0; i < lines.size() && i < head; ++i) {
+    for (std::size_t i = 0; i < lines.size() && i < limit; ++i) {
         if (i != 0U) out += '\n';
         out += lines[i];
     }
@@ -77,7 +79,7 @@ std::string ordinal_word(long n) {
 
 std::string entry_label(long n) { return ordinal_word(n) + " AI said:"; }
 
-std::string build_output(std::span<const std::string> entries, std::size_t head_lines) {
+std::string build_output(std::span<const std::string> entries, std::optional<std::size_t> head_lines) {
     std::string out;
     for (std::size_t i = 0; i < entries.size(); ++i) {
         std::string content = head_n_lines(entries[i], head_lines);
@@ -186,7 +188,7 @@ static void execute_ai_said(prompt_context& ctx) {
 
     // head value is applied like `sed -n 1,Np`; a non-numeric value becomes a
     // 0 cap (never triggered in practice).
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (head_set) {
         bool numeric = !head_str.empty() && head_str.find_first_not_of("0123456789") == std::string::npos;
         if (numeric) head_lines = static_cast<std::size_t>(std::strtoull(head_str.c_str(), nullptr, 10));

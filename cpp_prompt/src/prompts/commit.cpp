@@ -23,7 +23,7 @@ std::string git_output(std::initializer_list<char const*> args) {
 } // namespace
 
 static void execute_commit(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }

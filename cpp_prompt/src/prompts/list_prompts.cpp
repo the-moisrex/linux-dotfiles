@@ -1,5 +1,7 @@
+#include "../sdk/args.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -7,8 +9,18 @@
 namespace prompt::prompts {
 
 static void execute_list_prompts(prompt_context& ctx) {
-    if (ctx.args_count > 0) {
-        throw usage_error{"prompt list-prompts: takes no arguments\n"};
+    // list-prompts.sh runs init_prompt --no-files, so parse_arguments validates
+    // and strips --head before the script's "takes no arguments" check.
+    std::optional<std::size_t> head_lines;
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
+        throw usage_error{std::move(msg)};
+    }
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (ctx.args[i] == "--head") {
+            ++i;
+        } else {
+            throw usage_error{"prompt list-prompts: takes no arguments\n"};
+        }
     }
     auto prompts = get_all_prompts();
 

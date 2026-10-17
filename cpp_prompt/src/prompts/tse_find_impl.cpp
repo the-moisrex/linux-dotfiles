@@ -313,11 +313,11 @@ std::string strip_trailing_newlines(std::string_view text) {
 std::string captured(std::string_view text) { return strip_trailing_newlines(text); }
 
 // Port of _common.sh trim_context as the script uses it: `printf '%s\n'` feeds
-// `sed -n 1,Np`, so a --head of 0 prints nothing while an absent --head adds a
-// single trailing newline.
-std::string trim_like_bash(std::string_view text, bool head_set, std::size_t head_lines) {
-    if (head_set && head_lines == 0) return {};
-    return trim_context_nl(text, head_set ? head_lines : 0);
+// `sed -n 1,Np`, and sed treats a range whose end precedes its start as line 1,
+// so a --head of 0 keeps one line while an absent --head adds a single trailing
+// newline.
+std::string trim_like_bash(std::string_view text, std::optional<std::size_t> head_lines) {
+    return trim_context_nl(text, head_lines);
 }
 
 bool is_all_digits(std::string_view text) {
@@ -366,8 +366,7 @@ snippet_result run_snippet(std::string_view script, std::string_view stdin_data)
 
 struct parsed_args {
     bool wants_help = false;
-    bool head_set = false;
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     std::string mode = "chat";
     std::string max_iter = "5";
     bool dry_run = false;
@@ -404,7 +403,6 @@ parsed_args parse_args(prompt_context const& ctx) {
             parsed.exit_code = 2;
             return parsed;
         }
-        parsed.head_set = true;
         parsed.head_lines = parse_head_value(ctx.args[i + 1]);
         consumed[i] = true;
         consumed[i + 1] = true;
@@ -595,8 +593,8 @@ struct emit_result {
     int exit_code = 0;
 };
 
-emit_result emit_review(std::string_view kind, std::string_view label, std::string_view payload, bool head_set,
-                        std::size_t head_lines) {
+emit_result emit_review(std::string_view kind, std::string_view label, std::string_view payload,
+                        std::optional<std::size_t> head_lines) {
     emit_result result;
 
     if (kind == "doc") {
@@ -636,7 +634,7 @@ emit_result emit_review(std::string_view kind, std::string_view label, std::stri
             result.output += "(no rows)\n";
         } else {
             result.output += "```csv\n";
-            result.output += trim_like_bash(csv.output, head_set, head_lines);
+            result.output += trim_like_bash(csv.output, head_lines);
             result.output += "\n```\n";
         }
         return result;
@@ -669,7 +667,7 @@ emit_result emit_review(std::string_view kind, std::string_view label, std::stri
 
     if (kind == "table") {
         result.output += "```text\n";
-        result.output += trim_like_bash(payload, head_set, head_lines);
+        result.output += trim_like_bash(payload, head_lines);
         result.output += "\n```\n";
         return result;
     }
@@ -684,7 +682,7 @@ emit_result emit_review(std::string_view kind, std::string_view label, std::stri
         result.output += "(no rows)\n";
     } else {
         result.output += "```csv\n";
-        result.output += trim_like_bash(csv.output, head_set, head_lines);
+        result.output += trim_like_bash(csv.output, head_lines);
         result.output += "\n```\n";
     }
     return result;
@@ -761,7 +759,7 @@ void execute_tse_find_impl(prompt_context& ctx) {
                 // trailing newlines are dropped by the capture.
                 auto payload = captured(prompt::process::run_command({"cat", "--", file}).stdout_data);
                 auto rendered = emit_review("doc", prompt::fs::relative_path(file, ctx.git_root).string(), payload,
-                                            parsed.head_set, parsed.head_lines);
+                                            parsed.head_lines);
                 output += rendered.output;
                 if (rendered.exit_code != 0) {
                     throw usage_error{std::move(rendered.error), std::move(output)};
@@ -769,8 +767,7 @@ void execute_tse_find_impl(prompt_context& ctx) {
                 output += '\n';
             }
         } else {
-            auto rendered = emit_review(input.review_kind, input.review_label, input.review_payload, parsed.head_set,
-                                        parsed.head_lines);
+            auto rendered = emit_review(input.review_kind, input.review_label, input.review_payload, parsed.head_lines);
             output += rendered.output;
             if (rendered.exit_code != 0) {
                 throw usage_error{std::move(rendered.error), std::move(output)};
@@ -799,8 +796,7 @@ void execute_tse_find_impl(prompt_context& ctx) {
 
         std::string output(kReviewInstructions);
         output += "---\n\n";
-        auto rendered =
-            emit_review("doc", "fresh tse.find run", captured(screen.stdout_data), parsed.head_set, parsed.head_lines);
+        auto rendered = emit_review("doc", "fresh tse.find run", captured(screen.stdout_data), parsed.head_lines);
         output += rendered.output;
         if (rendered.exit_code != 0) {
             throw usage_error{std::move(rendered.error), std::move(output)};
@@ -820,7 +816,7 @@ void execute_tse_find_impl(prompt_context& ctx) {
     }
     // `help_text="$(trim_context "$help_text")"`: the captured text is capped by
     // sed and its trailing newline dropped, then printed with a single `\n`.
-    std::string help_text = trim_like_bash(captured(help_run.stdout_data), parsed.head_set, parsed.head_lines);
+    std::string help_text = trim_like_bash(captured(help_run.stdout_data), parsed.head_lines);
 
     std::string output(kGeneratorIntro);
     output += input.query + "\n";

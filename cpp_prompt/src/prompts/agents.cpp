@@ -18,7 +18,7 @@ namespace {
 // frequently contains ``` blocks that would break an outer markdown fence.
 // Format matches embed_agent_file: blank line, "File: <basename>", ```text,
 // file body (head-capped), ```.
-std::string embed_agent_file(std::filesystem::path const& path, std::size_t head_lines) {
+std::string embed_agent_file(std::filesystem::path const& path, std::optional<std::size_t> head_lines) {
     std::string out;
     out += '\n';
     out += std::format("File: {}\n", path.filename().string());
@@ -39,7 +39,7 @@ std::string target_inode_key(std::filesystem::path const& path) {
 } // namespace
 
 static void execute_agents(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }

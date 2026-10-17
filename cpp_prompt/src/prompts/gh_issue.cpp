@@ -29,7 +29,7 @@ std::string gh_issue_field(std::string const& number, std::string const& field, 
 } // namespace
 
 static void execute_gh_issue(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }

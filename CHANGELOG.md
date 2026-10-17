@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cpp_prompt/` — native C++ prompt dispatcher with **all prompts implemented natively**: no runtime dependency on the `prompts/` directory (no scanning/reading/executing of prompt scripts; `new` embeds static snapshots instead). Every prompt's stdout, stderr, exit codes, `--help` text and `prompt list` summary stay byte-identical to `bin/prompt` + `prompts/*.sh`
 - Native ports for the remaining prompt families: text/analysis (`api`, `explain`, `debug`, `diagram`, `metadata`, …), git (`git`, `git.diff`, `git-dirty`, `git.files`, `git.worktree.*`, `repo`, `verify`), tool wrappers (`clang-tidy`, `cmake`, `gdb`, `cppman`, `ci`, `docker`, `gh.issue`, `paths`, …), stdin/translate (`english`, `farsi`, `stdin`, `tweets`, `symbols`, `summarize`, `yt`), complex (`agents`, `ai-said`, `ask-for-help`, `skill`, `opportunities`, `fs8.mod`, `fs8.test`), plus the shared dispatch/chaining/pipeline/clipboard/sanitize SDK
 - `prompt::fs::bin_tool` — locates repo `bin/` utilities (exe dir → git root → cwd walk → PATH) without going through the prompt scripts
-- `cpp_prompt/src/prompts/prompt_assets.hpp` — static snapshots of `_common.sh`/`fix.sh`/`symbols.sh` embedded into the binary for the `new` prompt
+- `cpp_prompt/new` is now native: `prompt new` asks an AI to write a `cpp_prompt/src/prompts/<name>.cpp` (self-registering, `prompt_context`-based, throwing on failure) instead of a bash script, and embeds the SDK headers plus the `fix` prompt as its reference. This is the one prompt that deliberately diverges from `prompts/new.sh`
+- `cpp_prompt/cmake/embed-assets.cmake` — bakes the `new` reference sources into the binary at build time (`${CMAKE_BINARY_DIR}/generated/prompt_assets.hpp`) instead of the checked-in `src/prompts/prompt_assets.hpp`, so the snapshots can't drift from the SDK
 
 ### Changed
 
@@ -42,3 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `resolve_input_file` matches the bash implementation (cwd → git root → `git ls-files | fzf -f`)
 - `prompt stock` in the C++ dispatcher honours `--head`: it was parsed but never applied, so `prompt stock --head N <snapshot>` printed the full rendered snapshot instead of the capped one
 - Debug-build `-Wall -Wextra -Wshadow` warnings from `process.cpp` (unused `quote_for`) and `skill.cpp` (a shadowed loop variable) cleared
+- `--head 0` audited across every prompt: context trimming now mirrors `sed -n "1,0p"` (keep line 1) via `trim_context`/`trim_context_nl`, while the paths that really run `head -n N` (`run`, `clang-tidy`) keep nothing — matching bash byte-for-byte (`std::optional<std::size_t>` distinguishes "unset" from a real `0` cap)
+- `prompt paths` consumed `--context`/`--head` values as paths (the flag was read but its operand was not) — a file's context and head cap are now applied and the operand no longer leaks into the path list
+- `prompt intraday --head N` was parsed but never applied (the cap was silently dropped); `--head` is now validated like `parse_arguments` and honoured through `trim_context`
+- `prompt list`/`list-prompts` rejected `--head N` (bash strips it via `init_prompt`→`parse_arguments`); both now accept and validate it
+- `prompt note --head` with no value treated `--head` as note text; it now fails with `Missing value for --head` (exit 2) like `note.sh`
+- `prompt clang-tidy --head N` kept a trailing blank line bash drops (`head -n N` inside `$(...)` strips it)
+- `prompt skill <unknown>` no longer leaks `bin/ai-find-skills`'s `# full JSON: <tmpfile>` stderr note (the bash download path redirects it to `/dev/null`)

@@ -24,7 +24,7 @@ struct snapshot_info {
 };
 
 struct basic_stock_prompt_config {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     std::vector<std::string> inputs;
     std::string symbol;
     int days = 0;
@@ -222,8 +222,8 @@ basic_stock_prompt_config parse_stock_args(prompt_context const& ctx) {
 // Renders one cached snapshot the way stock.sh does: print the header from the
 // `tse snapshot` probe, then the Markdown `tse markdown` produces (with the
 // script's raw-JSON fallback if that fails).
-std::string render_snapshot(std::filesystem::path const& path, snapshot_info const& info, std::size_t head_lines,
-                            std::string const& tse_tool, std::string& errors) {
+std::string render_snapshot(std::filesystem::path const& path, snapshot_info const& info,
+                            std::optional<std::size_t> head_lines, std::string const& tse_tool, std::string& errors) {
     std::error_code ec;
     auto base = prompt::fs::find_git_root().value_or(std::filesystem::current_path(ec));
     auto rel = std::filesystem::relative(std::filesystem::weakly_canonical(path, ec), base, ec);

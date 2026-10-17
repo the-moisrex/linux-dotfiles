@@ -31,7 +31,7 @@ std::string git_toplevel() {
 } // namespace
 
 static void execute_clang_tidy(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }
@@ -133,8 +133,15 @@ static void execute_clang_tidy(prompt_context& ctx) {
               "and idiomatic fixes. Suggest small git patches or refactored code blocks where "
               "appropriate.\n";
     output += "\n\n```text\n";
-    output += trim_context_nl(result.stdout_data, head_lines);
-    output += "\n```\n";
+    // clang-tidy.sh: run_output=$(clang-tidy ...); if --head then
+    // run_output="$(printf "%s" "$run_output" | head -n N)"; then
+    // printf '```text\n%s\n```\n' "$run_output". `head -n 0` prints nothing
+    // (unlike trim_context's sed), and the inner $(...) re-strips trailing
+    // newlines, so a trailing blank line is dropped.
+    std::string run_output = strip_trailing_newlines(result.stdout_data);
+    if (head_lines) run_output = head_output(run_output, *head_lines);
+    output += run_output;
+    output += "\n\n```\n";
 
     ctx.out = std::move(output);
 }

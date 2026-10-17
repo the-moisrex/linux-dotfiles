@@ -1,6 +1,8 @@
+#include "../sdk/args.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -8,9 +10,18 @@
 namespace prompt::prompts {
 
 static void execute_list(prompt_context& ctx) {
+    // list.sh runs init_prompt --no-files, so parse_arguments validates --head
+    // (and strips it) before the script's own --names loop runs.
+    std::optional<std::size_t> head_lines;
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
+        throw usage_error{std::move(msg)};
+    }
+
     bool names_only = false;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--names") {
+        if (ctx.args[i] == "--head") {
+            ++i;
+        } else if (ctx.args[i] == "--names") {
             names_only = true;
         } else {
             throw usage_error{"prompt list: unknown argument: " + std::string(ctx.args[i]) + "\n", {}, true};

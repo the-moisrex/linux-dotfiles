@@ -116,7 +116,7 @@ static void execute_git_dirty(prompt_context& ctx) {
     // git-dirty.sh parses its own flags (not via _common.sh's parse_arguments),
     // and its --head accepts any value verbatim. --help/-h are intercepted by
     // the native dispatcher before we run.
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     bool filter_staged = false;
     bool filter_unstaged = false;
     bool filter_all = false;

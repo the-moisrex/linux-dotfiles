@@ -11,7 +11,7 @@ namespace {
 
 // plan.sh embeds through _common.sh's embed_file, whose shape differs from the
 // inline loops the other prompts use (leading blank line, no trailing one).
-std::string embed_file_block(std::filesystem::path const& path, std::size_t head_lines) {
+std::string embed_file_block(std::filesystem::path const& path, std::optional<std::size_t> head_lines) {
     if (!std::filesystem::is_regular_file(path)) return {};
 
     std::string name = path.filename().string();
@@ -27,7 +27,7 @@ std::string embed_file_block(std::filesystem::path const& path, std::size_t head
 } // namespace
 
 static void execute_plan(prompt_context& ctx) {
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }

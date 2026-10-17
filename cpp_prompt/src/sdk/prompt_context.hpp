@@ -17,7 +17,7 @@ struct prompt_context {
     std::string_view name;
     std::array<std::string_view, 32> args{};
     std::size_t args_count = 0;
-    std::size_t head_lines = 0;
+    std::optional<std::size_t> head_lines;
     std::string stdin_content;
     // Set when stdin was piped, and by a prompt that reads it: the dispatcher
     // spends the shared pipe once either flag is set (see main.cpp).
