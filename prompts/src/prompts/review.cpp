@@ -10,21 +10,17 @@ namespace prompt::prompts {
 static void execute_review(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Review this code like a strong practical reviewer.\n";
-    output += "Prioritize bugs, behavioral regressions, risky assumptions, edge cases, "
-              "maintainability problems, and missing tests.\n";
-    output += "List the most important findings first with short explanations, then provide a git "
-              "diff for the most useful fixes.\n";
-    output += "If there are no major issues, say that clearly and still suggest a small safe "
-              "improvement as a git diff if one is worthwhile.\n";
+    std::string output = R"PROMPT(Review this code like a strong practical reviewer.
+Prioritize bugs, behavioral regressions, risky assumptions, edge cases, maintainability problems, and missing tests.
+List the most important findings first with short explanations, then provide a git diff for the most useful fixes.
+If there are no major issues, say that clearly and still suggest a small safe improvement as a git diff if one is worthwhile.
+)PROMPT";
     output += '\n';
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "```\n\n";
     }

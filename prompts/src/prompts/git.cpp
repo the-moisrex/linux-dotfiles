@@ -51,13 +51,25 @@ static void execute_git(prompt_context& ctx) {
     auto files = positional_args(ctx);
 
     std::string output;
-    output += "You are a git expert. Help with the following git-related task.\n\nProvide:\n1. The exact git commands "
-              "to run, in order.\n2. A brief explanation of what each command does and why.\n3. Common pitfalls or "
-              "things that could go wrong at each step.\n4. If a task description is provided, implement exactly "
-              "that.\n\nCommon scenarios you can help with:\n- Merge conflict resolution strategies\n- Interactive "
-              "rebase workflows\n- Bisecting to find problematic commits\n- Setting up git hooks and workflows\n- "
-              "Recovering from mistakes (reset, reflog, cherry-pick)\n- Repository maintenance (gc, prune, shallow "
-              "clone management)\n- Branch management and cleanup\n- Cherry-picking and conflict resolution\n\n";
+    output += R"PROMPT(You are a git expert. Help with the following git-related task.
+
+Provide:
+1. The exact git commands to run, in order.
+2. A brief explanation of what each command does and why.
+3. Common pitfalls or things that could go wrong at each step.
+4. If a task description is provided, implement exactly that.
+
+Common scenarios you can help with:
+- Merge conflict resolution strategies
+- Interactive rebase workflows
+- Bisecting to find problematic commits
+- Setting up git hooks and workflows
+- Recovering from mistakes (reset, reflog, cherry-pick)
+- Repository maintenance (gc, prune, shallow clone management)
+- Branch management and cleanup
+- Cherry-picking and conflict resolution
+
+)PROMPT";
 
     // Embed git status context if in a git repo.
     std::vector<char const*> rev = {"git", "rev-parse", "--is-inside-work-tree", nullptr};

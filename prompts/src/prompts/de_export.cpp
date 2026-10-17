@@ -74,40 +74,34 @@ static void execute_de_export(prompt_context& ctx) {
     if (has_exports) has_modules = true;
 
     std::string output;
-    output += "You are an expert C++ developer specializing in C++20 modules, build hygiene, and "
-              "header design.\n";
+    output += R"PROMPT(You are an expert C++ developer specializing in C++20 modules, build hygiene, and header design.
+)PROMPT";
     output += '\n';
 
     if (has_modules && has_exports) {
-        output += "The code below uses C++20 modules and contains `export` declarations.\n\n- De-exporting:\n";
-        output += "   - Analyze each `export` declaration and determine whether the exported entity "
-                  "is actually consumed by external translation units.\n";
-        output += "   - Internal helpers, implementation details, and symbols only used within the "
-                  "module should have `export` removed.\n";
-        output += "   - When de-exporting, also move the declaration to a non-exported partition "
-                  "or to the implementation unit if it is not part of the public API.\n";
-        output += "   - Preserve `export` on the module interface unit itself and on anything that "
-                  "truly forms the public API.\n";
+        output += R"PROMPT(The code below uses C++20 modules and contains `export` declarations.
+
+- De-exporting:
+   - Analyze each `export` declaration and determine whether the exported entity is actually consumed by external translation units.
+   - Internal helpers, implementation details, and symbols only used within the module should have `export` removed.
+   - When de-exporting, also move the declaration to a non-exported partition or to the implementation unit if it is not part of the public API.
+   - Preserve `export` on the module interface unit itself and on anything that truly forms the public API.
+)PROMPT";
         output += '\n';
     } else {
         output += '\n';
     }
 
-    output += "- Moving implementations out of headers:\n";
-    output += "   - If an inline function, template specialization, or non-template function body "
-              "is defined in a header (.h/.hpp) that is also a module interface (.cppm/.ixx), "
-              "move the body to the corresponding implementation unit (.cpp).\n";
-    output += "   - Keep only declarations in the interface when possible; prefer `export` on "
-              "declarations, not definitions.\n";
-    output += "   - For templates that must remain visible, keep them in the interface but mark "
-              "implementation details as internal (non-exported).\n";
-    output += "   - If a header is not part of a module, prefer forward declarations and moving "
-              "definitions to .cpp files where feasible.\n";
+    output += R"PROMPT(- Moving implementations out of headers:
+   - If an inline function, template specialization, or non-template function body is defined in a header (.h/.hpp) that is also a module interface (.cppm/.ixx), move the body to the corresponding implementation unit (.cpp).
+   - Keep only declarations in the interface when possible; prefer `export` on declarations, not definitions.
+   - For templates that must remain visible, keep them in the interface but mark implementation details as internal (non-exported).
+   - If a header is not part of a module, prefer forward declarations and moving definitions to .cpp files where feasible.
+)PROMPT";
     output += '\n';
 
     for (auto const& file : cpp_files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n\n";
     }

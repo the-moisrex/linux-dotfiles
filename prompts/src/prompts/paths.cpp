@@ -241,8 +241,7 @@ static void execute_paths(prompt_context& ctx) {
         } else {
             // embed_file "$resolved" "$rel": leading blank, no blank after the
             // heading, then the trimmed file and its closing fence.
-            output += std::format("\nFile: {}\n", rel.string());
-            output += std::format("```{}\n", lang);
+            output += std::format("\nFile: {}\n```{}\n", rel.string(), lang);
             if (!sed_error.empty()) {
                 sed_warnings += sed_error;
             } else {

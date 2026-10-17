@@ -25,22 +25,29 @@ static void execute_diagram(prompt_context& ctx) {
     }
 
     std::string output;
-    output += "You are a software architecture diagramming expert.\nGenerate a clear, accurate diagram from the "
-              "provided code or description.\n\n";
+    output += R"PROMPT(You are a software architecture diagramming expert.
+Generate a clear, accurate diagram from the provided code or description.
+
+)PROMPT";
     output += std::format("Output format: {}\n", diagram_type);
-    output += "\nGuidelines:\n- Capture the essential relationships, not every detail\n- Use meaningful labels on all "
-              "nodes and edges\n- Group related components together\n- For sequence diagrams, show the most important "
-              "interactions\n- For class diagrams, show inheritance, composition, and key methods\n- For flowcharts, "
-              "show decision points and error paths\n- Include a brief legend or title if the diagram is complex\n\n";
-    output += "If the code is complex, produce multiple focused diagrams rather than one "
-              "overwhelming diagram.\n";
+    output += R"PROMPT(
+Guidelines:
+- Capture the essential relationships, not every detail
+- Use meaningful labels on all nodes and edges
+- Group related components together
+- For sequence diagrams, show the most important interactions
+- For class diagrams, show inheritance, composition, and key methods
+- For flowcharts, show decision points and error paths
+- Include a brief legend or title if the diagram is complex
+
+If the code is complex, produce multiple focused diagrams rather than one overwhelming diagram.
+)PROMPT";
     output += '\n';
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         // diagram.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";

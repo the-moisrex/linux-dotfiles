@@ -76,8 +76,9 @@ static void execute_ci(prompt_context& ctx) {
     }
 
     if (ci_files.empty()) {
-        output += "No CI/CD configuration files found in this repository.\nSearched for: GitHub Actions, GitLab CI, "
-                  "Jenkins, Docker, CircleCI, Travis CI.\n";
+        output += R"PROMPT(No CI/CD configuration files found in this repository.
+Searched for: GitHub Actions, GitLab CI, Jenkins, Docker, CircleCI, Travis CI.
+)PROMPT";
         ctx.out = std::move(output);
         return;
     }
@@ -98,8 +99,7 @@ static void execute_ci(prompt_context& ctx) {
         if (std::filesystem::is_regular_file(file, ec)) {
             std::filesystem::path p(file);
             auto label = fs::relative_path(p, ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
-            output += std::format("File: {}\n\n", label.string());
-            output += std::format("```{}\n", infer_lang(p));
+            output += std::format("File: {}\n\n```{}\n", label.string(), infer_lang(p));
             output += trim_context_nl(read_file(p), head_lines);
             output += "\n```\n\n";
         }

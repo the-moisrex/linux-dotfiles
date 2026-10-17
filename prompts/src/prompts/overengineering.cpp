@@ -204,8 +204,7 @@ static void execute_overengineering(prompt_context& ctx) {
     for (auto const& arg : files) {
         std::filesystem::path file(arg);
         if (std::filesystem::is_regular_file(file)) {
-            output += std::format("File: {}\n\n", file.filename().string());
-            output += std::format("```{}\n", infer_lang(file));
+            output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
             output += head_spec.empty() ? read_file(file) : run_head(head_spec, file);
             output += "```\n\n";
         } else {

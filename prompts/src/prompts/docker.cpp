@@ -28,8 +28,7 @@ static void execute_docker(prompt_context& ctx) {
         std::filesystem::path p(file);
         if (std::filesystem::is_regular_file(p)) {
             std::string file_name = p.filename().string();
-            output += std::format("File: {}\n\n", file_name);
-            output += std::format("```{}\n", infer_lang(p));
+            output += std::format("File: {}\n\n```{}\n", file_name, infer_lang(p));
             output += trim_context_nl(read_file(p), head_lines);
             output += "\n```\n\n";
         } else {

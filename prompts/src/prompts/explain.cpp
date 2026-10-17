@@ -9,12 +9,10 @@ namespace prompt::prompts {
 static void execute_explain(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Explain this clearly and concretely.\n";
-    output += "Describe what it does, how the parts fit together, key control flow, important "
-              "assumptions, and likely failure points.\n";
-    output += "If useful, finish with a small git diff that improves readability through naming, "
-              "structure, or comments.\n";
+    std::string output = R"PROMPT(Explain this clearly and concretely.
+Describe what it does, how the parts fit together, key control flow, important assumptions, and likely failure points.
+If useful, finish with a small git diff that improves readability through naming, structure, or comments.
+)PROMPT";
     output += '\n';
 
     std::string error;

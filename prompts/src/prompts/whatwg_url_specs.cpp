@@ -16,10 +16,10 @@ static void execute_whatwg_url_specs(prompt_context& ctx) {
     std::filesystem::path tool = fs::bin_tool("whatwg-url-specs", ctx.exe_path,
                                               ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
 
-    std::string output;
-    output += "Review the following sections from the WHATWG URL specification.\n";
-    output += "Ensure that any code, fixes, or analysis strictly adhere to these standard algorithms and "
-              "definitions.\n\n";
+    std::string output = R"PROMPT(Review the following sections from the WHATWG URL specification.
+Ensure that any code, fixes, or analysis strictly adhere to these standard algorithms and definitions.
+
+)PROMPT";
 
     if (sections.empty()) {
         // No queries: the tool's --help is streamed verbatim inside a code

@@ -9,19 +9,17 @@ namespace prompt::prompts {
 static void execute_comments(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Improve the comments and inline documentation here.\n";
-    output += "Add only high-value comments, docstrings, or usage notes where they genuinely help "
-              "understanding.\n";
-    output += "Avoid noisy commentary. Explain tricky behavior, assumptions, contracts, and "
-              "non-obvious reasoning.\n";
-    output += "Provide the result as a git diff.\n\n";
+    std::string output = R"PROMPT(Improve the comments and inline documentation here.
+Add only high-value comments, docstrings, or usage notes where they genuinely help understanding.
+Avoid noisy commentary. Explain tricky behavior, assumptions, contracts, and non-obvious reasoning.
+Provide the result as a git diff.
+
+)PROMPT";
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n\n";
     }

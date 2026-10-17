@@ -10,16 +10,18 @@ namespace prompt::prompts {
 static void execute_docstring(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Add comprehensive docstrings to all functions, classes, and methods in the "
-              "following code.\n";
-    output += "Ensure the docstrings clearly describe:\n1. The overall purpose and behavior.\n2. The parameters "
-              "(including their expected types).\n3. The return values (and types).\n4. Any exceptions or errors that "
-              "might be raised.\n5. Don't explain trivial or add useless information.\n";
-    output += "Adhere to standard documentation conventions for the specific language if they "
-              "exist (e.g., PEP 257/Google style for Python, JSDoc for JavaScript/TypeScript, "
-              "JavaDoc for Java).\n";
-    output += "Return the updated code with the newly added docstrings or write a patch file.\n\n";
+    std::string output =
+        R"PROMPT(Add comprehensive docstrings to all functions, classes, and methods in the following code.
+Ensure the docstrings clearly describe:
+1. The overall purpose and behavior.
+2. The parameters (including their expected types).
+3. The return values (and types).
+4. Any exceptions or errors that might be raised.
+5. Don't explain trivial or add useless information.
+Adhere to standard documentation conventions for the specific language if they exist (e.g., PEP 257/Google style for Python, JSDoc for JavaScript/TypeScript, JavaDoc for Java).
+Return the updated code with the newly added docstrings or write a patch file.
+
+)PROMPT";
 
     std::string error;
     for (auto const& arg : positional_args(ctx)) {
@@ -33,8 +35,7 @@ static void execute_docstring(prompt_context& ctx) {
                      resolved->string() + "\"\n";
             continue;
         }
-        output += std::format("File: {}\n\n", resolved->filename().string());
-        output += std::format("```{}\n", infer_lang(*resolved));
+        output += std::format("File: {}\n\n```{}\n", resolved->filename().string(), infer_lang(*resolved));
         output += trim_context_nl(read_file(*resolved), head_lines);
         output += "\n```\n";
     }

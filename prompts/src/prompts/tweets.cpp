@@ -16,11 +16,12 @@ static void execute_tweets(prompt_context& ctx) {
         output += embed_stdin(ctx.stdin_content, head_lines);
     }
 
-    output += "Based on the input content, generate several high-quality tweet ideas.\nCreate a markdown table with "
-              "columns: Tweet | Why this tweet | Expected impact\nWrite clean, natural tweets only \xE2\x80\x94 no "
-              "hashtags and no weird emojis.\nFocus on clear, engaging language that fits the source material.\n";
-    output += "Prefer 3\xE2\x80\x93"
-              "5 strong, ready-to-post ideas. Keep them concise.\n";
+    output += R"PROMPT(Based on the input content, generate several high-quality tweet ideas.
+Create a markdown table with columns: Tweet | Why this tweet | Expected impact
+Write clean, natural tweets only — no hashtags and no weird emojis.
+Focus on clear, engaging language that fits the source material.
+Prefer 3–5 strong, ready-to-post ideas. Keep them concise.
+)PROMPT";
     output += '\n';
 
     ctx.out = std::move(output);

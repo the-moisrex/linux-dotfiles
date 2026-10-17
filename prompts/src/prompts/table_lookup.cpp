@@ -44,8 +44,7 @@ OUTPUT:
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         // table-lookup.sh closes the fence directly after the content.
         output += "```\n\n";

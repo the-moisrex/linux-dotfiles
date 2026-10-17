@@ -74,8 +74,10 @@ static void execute_cmake(prompt_context& ctx) {
     }
 
     std::string output;
-    output += "Here is the complete CMake configuration for the current project.\nPlease review the build setup, "
-              "dependencies, and target structures.\n\n";
+    output += R"PROMPT(Here is the complete CMake configuration for the current project.
+Please review the build setup, dependencies, and target structures.
+
+)PROMPT";
 
     std::vector<std::string> files;
     std::string search_dir;

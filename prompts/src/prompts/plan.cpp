@@ -17,8 +17,7 @@ std::string embed_file_block(std::filesystem::path const& path, std::optional<st
     std::string name = path.filename().string();
     std::string output;
     output += '\n';
-    output += std::format("File: {}\n", name);
-    output += std::format("```{}\n", infer_lang(path));
+    output += std::format("File: {}\n```{}\n", name, infer_lang(path));
     output += trim_context_nl(read_file(path), head_lines);
     output += "```\n";
     return output;

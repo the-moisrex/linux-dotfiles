@@ -10,24 +10,34 @@ namespace prompt::prompts {
 static void execute_benchmark(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "You are a performance engineering expert.\n";
-    output += "Analyze the provided code and design meaningful benchmarks to measure its "
-              "performance.\n";
-    output += "\nFor each benchmark, provide:\n1. What to measure (latency, throughput, memory, CPU, I/O)\n2. A "
-              "concrete benchmark implementation in the appropriate framework\n   - C++: Google Benchmark\n   - "
-              "Python: timeit, pytest-benchmark\n   - JavaScript/TypeScript: bench.js or mitata\n   - Go: testing.B\n  "
-              " - Rust: criterion\n   - Other: language-appropriate micro-benchmark\n3. What variables to vary (input "
-              "sizes, concurrency levels, data distributions)\n4. How to visualize and compare "
-              "results\n\nGuidelines:\n- Benchmark the actual hot paths, not toy examples\n- Include warmup "
-              "iterations\n- Account for noise (multiple runs, statistical significance)\n- Measure what matters: p50, "
-              "p95, p99 latency, not just averages\n- Compare against a baseline when possible\n\n";
+    std::string output = R"PROMPT(You are a performance engineering expert.
+Analyze the provided code and design meaningful benchmarks to measure its performance.
+
+For each benchmark, provide:
+1. What to measure (latency, throughput, memory, CPU, I/O)
+2. A concrete benchmark implementation in the appropriate framework
+   - C++: Google Benchmark
+   - Python: timeit, pytest-benchmark
+   - JavaScript/TypeScript: bench.js or mitata
+   - Go: testing.B
+   - Rust: criterion
+   - Other: language-appropriate micro-benchmark
+3. What variables to vary (input sizes, concurrency levels, data distributions)
+4. How to visualize and compare results
+
+Guidelines:
+- Benchmark the actual hot paths, not toy examples
+- Include warmup iterations
+- Account for noise (multiple runs, statistical significance)
+- Measure what matters: p50, p95, p99 latency, not just averages
+- Compare against a baseline when possible
+
+)PROMPT";
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         // benchmark.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";

@@ -10,15 +10,16 @@ namespace prompt::prompts {
 static void execute_migrate(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "You are a code migration expert.\n";
-    output += "Help migrate the provided code from its current state to the target framework, API, or "
-              "language version.\n";
-    output += "\nApproach:\n1. Identify the current framework/API/version from the code.\n2. Identify the target from "
-              "the task description or infer from context.\n3. List the breaking changes and deprecations that affect "
-              "this code.\n4. Provide the migrated code as a git diff, preserving behavior.\n";
-    output += "5. Note any manual steps required (config changes, dependency updates, data "
-              "migrations).\n";
+    std::string output = R"PROMPT(You are a code migration expert.
+Help migrate the provided code from its current state to the target framework, API, or language version.
+
+Approach:
+1. Identify the current framework/API/version from the code.
+2. Identify the target from the task description or infer from context.
+3. List the breaking changes and deprecations that affect this code.
+4. Provide the migrated code as a git diff, preserving behavior.
+5. Note any manual steps required (config changes, dependency updates, data migrations).
+)PROMPT";
     output +=
         "\nGuidelines:\n- Preserve existing behavior unless explicitly asked to change it\n- Make the smallest safe "
         "changes necessary\n- Prefer mechanical transformations that can be verified\n- Flag any semantic changes that "
@@ -27,8 +28,7 @@ static void execute_migrate(prompt_context& ctx) {
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         // migrate.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";

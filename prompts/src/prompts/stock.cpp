@@ -18,8 +18,10 @@ static void execute_stock(prompt_context& ctx) {
 
     std::string output;
     if (config.cache_mode) {
-        output += "The data below comes from CACHED `.stock` snapshots written by tse.snapshot, not a "
-                  "live fetch — analyze each as-of its fetched_at timestamp.\n\n";
+        output +=
+            R"PROMPT(The data below comes from CACHED `.stock` snapshots written by tse.snapshot, not a live fetch — analyze each as-of its fetched_at timestamp.
+
+)PROMPT";
     }
 
     output += R"EOF(You are an institutional analyst of the Tehran Stock Exchange. Analyze the instrument data below.

@@ -29,8 +29,9 @@ static void execute_metadata(prompt_context& ctx) {
     }
 
     std::string output;
-    output += "Analyze the input and generate comprehensive metadata representing its core "
-              "attributes, entities, purpose, and context.\n";
+    output +=
+        R"PROMPT(Analyze the input and generate comprehensive metadata representing its core attributes, entities, purpose, and context.
+)PROMPT";
     output += std::format("Output the metadata strictly in {} format.\n", upper);
     output += "Ensure the output is well-structured, valid " + format +
               ", and enclosed in a single markdown code block so it can be easily extracted and "

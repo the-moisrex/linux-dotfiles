@@ -10,20 +10,17 @@ namespace prompt::prompts {
 static void execute_stupid(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Find the stupid mistakes in this code.\n";
-    output += "Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, "
-              "misleading names, missing checks, and anything else that would make an experienced "
-              "reviewer say 'well that was silly'.\n";
-    output += "Be blunt but useful. List each issue with a short explanation and the smallest "
-              "practical fix.\n";
-    output += "At the end, suggest small git patches.\n\n";
+    std::string output = R"PROMPT(Find the stupid mistakes in this code.
+Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'.
+Be blunt but useful. List each issue with a short explanation and the smallest practical fix.
+At the end, suggest small git patches.
+
+)PROMPT";
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         // stupid.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";

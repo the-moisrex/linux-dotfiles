@@ -52,11 +52,19 @@ static void execute_verify(prompt_context& ctx) {
     }
 
     std::string output;
-    output += "You are verifying uncommitted changes in a Git repository.\nYour job is to validate correctness: check "
-              "that the changes do\nwhat they claim, handle edge cases, preserve invariants, and\nintroduce no bugs or "
-              "regressions.\n\nFor each issue found:\n  1. State whether the change is CORRECT or INCORRECT.\n  2. If "
-              "incorrect, identify the file and line, explain the failure,\n     and provide a git diff that fixes "
-              "it.\n\nIf all changes are correct, state that clearly.\n\n";
+    output += R"PROMPT(You are verifying uncommitted changes in a Git repository.
+Your job is to validate correctness: check that the changes do
+what they claim, handle edge cases, preserve invariants, and
+introduce no bugs or regressions.
+
+For each issue found:
+  1. State whether the change is CORRECT or INCORRECT.
+  2. If incorrect, identify the file and line, explain the failure,
+     and provide a git diff that fixes it.
+
+If all changes are correct, state that clearly.
+
+)PROMPT";
     output += trim_context_nl(context, head_lines);
 
     ctx.out = std::move(output);

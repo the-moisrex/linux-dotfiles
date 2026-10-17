@@ -10,10 +10,9 @@ namespace prompt::prompts {
 static void execute_debug(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "You are an expert debugger across all programming languages and runtimes.\n";
-    output += "Analyze the provided code, error messages, stack traces, or logs and identify the "
-              "root cause of the issue.\n";
+    std::string output = R"PROMPT(You are an expert debugger across all programming languages and runtimes.
+Analyze the provided code, error messages, stack traces, or logs and identify the root cause of the issue.
+)PROMPT";
     output +=
         "\nApproach:\n1. Identify the language, runtime, and environment from the context.\n2. Trace the error from "
         "its symptom back to its origin.\n3. Explain the root cause clearly and concisely.\n4. Provide the smallest "
@@ -25,8 +24,7 @@ static void execute_debug(prompt_context& ctx) {
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         // debug.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";

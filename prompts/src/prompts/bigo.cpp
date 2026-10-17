@@ -10,15 +10,13 @@ namespace prompt::prompts {
 static void execute_bigo(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Calculate the Big O notation for the time and space complexity of the following "
-              "algorithms.\n";
-    output += "Provide a clear step-by-step breakdown of your reasoning.\n";
-    output += "Explicitly define what any variables (e.g., N, M, V, E) represent in the context "
-              "of the inputs.\n";
-    output += "If there are multiple functions or methods, analyze each one individually.\n";
-    output += "ALWAYS format your Big O notations using math delimiters, such as "
-              "\\mathcal{O}(N) or \\mathcal{O}(N \\log N).\n";
+    std::string output =
+        R"PROMPT(Calculate the Big O notation for the time and space complexity of the following algorithms.
+Provide a clear step-by-step breakdown of your reasoning.
+Explicitly define what any variables (e.g., N, M, V, E) represent in the context of the inputs.
+If there are multiple functions or methods, analyze each one individually.
+ALWAYS format your Big O notations using math delimiters, such as \mathcal{O}(N) or \mathcal{O}(N \log N).
+)PROMPT";
     output += '\n';
 
     // bigo.sh guards its fzf fallback with `[ $# -eq 0 ]`, and because
@@ -43,8 +41,7 @@ static void execute_bigo(prompt_context& ctx) {
                      resolved->string() + "\"\n";
             continue;
         }
-        output += std::format("File: {}\n\n", resolved->filename().string());
-        output += std::format("```{}\n", infer_lang(*resolved));
+        output += std::format("File: {}\n\n```{}\n", resolved->filename().string(), infer_lang(*resolved));
         output += trim_context_nl(read_file(*resolved), head_lines);
         output += "\n```\n";
     }

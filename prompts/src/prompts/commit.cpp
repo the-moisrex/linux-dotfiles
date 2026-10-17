@@ -42,13 +42,19 @@ static void execute_commit(prompt_context& ctx) {
 
     std::string output;
     output += std::format("Write a clear, descriptive Git commit message for the following {}.\n", diff_type);
-    output += "Follow the Conventional Commits specification (e.g., feat:, fix:, docs:, "
-              "refactor:, chore:).\n";
-    output += "Keep the subject line concise (under 50 characters) and include a more detailed "
-              "body if the changes are complex.\n";
-    output += "Provide the commit message directly, without extra conversational text.\n\nProvide:\n1. A concise "
-              "subject line.\n2. A short body explaining what changed and why.\n3. If helpful, an alternative subject "
-              "line.\nKeep it specific and practical, not generic.\n\n\n```diff\n";
+    output += R"PROMPT(Follow the Conventional Commits specification (e.g., feat:, fix:, docs:, refactor:, chore:).
+Keep the subject line concise (under 50 characters) and include a more detailed body if the changes are complex.
+Provide the commit message directly, without extra conversational text.
+
+Provide:
+1. A concise subject line.
+2. A short body explaining what changed and why.
+3. If helpful, an alternative subject line.
+Keep it specific and practical, not generic.
+
+
+```diff
+)PROMPT";
     output += trim_context_nl(diff, head_lines);
     output += "\n```\n\n";
 

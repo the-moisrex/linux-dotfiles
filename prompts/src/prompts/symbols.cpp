@@ -9,13 +9,11 @@ namespace prompt::prompts {
 static void execute_symbols(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Review the symbols in this code and find bad names that should be renamed.\n";
-    output += "Focus on unclear, misleading, overly abbreviated, inconsistent, or non-idiomatic symbol "
-              "names.\n";
-    output += "For each rename suggestion, provide the current name, the proposed new name, and the reason "
-              "in a table.\n";
-    output += "Only suggest renames that materially improve readability or maintainability.\n";
+    std::string output = R"PROMPT(Review the symbols in this code and find bad names that should be renamed.
+Focus on unclear, misleading, overly abbreviated, inconsistent, or non-idiomatic symbol names.
+For each rename suggestion, provide the current name, the proposed new name, and the reason in a table.
+Only suggest renames that materially improve readability or maintainability.
+)PROMPT";
 
     // symbols.sh tests $#, which is the script's whole argument list (bash's
     // parse_arguments shifts the function's own parameters, not the caller's
@@ -29,8 +27,7 @@ static void execute_symbols(prompt_context& ctx) {
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("\nFile: {}\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("\nFile: {}\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n";
     }

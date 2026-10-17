@@ -43,21 +43,22 @@ static void execute_cpp(prompt_context& ctx) {
     }
 
     if (!content.empty() && is_compiler_output(content)) {
-        output += "\nThe provided output contains C++ compiler errors or warnings.\nPlease analyze the error messages "
-                  "and the provided code context.\nFind the root problem and propose the smallest useful fix.\n";
-        output += "Explain the issue briefly, and provide the answer primarily as a git diff that "
-                  "can be applied directly.\n";
-        output += "Prefer minimal, surgical changes over broad rewrites.\n";
+        output += R"PROMPT(
+The provided output contains C++ compiler errors or warnings.
+Please analyze the error messages and the provided code context.
+Find the root problem and propose the smallest useful fix.
+Explain the issue briefly, and provide the answer primarily as a git diff that can be applied directly.
+Prefer minimal, surgical changes over broad rewrites.
+)PROMPT";
     } else {
-        output += "You are an expert C++ developer with deep knowledge of modern C++ (C++17, "
-                  "C++20, C++23, C++26) and strict adherence to the C++ Core Guidelines.\n";
-        output += "Follow these principles when providing C++ code:\n\n";
-        output += "- Use modern C++ features (auto, range-based loops, structured bindings, "
-                  "concepts, modules)\n";
-        output += "- Apply C++ Core Guidelines (ES, SL, NL, F, C, Enum, Con, T, I, R, Pro, E, S, "
-                  "Cp)\n";
-        output += "- Prioritize performance using move semantics, perfect forwarding, and minimal "
-                  "allocations\n";
+        output +=
+            R"PROMPT(You are an expert C++ developer with deep knowledge of modern C++ (C++17, C++20, C++23, C++26) and strict adherence to the C++ Core Guidelines.
+Follow these principles when providing C++ code:
+
+- Use modern C++ features (auto, range-based loops, structured bindings, concepts, modules)
+- Apply C++ Core Guidelines (ES, SL, NL, F, C, Enum, Con, T, I, R, Pro, E, S, Cp)
+- Prioritize performance using move semantics, perfect forwarding, and minimal allocations
+)PROMPT";
         output +=
             "- Minimize dependencies - prefer standard library over third-party libraries\n- Use constexpr for "
             "compile-time computation when possible\n- Apply [[nodiscard]] to functions whose return values should not "

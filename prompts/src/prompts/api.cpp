@@ -9,12 +9,10 @@ namespace prompt::prompts {
 static void execute_api(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Review this API design.\n";
-    output += "Look for confusing names, inconsistent behavior, unclear contracts, weak validation, "
-              "awkward call sites, leaky abstractions, and backward-compatibility risks.\n";
-    output += "Suggest the smallest meaningful API improvements, explain the tradeoffs briefly, and "
-              "provide a git diff for the recommended changes.\n";
+    std::string output = R"PROMPT(Review this API design.
+Look for confusing names, inconsistent behavior, unclear contracts, weak validation, awkward call sites, leaky abstractions, and backward-compatibility risks.
+Suggest the smallest meaningful API improvements, explain the tradeoffs briefly, and provide a git diff for the recommended changes.
+)PROMPT";
     output += '\n';
 
     std::string error;

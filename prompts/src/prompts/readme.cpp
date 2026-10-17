@@ -11,17 +11,27 @@ namespace prompt::prompts {
 static void execute_readme(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "You are a technical documentation expert.\n";
-    output += "Generate or improve a comprehensive README.md based on the provided code and "
-              "context.\n";
-    output += "\nThe README should include:\n1. Project name and a concise one-line description\n2. Features and key "
-              "capabilities\n3. Installation instructions (copy-pasteable)\n4. Quick start / usage examples\n5. "
-              "Configuration options (if any)\n6. API reference (for libraries)\n7. Contributing guidelines (if "
-              "applicable)\n8. License\n\nGuidelines:\n- Write for someone who has never seen this project before\n- "
-              "Use concrete examples, not abstract descriptions\n- Keep it scannable: headers, lists, code blocks\n- "
-              "Do not invent features that are not present in the code\n- Match the tone to the project (professional "
-              "for libraries, friendly for tools)\n\n";
+    std::string output = R"PROMPT(You are a technical documentation expert.
+Generate or improve a comprehensive README.md based on the provided code and context.
+
+The README should include:
+1. Project name and a concise one-line description
+2. Features and key capabilities
+3. Installation instructions (copy-pasteable)
+4. Quick start / usage examples
+5. Configuration options (if any)
+6. API reference (for libraries)
+7. Contributing guidelines (if applicable)
+8. License
+
+Guidelines:
+- Write for someone who has never seen this project before
+- Use concrete examples, not abstract descriptions
+- Keep it scannable: headers, lists, code blocks
+- Do not invent features that are not present in the code
+- Match the tone to the project (professional for libraries, friendly for tools)
+
+)PROMPT";
 
     // readme.sh: `git rev-parse --is-inside-work-tree` gates the project
     // structure block; the listing is the locale-collated `ls -1 <root> |
@@ -39,8 +49,7 @@ static void execute_readme(prompt_context& ctx) {
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         // readme.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";

@@ -13,26 +13,22 @@ static void execute_compile_time(prompt_context& ctx) {
     output +=
         "Review this C++ code and identify easy fixes to reduce compile time.\nLook for:\n- Unnecessary `#include` "
         "directives that can be removed.\n- Opportunities to replace `#include` with forward declarations.\n";
-    output += "- Inline functions or templates in headers that can be moved to source (.cpp) "
-              "files.\n";
-    output += "- Template bloat or opportunities for explicit template instantiation.\n";
-    output += "- Expensive headers (e.g., `<iostream>`, `<regex>`, `<windows.h>`) included in "
-              "header files instead of source files.\n";
-    output += "- Moving compile time constants inside a dependent templated out of that "
-              "dependency.\n";
-    output += "- Reducing coupling of templated arguments.\n- Minimizing template arguments and not packing "
-              "unnecessary arguments.\n\n";
-    output += "Call out which issues matter most in practice, and provide a git diff for the "
-              "high-impact, easy-to-implement improvements.\n";
-    output += "Do not sacrifice correctness or introduce severe runtime performance regressions "
-              "for minor compile-time wins.\n";
+    output += R"PROMPT(- Inline functions or templates in headers that can be moved to source (.cpp) files.
+- Template bloat or opportunities for explicit template instantiation.
+- Expensive headers (e.g., `<iostream>`, `<regex>`, `<windows.h>`) included in header files instead of source files.
+- Moving compile time constants inside a dependent templated out of that dependency.
+- Reducing coupling of templated arguments.
+- Minimizing template arguments and not packing unnecessary arguments.
+
+Call out which issues matter most in practice, and provide a git diff for the high-impact, easy-to-implement improvements.
+Do not sacrifice correctness or introduce severe runtime performance regressions for minor compile-time wins.
+)PROMPT";
     output += '\n';
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n\n";
     }

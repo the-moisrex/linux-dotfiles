@@ -10,19 +10,17 @@ namespace prompt::prompts {
 static void execute_tests(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Review this code and identify the highest-value missing tests.\n";
-    output += "Focus on edge cases, regressions, error handling, boundary conditions, invalid "
-              "input, and behavior that looks easy to break.\n";
-    output += "Propose a minimal but effective test plan first, then provide a git diff that adds "
-              "or updates the tests.\n";
-    output += "Prefer the smallest practical diff that materially improves confidence.\n\n";
+    std::string output = R"PROMPT(Review this code and identify the highest-value missing tests.
+Focus on edge cases, regressions, error handling, boundary conditions, invalid input, and behavior that looks easy to break.
+Propose a minimal but effective test plan first, then provide a git diff that adds or updates the tests.
+Prefer the smallest practical diff that materially improves confidence.
+
+)PROMPT";
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n";
     }

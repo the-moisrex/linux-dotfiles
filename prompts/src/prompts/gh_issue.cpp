@@ -62,12 +62,21 @@ static void execute_gh_issue(prompt_context& ctx) {
     }
 
     std::string output;
-    output += "Implement the following GitHub issue. Read the issue carefully, explore the\ncodebase to understand the "
-              "current state, and produce a working implementation.\nFollow existing code conventions, patterns, and "
-              "project structure.\n\n## Requirements\n\n- Read relevant source files before writing any code.\n- Make "
-              "minimal, focused changes that solve the problem.\n- Preserve existing code style and conventions.\n- Do "
-              "not add unnecessary abstractions or rewrites.\n- Return your changes as a git diff that can be applied "
-              "directly.\n\n---\n\n";
+    output += R"PROMPT(Implement the following GitHub issue. Read the issue carefully, explore the
+codebase to understand the current state, and produce a working implementation.
+Follow existing code conventions, patterns, and project structure.
+
+## Requirements
+
+- Read relevant source files before writing any code.
+- Make minimal, focused changes that solve the problem.
+- Preserve existing code style and conventions.
+- Do not add unnecessary abstractions or rewrites.
+- Return your changes as a git diff that can be applied directly.
+
+---
+
+)PROMPT";
 
     if (!issue_title.empty()) {
         output += std::format("# Issue #{}: {}\n\n", issue_number, issue_title);

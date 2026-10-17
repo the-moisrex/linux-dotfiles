@@ -9,22 +9,17 @@ namespace prompt::prompts {
 static void execute_security(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Review this for security and safety issues.\n";
-    output += "Look for vulnerabilities, unsafe defaults, trust boundary mistakes, injection "
-              "risks, missing validation, secrets exposure, privilege problems, dangerous file or "
-              "process handling, and denial-of-service risks.\n";
-    output += "Also call out reliability or safety hazards that could cause data loss, corruption, "
-              "crashes, or harmful behavior.\n";
-    output += "List findings by severity, explain the risk briefly, and suggest the smallest "
-              "effective fix for each one.\n";
+    std::string output = R"PROMPT(Review this for security and safety issues.
+Look for vulnerabilities, unsafe defaults, trust boundary mistakes, injection risks, missing validation, secrets exposure, privilege problems, dangerous file or process handling, and denial-of-service risks.
+Also call out reliability or safety hazards that could cause data loss, corruption, crashes, or harmful behavior.
+List findings by severity, explain the risk briefly, and suggest the smallest effective fix for each one.
+)PROMPT";
     output += '\n';
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n\n";
     }

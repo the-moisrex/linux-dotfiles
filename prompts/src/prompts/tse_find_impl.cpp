@@ -818,11 +818,8 @@ void execute_tse_find_impl(prompt_context& ctx) {
     // sed and its trailing newline dropped, then printed with a single `\n`.
     std::string help_text = trim_like_bash(captured(help_run.stdout_data), parsed.head_lines);
 
-    std::string output(kGeneratorIntro);
-    output += input.query + "\n";
-    output += kHelpHeader;
-    output += help_text;
-    output += kBuildingCommand;
+    std::string output =
+        std::format("{}{}\n{}{}{}", kGeneratorIntro, input.query, kHelpHeader, help_text, kBuildingCommand);
     if (parsed.mode == "chat") {
         output += kChatMode;
     } else {

@@ -99,8 +99,7 @@ static void execute_run(prompt_context& ctx) {
               ". Identify the root cause, explain the failure clearly, and suggest the smallest "
               "useful fix. If the build succeeded but the program failed at runtime, focus on the "
               "runtime issue.\n\n";
-    output += std::format("Exit status: {}\n\n", status_text);
-    output += std::format("```text\n{}\n```\n", run_output);
+    output += std::format("Exit status: {}\n\n```text\n{}\n```\n", status_text, run_output);
 
     if (include_gtest) {
         auto failed = extract_failed_gtests(search_output);

@@ -9,14 +9,12 @@ namespace prompt::prompts {
 static void execute_perf(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Review this for performance issues.\n";
-    output += "Look for unnecessary allocations, wasteful copies, bad algorithms, blocking work, "
-              "repeated parsing, excessive syscalls, poor data layout, and avoidable hot-path "
-              "overhead.\n";
-    output += "Call out which issues matter most in practice, and provide a git diff for the "
-              "smallest high-impact improvements.\n";
-    output += "Do not sacrifice correctness or readability for tiny wins.\n\n";
+    std::string output = R"PROMPT(Review this for performance issues.
+Look for unnecessary allocations, wasteful copies, bad algorithms, blocking work, repeated parsing, excessive syscalls, poor data layout, and avoidable hot-path overhead.
+Call out which issues matter most in practice, and provide a git diff for the smallest high-impact improvements.
+Do not sacrifice correctness or readability for tiny wins.
+
+)PROMPT";
 
     std::string error;
     auto sources = collect_file_args(ctx);

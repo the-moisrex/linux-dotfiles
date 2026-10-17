@@ -10,20 +10,21 @@ namespace prompt::prompts {
 static void execute_gtest(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    std::string output;
-    output += "Write comprehensive unit tests for the following C++ code using Google Test (gtest).\nThis code is part "
-              "of a C++ web framework named web++.\nFocus on:\n- Clear and descriptive test names.\n- Proper "
-              "Setup/Teardown (using TEST_F and fixtures if necessary).\n";
-    output += "- Edge cases and typical web framework scenarios (e.g., malformed inputs, "
-              "boundaries).\n";
-    output += "- Standard gtest macros (EXPECT_EQ, ASSERT_TRUE, EXPECT_THROW, etc.).\nProvide the complete test code "
-              "implementation.\n\n";
+    std::string output = R"PROMPT(Write comprehensive unit tests for the following C++ code using Google Test (gtest).
+This code is part of a C++ web framework named web++.
+Focus on:
+- Clear and descriptive test names.
+- Proper Setup/Teardown (using TEST_F and fixtures if necessary).
+- Edge cases and typical web framework scenarios (e.g., malformed inputs, boundaries).
+- Standard gtest macros (EXPECT_EQ, ASSERT_TRUE, EXPECT_THROW, etc.).
+Provide the complete test code implementation.
+
+)PROMPT";
 
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n", file.filename().string());
-        output += std::format("```{}\n", infer_lang(file));
+        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += trim_context_nl(read_file(file), head_lines);
         output += "\n```\n";
     }
