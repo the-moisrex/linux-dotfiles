@@ -23,7 +23,7 @@ std::string strip_trailing_newlines(std::string_view s) {
     return out;
 }
 
-std::string infer_lang(std::string_view base) {
+std::string_view infer_lang(std::string_view base) {
     auto dot = base.rfind('.');
     std::string_view ext = (dot == std::string_view::npos) ? base : base.substr(dot + 1);
     if (base == "Dockerfile") return "dockerfile";
@@ -62,24 +62,14 @@ std::string infer_lang(std::string_view base) {
 } // namespace
 
 static void execute_git_diff(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
         throw soft_error{"prompt git.diff: Error: Not inside a git repository.\n"};
     }
 
-    std::vector<std::string> files;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        files.emplace_back(ctx.args[i]);
-    }
+    auto files = positional_args(ctx);
 
     std::filesystem::path git_root = ctx.git_root;
 
@@ -121,7 +111,7 @@ static void execute_git_diff(prompt_context& ctx) {
                 std::error_code ec;
                 if (!filepath.empty() && std::filesystem::is_regular_file(full, ec) && !ec) {
                     std::string name = std::filesystem::path(filepath).filename().string();
-                    std::string lang = infer_lang(name);
+                    std::string_view lang = infer_lang(name);
                     std::string content = read_file(full);
                     output += std::format("File: {} (new)\n", filepath);
                     output += '\n';

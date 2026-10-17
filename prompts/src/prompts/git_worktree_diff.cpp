@@ -37,10 +37,7 @@ std::string detect_base_branch(std::string const& given) {
 } // namespace
 
 static void execute_git_worktree_diff(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
@@ -48,14 +45,7 @@ static void execute_git_worktree_diff(prompt_context& ctx) {
     }
 
     // Custom flags: --not <commit>, --base <branch>; everything else is a file.
-    std::vector<std::string> rest;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        rest.emplace_back(ctx.args[i]);
-    }
+    auto rest = positional_args(ctx);
 
     std::string base_branch;
     std::string not_commit;

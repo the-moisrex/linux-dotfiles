@@ -12,10 +12,7 @@ namespace prompt::prompts {
 static void execute_list(prompt_context& ctx) {
     // list.sh runs init_prompt --no-files, so parse_arguments validates --head
     // (and strips it) before the script's own --names loop runs.
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     bool names_only = false;
     for (std::size_t i = 0; i < ctx.args_count; ++i) {

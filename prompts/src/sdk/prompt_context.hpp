@@ -40,31 +40,21 @@ struct prompt_context {
     std::string out;
     std::string err;
     bool no_clipboard = false;
-
-    // In-process sub-dispatch (paths -> files, verify -> git-dirty) copies the
-    // context; the child must not append to the parent's accumulated text.
-    void clear_output() {
-        out.clear();
-        err.clear();
-        no_clipboard = false;
-    }
-
-    [[nodiscard]] std::string clipboard_content() const {
-        return (clipboard_content_fn != nullptr) ? clipboard_content_fn() : "";
-    }
-
-    [[nodiscard]] std::optional<std::string> clipboard_identifier() const {
-        return (clipboard_identifier_fn != nullptr) ? clipboard_identifier_fn() : std::nullopt;
-    }
-
-    [[nodiscard]] std::vector<std::filesystem::path> select_files() const {
-        return (select_files_fn != nullptr) ? select_files_fn() : std::vector<std::filesystem::path>{};
-    }
-
-    [[nodiscard]] std::optional<std::filesystem::path> resolve_input_file(std::string_view wanted) const {
-        return (resolve_input_file_fn != nullptr) ? resolve_input_file_fn(wanted) : std::nullopt;
-    }
 };
+
+// The dispatcher-injected services and the sub-dispatch reset, as free
+// functions taking the context (the struct stays a plain data bag). These are
+// the wrapper methods prompt code used to call as clipboard_content(ctx) etc.
+void clear_output(prompt_context& ctx);
+
+[[nodiscard]] std::string clipboard_content(prompt_context const& ctx);
+
+[[nodiscard]] std::optional<std::string> clipboard_identifier(prompt_context const& ctx);
+
+[[nodiscard]] std::vector<std::filesystem::path> select_files(prompt_context const& ctx);
+
+[[nodiscard]] std::optional<std::filesystem::path> resolve_input_file(prompt_context const& ctx,
+                                                                      std::string_view wanted);
 
 prompt_context make_base_context();
 

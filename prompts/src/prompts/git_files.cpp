@@ -17,7 +17,7 @@ namespace {
 // Byte-identical port of `_common.sh infer_lang` so the fenced language tag
 // matches the bash script (embed.cpp's infer_lang reorders CMakeLists.txt
 // after .txt and would emit "text" instead of "cmake").
-std::string infer_lang(std::string_view base) {
+std::string_view infer_lang(std::string_view base) {
     auto after_last_dot = base.rfind('.');
     std::string_view ext = (after_last_dot == std::string_view::npos) ? base : base.substr(after_last_dot + 1);
 
@@ -93,29 +93,19 @@ std::string strip_trailing_newlines(std::string_view s) {
 } // namespace
 
 static void execute_git_files(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
-    std::vector<std::string> file_args;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        file_args.emplace_back(ctx.args[i]);
-    }
+    auto file_args = positional_args(ctx);
 
     // Resolve inputs. With no args the script falls back to `select_files`
-    // (fzf -m); the native dispatcher wires ctx.select_files() to that.
+    // (fzf -m); the native dispatcher wires select_files(ctx) to that.
     std::vector<std::filesystem::path> selected;
     std::string errors;
     if (file_args.empty()) {
-        selected = ctx.select_files();
+        selected = select_files(ctx);
     } else {
         for (auto const& arg : file_args) {
-            auto resolved = ctx.resolve_input_file(arg);
+            auto resolved = resolve_input_file(ctx, arg);
             if (!resolved) {
                 errors += std::format("prompt git.files: file not found: {}\n", arg);
                 continue;

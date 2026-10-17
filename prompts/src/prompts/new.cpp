@@ -29,10 +29,7 @@ std::string embed_block(std::filesystem::path const& path, std::optional<std::si
 } // namespace
 
 static void execute_new(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     std::string output;
     if (ctx.stdin_consumed) {
@@ -74,14 +71,9 @@ Return:
     }
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        std::string_view wanted = ctx.args[i];
+    for (auto const& wanted : positional_args(ctx)) {
         std::filesystem::path resolved;
-        if (auto found = ctx.resolve_input_file(wanted)) {
+        if (auto found = resolve_input_file(ctx, wanted)) {
             resolved = *found;
         }
         if (!resolved.empty() && std::filesystem::is_regular_file(resolved)) {

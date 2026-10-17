@@ -120,10 +120,7 @@ std::filesystem::path find_foresight_root() {
 } // namespace
 
 static void execute_fs8_mod(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     auto root = find_foresight_root();
     if (root.empty()) {

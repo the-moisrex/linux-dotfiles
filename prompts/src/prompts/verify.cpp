@@ -19,22 +19,12 @@ std::string strip_trailing_newlines(std::string_view s) {
 } // namespace
 
 static void execute_verify(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     // verify.sh runs `bash git-dirty.sh ...` (matches byte-for-byte when we run
     // the same script via the legacy runner). Its stderr is discarded and its
     // exit status ignored (2>/dev/null || true).
-    std::vector<std::string> git_dirty_args;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        git_dirty_args.emplace_back(ctx.args[i]);
-    }
+    auto git_dirty_args = positional_args(ctx);
     if (git_dirty_args.empty()) git_dirty_args = {"--full-diff"};
 
     // Deciding what to verify: piped stdin wins (verify.sh calls read_stdin);
@@ -53,7 +43,7 @@ static void execute_verify(prompt_context& ctx) {
         std::size_t n = 0;
         for (auto const& a : git_dirty_args) sub.args[n++] = a;
         sub.args_count = n;
-        sub.clear_output();
+        clear_output(sub);
         if (const auto* dirty = prompt::find_prompt("git-dirty")) dirty->execute_fn(sub);
         context = strip_trailing_newlines(sub.out);
         if (context.empty()) {

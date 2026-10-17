@@ -10,19 +10,9 @@
 namespace prompt::prompts {
 
 static void execute_gdb(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
-    std::vector<std::string> files;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        files.emplace_back(ctx.args[i]);
-    }
+    auto files = positional_args(ctx);
 
     // gdb.sh: a fixed instruction block (echoes + a quoted heredoc) followed by
     // the sample `gdb ... | grep` probe, whose stdout is streamed verbatim. The

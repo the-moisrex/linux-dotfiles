@@ -10,27 +10,17 @@
 namespace prompt::prompts {
 
 static void execute_files(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
-    std::vector<std::string_view> file_args;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-        } else {
-            file_args.push_back(ctx.args[i]);
-        }
-    }
+    auto file_args = positional_args(ctx);
 
     std::vector<std::filesystem::path> selected_files;
     std::string errors;
     if (file_args.empty()) {
-        selected_files = ctx.select_files();
+        selected_files = select_files(ctx);
     } else {
-        for (auto arg : file_args) {
-            auto resolved = ctx.resolve_input_file(arg);
+        for (auto const& arg : file_args) {
+            auto resolved = resolve_input_file(ctx, arg);
             if (!resolved) {
                 errors += std::format("prompt files: file not found: {}\n", std::string(arg));
                 continue;

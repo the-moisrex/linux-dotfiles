@@ -9,7 +9,7 @@
 
 namespace prompt {
 
-std::string infer_lang(std::filesystem::path const& file);
+std::string_view infer_lang(std::filesystem::path const& file);
 
 // Port of `_common.sh trim_context`'s body with a `$(cat ...)`-style content:
 // the content truncated to the first N lines (each keeping its newline) when a

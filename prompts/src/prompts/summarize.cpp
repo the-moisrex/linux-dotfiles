@@ -119,7 +119,7 @@ static void execute_summarize(prompt_context& ctx) {
     if (ctx.stdin_consumed) {
         input = drop_trailing_newlines(ctx.stdin_content);
     } else {
-        input = drop_trailing_newlines(ctx.clipboard_content());
+        input = drop_trailing_newlines(clipboard_content(ctx));
         if (input.empty()) {
             throw soft_error{"No input. Pipe a URL or clipboard content.\n"};
         }

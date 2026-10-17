@@ -9,19 +9,9 @@
 namespace prompt::prompts {
 
 static void execute_whatwg_url_specs(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
-    std::vector<std::string> sections;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        sections.emplace_back(ctx.args[i]);
-    }
+    auto sections = positional_args(ctx);
 
     std::filesystem::path tool = fs::bin_tool("whatwg-url-specs", ctx.exe_path,
                                               ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));

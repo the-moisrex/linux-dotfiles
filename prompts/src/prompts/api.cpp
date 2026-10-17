@@ -7,10 +7,7 @@
 namespace prompt::prompts {
 
 static void execute_api(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     std::string output;
     output += "Review this API design.\n";
@@ -21,17 +18,12 @@ static void execute_api(prompt_context& ctx) {
     output += '\n';
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        std::filesystem::path file(ctx.args[i]);
-        if (std::filesystem::is_regular_file(file)) {
-            output += embed_file_block(file, head_lines);
-        } else {
-            warn_missing_file(error, ctx.args[i]);
-        }
+    auto sources = collect_file_args(ctx);
+    for (auto const& file : sources.files) {
+        output += embed_file_block(file, head_lines);
+    }
+    for (auto arg : sources.missing) {
+        warn_missing_file(error, arg);
     }
 
     ctx.out = std::move(output);

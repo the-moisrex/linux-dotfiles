@@ -11,19 +11,9 @@ namespace prompt::prompts {
 static void render_help_man(std::ostream& os);
 
 static void execute_man(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
-    std::vector<std::string> pages;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        pages.emplace_back(ctx.args[i]);
-    }
+    auto pages = positional_args(ctx);
 
     if (pages.empty()) {
         std::string help_os = help_text(render_help_man);

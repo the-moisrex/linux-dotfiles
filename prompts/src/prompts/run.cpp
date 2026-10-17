@@ -48,10 +48,7 @@ std::string head_n(std::string_view text, std::size_t n) { return head_output(te
 } // namespace
 
 static void execute_run(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     bool include_gtest = false;
     std::vector<std::string> run_args;
@@ -120,7 +117,7 @@ static void execute_run(prompt_context& ctx) {
             std::size_t n = 0;
             for (auto const& a : gtest_args) sub.args[n++] = a;
             sub.args_count = n;
-            sub.clear_output();
+            clear_output(sub);
             if (const auto* gtest_case = prompt::find_prompt("gtest-case")) {
                 gtest_case->execute_fn(sub);
                 output += sub.out;

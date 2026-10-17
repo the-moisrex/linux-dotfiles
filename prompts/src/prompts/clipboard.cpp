@@ -6,14 +6,11 @@
 namespace prompt::prompts {
 
 static void execute_clipboard(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     // bash: content="$(clipboard_content)" — the command substitution strips
     // trailing newlines, so an all-whitespace clipboard reads as empty.
-    std::string content = ctx.clipboard_content();
+    std::string content = clipboard_content(ctx);
     while (!content.empty() && content.back() == '\n') content.pop_back();
 
     if (content.empty()) {

@@ -1,4 +1,5 @@
 #include "args.hpp"
+#include "errors.hpp"
 #include <cstdlib>
 #include <limits>
 
@@ -33,6 +34,44 @@ std::string parse_head_option(std::span<std::string_view const> args, std::optio
         ++i;
     }
     return {};
+}
+
+std::optional<std::size_t> head_lines_or_throw(prompt_context const& ctx, bool strict) {
+    std::optional<std::size_t> head_lines;
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines, strict); !msg.empty()) {
+        throw usage_error{std::move(msg)};
+    }
+    return head_lines;
+}
+
+std::vector<std::string> positional_args(prompt_context const& ctx) {
+    std::vector<std::string> out;
+    out.reserve(ctx.args_count);
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (ctx.args[i] == "--head") {
+            ++i;
+            continue;
+        }
+        out.emplace_back(ctx.args[i]);
+    }
+    return out;
+}
+
+file_args collect_file_args(prompt_context const& ctx) {
+    file_args result;
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (ctx.args[i] == "--head") {
+            ++i;
+            continue;
+        }
+        std::filesystem::path file(ctx.args[i]);
+        if (std::filesystem::is_regular_file(file)) {
+            result.files.push_back(std::move(file));
+        } else {
+            result.missing.push_back(ctx.args[i]);
+        }
+    }
+    return result;
 }
 
 } // namespace prompt

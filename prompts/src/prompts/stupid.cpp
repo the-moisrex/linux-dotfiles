@@ -8,10 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_stupid(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     std::string output;
     output += "Find the stupid mistakes in this code.\n";
@@ -23,21 +20,16 @@ static void execute_stupid(prompt_context& ctx) {
     output += "At the end, suggest small git patches.\n\n";
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        std::filesystem::path file(ctx.args[i]);
-        if (std::filesystem::is_regular_file(file)) {
-            output += std::format("File: {}\n\n", file.filename().string());
-            output += std::format("```{}\n", infer_lang(file));
-            output += trim_context_nl(read_file(file), head_lines);
-            // stupid.sh leaves a blank line before the closing fence.
-            output += "\n```\n\n";
-        } else {
-            warn_missing_file(error, ctx.args[i]);
-        }
+    auto sources = collect_file_args(ctx);
+    for (auto const& file : sources.files) {
+        output += std::format("File: {}\n\n", file.filename().string());
+        output += std::format("```{}\n", infer_lang(file));
+        output += trim_context_nl(read_file(file), head_lines);
+        // stupid.sh leaves a blank line before the closing fence.
+        output += "\n```\n\n";
+    }
+    for (auto arg : sources.missing) {
+        warn_missing_file(error, arg);
     }
 
     ctx.out = std::move(output);

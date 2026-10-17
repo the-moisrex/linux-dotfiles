@@ -31,19 +31,9 @@ std::string git_toplevel() {
 } // namespace
 
 static void execute_clang_tidy(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
-    std::vector<std::string> file_args;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        file_args.emplace_back(ctx.args[i]);
-    }
+    auto file_args = positional_args(ctx);
 
     std::string git_root = git_toplevel();
 
@@ -54,7 +44,7 @@ static void execute_clang_tidy(prompt_context& ctx) {
     std::vector<std::string> run_args;     // ARGS
     std::vector<std::string> display_args; // $*
     if (ctx.args_count == 0) {
-        auto selected = ctx.select_files();
+        auto selected = select_files(ctx);
         if (selected.empty()) {
             ctx.out.clear();
             ctx.err = "No files specified or selected.\n";

@@ -241,7 +241,7 @@ Notes:
         // checking status) and the chain keeps running with the remaining
         // prompts.
         try {
-            ctx.clear_output();
+            clear_output(ctx);
             desc->execute_fn(ctx);
             pipeline.add_output(prompt::sanitize::sanitize(ctx.out), ctx.no_clipboard);
             if (!ctx.err.empty()) {

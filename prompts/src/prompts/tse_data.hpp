@@ -149,7 +149,7 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
     }
 
     if (cfg.inputs.empty()) {
-        if (auto id = ctx.clipboard_identifier()) cfg.inputs.push_back(*id);
+        if (auto id = clipboard_identifier(ctx)) cfg.inputs.push_back(*id);
         if (cfg.inputs.empty()) {
             cfg.failed = true;
             cfg.error = pfx + "no symbol given and no identifier found in the clipboard\n";

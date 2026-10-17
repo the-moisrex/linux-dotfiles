@@ -8,10 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_docstring(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     std::string output;
     output += "Add comprehensive docstrings to all functions, classes, and methods in the "
@@ -25,18 +22,14 @@ static void execute_docstring(prompt_context& ctx) {
     output += "Return the updated code with the newly added docstrings or write a patch file.\n\n";
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        auto resolved = ctx.resolve_input_file(ctx.args[i]);
+    for (auto const& arg : positional_args(ctx)) {
+        auto resolved = resolve_input_file(ctx, arg);
         if (!resolved) {
-            error += std::format("prompt docstring: file not found: {}\n", std::string(ctx.args[i]));
+            error += std::format("prompt docstring: file not found: {}\n", arg);
             continue;
         }
         if (::access(resolved->c_str(), R_OK) != 0) {
-            error += "prompt docstring: file not readable: \"" + std::string(ctx.args[i]) + "\"; resolved to \"" +
+            error += "prompt docstring: file not readable: \"" + std::string(arg) + "\"; resolved to \"" +
                      resolved->string() + "\"\n";
             continue;
         }

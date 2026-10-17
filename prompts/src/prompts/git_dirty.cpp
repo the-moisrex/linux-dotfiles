@@ -26,7 +26,7 @@ std::string capture(std::vector<std::string> const& args) {
     return out;
 }
 
-std::string infer_lang(std::string_view base) {
+std::string_view infer_lang(std::string_view base) {
     auto dot = base.rfind('.');
     std::string_view ext = (dot == std::string_view::npos) ? base : base.substr(dot + 1);
     if (base == "Dockerfile") return "dockerfile";

@@ -45,20 +45,10 @@ std::string head_lines_raw(std::string_view s, std::size_t n) {
 } // namespace
 
 static void execute_git(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     // parse_arguments leaves the non-flag files in ARGS (with --head N removed).
-    std::vector<std::string> files;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        files.emplace_back(ctx.args[i]);
-    }
+    auto files = positional_args(ctx);
 
     std::string output;
     output += "You are a git expert. Help with the following git-related task.\n\nProvide:\n1. The exact git commands "
@@ -89,7 +79,7 @@ static void execute_git(prompt_context& ctx) {
         std::error_code ec;
         if (std::filesystem::is_regular_file(path, ec) && !ec) {
             std::string name = path.filename().string();
-            std::string lang = infer_lang(path);
+            std::string_view lang = infer_lang(path);
             std::string content = read_file(path);
             output += std::format("File: {}\n", name);
             output += '\n';

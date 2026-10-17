@@ -175,7 +175,7 @@ static void execute_paths(prompt_context& ctx) {
     // Resolve each unique path and keep only readable, git-tracked files.
     std::vector<std::string> resolved_files;
     for (auto const& clean : order) {
-        auto resolved = ctx.resolve_input_file(clean);
+        auto resolved = resolve_input_file(ctx, clean);
         if (!resolved) continue;
         if (::access(resolved->c_str(), R_OK) != 0) continue;
         if (!git_tracked(resolved->string())) continue;
@@ -194,7 +194,7 @@ static void execute_paths(prompt_context& ctx) {
         std::size_t n = 0;
         for (auto const& r : resolved_files) sub.args[n++] = r;
         sub.args_count = n;
-        sub.clear_output();
+        clear_output(sub);
         if (const auto* files = prompt::find_prompt("files")) {
             files->execute_fn(sub);
             output += sub.out;

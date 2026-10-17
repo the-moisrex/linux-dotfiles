@@ -27,10 +27,7 @@ std::string embed_file_block(std::filesystem::path const& path, std::optional<st
 } // namespace
 
 static void execute_plan(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     std::string output;
     output += R"HELP(You are in PLAN MODE. Your goal is to produce a detailed, decision-complete
@@ -99,20 +96,16 @@ Produce a structured plan with these sections:
     output += '\n';
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
+    for (auto const& arg : positional_args(ctx)) {
         // plan.sh: resolve_input_file first, then embed_file on the result.
-        auto resolved = ctx.resolve_input_file(ctx.args[i]);
-        std::filesystem::path file(ctx.args[i]);
+        auto resolved = resolve_input_file(ctx, arg);
+        std::filesystem::path file(arg);
         if (resolved && std::filesystem::is_regular_file(*resolved)) {
             output += embed_file_block(*resolved, head_lines);
         } else if (std::filesystem::is_regular_file(file)) {
             output += embed_file_block(file, head_lines);
         } else {
-            error += std::format("Warning: File not found: {}\n", std::string(ctx.args[i]));
+            error += std::format("Warning: File not found: {}\n", arg);
         }
     }
 

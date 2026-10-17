@@ -92,7 +92,7 @@ basic_intraday_prompt_config parse_intraday_args(prompt_context const& ctx) {
     }
 
     if (config.symbol.empty()) {
-        if (auto id = ctx.clipboard_identifier()) config.symbol = *id;
+        if (auto id = clipboard_identifier(ctx)) config.symbol = *id;
         if (config.symbol.empty()) {
             config.failed = true;
             config.error = "prompt intraday: no symbol given and no identifier found in the clipboard\n";

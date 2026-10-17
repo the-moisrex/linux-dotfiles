@@ -269,10 +269,7 @@ std::string find_rec(std::string const& results, std::string const& name) {
 } // namespace
 
 static void execute_skill(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     // command -v jq is required before anything else.
     {

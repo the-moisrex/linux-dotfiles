@@ -47,23 +47,16 @@ bool matches_any_line(std::string const& content, std::regex const& re) {
 } // namespace
 
 static void execute_de_export(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     // de-export.sh reads $stdin_content, which the dispatcher never exports and
     // the script never fills (it has no read_stdin), so piped stdin never
     // reaches all_content — mirror that here.
     std::vector<std::filesystem::path> cpp_files;
     std::string all_content;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        std::filesystem::path file(ctx.args[i]);
-        if (std::filesystem::is_regular_file(file) && is_cpp_file(std::string(ctx.args[i]))) {
+    for (auto const& arg : positional_args(ctx)) {
+        std::filesystem::path file(arg);
+        if (std::filesystem::is_regular_file(file) && is_cpp_file(std::string(arg))) {
             cpp_files.push_back(file);
             all_content += strip_trailing_newlines(read_file(file)) + "\n";
         }

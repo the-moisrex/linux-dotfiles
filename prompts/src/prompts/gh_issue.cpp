@@ -29,21 +29,11 @@ std::string gh_issue_field(std::string const& number, std::string const& field, 
 } // namespace
 
 static void execute_gh_issue(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     // init_prompt --no-files: --head is the only recognized flag; everything
     // else is treated as the issue number.
-    std::vector<std::string> rest;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        rest.emplace_back(ctx.args[i]);
-    }
+    auto rest = positional_args(ctx);
 
     std::string issue_number = rest.empty() ? std::string{} : rest.front();
     std::string issue_url;

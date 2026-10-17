@@ -147,7 +147,7 @@ static void execute_auto(prompt_context& ctx) {
     }
 
     if (input_buffer.empty()) {
-        input_buffer = ctx.clipboard_content();
+        input_buffer = clipboard_content(ctx);
     }
 
     std::string target_script = "summarize";
@@ -238,7 +238,7 @@ static void execute_auto(prompt_context& ctx) {
     }
 
     if (!ctx.stdin_consumed && target_script != "stock") {
-        if (auto id = ctx.clipboard_identifier()) {
+        if (auto id = clipboard_identifier(ctx)) {
             target_script = "stock";
             extra_args.push_back(*id);
         }
@@ -277,7 +277,7 @@ static void execute_auto(prompt_context& ctx) {
         sub_ctx.args_count = n;
         // `printf '%s\n' "$input_buffer"` re-adds the trailing newline that
         // $(cat) stripped.
-        sub_ctx.clear_output();
+        clear_output(sub_ctx);
         sub_ctx.stdin_content = has_stdin ? input_buffer + "\n" : std::string{};
         sub_ctx.stdin_consumed = has_stdin;
         try {

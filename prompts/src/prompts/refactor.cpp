@@ -8,10 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_refactor(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     std::string output;
     output += "Refactor this while preserving behavior.\n";
@@ -22,22 +19,17 @@ static void execute_refactor(prompt_context& ctx) {
     output += "Keep the diff as small and safe as possible.\n\n";
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        std::filesystem::path file(ctx.args[i]);
-        if (std::filesystem::is_regular_file(file)) {
-            output += std::format("File: {}\n\n", file.filename().string());
-            output += std::format("```{}\n", infer_lang(file));
-            output += trim_context_nl(read_file(file), head_lines);
-            output += "\n```\n\n";
-        } else {
-            error += "Warning: File '" + std::string(ctx.args[i]) +
-                     "' not found or is not a "
-                     "regular file.\n";
-        }
+    auto sources = collect_file_args(ctx);
+    for (auto const& file : sources.files) {
+        output += std::format("File: {}\n\n", file.filename().string());
+        output += std::format("```{}\n", infer_lang(file));
+        output += trim_context_nl(read_file(file), head_lines);
+        output += "\n```\n\n";
+    }
+    for (auto arg : sources.missing) {
+        error += "Warning: File '" + std::string(arg) +
+                 "' not found or is not a "
+                 "regular file.\n";
     }
 
     ctx.out = std::move(output);

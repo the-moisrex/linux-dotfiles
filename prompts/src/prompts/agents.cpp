@@ -39,10 +39,7 @@ std::string target_inode_key(std::filesystem::path const& path) {
 } // namespace
 
 static void execute_agents(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     if (ctx.git_root.empty()) {
         throw soft_error{"Error: not inside a git repository.\n"};

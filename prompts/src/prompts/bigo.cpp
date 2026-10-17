@@ -8,10 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_bigo(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     std::string output;
     output += "Calculate the Big O notation for the time and space complexity of the following "
@@ -31,22 +28,18 @@ static void execute_bigo(prompt_context& ctx) {
     // result is discarded; running select_files only reproduces fzf's
     // stderr ("inappropriate ioctl for device" without a tty).
     if (ctx.args_count == 0) {
-        (void)ctx.select_files();
+        (void)select_files(ctx);
     }
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        auto resolved = ctx.resolve_input_file(ctx.args[i]);
+    for (auto const& arg : positional_args(ctx)) {
+        auto resolved = resolve_input_file(ctx, arg);
         if (!resolved) {
-            error += std::format("prompt bigo: file not found: {}\n", std::string(ctx.args[i]));
+            error += std::format("prompt bigo: file not found: {}\n", arg);
             continue;
         }
         if (::access(resolved->c_str(), R_OK) != 0) {
-            error += "prompt bigo: file not readable: \"" + std::string(ctx.args[i]) + "\"; resolved to \"" +
+            error += "prompt bigo: file not readable: \"" + std::string(arg) + "\"; resolved to \"" +
                      resolved->string() + "\"\n";
             continue;
         }

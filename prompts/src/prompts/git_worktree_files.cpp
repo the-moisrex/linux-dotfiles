@@ -27,7 +27,7 @@ std::string strip_trailing_newlines(std::string_view s) {
     return out;
 }
 
-std::string infer_lang(std::string_view base) {
+std::string_view infer_lang(std::string_view base) {
     auto dot = base.rfind('.');
     std::string_view ext = (dot == std::string_view::npos) ? base : base.substr(dot + 1);
     if (base == "Dockerfile") return "dockerfile";
@@ -93,24 +93,14 @@ std::string detect_base_branch(std::string const& given) {
 } // namespace
 
 static void execute_git_worktree_files(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
         throw soft_error{"prompt git.worktree.files: Error: Not inside a git repository.\n"};
     }
 
-    std::vector<std::string> rest;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        rest.emplace_back(ctx.args[i]);
-    }
+    auto rest = positional_args(ctx);
 
     std::string base_branch;
     std::string not_commit;
@@ -159,7 +149,7 @@ static void execute_git_worktree_files(prompt_context& ctx) {
     std::string output;
     std::string error;
     for (auto const& file : changed_files) {
-        auto resolved = ctx.resolve_input_file(file);
+        auto resolved = resolve_input_file(ctx, file);
         if (!resolved) {
             error += std::format("prompt git.worktree.files: file not found: {}\n", file);
             continue;

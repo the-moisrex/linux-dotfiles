@@ -7,7 +7,7 @@
 
 namespace prompt {
 
-std::string infer_lang(std::filesystem::path const& file) {
+std::string_view infer_lang(std::filesystem::path const& file) {
     auto ext = file.extension().string();
     if (ext == ".c" || ext == ".h") return "c";
     if (ext == ".cc" || ext == ".cpp" || ext == ".cxx" || ext == ".c++" || ext == ".hpp" || ext == ".hh" ||

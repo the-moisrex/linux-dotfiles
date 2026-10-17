@@ -9,10 +9,7 @@
 namespace prompt::prompts {
 
 static void execute_spp(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
+    auto head_lines = head_lines_or_throw(ctx);
 
     // spp.sh tests the raw $# (so `prompt spp --head 5` is not an error).
     if (ctx.args_count == 0) {
@@ -25,12 +22,8 @@ static void execute_spp(prompt_context& ctx) {
     output += "Additional C++ symbol context:\n\n";
 
     std::string error;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i;
-            continue;
-        }
-        std::string symbol(ctx.args[i]);
+    for (auto const& arg : positional_args(ctx)) {
+        std::string symbol(arg);
         output += std::format("Symbol: {}\n\n", symbol);
         output += "```cpp\n";
 

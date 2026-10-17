@@ -53,20 +53,10 @@ std::string strip_source_lists(std::string const& content) {
 } // namespace
 
 static void execute_cmake(prompt_context& ctx) {
-    std::optional<std::size_t> head_lines;
     // init_prompt -> parse_arguments runs first (validates --head); the script
     // then walks the remaining args for its own flags.
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines); !msg.empty()) {
-        throw usage_error{std::move(msg)};
-    }
-    std::vector<std::string_view> remaining;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
-            ++i; // --head and its value are consumed by parse_arguments
-        } else {
-            remaining.push_back(ctx.args[i]);
-        }
-    }
+    auto head_lines = head_lines_or_throw(ctx);
+    auto remaining = positional_args(ctx);
 
     std::vector<std::string> exclude_patterns;
     bool strip_lists = false;
