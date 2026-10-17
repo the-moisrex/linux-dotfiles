@@ -12,7 +12,6 @@ import re
 import shlex
 import statistics
 import sys
-import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from datetime import datetime
@@ -24,6 +23,12 @@ _loader = SourceFileLoader("tse", os.path.join(HERE, "tse"))
 _spec = importlib.util.spec_from_loader("tse", _loader)
 tse = importlib.util.module_from_spec(_spec)
 _loader.exec_module(tse)
+
+# The bulk market-watch helpers live in bin/tse so `tse` and `tse.find` share one
+# implementation and one field-mapping.
+marketwatch_path = tse.marketwatch_path
+book_is_real = tse.book_is_real
+fetch_market_watch = tse.fetch_market_watch
 
 SECTOR_CODES = {
     "01": "زراعت و خدمات وابسته", "10": "استخراج زغال سنگ",
@@ -210,53 +215,6 @@ def guess_type(isin, name):
     if re.match(r"^ح\s*\.|^ح\s", text):
         return "right"
     return "other"
-
-
-def marketwatch_path(with_book):
-    params = {"market": 0, "withBestLimits": str(bool(with_book)).lower(), "hEven": 0, "RefID": 0}
-    params.update({f"paperTypes[{i}]": i + 1 for i in range(9)})
-    return "ClosingPrice/GetMarketWatch?" + urllib.parse.urlencode(params)
-
-
-def book_is_real(levels):
-    if not isinstance(levels, list):
-        return False
-    return any(
-        (level.get("qmd") or level.get("qmo") or level.get("pmd") or level.get("pmo"))
-        for level in levels if isinstance(level, dict)
-    )
-
-
-def fetch_market_watch(client, with_book=False):
-    """Merge successive market-watch payloads until kind codes (and book) are present."""
-    merged = {}
-    for _ in range(6):
-        rows = client.api(marketwatch_path(with_book), "marketwatch")
-        if not isinstance(rows, list) or not rows:
-            raise tse.DataError("Unexpected market watch result")
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            code = str(tse.pick(row, "insCode") or "")
-            if not code:
-                continue
-            current = merged.get(code)
-            if current is None:
-                merged[code] = dict(row)
-                continue
-            for key, value in row.items():
-                if key not in current or current[key] in (None, "", 0, []):
-                    current[key] = value
-            if book_is_real(row.get("blDs")) and not book_is_real(current.get("blDs")):
-                current["blDs"] = row["blDs"]
-        kinds = sum(1 for row in merged.values() if tse.pick(row, "yVal") is not None)
-        have_kinds = kinds >= len(merged) * 0.98
-        have_book = not with_book or any(book_is_real(row.get("blDs")) for row in merged.values())
-        if have_kinds and have_book:
-            break
-    if not merged:
-        raise tse.DataError("Market watch returned no instruments")
-    return list(merged.values())
 
 
 def parse_row(row):

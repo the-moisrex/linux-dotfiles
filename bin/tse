@@ -2,16 +2,19 @@
 
 import argparse
 import csv
+import http.client
 import importlib.util
 import io
 import json
 import os
 import re
+import socket
+import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from importlib.machinery import SourceFileLoader
@@ -52,10 +55,63 @@ INDEX_COMPONENTS = (
 )
 
 
-def marketwatch_url():
-    params = {"market": 0, "withBestLimits": "false", "hEven": 0, "RefID": 0}
+def marketwatch_path(with_book=False):
+    params = {"market": 0, "withBestLimits": str(bool(with_book)).lower(), "hEven": 0, "RefID": 0}
     params.update({f"paperTypes[{i}]": i + 1 for i in range(9)})
-    return TSETMC + "/ClosingPrice/GetMarketWatch?" + urllib.parse.urlencode(params)
+    return "ClosingPrice/GetMarketWatch?" + urllib.parse.urlencode(params)
+
+
+def marketwatch_url():
+    return TSETMC + "/" + marketwatch_path()
+
+
+def book_is_real(levels):
+    if not isinstance(levels, list):
+        return False
+    return any(
+        (level.get("qmd") or level.get("qmo") or level.get("pmd") or level.get("pmo"))
+        for level in levels
+        if isinstance(level, dict)
+    )
+
+
+def fetch_market_watch(client, with_book=False):
+    """Merge successive market-watch payloads until kind codes (and book) are present.
+
+    One bulk request returns every instrument's quote fields; a single payload
+    sometimes omits a column, so successive payloads are merged (the same
+    strategy ``tse.find`` relies on).
+    """
+    merged = {}
+    for _ in range(6):
+        rows = client.api(marketwatch_path(with_book), "marketwatch")
+        if not isinstance(rows, list) or not rows:
+            raise DataError("Unexpected market watch result")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            code = str(pick(row, "insCode") or "")
+            if not code:
+                continue
+            current = merged.get(code)
+            if current is None:
+                merged[code] = dict(row)
+                continue
+            for key, field in row.items():
+                if key not in current or current[key] in (None, "", 0, []):
+                    current[key] = field
+            if book_is_real(row.get("blDs")) and not book_is_real(current.get("blDs")):
+                current["blDs"] = row["blDs"]
+        kinds = sum(1 for row in merged.values() if pick(row, "yVal") is not None)
+        have_kinds = kinds >= len(merged) * 0.98
+        have_book = not with_book or any(
+            book_is_real(row.get("blDs")) for row in merged.values()
+        )
+        if have_kinds and have_book:
+            break
+    if not merged:
+        raise DataError("Market watch returned no instruments")
+    return list(merged.values())
 
 
 DataError = codal.DataError
@@ -143,62 +199,149 @@ def marker_hit(text, markers):
     return any(marker in fixed for marker in markers)
 
 
-def verification_page(html):
-    if marker_hit(html, VERIFICATION_MARKERS):
-        return True
-    lowered = html.lower()
-    return "captcha" in lowered or "verify" in lowered
+HTTP_TIMEOUT = 12
+_REDIRECT_CODES = (301, 302, 303, 307, 308)
+
+# Shared leaf executor for independent fetches submitted from workers of the
+# per-command fan-out pool (history components, breadth fallbacks, World Bank
+# series). It is deliberately separate from that pool: a worker blocking on a
+# future from its own pool can deadlock, whereas a disjoint pool cannot.
+_leaf_lock = threading.Lock()
+_leaf_executor = None
+
+
+def leaf_pool():
+    global _leaf_executor
+    with _leaf_lock:
+        if _leaf_executor is None:
+            _leaf_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tse-leaf")
+        return _leaf_executor
 
 
 class Client:
+    """HTTP client that keeps one connection alive per (thread, host).
+
+    ``urllib.request.urlopen`` opens and closes a fresh socket for every call,
+    paying a DNS lookup and TLS handshake each time — expensive under the
+    fan-out pools and the probable cause of the resolver instability noted
+    around ``history``. Reusing the connection per worker thread removes both
+    costs while staying thread-safe (connections are never shared).
+    """
+
     def __init__(self):
         self.blocked_hosts = set()
+        self._local = threading.local()
+        self._context = ssl.create_default_context()
+        self._warm_dns()
+
+    @staticmethod
+    def _warm_dns():
+        for url in (TSETMC, WEBGW, WORLD_BANK.format("x")):
+            host = urllib.parse.urlsplit(url).hostname
+            if not host:
+                continue
+            try:
+                socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+            except OSError:
+                pass
+
+    def _connection(self, scheme, host, port):
+        store = getattr(self._local, "conns", None)
+        if store is None:
+            store = {}
+            self._local.conns = store
+        key = (scheme, host, port)
+        conn = store.get(key)
+        if conn is None:
+            if scheme == "https":
+                conn = http.client.HTTPSConnection(
+                    host, port, timeout=HTTP_TIMEOUT, context=self._context
+                )
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=HTTP_TIMEOUT)
+            store[key] = conn
+        return conn
+
+    def _discard(self, scheme, host, port, conn):
+        try:
+            conn.close()
+        except OSError:
+            pass
+        store = getattr(self._local, "conns", None)
+        if store is not None and store.get((scheme, host, port)) is conn:
+            store.pop((scheme, host, port), None)
+
+    def _open(self, url, accept):
+        """Return (status, body); follows redirects; raises URLError on transport failure."""
+        target = url
+        for _ in range(6):
+            parts = urllib.parse.urlsplit(target)
+            scheme, host = parts.scheme, parts.hostname
+            if not host:
+                raise urllib.error.URLError(f"invalid URL: {target}")
+            port = parts.port or (443 if scheme == "https" else 80)
+            path = urllib.parse.urlunsplit(("", "", parts.path or "/", parts.query, ""))
+            conn = self._connection(scheme, host, port)
+            try:
+                conn.request(
+                    "GET", path, headers={"User-Agent": USER_AGENT, "Accept": accept}
+                )
+                response = conn.getresponse()
+                body = response.read(6_000_001)
+                status = response.status
+                location = response.getheader("Location")
+                if len(body) > 6_000_000:
+                    # Undrained bytes would corrupt the reused connection.
+                    self._discard(scheme, host, port, conn)
+            except (http.client.HTTPException, OSError) as exc:
+                self._discard(scheme, host, port, conn)
+                raise urllib.error.URLError(exc) from exc
+            if status in _REDIRECT_CODES and location:
+                target = urllib.parse.urljoin(target, location)
+                continue
+            return status, body
+        raise DataError(f"Too many redirects: {url}")
 
     def get(self, url, *, accept="application/json"):
         host = urllib.parse.urlsplit(url).hostname
         if host in self.blocked_hosts:
             raise DataError(f"{host} requires browser verification; try again later")
-        request = urllib.request.Request(
-            url, headers={"User-Agent": USER_AGENT, "Accept": accept}
-        )
         verification_retried = False
         for attempt in range(3):
             try:
-                with urllib.request.urlopen(request, timeout=12) as response:
-                    body = response.read(6_000_001)
+                status, body = self._open(url, accept)
                 if len(body) > 6_000_000:
                     raise DataError(f"Response too large: {url}")
-                text = body.decode("utf-8-sig", errors="replace")
-                if marker_hit(text, VERIFICATION_MARKERS):
-                    if not verification_retried:
-                        verification_retried = True
-                        time.sleep(12)
-                        continue
-                    self.blocked_hosts.add(host)
-                    raise DataError(
-                        f"{host} requires browser verification; try again later"
-                    )
-                if marker_hit(text, BLOCK_MARKERS):
-                    raise DataError(
-                        f"Access blocked by {host}; try an Iranian IP without a VPN"
-                    )
-                return text
-            except urllib.error.HTTPError as exc:
-                if exc.code == 429:
+                if status == 429:
                     raise DataError(
                         f"Rate limited by {host} (HTTP 429); wait a few minutes and rerun"
-                    ) from exc
-                if exc.code == 403:
+                    )
+                if status == 403:
                     raise DataError(
                         f"Access denied by {host} (HTTP 403); check your Iranian IP and VPN"
-                    ) from exc
-                if exc.code not in (500, 502, 503, 504) or attempt == 2:
-                    raise DataError(f"{host}: HTTP {exc.code}") from exc
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                    )
+                if status >= 400:
+                    if status not in (500, 502, 503, 504) or attempt == 2:
+                        raise DataError(f"{host}: HTTP {status}")
+                else:
+                    text = body.decode("utf-8-sig", errors="replace")
+                    if marker_hit(text, VERIFICATION_MARKERS):
+                        if not verification_retried:
+                            verification_retried = True
+                            time.sleep(12)
+                            continue
+                        self.blocked_hosts.add(host)
+                        raise DataError(
+                            f"{host} requires browser verification; try again later"
+                        )
+                    if marker_hit(text, BLOCK_MARKERS):
+                        raise DataError(
+                            f"Access blocked by {host}; try an Iranian IP without a VPN"
+                        )
+                    return text
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
                 if attempt == 2:
-                    raise DataError(
-                        f"Cannot reach {urllib.parse.urlsplit(url).hostname}: {exc}"
-                    ) from exc
+                    raise DataError(f"Cannot reach {host}: {exc}") from exc
             time.sleep(1.5 * (attempt + 1))
         raise DataError(f"Cannot retrieve {url}")
 
@@ -513,42 +656,6 @@ def share_changes(client, code):
     return result
 
 
-def dps_history(symbol):
-    url = (
-        f"http://old.tsetmc.com/tsev2/data/DPSData.aspx?s={urllib.parse.quote(symbol)}"
-    )
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(request, timeout=12) as response:
-            text = response.read().decode("utf-8-sig", errors="replace")
-    except Exception as exc:
-        raise DataError(f"DPS fetch failed: {exc}") from exc
-    result = []
-    seen = set()
-    for row in text.split(";"):
-        cols = row.split("@")
-        if len(cols) >= 7 and cols[6]:
-            try:
-                dps = float(cols[6].strip())
-                if dps > 0:
-                    fiscal_year = cols[2].strip()
-                    meeting_date = trade_date(cols[1].strip())
-                    key = (fiscal_year, dps)
-                    if key not in seen and meeting_date:
-                        seen.add(key)
-                        result.append(
-                            {
-                                "fiscal_year": fiscal_year,
-                                "meeting_date": meeting_date,
-                                "dps_rial": dps,
-                            }
-                        )
-            except ValueError:
-                pass
-    result.sort(key=lambda x: x["meeting_date"])
-    return result
-
-
 def adjust_history(unadjusted_history, price_adjustments, share_changes):
     """Backward-adjust prices using official GetPriceAdjustList ratios only.
 
@@ -598,17 +705,28 @@ def adjust_history(unadjusted_history, price_adjustments, share_changes):
 
 
 def history(client, code, days, adjusted=True, errors=None, with_client_type=True):
-    # Deliberately sequential: nesting a pool inside the callers' pool doubles
-    # the number of in-flight connections, and concurrent getaddrinfo() on this
-    # box is unstable (stack smashing / bogus NameErrors in workers).
-    rows = client.api(
-        f"ClosingPrice/GetClosingPriceDailyList/{code}/{days}", "closingPriceDaily"
+    # The price table, the daily حقیقی/حقوقی series and the two corporate-action
+    # lists are mutually independent, so they run concurrently on the shared leaf
+    # pool (a disjoint pool, so a worker waiting on it cannot deadlock). Keeping
+    # connections alive per worker also amortises their TLS handshakes.
+    pool = leaf_pool()
+    daily = pool.submit(
+        client.api,
+        f"ClosingPrice/GetClosingPriceDailyList/{code}/{days}",
+        "closingPriceDaily",
     )
+    flow_future = (
+        pool.submit(client_type_history, client, code) if with_client_type else None
+    )
+    adjust_future = pool.submit(price_adjustments, client, code) if adjusted else None
+    shares_future = pool.submit(share_changes, client, code) if adjusted else None
+
+    rows = daily.result()
     flow_by_date = {}
-    if with_client_type:
+    if flow_future is not None:
         # A failed client-type fetch must not cost the caller the price table.
         try:
-            flow_by_date = client_type_history(client, code)
+            flow_by_date = flow_future.result()
         except DataError as exc:
             if errors is not None:
                 errors["client_type_history"] = str(exc)
@@ -645,8 +763,8 @@ def history(client, code, days, adjusted=True, errors=None, with_client_type=Tru
         )
     if not adjusted:
         return {"unadjusted": unadjusted}
-    pa = price_adjustments(client, code)
-    sc = share_changes(client, code)
+    pa = adjust_future.result()
+    sc = shares_future.result()
     adjusted = adjust_history(unadjusted, pa, sc)
     return {
         "unadjusted": unadjusted,
@@ -1017,26 +1135,34 @@ def world_bank_series(client, indicator):
 
 
 def economy(client):
+    pool = leaf_pool()
+    inflation = pool.submit(world_bank_series, client, "FP.CPI.TOTL.ZG")
+    growth = pool.submit(world_bank_series, client, "NY.GDP.MKTP.KD.ZG")
     return {
         "source": "World Bank (annual data)",
-        "inflation_cpi_annual_pct": world_bank_series(client, "FP.CPI.TOTL.ZG"),
-        "gdp_growth_annual_pct": world_bank_series(client, "NY.GDP.MKTP.KD.ZG"),
+        "inflation_cpi_annual_pct": inflation.result(),
+        "gdp_growth_annual_pct": growth.result(),
     }
 
 
 def market_breadth(client):
+    # Fifteen per-symbol quotes on the shared leaf pool (warm keep-alive
+    # connections) beat the single bulk market-watch request for this scope: the
+    # bulk payload carries the whole market (~1 MB, measured median ~1.7s) while
+    # the fifteen small responses answer in ~0.2s. The bulk endpoint only pays
+    # off when the whole market is needed, as in tse.find.
     results = []
     failures = []
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = [
-            (symbol, pool.submit(quote, client, code))
-            for code, symbol in INDEX_COMPONENTS
-        ]
-        for symbol, future in futures:
-            try:
-                results.append((symbol, future.result()))
-            except DataError as exc:
-                failures.append({"symbol": symbol, "error": str(exc)})
+    pool = leaf_pool()
+    futures = [
+        (symbol, pool.submit(quote, client, code))
+        for code, symbol in INDEX_COMPONENTS
+    ]
+    for symbol, future in futures:
+        try:
+            results.append((symbol, future.result()))
+        except DataError as exc:
+            failures.append({"symbol": symbol, "error": str(exc)})
     components = []
     for symbol, quote_data in results:
         last = quote_data.get("last_rial") or quote_data.get("closing_rial")
@@ -1135,7 +1261,7 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
         "share_count": None,
     }
     codal_errors = {}
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="tse") as pool:
         futures = {
             "identity": pool.submit(identity, client, code),
             "quote": pool.submit(quote, client, code),
@@ -1180,8 +1306,10 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
                 )
             else:
                 errors["codal"] = "No symbol found for Codal search"
-        output["fundamentals"] = info(
-            client, code, ident, output["quote"] or {}, errors
+        # Fundamentals run in the pool too, overlapping the slower history fetch
+        # instead of blocking the collector on the main thread.
+        futures["fundamentals"] = pool.submit(
+            info, client, code, ident, output["quote"] or {}, errors
         )
         for key in ("order_book", "client_type", "indexes", "history"):
             output[key] = take(key)
@@ -1189,6 +1317,7 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
         output["market_context"] = {
             key: value for key, value in context.items() if value is not None
         } or None
+        output["fundamentals"] = take("fundamentals")
         if codal_future is not None:
             output["codal"] = codal_future.result()
             errors.update(codal_errors)
