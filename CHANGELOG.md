@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `fs::bin_tool` now finds repo tools when the binary is **installed** in `bin/`: it looked in `exe_dir/bin/<tool>` (`bin/bin/tse`) instead of `exe_dir/<tool>`, so `prompt stock` (and every tool-invoking prompt) failed outside the build tree with `python3: can't open file '.../tse'` — the miss also fell back to a bare name, which callers then opened relative to the cwd. The `$PATH` fallback now resolves to an absolute path, and `tests/test_fs.cpp` locks the installed/build/git-root/PATH layouts
 - Empty-but-piped stdin handling: `note` (and other stdin-reading prompts) print the same blank embed block as `embed_stdin || true` when the pipe is empty, keeping chained output byte-identical to bash
 - `resolve_input_file` matches the bash implementation (cwd → git root → `git ls-files | fzf -f`)
 - `prompt stock` in the C++ dispatcher honours `--head`: it was parsed but never applied, so `prompt stock --head N <snapshot>` printed the full rendered snapshot instead of the capped one

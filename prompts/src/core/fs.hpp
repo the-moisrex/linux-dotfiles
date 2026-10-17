@@ -17,11 +17,12 @@ std::filesystem::path relative_path(std::filesystem::path const& file,
 
 // Resolve a repository utility (bin/run, bin/tse, bin/gtest-case, ...) without
 // going through prompts/. Search order:
-//   1. exe_path/bin/<name>          (installed layout: prompt lives in bin/)
-//   2. exe_path/../../bin/<name>    (build layout: .../prompts/build/prompt)
-//   3. git_root/bin/<name>          (running from anywhere in the repo)
+//   1. exe_path's directory/<name>   (installed layout: prompt sits in bin/)
+//   2. exe_path/../../bin/<name>     (build layout: .../prompts/build/prompt)
+//   3. git_root/bin/<name>           (running from anywhere in the repo)
 //   4. walk up from cwd to <dir>/bin/<name>
-//   5. bare <name> (PATH lookup by the shell)
+//   5. $PATH/<name>, as an absolute path (so `python3 <tool>` still works)
+//   6. bare <name> (last resort: PATH lookup by the shell)
 std::filesystem::path bin_tool(std::string_view name, std::filesystem::path const& exe_path,
                                std::optional<std::filesystem::path> const& git_root);
 
