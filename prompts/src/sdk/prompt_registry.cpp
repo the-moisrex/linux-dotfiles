@@ -17,9 +17,9 @@ std::size_t prompts_count = 0;
 } // namespace
 
 bool prompt_descriptor_less(prompt_descriptor const* a, prompt_descriptor const* b) noexcept {
-    // The bash dispatcher pipes whole `name<TAB>file` lines through `sort`
-    // under the caller's LC_COLLATE, and the file part can influence the
-    // collation result — so the key must include it verbatim.
+    // The bash reference (prompts-shell/) pipes whole `name<TAB>file` lines
+    // through `sort` under the caller's LC_COLLATE, and the file part can
+    // influence the collation result — so the key must include it verbatim.
     static bool const locale_set = std::setlocale(LC_COLLATE, "") != nullptr;
     (void)locale_set;
     std::string const ka = std::string(a->name) + '\t' + std::string(a->sort_file);
@@ -77,7 +77,7 @@ bool register_prompt(std::string_view name, std::string_view help_summary, void 
 }
 
 void init_prompt_registry() {
-    assign_sort_files(fs::find_git_root().value_or(std::filesystem::current_path()) / "prompts");
+    assign_sort_files(fs::find_git_root().value_or(std::filesystem::current_path()) / "prompts-shell");
 }
 
 } // namespace prompt

@@ -1,5 +1,5 @@
 ---
-# clang-tidy checks for the cpp_prompt dispatcher.
+# clang-tidy checks for the native prompt dispatcher.
 # Two groups: correctness checks we fix on sight, and style checks this
 # project deliberately declines. Run with:
 #   clang-tidy -p build src/*.cpp src/*/*.cpp tests/*.cpp

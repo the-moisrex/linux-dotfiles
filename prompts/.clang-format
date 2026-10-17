@@ -1,5 +1,5 @@
 ---
-# Style for the cpp_prompt port, tuned to match the existing sources:
+# Style for the native prompt port, tuned to match the existing sources:
 # 4-space indent, no namespace indentation (dominant style), left pointers,
 # short ifs/loops on one line, 120 columns (longest legitimate code lines).
 Language: Cpp

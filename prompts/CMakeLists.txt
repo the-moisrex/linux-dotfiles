@@ -106,4 +106,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_subdirectory(tests)
 endif()
 
-install(TARGETS prompt RUNTIME DESTINATION bin)
+# Component "prompt" keeps `cmake --install --component prompt` from also
+# installing the FetchContent'd dependencies (httplib/date) into the prefix.
+install(TARGETS prompt RUNTIME DESTINATION bin COMPONENT prompt)

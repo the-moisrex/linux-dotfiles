@@ -30,7 +30,9 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         std::string_view arg(argv[1]);
         if (arg == "--help" || arg == "-h") {
-            // Same usage text as the bash dispatcher's usage().
+            // Mirrors the bash dispatcher's usage(); the Notes differ because
+            // the native dispatcher ships a fixed prompt set instead of
+            // scanning for prompt files.
             std::cout << R"(Usage:
   prompt --help
   prompt list
@@ -54,15 +56,12 @@ Examples:
   prompt .agents .files one two three .note "Some details" .cli "pwd"
 
 Notes:
-  - Searches $XDG_CONFIG_DIRS/prompts and ../prompts (relative to this script) for prompt files.
-  - Recognized extensions (in search order): .sh .txt .md then no extension.
-  - For .sh prompts, the script will be executed with bash and receive STDIN and any additional arguments.
-  - For .txt/.md (or no-ext treated as text) prompts the file contents are printed, then STDIN is appended (if any).
-  - 'prompt list' is itself a prompt script: it lists available prompts with
-    the first paragraph of each prompt's help as the description (--names for
-    bare names only).
-  - 'prompt list-prompts' is also a prompt script: it prints the full help
-    text of every available prompt.
+  - Ships a fixed set of built-in prompts; it does not scan for prompt files.
+    (The bash reference under prompts-shell/ searches $XDG_CONFIG_DIRS/prompts
+    and its own directory and runs .sh/.txt/.md prompts.)
+  - 'prompt list' lists available prompts with the first paragraph of each
+    prompt's help as the description (--names for bare names only).
+  - 'prompt list-prompts' prints the full help text of every available prompt.
 )";
             return 0;
         }

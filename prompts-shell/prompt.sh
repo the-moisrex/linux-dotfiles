@@ -3,7 +3,7 @@
 # Write a bash script that manages prompts for us.
 #
 # - Add --help
-# - $XDG_CONFIG_DIRS/prompts is where we can find prompt files + an special place "../prompts" which is relative to the source file itself.
+# - $XDG_CONFIG_DIRS/prompts is where we can find prompt files + the special place next to this script (prompts-shell/).
 # - name of the script is `prompt`.
 # - Prompt files are bash scripts or txt or markdown files.
 # - Usage: `cat file.cpp | prompt cpp-debug`  would invoke `cpp-debug.sh` or `cpp-debug.txt`  or `cpp-debug.md` or `cpp-debug` file and append that file.cpp to it.
@@ -33,7 +33,8 @@ _script_dir() {
 }
 
 SCRIPT_DIR="$(_script_dir)"
-SPECIAL_PROMPTS_DIR="$(cd "${SCRIPT_DIR}/../prompts" 2>/dev/null && pwd || true)"
+SPECIAL_PROMPTS_DIR="$SCRIPT_DIR"
+BIN_DIR="$(cd "${SCRIPT_DIR}/../bin" 2>/dev/null && pwd || printf '%s' "$SCRIPT_DIR")"
 
 # Split XDG_CONFIG_DIRS into array
 IFS=':' read -r -a XDG_DIRS_ARRAY <<< "$XDG_CONFIG_DIRS"
@@ -59,6 +60,8 @@ _find_prompt_file() {
     [[ -z "$dir" ]] && continue
     for ext in "${EXT_ORDER[@]}"; do
       candidate="$dir/$name$ext"
+      # This dispatcher is not a prompt, even though it sits next to them.
+      [[ "$(basename "$candidate")" == "prompt.sh" ]] && continue
       if [[ -f "$candidate" ]]; then
         printf "%s" "$candidate"
         return 0
@@ -104,7 +107,7 @@ Examples:
   prompt .agents .files one two three .note "Some details" .cli "pwd"
 
 Notes:
-  - Searches $XDG_CONFIG_DIRS/prompts and ../prompts (relative to this script) for prompt files.
+  - Searches $XDG_CONFIG_DIRS/prompts and the directory containing this script (prompts-shell/) for prompt files.
   - Recognized extensions (in search order): .sh .txt .md then no extension.
   - For .sh prompts, the script will be executed with bash and receive STDIN and any additional arguments.
   - For .txt/.md (or no-ext treated as text) prompts the file contents are printed, then STDIN is appended (if any).
@@ -180,7 +183,7 @@ trap 'rm -f "$_all_output_file" "$_raw_output_file" "$_no_clipboard_file"' EXIT
 
 # Normalize prompt output before printing or copying it anywhere.
 sanitize_output() {
-  "$SCRIPT_DIR/strip-osc" | "$SCRIPT_DIR/clean.privacy"
+  "$BIN_DIR/strip-osc" | "$BIN_DIR/clean.privacy"
 }
 
 # Print output to stdout and append it to the clipboard temp file with
@@ -259,7 +262,7 @@ done
 
 # Copy accumulated output to clipboard
 if [[ -s "$_all_output_file" ]]; then
-  "$SCRIPT_DIR/c.c" < "$_all_output_file"
+  "$BIN_DIR/c.c" < "$_all_output_file"
 fi
 
 exit "$_exit_code"

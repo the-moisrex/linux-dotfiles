@@ -32,7 +32,7 @@ foreach(spec IN LISTS ASSET_FILES)
     endwhile()
 
     string(APPEND body "inline constexpr char const *${ident} = R\"${delim}(${content})${delim}\";\n\n")
-    string(APPEND table "    {.label = \"cpp_prompt/${relpath}\", .lang = \"cpp\", .text = ${ident}},\n")
+    string(APPEND table "    {.label = \"prompts/${relpath}\", .lang = \"cpp\", .text = ${ident}},\n")
     math(EXPR count "${count} + 1")
 endforeach()
 

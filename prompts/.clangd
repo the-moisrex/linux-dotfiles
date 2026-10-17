@@ -1,4 +1,4 @@
-# clangd configuration for the cpp_prompt dispatcher.
+# clangd configuration for the native prompt dispatcher.
 # See: https://clangd.llvm.org/config
 CompileFlags:
   # Pick up compile_commands.json from the build directory.

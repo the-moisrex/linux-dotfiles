@@ -386,6 +386,8 @@ collect_prompts() {
             [[ -f "$file" ]] || continue
             base="$(basename "$file")"
             [[ "$base" == _* ]] && continue
+            # The dispatcher itself lives in this directory now; it is not a prompt.
+            [[ "$base" == prompt.sh ]] && continue
             name="$base"
             for ext in .sh .txt .md; do
                 name="${name%$ext}"

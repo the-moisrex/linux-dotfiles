@@ -43,7 +43,7 @@ chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_des
             prompt_name = arg.substr(1);
         } else if (matched_names == 0 && !arg.empty() && std::isalnum(static_cast<unsigned char>(arg[0])) != 0) {
             // Only the first bare token can name a prompt; later bare words
-            // are arguments (bin/prompt's `elif [[ ${#_prompts[@]} -eq 0 ]]`).
+            // are arguments (the bash dispatcher's `elif [[ ${#_prompts[@]} -eq 0 ]]`).
             prompt_name = arg;
         }
 

@@ -41,11 +41,11 @@ static void execute_new(prompt_context& ctx) {
         if (!content.empty()) output += content + "\n\n";
     }
 
-    output += R"NEWTEXT(Write a new native (C++) prompt for cpp_prompt.
+    output += R"NEWTEXT(Write a new native (C++) prompt for the prompt dispatcher in `prompts/`.
 
 Goal:
-Create a complete, ready-to-use implementation in cpp_prompt/src/prompts/<name>.cpp that generates an AI prompt.
-cpp_prompt is a one-file-per-prompt native replacement for bin/prompt + prompts/*.sh; match the style, structure, and helpers of the prompts already there.
+Create a complete, ready-to-use implementation in `prompts/src/prompts/<name>.cpp` that generates an AI prompt.
+The native dispatcher in `prompts/` is a one-file-per-prompt C++ replacement for the bash `prompts-shell/` (its `prompt.sh` dispatcher + `*.sh` prompts); match the style, structure, and helpers of the prompts already there.
 
 Requirements for the generated prompt:
 - Implement `static void execute_<name>(prompt_context&)` and `static void render_help_<name>(std::ostream&)`, then register the prompt at the end of the file:
@@ -65,7 +65,7 @@ If extra reference files are provided, treat them as examples or domain context 
 
 Return:
 1. A short explanation of the design choices.
-2. The full contents of cpp_prompt/src/prompts/<name>.cpp.
+2. The full contents of `prompts/src/prompts/<name>.cpp`.
 3. The <name> you chose and one or two example invocations.
 )NEWTEXT";
 
@@ -101,7 +101,7 @@ static void render_help_new(std::ostream& os) {
     os << R"EOF(Usage: prompt new [--head N] [FILE...]
        echo "what the prompt should do" | prompt new [--head N] [FILE...]
 
-Builds a prompt that asks an AI to write a new native (C++) prompt for cpp_prompt following its conventions.
+Builds a prompt that asks an AI to write a new native (C++) prompt for the `prompts/` dispatcher following its conventions.
 
 Always embeds the SDK headers and an example prompt so the AI has enough
 context to generate a good, consistent prompt.
@@ -116,9 +116,9 @@ Options:
 
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
-bool const registered = prompt::register_prompt(
-    "new",
-    "Builds a prompt that asks an AI to write a new native (C++) prompt for cpp_prompt following its conventions.",
-    &execute_new, &render_help_new);
+bool const registered = prompt::register_prompt("new",
+                                                "Builds a prompt that asks an AI to write a new native (C++) prompt "
+                                                "for the `prompts/` dispatcher following its conventions.",
+                                                &execute_new, &render_help_new);
 
 } // namespace prompt::prompts
