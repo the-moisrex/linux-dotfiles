@@ -108,6 +108,36 @@ def tehran_now():
     return datetime.now(tz)
 
 
+def jalali_stamp(moment):
+    """Aware datetime -> Jalali 'YYYY/MM/DD HH:MM:SS' (mirrors bin/tse)."""
+    month_days = (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+    gm = moment.month
+    gy2 = moment.year + 1 if gm > 2 else moment.year
+    days = (
+        355666
+        + 365 * moment.year
+        + (gy2 + 3) // 4
+        - (gy2 + 99) // 100
+        + (gy2 + 399) // 400
+        + moment.day
+        + month_days[gm - 1]
+    )
+    jy = -1595 + 33 * (days // 12053)
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + days // 31
+        jd = 1 + days % 31
+    else:
+        jm = 7 + (days - 186) // 30
+        jd = 1 + (days - 186) % 30
+    return f"{jy}/{jm:02d}/{jd:02d} {moment:%H:%M:%S}"
+
+
 def ocr_candidates(image):
     if not image:
         return []
@@ -560,7 +590,7 @@ def trim_announcements(data, top):
 
 def codal_snapshot(symbol, top, errors, fund=False):
     result = codal(symbol, errors, fund=fund)
-    return {**trim_announcements(result, top), "retrieved_at": tehran_now().isoformat(timespec="seconds")}
+    return {**trim_announcements(result, top), "retrieved_at": jalali_stamp(tehran_now())}
 
 
 def main(argv=None):

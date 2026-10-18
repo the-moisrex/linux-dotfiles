@@ -158,13 +158,106 @@ def price(value):
     return value if value not in (None, 0) else None
 
 
-def trade_date(value):
-    text = normal(value)
-    return (
-        f"{text[:4]}-{text[4:6]}-{text[6:8]}"
-        if re.fullmatch(r"\d{8}", text)
-        else text or None
+GREGORIAN_DATE_RE = re.compile(r"(\d{4})-?(\d{2})-?(\d{2})")
+
+
+def gregorian_to_jalali(gy, gm, gd):
+    """Gregorian (y, m, d) -> Jalali (y, m, d), pure integer arithmetic."""
+    month_days = (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+    gy2 = gy + 1 if gm > 2 else gy
+    days = (
+        355666
+        + 365 * gy
+        + (gy2 + 3) // 4
+        - (gy2 + 99) // 100
+        + (gy2 + 399) // 400
+        + gd
+        + month_days[gm - 1]
     )
+    jy = -1595 + 33 * (days // 12053)
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + days // 31
+        jd = 1 + days % 31
+    else:
+        jm = 7 + (days - 186) // 30
+        jd = 1 + (days - 186) % 30
+    return jy, jm, jd
+
+
+def jalali_to_gregorian(jy, jm, jd):
+    """Jalali (y, m, d) -> Gregorian (y, m, d), the inverse of the above."""
+    jy += 1595
+    days = -355668 + 365 * jy + (jy // 33) * 8 + ((jy % 33) + 3) // 4 + jd
+    days += (jm - 1) * 31 if jm < 7 else (jm - 7) * 30 + 186
+    gy = 400 * (days // 146097)
+    days %= 146097
+    if days > 36524:
+        days -= 1
+        gy += 100 * (days // 36524)
+        days %= 36524
+        if days >= 365:
+            days += 1
+    gy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        gy += (days - 1) // 365
+        days = (days - 1) % 365
+    gd = days + 1
+    leap = (gy % 4 == 0 and gy % 100 != 0) or gy % 400 == 0
+    month_days = (0, 31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    gm = 0
+    while gm < 13 and gd > month_days[gm]:
+        gd -= month_days[gm]
+        gm += 1
+    return gy, gm, gd
+
+
+def jalali_day(moment):
+    """Aware datetime -> compact Jalali 'YYYYMMDD' (used for file names)."""
+    jy, jm, jd = gregorian_to_jalali(moment.year, moment.month, moment.day)
+    return f"{jy}{jm:02d}{jd:02d}"
+
+
+def jalali_stamp(moment):
+    """Aware datetime -> Jalali 'YYYY/MM/DD HH:MM:SS'."""
+    jy, jm, jd = gregorian_to_jalali(moment.year, moment.month, moment.day)
+    return f"{jy}/{jm:02d}/{jd:02d} {moment:%H:%M:%S}"
+
+
+def trade_date(value):
+    """TSETMC `dEven`-style Gregorian YYYYMMDD (or YYYY-MM-DD) -> Jalali YYYY/MM/DD."""
+    text = normal(value)
+    match = GREGORIAN_DATE_RE.fullmatch(text)
+    if match:
+        jy, jm, jd = gregorian_to_jalali(*(int(part) for part in match.groups()))
+        return f"{jy}/{jm:02d}/{jd:02d}"
+    return text or None
+
+
+def parse_moment(text):
+    """Parse a Jalali 'YYYY/MM/DD HH:MM:SS' stamp or a legacy ISO timestamp
+    (older .stock files) into an aware Tehran datetime, else None."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    text = text.strip()
+    match = re.fullmatch(r"(\d{4})/(\d{2})/(\d{2})[ T](\d{2}):(\d{2}):(\d{2})", text)
+    if match:
+        jy, jm, jd, hour, minute, second = (int(part) for part in match.groups())
+        gy, gm, gd = jalali_to_gregorian(jy, jm, jd)
+        try:
+            return datetime(gy, gm, gd, hour, minute, second, tzinfo=tehran_now().tzinfo)
+        except ValueError:
+            return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def trade_time(value):
@@ -1240,7 +1333,7 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
     now = tehran_now()
     errors = {}
     output = {
-        "fetched_at": now.isoformat(timespec="seconds"),
+        "fetched_at": jalali_stamp(now),
         "market_session_open": market_session_open(now),
         "instrument": instrument,
         "quote": None,
@@ -1333,8 +1426,10 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
 
 
 def markdown(data):
+    when = parse_moment(data.get("fetched_at"))
+    fetched = jalali_stamp(when) if when is not None else (data.get("fetched_at") or "unknown")
     lines = [
-        f"Fetched at (Asia/Tehran): {data['fetched_at']}",
+        f"Fetched at: {fetched}",
         f"Market session open by schedule: {data['market_session_open']} (does not guarantee an instrument is trading)",
         "Prices and traded value are in rial, not toman. Missing values are unknown, not zero.",
     ]
@@ -1482,14 +1577,12 @@ def markdown(data):
 def snapshot_meta_text(meta, data):
     """The four header lines stock.sh derives from a .stock snapshot."""
     fetched = data.get("fetched_at") or meta.get("fetched_at") or ""
-    stale = ""
-    if isinstance(fetched, str) and fetched:
-        try:
-            when = datetime.fromisoformat(fetched)
-            age = datetime.now(when.tzinfo) - when
-            stale = "yes" if age.total_seconds() > 86400 else "no"
-        except ValueError:
-            stale = "?"
+    when = parse_moment(fetched)
+    if when is not None:
+        stale = "yes" if (datetime.now(when.tzinfo) - when).total_seconds() > 86400 else "no"
+        fetched = jalali_stamp(when)
+    else:
+        stale = "?" if isinstance(fetched, str) and fetched else ""
     note = meta.get("note")
     note = "" if note in (None, "") else " ".join(str(note).split())
     bits = []
@@ -1738,7 +1831,7 @@ History options: --full (all records) is the default; --days N overrides it.""",
     else:
         now = tehran_now()
         summary = {
-            "fetched_at": now.isoformat(timespec="seconds"),
+            "fetched_at": jalali_stamp(now),
             "market_session_open": market_session_open(now),
             "instrument": instrument,
             "quote": result if args.command == "quote" else None,

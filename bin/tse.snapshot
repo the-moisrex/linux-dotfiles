@@ -2,6 +2,7 @@
 """tse.snapshot — fetch full `tse all` data for screened symbols into .stock files."""
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -19,6 +21,12 @@ TEHRAN = ZoneInfo("Asia/Tehran")
 SAFE_CHARS = re.compile(r'[\s\\/:*?"<>|\[\]]+')
 DASH_LINE = re.compile(r"[-=_]+$")
 FETCH_TIMEOUT = 300
+
+# Reuse the Jalali helpers (and the rest of the field-mapping) from bin/tse.
+_loader = SourceFileLoader("tse", str(TSE))
+_spec = importlib.util.spec_from_loader("tse", _loader)
+tse = importlib.util.module_from_spec(_spec)
+_loader.exec_module(tse)
 
 
 class SnapshotError(Exception):
@@ -138,7 +146,7 @@ def process(entry, outdir, date, opts):
     meta = {
         "version": 1,
         "fetched_at": data.get("fetched_at"),
-        "saved_at": datetime.now(TEHRAN).isoformat(timespec="seconds"),
+        "saved_at": tse.jalali_stamp(datetime.now(TEHRAN)),
         "source": source,
         "input": token,
         "symbol": instrument.get("symbol"),
@@ -174,7 +182,8 @@ def main(argv=None):
   tse.find findings.tse --format jsonl | fzf --multi | tse.snapshot stocks/
   printf 'فولاد\\nوبملت\\n' | tse.snapshot stocks/
 
-files are named <dir>/YYYYMMDD_<symbol>_<ISIN>.stock and are not re-fetched on
+files are named <dir>/YYYYMMDD_<symbol>_<ISIN>.stock (YYYYMMDD is the Jalali
+date) and are not re-fetched on
 re-run unless --force is given (so a failed batch can be topped up by rerunning).
 each fetch is one `tse all` process (300s timeout); with several parallel jobs the
 Codal sections (they solve Codal's rate-limit captcha through `codal` when needed)
@@ -214,7 +223,7 @@ them).""",
 
     outdir = Path(opts.dir).expanduser()
     outdir.mkdir(parents=True, exist_ok=True)
-    date = datetime.now(TEHRAN).strftime("%Y%m%d")
+    date = tse.jalali_day(datetime.now(TEHRAN))
 
     counts = {"saved": 0, "skip": 0, "fail": 0}
     with ThreadPoolExecutor(max_workers=opts.jobs) as pool:
