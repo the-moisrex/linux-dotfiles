@@ -183,6 +183,74 @@ transfer /tmp/test.md
 cat /tmp/test.md | transfer test.md
 ```
 
+### `browser.find`
+
+Discover the browsers installed on the machine, their profiles, which profiles are
+currently open (with PIDs), and the system default. Covers both Chromium-family
+(Chrome, Chromium, Brave, Edge, Vivaldi, …) and Firefox-family (Firefox, Developer
+Edition, Nightly) browsers. Output is human-readable by default and JSON with
+`--json`, so other scripts can consume it.
+
+```bash
+browser.find list                  # installed browsers + profile counts
+browser.find profiles [browser]    # every profile, with default/open flags
+browser.find profiles --open-only  # only profiles of running browsers
+browser.find open                  # running browsers with PIDs + profiles
+browser.find default               # system default browser + profile
+browser.find list --json           # machine-readable snapshot
+```
+
+### `cookies`
+
+Extract cookies and saved logins for a site from the first matching browser/profile.
+It resolves browsers through `browser.find` (Chromium-family first, then Firefox-family),
+preferring currently open profiles and the system default. Databases locked by a running
+browser are copied (with their `-wal`/`-shm` sidecars) before being read.
+
+```bash
+cookies grok.com                        # cookies for the site (first match)
+cookies https://x.com --open-only       # only currently running browsers
+cookies grok.com --browser firefox --profile default-3
+cookies grok.com --kind both --all      # cookies + logins from every match
+cookies grok.com --format header        # "name=value; ..." for curl/requests
+cookies grok.com --format netscape      # cookies.txt for curl/yt-dlp/wget
+cookies grok.com --list                 # which profiles have data, no secrets
+```
+
+Chromium cookies/logins are decrypted with the key from the login keyring
+(`secret-tool`, falling back to the `peanuts` password-store key); Firefox cookies are
+read directly. Saved logins come from Chromium's `Login Data` and from Firefox's
+`logins.db` (the PBES2-wrapped `key4.db` key plus the `as-logins-key` JWE) or legacy
+`logins.json`. A Firefox primary password is prompted for unless `--master-password`
+is given. When a site matches nothing, a hint on stderr points at `browser.storage`
+if the same site keeps a token in `localStorage` (disable with `--no-hint`).
+
+### `browser.storage`
+
+Read a site's web storage — `localStorage` (default) or `sessionStorage` — from the
+first matching browser/profile, the counterpart to `cookies` for SPAs that keep
+their login token in `localStorage` rather than the cookie jar. Like `cookies` it
+resolves browsers through `browser.find`; storage is keyed by *origin*
+(`scheme://host[:port]`), so a bare host matches across schemes/ports unless you
+pin one. Firefox reads `storage/{default,permanent}/<origin>/ls/data.sqlite`
+(Snappy values decoded in pure Python); Chromium reads its LevelDB store
+(`Local Storage/leveldb`) with a small built-in LevelDB reader — SST tables and
+write-ahead log — so no external `plyvel`/`snappy` is needed and locked stores are
+still safe to read.
+
+```bash
+browser.storage example.com                  # storage entries (first match)
+browser.storage https://example.com --exact  # exact origin, no subdomains
+browser.storage example.com --key Authorization --value-only
+browser.storage example.com --grep 'auth|token'
+browser.storage example.com --kind all --all # localStorage + sessionStorage, every match
+browser.storage example.com --format json    # machine-readable, values included
+browser.storage --list                     # profiles with storage, no secrets
+```
+
+`--format` is `table` (default), `json` or `raw`; `--no-values` shows only key names
+(`--format json` then reports `keys`/`count`), and `--value-only` prints just values.
+
 ### Other Web tools
 
 - __blogs__ — print random blog post links from indieblog.page

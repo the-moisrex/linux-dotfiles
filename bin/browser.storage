@@ -1,0 +1,710 @@
+#!/usr/bin/env python3
+"""browser.storage — read web-storage (localStorage/sessionStorage) from browsers.
+
+General purpose helper built on ``browser.find``: ask for a site and it locates the
+first browser/profile that has web-storage data for it, unless you pin a
+browser/profile.  It complements ``cookies`` -- a login whose credential only lives
+in ``localStorage`` (a very common SPA pattern) shows up here but not in the cookie
+jar.
+
+Storage is stored per *origin* (scheme + host + port), not per cookie domain.
+Read sources:
+
+  * firefox family  — ``storage/{default,permanent}/<origin>/ls/data.sqlite`` for
+    localStorage and ``storage/temporary`` for sessionStorage.  Values may be
+    Snappy-compressed (Firefox only), which is decoded here in pure Python.
+  * chromium family — the LevelDB store under ``Local Storage/leveldb`` (and
+    ``Session Storage/leveldb``), read read-only with a small pure-Python LevelDB
+    parser (SST tables + write-ahead log; no ``plyvel``/``snappy`` needed).
+
+Usage:
+  browser.storage example.com                 # storage entries, first matching profile
+  browser.storage https://example.com --exact # exact origin instead of subdomains
+  browser.storage example.com --key Authorization --format raw
+  browser.storage example.com --format json
+  browser.storage example.com --value-only    # just the values, one per line
+  browser.storage example.com --kind all --all
+  browser.storage --list                    # which profiles have storage, no secrets
+
+Exit status is 0 when data was found, 1 when nothing matched, 2 on usage errors.
+"""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import glob
+import importlib.util
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import zlib
+from importlib.machinery import SourceFileLoader
+from urllib.parse import urlparse
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# --------------------------------------------------------------------- browser.find
+
+
+_BROWSER_FIND = None
+
+
+class StorageError(Exception):
+    pass
+
+
+def _load_browser_find():
+    global _BROWSER_FIND
+    if _BROWSER_FIND is not None:
+        return _BROWSER_FIND
+    path = os.path.join(HERE, "browser.find")
+    if not os.path.exists(path):
+        path = shutil.which("browser.find") or ""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        loader = SourceFileLoader("browser_find", path)
+        spec = importlib.util.spec_from_loader("browser_find", loader)
+        module = importlib.util.module_from_spec(spec)
+        # dataclasses looks the module up in sys.modules while executing.
+        sys.modules["browser_find"] = module
+        loader.exec_module(module)
+    except Exception:
+        return None
+    _BROWSER_FIND = module
+    return module
+
+
+def get_browsers():
+    """Browser/profile snapshot as plain dicts (from browser.find)."""
+    module = _load_browser_find()
+    if module is not None:
+        return [module.browser_dict(b) for b in module.collect()]
+    exe = shutil.which("browser.find")
+    if not exe:
+        raise StorageError("browser.find not found next to browser.storage or on PATH")
+    out = subprocess.run([exe, "list", "--json"], capture_output=True, text=True)
+    if out.returncode not in (0, 1) or not out.stdout.strip():
+        raise StorageError(out.stderr.strip() or "browser.find failed")
+    return json.loads(out.stdout)
+
+
+# ------------------------------------------------------------------------- sqlite
+
+
+_TMP_ROOT = tempfile.mkdtemp(prefix="browser-storage-")
+atexit.register(lambda: shutil.rmtree(_TMP_ROOT, ignore_errors=True))
+
+
+def open_sqlite(path):
+    """Open a possibly-locked SQLite DB read-only via a consistent temp copy."""
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError(path)
+    work = tempfile.mkdtemp(dir=_TMP_ROOT)
+    base = os.path.basename(path)
+    for suffix in ("", "-wal", "-shm"):
+        src = path + suffix
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(work, base + suffix))
+    conn = sqlite3.connect(os.path.join(work, base), uri=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# ------------------------------------------------------------------------ snappy
+
+
+def snappy_decompress(data):
+    """Decode the Snappy *raw* block format (used by Firefox storage + LevelDB)."""
+    length, pos = _varint(data, 0)
+    out = bytearray()
+    n = len(data)
+    while pos < n:
+        tag = data[pos]
+        pos += 1
+        kind = tag & 0x03
+        if kind == 0:  # literal
+            ln = tag >> 2
+            if ln < 60:
+                ln += 1
+            else:
+                extra = ln - 59
+                ln = int.from_bytes(data[pos:pos + extra], "little") + 1
+                pos += extra
+            out += data[pos:pos + ln]
+            pos += ln
+        else:  # copy
+            if kind == 1:
+                ln = ((tag >> 2) & 0x07) + 4
+                offset = ((tag >> 5) << 8) | data[pos]
+                pos += 1
+            elif kind == 2:
+                ln = (tag >> 2) + 1
+                offset = int.from_bytes(data[pos:pos + 2], "little")
+                pos += 2
+            else:
+                ln = (tag >> 2) + 1
+                offset = int.from_bytes(data[pos:pos + 4], "little")
+                pos += 4
+            if offset == 0 or offset > len(out):
+                raise StorageError("corrupt snappy stream")
+            start = len(out) - offset
+            if offset >= ln:
+                out += out[start:start + ln]
+            else:
+                for i in range(ln):
+                    out.append(out[start + i])
+    if len(out) != length:
+        raise StorageError("snappy length mismatch")
+    return bytes(out)
+
+
+def _varint(buf, pos):
+    result = 0
+    shift = 0
+    while True:
+        b = buf[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not b & 0x80:
+            return result, pos
+        shift += 7
+
+
+# ---------------------------------------------------------------- leveldb (chromium)
+
+_LEV_MAGIC = 0xDB4775248B80FB57
+
+
+def _read_block(data, offset, size):
+    raw = data[offset:offset + size]
+    ctype = data[offset + size] if offset + size < len(data) else 0
+    if ctype == 1:
+        return snappy_decompress(raw)
+    if ctype == 2:
+        return zlib.decompress(raw)
+    return raw
+
+
+def _iter_block(block):
+    """Yield ``(key, value)`` from a LevelDB block body."""
+    if len(block) < 4:
+        return
+    num_restarts = int.from_bytes(block[-4:], "little")
+    restart_off = len(block) - 4 - num_restarts * 4
+    if num_restarts == 0 or restart_off < 0:
+        restart_off = len(block)
+    pos = 0
+    last = b""
+    while pos < restart_off:
+        shared, pos = _varint(block, pos)
+        non_shared, pos = _varint(block, pos)
+        vlen, pos = _varint(block, pos)
+        key = last[:shared] + block[pos:pos + non_shared]
+        pos += non_shared
+        value = block[pos:pos + vlen]
+        pos += vlen
+        last = key
+        yield key, value
+
+
+def _iter_table(path):
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if len(data) < 48:
+        return
+    footer = data[-48:]
+    if int.from_bytes(footer[40:48], "little") != _LEV_MAGIC:
+        return
+    pos = 0
+    _, pos = _varint(footer, pos)          # metaindex offset
+    _, pos = _varint(footer, pos)          # metaindex size
+    index_off, pos = _varint(footer, pos)
+    index_size, pos = _varint(footer, pos)
+    index_block = _read_block(data, index_off, index_size)
+    for _, handle in _iter_block(index_block):
+        h_off, p = _varint(handle, 0)
+        h_size, _ = _varint(handle, p)
+        for key, value in _iter_block(_read_block(data, h_off, h_size)):
+            # Data blocks hold *internal* keys: user key + 8-byte (sequence<<8|type).
+            yield key[:-8] if len(key) >= 8 else key, value
+
+
+def _iter_log_records(data):
+    """Reassemble logical records from a LevelDB write-ahead log."""
+    block_size = 32768
+    pending = []
+    pos = 0
+    while pos < len(data):
+        block = data[pos:pos + block_size]
+        p = 0
+        while p + 7 <= len(block):
+            length = int.from_bytes(block[p + 4:p + 6], "little")
+            rtype = block[p + 6]
+            if length == 0 and rtype == 0:
+                break  # zero padding to the end of the block
+            p += 7
+            if p + length > len(block):
+                break
+            chunk = block[p:p + length]
+            p += length
+            if rtype == 1:      # full
+                yield chunk
+            elif rtype == 2:    # first
+                pending = [chunk]
+            elif rtype == 3:    # middle
+                pending.append(chunk)
+            elif rtype == 4:    # last
+                pending.append(chunk)
+                yield b"".join(pending)
+                pending = []
+        pos += block_size
+
+
+def _iter_write_batch(record):
+    if len(record) < 12:
+        return
+    count = int.from_bytes(record[8:12], "little")
+    pos = 12
+    for _ in range(count):
+        if pos >= len(record):
+            break
+        item = record[pos]
+        pos += 1
+        klen, pos = _varint(record, pos)
+        key = record[pos:pos + klen]
+        pos += klen
+        if item == 1:
+            vlen, pos = _varint(record, pos)
+            value = record[pos:pos + vlen]
+            pos += vlen
+            yield key, value
+        else:
+            yield key, None
+
+
+def read_leveldb(dirpath):
+    """Return ``{key_bytes: value_bytes}`` merged from a LevelDB directory."""
+    entries = {}
+    tables = sorted(glob.glob(os.path.join(dirpath, "*.ldb"))
+                    + glob.glob(os.path.join(dirpath, "*.sst")))
+    for path in tables:
+        try:
+            for key, value in _iter_table(path):
+                entries[key] = value
+        except (OSError, StorageError, IndexError):
+            continue
+    logs = sorted(glob.glob(os.path.join(dirpath, "*.log")))
+    for path in logs:
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        try:
+            for record in _iter_log_records(data):
+                for key, value in _iter_write_batch(record):
+                    if value is None:
+                        entries.pop(key, None)
+                    else:
+                        entries[key] = value
+        except (StorageError, IndexError):
+            continue
+    return entries
+
+
+def _decode_storage_string(marker, raw):
+    if marker == 0:
+        return raw.decode("utf-16-le", "replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
+
+
+def read_chromium_storage(profile, kind, domain, exact):
+    base = os.path.join(profile["path"], "Local Storage"
+                        if kind == "localstorage" else "Session Storage")
+    leveldb = os.path.join(base, "leveldb")
+    if not os.path.isdir(leveldb):
+        if os.path.isdir(base) and any(
+                f.endswith((".ldb", ".log", ".sst")) for f in os.listdir(base)):
+            leveldb = base
+        else:
+            return []
+    entries = read_leveldb(leveldb)
+    out = []
+    for key, value in entries.items():
+        if key == b"VERSION" or key.startswith(b"META:"):
+            continue
+        if not key.startswith(b"_"):
+            continue
+        rest = key[1:]
+        nul = rest.find(b"\x00")
+        if nul <= 0:
+            continue
+        origin = rest[:nul].decode("utf-8", "replace")
+        if not origin_matches(origin, domain, exact):
+            continue
+        tail = rest[nul + 1:]
+        if not tail:
+            continue
+        name = _decode_storage_string(tail[0], tail[1:])
+        val = _decode_storage_string(value[0], value[1:]) if value else ""
+        out.append({"origin": origin, "key": name, "value": val, "kind": kind})
+    return out
+
+
+# -------------------------------------------------------------------- firefox read
+
+
+def _decode_firefox_value(value, utf16_length, conversion_type, compression_type):
+    if isinstance(value, str):  # a few stores keep TEXT rather than BLOB
+        return value
+    raw = bytes(value) if value is not None else b""
+    if compression_type:
+        try:
+            raw = snappy_decompress(raw)
+        except (StorageError, IndexError):
+            pass
+    if conversion_type == 1:
+        return raw.decode("utf-8", "replace")
+    if utf16_length and len(raw) == utf16_length * 2:
+        try:
+            return raw.decode("utf-16-le")
+        except UnicodeDecodeError:
+            pass
+    return raw.decode("utf-8", "replace")
+
+
+def origin_from_dir(name):
+    """Decode a Firefox storage directory name into an origin string."""
+    name = name.split("^", 1)[0]
+    if "+++" not in name:
+        return ""
+    scheme, rest = name.split("+++", 1)
+    if scheme == "file":
+        return "file://" + rest.replace("+", "/")
+    if "+" in rest:
+        host, port = rest.rsplit("+", 1)
+        if port.isdigit():
+            return f"{scheme}://{host}:{port}"
+    return f"{scheme}://{rest}"
+
+
+def _firefox_roots(profile_path, kind):
+    storage = os.path.join(profile_path, "storage")
+    subs = ("default", "permanent") if kind == "localstorage" else ("temporary",)
+    return [os.path.join(storage, s) for s in subs]
+
+
+def read_firefox_storage(profile, kind, domain, exact):
+    out = []
+    for root in _firefox_roots(profile["path"], kind):
+        if not os.path.isdir(root):
+            continue
+        try:
+            origin_dirs = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for origin_dir in origin_dirs:
+            db = os.path.join(root, origin_dir, "ls", "data.sqlite")
+            if not os.path.isfile(db):
+                continue
+            origin = origin_from_dir(origin_dir)
+            if not origin_matches(origin, domain, exact):
+                continue
+            try:
+                conn = open_sqlite(db)
+                rows = conn.execute(
+                    "select key, value, utf16_length, conversion_type, "
+                    "compression_type from data").fetchall()
+            except (sqlite3.Error, OSError):
+                continue
+            for row in rows:
+                value = _decode_firefox_value(
+                    row["value"], row["utf16_length"],
+                    row["conversion_type"], row["compression_type"])
+                out.append({"origin": origin, "key": row["key"],
+                            "value": value, "kind": kind})
+    return out
+
+
+# ------------------------------------------------------------------ origin match
+
+
+def domain_of(target):
+    t = (target or "").strip()
+    if "://" in t:
+        return (urlparse(t).hostname or "").lower()
+    t = t.split("/", 1)[0].split("?", 1)[0].strip().rstrip(".")
+    if t.count(":") == 1 and t.rsplit(":", 1)[1].isdigit():
+        t = t.rsplit(":", 1)[0]
+    return t.lower()
+
+
+def host_matches(host, domain, exact):
+    """Bidirectional label match (as ``cookies``); ``--exact`` is strict equality."""
+    if not host or not domain:
+        return False
+    host = host.lower().lstrip(".")
+    if exact:
+        return host == domain
+    return (host == domain
+            or host.endswith("." + domain)
+            or domain.endswith("." + host))
+
+
+def _parse_origin(origin):
+    if "://" in origin:
+        u = urlparse(origin)
+        try:
+            port = u.port
+        except ValueError:
+            port = None
+        return u.scheme.lower(), (u.hostname or "").lower(), port
+    return "", origin.lower(), None
+
+
+def origin_matches(origin, domain, exact):
+    if domain is None:  # no target: every origin matches (used by --list)
+        return True
+    scheme, host, port = _parse_origin(origin)
+    if not host:
+        return False
+    if not host_matches(host, domain["host"], exact):
+        return False
+    if exact and domain["scheme"]:
+        # strict origin: scheme and port must match too
+        return scheme == domain["scheme"] and port == domain["port"]
+    if domain["port"] is not None and port != domain["port"]:
+        return False
+    if domain["scheme"] and scheme != domain["scheme"]:
+        return False
+    return True
+
+
+def parse_target(target):
+    t = (target or "").strip()
+    if "://" in t:
+        u = urlparse(t)
+        try:
+            port = u.port
+        except ValueError:
+            port = None
+        return {"scheme": u.scheme.lower(), "host": (u.hostname or "").lower(),
+                "port": port}
+    host, port = t, None
+    if t.count(":") == 1 and t.rsplit(":", 1)[1].isdigit():
+        host, p = t.rsplit(":", 1)
+        port = int(p)
+    return {"scheme": "", "host": host.lower().rstrip("."), "port": port}
+
+
+# ----------------------------------------------------------------- target choice
+
+
+def ordered_profiles(browsers, args):
+    pairs = []
+    seen = set()
+    for b in browsers:
+        if args.browser:
+            wanted = {x.lower() for x in args.browser}
+            if b["id"].lower() not in wanted and b["name"].lower() not in wanted:
+                continue
+        if args.family and b["family"] != args.family:
+            continue
+        for p in b["profiles"]:
+            if args.open_only and not p["is_open"]:
+                continue
+            if args.profile:
+                cand = {p["name"].lower(), os.path.basename(p["path"]).lower(),
+                        p["path"].lower()}
+                if args.profile.lower() not in cand:
+                    continue
+            real = os.path.realpath(p["path"])
+            if real in seen:
+                continue
+            seen.add(real)
+            pairs.append((b, p))
+    pairs.sort(key=lambda bp: (
+        not bp[1]["is_open"], not bp[1]["is_default"], bp[1]["name"]))
+    return pairs
+
+
+def kinds_of(arg):
+    return ["localstorage", "sessionstorage"] if arg == "all" else [arg]
+
+
+def read_storage(browser, profile, kind, domain, exact):
+    if browser["family"] == "chromium":
+        return read_chromium_storage(profile, kind, domain, exact)
+    return read_firefox_storage(profile, kind, domain, exact)
+
+
+def collect_entries(browser, profile, kinds, domain, exact, key, grep):
+    pattern = re.compile(grep) if grep else None
+    entries = []
+    for kind in kinds:
+        try:
+            got = read_storage(browser, profile, kind, domain, exact)
+        except Exception:
+            got = []
+        for e in got:
+            if key and e["key"] != key:
+                continue
+            if pattern and not pattern.search(e["key"]):
+                continue
+            entries.append(e)
+    return entries
+
+
+# --------------------------------------------------------------------- formatting
+
+
+def _profile_header(browser, profile):
+    return (f"# {browser['id']} / {profile['name']} "
+            f"({profile['path']}){' [open]' if profile['is_open'] else ''}")
+
+
+def print_table(entries):
+    print(f"{'ORIGIN':<40} {'KEY':<28} VALUE")
+    for e in entries:
+        print(f"{e['origin']:<40} {e['key']:<28} {e['value']}")
+
+
+# ------------------------------------------------------------------------- CLI
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="browser.storage",
+        description="Read web-storage (localStorage/sessionStorage) for a site.")
+    p.add_argument("target", nargs="?",
+                   help="domain, host:port or URL, e.g. example.com or https://x.com")
+    p.add_argument("--browser", action="append", default=[],
+                   help="restrict to a browser id (repeatable, e.g. firefox, brave)")
+    p.add_argument("--profile", default=None, help="restrict to a profile name/path")
+    p.add_argument("--family", choices=["chromium", "firefox"], default=None)
+    p.add_argument("--open-only", action="store_true",
+                   help="only use browsers/profiles that are currently running")
+    p.add_argument("--all", action="store_true",
+                   help="use every matching browser/profile, not just the first")
+    p.add_argument("--exact", action="store_true",
+                   help="exact origin (scheme+host+port) instead of matching subdomains")
+    p.add_argument("--kind", choices=["localstorage", "sessionstorage", "all"],
+                   default="localstorage")
+    p.add_argument("--key", default=None, help="only entries with this exact key")
+    p.add_argument("--grep", default=None, help="only entries whose key matches a regex")
+    p.add_argument("--format", choices=["table", "json", "raw"], default="table")
+    p.add_argument("--value-only", action="store_true",
+                   help="print only values (one per line)")
+    p.add_argument("--no-values", action="store_true",
+                   help="hide values (with --format json/table) and show keys only")
+    p.add_argument("--list", action="store_true",
+                   help="list matching profiles and counts without printing values")
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if not args.target and not args.list:
+        build_parser().print_usage(sys.stderr)
+        return 2
+
+    try:
+        browsers = get_browsers()
+    except StorageError as exc:
+        print(f"browser.storage: {exc}", file=sys.stderr)
+        return 1
+
+    pairs = ordered_profiles(browsers, args)
+    if not pairs:
+        print("browser.storage: no matching browser/profile", file=sys.stderr)
+        return 1
+
+    kinds = kinds_of(args.kind)
+    domain = parse_target(args.target) if args.target else None
+
+    matches = []
+    for browser, profile in pairs:
+        entries = collect_entries(browser, profile, kinds, domain, args.exact,
+                                  args.key, args.grep)
+        if entries:
+            matches.append((browser, profile, entries))
+            if not args.all and domain is not None:
+                break
+
+    if not matches:
+        if args.target and args.format == "json":
+            print(json.dumps({"target": args.target, "matches": []}, indent=2))
+        elif args.target:
+            print(f"No storage entries found for {args.target}.")
+        else:
+            print("No web storage found.")
+        return 1
+
+    if args.list:
+        for browser, profile, entries in matches:
+            print(f"{browser['id']}\t{profile['name']}\t{profile['path']}\t"
+                  f"{len(entries)} entries")
+        return 0
+
+    if args.value_only or args.format == "raw":
+        for _, _, entries in matches:
+            for e in entries:
+                print(e["value"] if not args.no_values else e["key"])
+        return 0
+
+    if args.format == "json":
+        payload = {"target": args.target, "kind": args.kind,
+                   "matches": [_match_json(b, p, entries, args.no_values)
+                               for b, p, entries in matches]}
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    for i, (browser, profile, entries) in enumerate(matches):
+        if i:
+            print()
+        print(_profile_header(browser, profile))
+        if args.no_values:
+            print(f"{'ORIGIN':<40} KEY")
+            for e in entries:
+                print(f"{e['origin']:<40} {e['key']}")
+        else:
+            print_table(entries)
+    return 0
+
+
+def _match_json(browser, profile, entries, no_values):
+    match = {
+        "browser": browser["id"],
+        "browser_name": browser["name"],
+        "family": browser["family"],
+        "profile": profile["name"],
+        "path": profile["path"],
+        "is_open": profile["is_open"],
+        "count": len(entries),
+    }
+    if no_values:
+        match["keys"] = [e["key"] for e in entries]
+    else:
+        match["storage"] = entries
+    return match
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)
+    except StorageError as exc:
+        print(f"browser.storage: {exc}", file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,703 @@
+#!/usr/bin/env python3
+"""browser.find — discover installed browsers, their profiles, running instances and defaults.
+
+Read-only, general purpose helper used by other scripts (notably ``cookies``).  It
+knows the two layout families and resolves profiles without ever launching a browser:
+
+  * chromium family  — Chromium, Chrome, Brave, Edge, Vivaldi, Opera, ...
+  * firefox  family  — Firefox, Developer Edition, Nightly, LibreWolf, Waterfox, Zen, Floorp
+
+For every browser it reports the executable, the config root, and each profile with
+its path, whether it is the default, and whether it is currently open.  Open
+instances are found by scanning ``/proc`` for the main browser process and resolving
+the profile from the command line (``--user-data-dir``/``--profile-directory``,
+``-profile``/``-P``) or, for Firefox, from the open ``cookies.sqlite``/``places.sqlite``
+file descriptor.  The system default browser comes from ``xdg-settings``/``xdg-mime``.
+
+Usage:
+  browser.find                      # same as: browser.find list
+  browser.find list                 # every browser that is installed or has a config
+  browser.find profiles [BROWSER]   # profiles (all, or one browser)
+  browser.find open                 # browsers/profiles currently running
+  browser.find default              # system default browser + default profile
+  browser.find list --json          # machine-readable (stable schema, used by cookies)
+  browser.find profiles --open-only --family firefox
+
+Exit status is 0 on success, 1 when nothing matches, 2 on usage errors.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+HOME = Path.home()
+XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or (HOME / ".config"))
+
+
+# --------------------------------------------------------------------------- registry
+
+
+@dataclass
+class RegistryEntry:
+    id: str
+    name: str
+    family: str  # "chromium" | "firefox"
+    exe_names: list
+    config_dirs: list
+    app_id: str = ""  # libsecret application attribute (chromium family)
+    desktop_names: list = field(default_factory=list)
+    proc_hints: list = field(default_factory=list)
+    cookie_file: str = "Cookies"
+
+
+def _dirs_chromium(sub, flatpak=None, snap=None):
+    dirs = [XDG_CONFIG / sub]
+    if flatpak:
+        dirs.append(HOME / ".var/app" / flatpak / "config" / sub)
+    if snap:
+        dirs.append(HOME / "snap" / snap / "common" / sub)
+    return [str(d) for d in dirs]
+
+
+def _dirs_firefox(app, flatpak=None, snap=None):
+    dirs = [HOME / ".mozilla" / app, XDG_CONFIG / "mozilla" / app]
+    if flatpak:
+        dirs.append(HOME / ".var/app" / flatpak / ".mozilla" / app)
+    if snap:
+        dirs.append(HOME / "snap" / snap / "common" / ".mozilla" / app)
+    return [str(d) for d in dirs]
+
+
+def registry():
+    """The browser table.  Adding a browser is one row."""
+    r = []
+
+    # ---- chromium family -------------------------------------------------
+    r.append(RegistryEntry(
+        "chromium", "Chromium", "chromium",
+        ["chromium", "chromium-browser"],
+        _dirs_chromium("chromium", flatpak="org.chromium.Chromium"),
+        app_id="chromium", desktop_names=["chromium"], proc_hints=["chromium"]))
+    r.append(RegistryEntry(
+        "chromium-headless", "Chromium (headless)", "chromium",
+        [],
+        _dirs_chromium("chromium-headless"),
+        app_id="chromium", proc_hints=["chromium-headless"]))
+    r.append(RegistryEntry(
+        "chrome", "Google Chrome", "chromium",
+        ["google-chrome", "google-chrome-stable"],
+        _dirs_chromium("google-chrome", flatpak="com.google.Chrome"),
+        app_id="chrome", desktop_names=["google-chrome"],
+        proc_hints=["google-chrome-stable", "google-chrome"]))
+    r.append(RegistryEntry(
+        "brave", "Brave", "chromium",
+        ["brave", "brave-browser"],
+        _dirs_chromium("BraveSoftware/Brave-Browser", flatpak="com.brave.Browser", snap="brave"),
+        app_id="brave", desktop_names=["brave-browser"], proc_hints=["brave"]))
+    r.append(RegistryEntry(
+        "edge", "Microsoft Edge", "chromium",
+        ["microsoft-edge", "microsoft-edge-stable"],
+        _dirs_chromium("microsoft-edge", flatpak="com.microsoft.Edge"),
+        app_id="microsoft-edge", desktop_names=["microsoft-edge"],
+        proc_hints=["microsoft-edge-stable", "microsoft-edge"]))
+    r.append(RegistryEntry(
+        "vivaldi", "Vivaldi", "chromium",
+        ["vivaldi", "vivaldi-stable"],
+        _dirs_chromium("vivaldi", flatpak="com.vivaldi.Vivaldi"),
+        app_id="vivaldi", desktop_names=["vivaldi-stable", "vivaldi"],
+        proc_hints=["vivaldi"]))
+    r.append(RegistryEntry(
+        "opera", "Opera", "chromium",
+        ["opera"],
+        _dirs_chromium("opera", flatpak="com.opera.Opera"),
+        app_id="opera", desktop_names=["opera"], proc_hints=["opera"]))
+    r.append(RegistryEntry(
+        "ungoogled-chromium", "Ungoogled Chromium", "chromium",
+        ["ungoogled-chromium"],
+        _dirs_chromium("ungoogled-chromium",
+                       flatpak="io.github.ungoogled_software.ungoogled_chromium"),
+        app_id="chromium", proc_hints=["ungoogled-chromium"]))
+    r.append(RegistryEntry(
+        "iridium", "Iridium", "chromium", ["iridium"],
+        _dirs_chromium("iridium"), app_id="iridium", proc_hints=["iridium"]))
+    r.append(RegistryEntry(
+        "thorium", "Thorium", "chromium", ["thorium"],
+        _dirs_chromium("thorium"), app_id="thorium", proc_hints=["thorium"]))
+
+    # ---- firefox family --------------------------------------------------
+    r.append(RegistryEntry(
+        "firefox", "Firefox", "firefox", ["firefox"],
+        _dirs_firefox("firefox", flatpak="org.mozilla.firefox", snap="firefox"),
+        desktop_names=["firefox"], proc_hints=["firefox"]))
+    r.append(RegistryEntry(
+        "firefox-developer-edition", "Firefox Developer Edition", "firefox",
+        ["firefox-developer-edition"],
+        _dirs_firefox("firefox", flatpak="org.mozilla.firefox", snap="firefox"),
+        desktop_names=["firefox-developer-edition"],
+        proc_hints=["firefox-developer-edition", "dev-edition"]))
+    r.append(RegistryEntry(
+        "firefox-nightly", "Firefox Nightly", "firefox", ["firefox-nightly"],
+        _dirs_firefox("firefox", flatpak="org.mozilla.firefox", snap="firefox"),
+        desktop_names=["firefox-nightly"], proc_hints=["firefox-nightly"]))
+    r.append(RegistryEntry(
+        "librewolf", "LibreWolf", "firefox", ["librewolf"],
+        _dirs_firefox("librewolf", flatpak="io.gitlab.librewolf-community"),
+        desktop_names=["librewolf"], proc_hints=["librewolf"]))
+    r.append(RegistryEntry(
+        "waterfox", "Waterfox", "firefox", ["waterfox"],
+        _dirs_firefox("waterfox", flatpak="net.waterfox.waterfox"),
+        desktop_names=["waterfox"], proc_hints=["waterfox"]))
+    r.append(RegistryEntry(
+        "zen", "Zen Browser", "firefox", ["zen-browser", "zen"],
+        _dirs_firefox("zen", flatpak="app.zen_browser.zen"),
+        desktop_names=["zen-browser", "zen"], proc_hints=["zen-browser"]))
+    r.append(RegistryEntry(
+        "floorp", "Floorp", "firefox", ["floorp"],
+        _dirs_firefox("floorp", flatpak="one.ablaze.floorp"),
+        desktop_names=["floorp"], proc_hints=["floorp"]))
+    return r
+
+
+# ------------------------------------------------------------------------- utilities
+
+
+def first_which(names):
+    for n in names:
+        p = shutil.which(n)
+        if p:
+            return p
+    return None
+
+
+def first_dir(dirs):
+    for d in dirs:
+        if d and os.path.isdir(d):
+            return d
+    return None
+
+
+def _parse_ini(path):
+    sections = {}
+    cur = None
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return sections
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            cur = line[1:-1]
+            sections.setdefault(cur, {})
+        elif "=" in line and cur is not None:
+            k, v = line.split("=", 1)
+            sections[cur][k.strip()] = v.strip()
+    return sections
+
+
+# ------------------------------------------------------------------------- profiles
+
+
+@dataclass
+class Profile:
+    name: str
+    path: str
+    is_default: bool = False
+    is_open: bool = False
+    pid: int = 0
+    last_used: str = ""
+    cookies_db: str = ""
+    login_db: str = ""
+    login_data: str = ""
+
+
+def chromium_profiles(config_dir):
+    config = Path(config_dir)
+    info, last_used = {}, ""
+    ls = config / "Local State"
+    if ls.is_file():
+        try:
+            data = json.loads(ls.read_text(errors="replace"))
+            prof = data.get("profile") or {}
+            info = prof.get("info_cache") or {}
+            last_used = prof.get("last_used") or ""
+        except (ValueError, OSError):
+            pass
+
+    names = set(info)
+    try:
+        for child in config.iterdir():
+            if child.is_dir() and (child / "Preferences").is_file():
+                names.add(child.name)
+    except OSError:
+        pass
+
+    profiles = []
+    for name in sorted(names):
+        # Chromium moved the cookie DB under Network/ in newer versions.
+        pdir = config / name
+        cookies = pdir / "Network" / "Cookies"
+        if not cookies.is_file():
+            cookies = pdir / "Cookies"
+        login_data = pdir / "Login Data"
+        account_data = pdir / "Login Data For Account"
+        login_db = str(login_data) if login_data.is_file() else (
+            str(account_data) if account_data.is_file() else "")
+        profiles.append(Profile(
+            name=name,
+            path=str(pdir),
+            is_default=(name == (last_used or "Default")),
+            last_used=last_used if name == last_used else "",
+            cookies_db=str(cookies) if cookies.is_file() else "",
+            login_db=login_db,
+            login_data=login_db,
+        ))
+    return profiles
+
+
+def firefox_profiles(config_dir):
+    config = Path(config_dir)
+    ini = _parse_ini(config / "profiles.ini")
+
+    install_defaults = set()
+    for sec, kv in ini.items():
+        if sec.startswith("Install") and kv.get("Default"):
+            install_defaults.add(kv["Default"])
+
+    profiles = []
+    for sec, kv in ini.items():
+        if not sec.startswith("Profile") or not kv.get("Path"):
+            continue
+        raw = kv["Path"]
+        if kv.get("IsRelative", "1") == "0" or os.path.isabs(raw):
+            path = Path(raw)
+        else:
+            path = config / raw
+        from_install = raw in install_defaults
+        is_default = bool(kv.get("Default") == "1" or from_install)
+        profiles.append(Profile(
+            name=kv.get("Name") or path.name,
+            path=str(path),
+            is_default=is_default,
+            cookies_db=str(path / "cookies.sqlite"),
+            login_db=str(path / "logins.db"),
+            login_data=str(path / "logins.json"),
+        ))
+
+    if not profiles:
+        # profiles.ini missing: fall back to directories containing a cookie DB.
+        try:
+            for child in config.iterdir():
+                if (child / "cookies.sqlite").is_file() or (child / "prefs.js").is_file():
+                    profiles.append(Profile(
+                        name=child.name, path=str(child),
+                        is_default="default" in child.name,
+                        cookies_db=str(child / "cookies.sqlite"),
+                        login_db=str(child / "logins.db"),
+                        login_data=str(child / "logins.json")))
+        except OSError:
+            pass
+    return profiles
+
+
+# ------------------------------------------------------------------------- processes
+
+
+def _iter_procs():
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return
+    for name in entries:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            exe = os.readlink(f"/proc/{pid}/exe")
+        except OSError:
+            exe = ""
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            raw = b""
+        args = [a.decode("utf-8", "replace") for a in raw.split(b"\0") if a]
+        if not exe and not args:
+            continue
+        yield pid, exe, args
+
+
+def _is_main_process(family, exe, args):
+    if family == "chromium":
+        return not any(a.startswith("--type=") for a in args)
+    return not any(a == "-contentproc" for a in args) and "crashhelper" not in os.path.basename(exe)
+
+
+def _match_entry(entries, exe, args):
+    hay = (exe + " " + (args[0] if args else "")).lower()
+    best, bestlen = None, -1
+    for e in entries:
+        for h in e.proc_hints:
+            if h in hay and len(h) > bestlen:
+                best, bestlen = e, len(h)
+    return best
+
+
+def _arg_value(args, *names):
+    for i, a in enumerate(args):
+        for n in names:
+            if a == n and i + 1 < len(args):
+                return args[i + 1]
+            if a.startswith(n + "="):
+                return a.split("=", 1)[1]
+    return None
+
+
+def _chromium_proc_profile(entry, args):
+    udd = _arg_value(args, "--user-data-dir")
+    pdir = _arg_value(args, "--profile-directory")
+    base = udd or first_dir(entry.config_dirs)
+    if not base:
+        return None
+    return str(Path(base) / (pdir or "Default"))
+
+
+def _firefox_profile_from_fds(pid):
+    base = f"/proc/{pid}/fd"
+    try:
+        fds = os.listdir(base)
+    except OSError:
+        return None
+    for fd in fds:
+        try:
+            target = os.readlink(f"{base}/{fd}")
+        except OSError:
+            continue
+        if target.endswith(("cookies.sqlite", "places.sqlite", "cookies.sqlite-wal")):
+            return str(Path(target).parent)
+    return None
+
+
+def _firefox_proc_profile(entry, pid, args):
+    p = _arg_value(args, "-profile", "--profile")
+    if p:
+        return p
+    return _firefox_profile_from_fds(pid)
+
+
+# ------------------------------------------------------------------------- collection
+
+
+def collect():
+    """Return the full browser/profile snapshot as a list of plain dicts (JSON-ready)."""
+    entries = registry()
+    browsers = {}
+    for entry in entries:
+        exe = first_which(entry.exe_names)
+        config_dir = first_dir(entry.config_dirs)
+        if not exe and not config_dir:
+            continue
+        profiles = []
+        if config_dir:
+            if entry.family == "chromium":
+                profiles = chromium_profiles(config_dir)
+            else:
+                profiles = firefox_profiles(config_dir)
+        browsers[entry.id] = {
+            "id": entry.id,
+            "name": entry.name,
+            "family": entry.family,
+            "app_id": entry.app_id,
+            "executable": exe or "",
+            "config_dir": config_dir or "",
+            "is_system_default": False,
+            "profiles": profiles,
+        }
+
+    # Several firefox-family builds (stable/DE/nightly) share one config root.
+    # Keep only the builds that are actually installed when the root is shared,
+    # so an uninstalled sibling does not appear just because the dir exists.
+    installed_dirs = {b["config_dir"] for b in browsers.values() if b["executable"]}
+    for bid in list(browsers):
+        b = browsers[bid]
+        if not b["executable"] and b["config_dir"] in installed_dirs:
+            del browsers[bid]
+
+    # running instances -----------------------------------------------------
+    open_paths = {}
+    for pid, exe, args in _iter_procs():
+        entry = _match_entry(entries, exe, args)
+        if not entry or not _is_main_process(entry.family, exe, args):
+            continue
+        if entry.id not in browsers:
+            continue
+        if entry.family == "chromium":
+            path = _chromium_proc_profile(entry, args)
+        else:
+            path = _firefox_proc_profile(entry, pid, args)
+        if not path:
+            continue
+        real = os.path.realpath(path)
+        open_paths[real] = pid
+
+    for bid, b in browsers.items():
+        for prof in b["profiles"]:
+            real = os.path.realpath(prof.path)
+            if real in open_paths:
+                prof.is_open = True
+                prof.pid = open_paths[real]
+
+    # default browser -------------------------------------------------------
+    default_id = system_default_browser_id(browsers)
+    if default_id and default_id in browsers:
+        browsers[default_id]["is_system_default"] = True
+
+    # keep registry order
+    order = {e.id: i for i, e in enumerate(entries)}
+    return sorted(browsers.values(), key=lambda b: order.get(b["id"], 999))
+
+
+def system_default_browser_id(browsers):
+    stem = ""
+    for cmd in (
+        ["xdg-settings", "get", "default-web-browser"],
+        ["xdg-mime", "query", "default", "x-scheme-handler/https"],
+        ["xdg-mime", "query", "default", "x-scheme-handler/http"],
+    ):
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.returncode == 0 and out.stdout.strip():
+            stem = out.stdout.strip()
+            break
+    stem = stem[:-len(".desktop")] if stem.endswith(".desktop") else stem
+    if not stem:
+        return ""
+    norm = _normalize_name(stem)
+    best, bestlen = "", -1
+    for b in browsers.values():
+        for name in registry_desktop_names(b["id"]):
+            n = _normalize_name(name)
+            if not n:
+                continue
+            if n == norm or n in norm or norm in n:
+                if len(n) > bestlen:
+                    best, bestlen = b["id"], len(n)
+    return best
+
+
+def _normalize_name(s):
+    return s.strip().lower().replace(" ", "-").replace("_", "-")
+
+
+_DESKTOP_CACHE = {}
+
+
+def registry_desktop_names(browser_id):
+    if not _DESKTOP_CACHE:
+        for e in registry():
+            _DESKTOP_CACHE[e.id] = e.desktop_names or [e.id]
+    return _DESKTOP_CACHE.get(browser_id, [browser_id])
+
+
+# ------------------------------------------------------------------------- filtering
+
+
+def filter_browsers(browsers, args):
+    out = browsers
+    if args.browser:
+        wanted = {b.lower() for b in args.browser}
+        out = [b for b in out if b["id"].lower() in wanted or b["name"].lower() in wanted]
+    if args.family:
+        out = [b for b in out if b["family"] == args.family]
+    if args.open_only:
+        out = [b for b in out if any(p.is_open for p in b["profiles"])]
+    return out
+
+
+def all_profiles(browsers, args):
+    pairs = []
+    for b in browsers:
+        for p in b["profiles"]:
+            if args.open_only and not p.is_open:
+                continue
+            pairs.append((b, p))
+    return pairs
+
+
+# ------------------------------------------------------------------------- rendering
+
+
+def _yes(v):
+    return "yes" if v else "-"
+
+
+def render_list(browsers):
+    if not browsers:
+        print("No browsers found.")
+        return 1
+    print(f"{'ID':<26} {'FAMILY':<8} {'DEFAULT':<7} {'OPEN':<5} {'PROFILES':<8} CONFIG")
+    for b in browsers:
+        opened = sum(1 for p in b["profiles"] if p.is_open)
+        print(f"{b['id']:<26} {b['family']:<8} "
+              f"{_yes(b['is_system_default']):<7} {str(opened):<5} "
+              f"{len(b['profiles']):<8} {b['config_dir'] or '(no config)'}")
+    return 0
+
+
+def render_profiles(pairs):
+    if not pairs:
+        print("No profiles found.")
+        return 1
+    print(f"{'DEFAULT':<7} {'OPEN':<5} {'BROWSER':<26} {'NAME':<22} PATH")
+    for b, p in pairs:
+        print(f"{_yes(p.is_default):<7} {_yes(p.is_open):<5} "
+              f"{b['id']:<26} {p.name:<22} {p.path}")
+    return 0
+
+
+def render_open(pairs):
+    opened = [(b, p) for b, p in pairs if p.is_open]
+    if not opened:
+        print("No browsers are currently running.")
+        return 1
+    print(f"{'BROWSER':<26} {'PID':<8} PROFILE")
+    for b, p in opened:
+        print(f"{b['id']:<26} {str(p.pid or ''):<8} {p.path}")
+    return 0
+
+
+def render_default(browsers):
+    default = next((b for b in browsers if b["is_system_default"]), None)
+    if not default:
+        print("No system default browser detected.")
+        return 1
+    prof = next((p for p in default["profiles"] if p.is_open), None)
+    if not prof:
+        prof = next((p for p in default["profiles"] if p.is_default), None)
+    if not prof and default["profiles"]:
+        prof = default["profiles"][0]
+    print(f"browser: {default['id']}")
+    if prof:
+        print(f"profile: {prof.path}")
+        print(f"open:    {_yes(prof.is_open)}")
+    return 0
+
+
+# ------------------------------------------------------------------------- CLI
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="browser.find",
+        description="Discover installed browsers, their profiles, running instances and defaults.")
+    p.add_argument("command", nargs="?", default="list",
+                   choices=["list", "profiles", "open", "default"])
+    p.add_argument("target", nargs="?", default=None,
+                   help="browser id to restrict to (mainly for 'profiles')")
+    p.add_argument("--browser", action="append", default=[],
+                   help="restrict to a browser id (repeatable)")
+    p.add_argument("--family", choices=["chromium", "firefox"], default=None)
+    p.add_argument("--open-only", action="store_true",
+                   help="only browsers/profiles that are currently running")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument("--names", action="store_true", help="print browser ids only")
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if args.browser is None:
+        args.browser = []
+    if args.target:
+        args.browser.append(args.target)
+    browsers = filter_browsers(collect(), args)
+
+    if args.command == "default":
+        if args.json:
+            default = next((b for b in browsers if b["is_system_default"]), None)
+            print(json.dumps(browser_dict(default) if default else None, indent=2))
+            return 0 if default else 1
+        return render_default(browsers)
+
+    if args.command == "open":
+        pairs = all_profiles(browsers, args)
+        if args.json:
+            payload = [
+                {"browser": b["id"], "browser_name": b["name"], "family": b["family"],
+                 "pid": p.pid, "name": p.name, "path": p.path}
+                for b, p in pairs if p.is_open
+            ]
+            print(json.dumps(payload, indent=2))
+            return 0 if payload else 1
+        return render_open(pairs)
+
+    if args.command == "profiles":
+        pairs = all_profiles(browsers, args)
+        if args.json:
+            seen = set()
+            payload = []
+            for b, p in pairs:
+                key = (b["id"], p.path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                payload.append({"browser": b["id"], "browser_name": b["name"],
+                                "family": b["family"], **profile_dict(p)})
+            print(json.dumps(payload, indent=2))
+            return 0 if payload else 1
+        return render_profiles(pairs)
+
+    # list
+    if args.names:
+        for b in browsers:
+            print(b["id"])
+        return 0 if browsers else 1
+    if args.json:
+        print(json.dumps([browser_dict(b) for b in browsers], indent=2))
+        return 0 if browsers else 1
+    return render_list(browsers)
+
+
+def profile_dict(p):
+    return {
+        "name": p.name,
+        "path": p.path,
+        "is_default": p.is_default,
+        "is_open": p.is_open,
+        "pid": p.pid,
+        "last_used": p.last_used,
+        "cookies_db": p.cookies_db,
+        "login_db": p.login_db,
+        "login_data": p.login_data,
+    }
+
+
+def browser_dict(b):
+    return {
+        "id": b["id"],
+        "name": b["name"],
+        "family": b["family"],
+        "app_id": b.get("app_id", ""),
+        "executable": b["executable"],
+        "config_dir": b["config_dir"],
+        "is_system_default": b["is_system_default"],
+        "profiles": [profile_dict(p) for p in b["profiles"]],
+    }
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)

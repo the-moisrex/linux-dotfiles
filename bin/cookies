@@ -1,0 +1,1052 @@
+#!/usr/bin/env python3
+"""cookies — extract cookies and saved logins from Chromium- and Firefox-family browsers.
+
+General purpose helper built on ``browser.find``: ask for a site and it locates the
+first browser/profile that has data for it, unless you pin a browser/profile.  It
+reads the cookie databases directly (Chromium ``Cookies``, Firefox ``moz_cookies``)
+and decrypts Chromium's AES-128-CBC values with the key from the login keyring, and
+Firefox's saved logins from ``logins.db`` (JWE/A256GCM) or legacy ``logins.json`` +
+``key4.db`` (NSS).  Databases locked by a running browser are copied together with
+their WAL/SHM sidecars before being opened read-only, so it is safe to run live.
+
+Usage:
+  cookies grok.com                       # cookies, first browser/profile that matches
+  cookies grok.com --format header       # "name=value; ..." for curl/requests
+  cookies grok.com --format netscape     # cookies.txt for curl/yt-dlp/wget
+  cookies https://x.com --browser firefox --profile default
+  cookies grok.com --open-only           # only browsers/profiles that are running
+  cookies grok.com --kind both --all     # cookies + logins from every match
+  cookies grok.com --list                # show which profiles have data, no secrets
+
+Secrets are printed to stdout only; nothing is copied to the clipboard.  When a
+site matches nothing, a one-line hint on stderr points at ``browser.storage`` if
+the same site keeps a token in ``localStorage`` (disable with ``--no-hint``).
+
+Exit status is 0 when data was found, 1 when nothing matched, 2 on usage errors.
+"""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import base64
+import binascii
+import getpass
+import hashlib
+import importlib.util
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+from urllib.parse import urlparse
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# --------------------------------------------------------------------------- crypto
+
+
+class CryptoError(Exception):
+    pass
+
+
+class UnsupportedEncryption(CryptoError):
+    pass
+
+
+_HAVE_PYCRYPTODOME = False
+try:  # pycryptodome first (fast, present on this machine)
+    from Crypto.Cipher import AES as _AES  # noqa: F401
+    from Crypto.Cipher import DES3 as _DES3  # noqa: F401
+    _HAVE_PYCRYPTODOME = True
+except ImportError:  # pragma: no cover - fall back to cryptography
+    _AES = None
+    _DES3 = None
+
+
+def _require_crypto():
+    if _HAVE_PYCRYPTODOME:
+        return
+    if importlib.util.find_spec("cryptography") is None:  # pragma: no cover
+        raise CryptoError(
+            "decryption needs pycryptodome or cryptography "
+            "(pacman: python-pycryptodome)")
+
+
+def _aes_cbc_decrypt(key, iv, data):
+    _require_crypto()
+    if _HAVE_PYCRYPTODOME:
+        from Crypto.Cipher import AES
+        return AES.new(key, AES.MODE_CBC, iv).decrypt(data)
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    dec = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+    return dec.update(data) + dec.finalize()
+
+
+def _aes_gcm_decrypt(key, iv, data, tag, aad=None):
+    _require_crypto()
+    if _HAVE_PYCRYPTODOME:
+        from Crypto.Cipher import AES
+        cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+        if aad:
+            cipher.update(aad)
+        return cipher.decrypt_and_verify(data, tag)
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    return AESGCM(key).decrypt(iv, data + tag, aad)
+
+
+def _des3_cbc_decrypt(key, iv, data):
+    _require_crypto()
+    if _HAVE_PYCRYPTODOME:
+        from Crypto.Cipher import DES3
+        return DES3.new(key, DES3.MODE_CBC, iv).decrypt(data)
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    dec = Cipher(algorithms.TripleDES(key), modes.CBC(iv)).decryptor()
+    return dec.update(data) + dec.finalize()
+
+
+def _unpad(data):
+    if not data:
+        return data
+    n = data[-1]
+    if 1 <= n <= 16 and data.endswith(bytes([n]) * n):
+        return data[:-n]
+    return data
+
+
+# --------------------------------------------------------------------- browser.find
+
+
+_BROWSER_FIND = None
+
+
+def _load_browser_find():
+    global _BROWSER_FIND
+    if _BROWSER_FIND is not None:
+        return _BROWSER_FIND
+    path = os.path.join(HERE, "browser.find")
+    if not os.path.exists(path):
+        path = shutil.which("browser.find") or ""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        loader = SourceFileLoader("browser_find", path)
+        spec = importlib.util.spec_from_loader("browser_find", loader)
+        module = importlib.util.module_from_spec(spec)
+        # dataclasses looks the module up in sys.modules while executing.
+        sys.modules["browser_find"] = module
+        loader.exec_module(module)
+    except Exception:
+        return None
+    _BROWSER_FIND = module
+    return module
+
+
+def get_browsers():
+    """Browser/profile snapshot as plain dicts (from browser.find)."""
+    module = _load_browser_find()
+    if module is not None:
+        return [module.browser_dict(b) for b in module.collect()]
+    exe = shutil.which("browser.find")
+    if not exe:
+        raise CryptoError("browser.find not found next to cookies or on PATH")
+    out = subprocess.run([exe, "list", "--json"], capture_output=True, text=True)
+    if out.returncode not in (0, 1) or not out.stdout.strip():
+        raise CryptoError(out.stderr.strip() or "browser.find failed")
+    return json.loads(out.stdout)
+
+
+# ------------------------------------------------------------------------- sqlite
+
+
+_TMP_ROOT = tempfile.mkdtemp(prefix="cookies-")
+atexit.register(lambda: shutil.rmtree(_TMP_ROOT, ignore_errors=True))
+
+
+def open_sqlite(path):
+    """Open a possibly-locked SQLite DB read-only via a consistent temp copy."""
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError(path)
+    work = tempfile.mkdtemp(dir=_TMP_ROOT)
+    base = os.path.basename(path)
+    for suffix in ("", "-wal", "-shm"):
+        src = path + suffix
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(work, base + suffix))
+    conn = sqlite3.connect(os.path.join(work, base), uri=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def pick(row, *names, default=None):
+    keys = set(row.keys())
+    for n in names:
+        if n in keys:
+            return row[n]
+    return default
+
+
+# ------------------------------------------------------------------- domain match
+
+
+def domain_of(target):
+    t = (target or "").strip()
+    if "://" in t:
+        return (urlparse(t).hostname or "").lower()
+    t = t.split("/", 1)[0].split("?", 1)[0].strip().rstrip(".")
+    return t.lower()
+
+
+def host_matches(host, domain, exact):
+    """Whether a cookie host applies to the queried domain.
+
+    Without ``--exact`` the match is bidirectional on label boundaries: a query
+    for ``grok.com`` also finds cookies for ``api.grok.com``, and a query for
+    ``www.grok.com`` still finds the site-wide ``.grok.com`` cookies.
+    """
+    if not host or not domain:
+        return False
+    host = host.lower().lstrip(".")
+    if exact:
+        return host == domain
+    return (host == domain
+            or host.endswith("." + domain)
+            or domain.endswith("." + host))
+
+
+# ------------------------------------------------------------------- chromium/key
+
+
+_KEY_CACHE = {}
+
+
+def chromium_key(app_id):
+    app_id = app_id or "chromium"
+    if app_id in _KEY_CACHE:
+        return _KEY_CACHE[app_id]
+    secret = None
+    if shutil.which("secret-tool"):
+        try:
+            out = subprocess.run(
+                ["secret-tool", "lookup", "application", app_id],
+                capture_output=True, text=True, timeout=10)
+            if out.returncode == 0 and out.stdout.strip():
+                secret = out.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if not secret:
+        # Chromium's --password-store=basic fallback.
+        secret = "peanuts"
+    key = hashlib.pbkdf2_hmac("sha1", secret.encode("utf-8"), b"saltysalt", 1, 16)
+    _KEY_CACHE[app_id] = key
+    return key
+
+
+def decrypt_chromium(blob, key):
+    if blob is None:
+        return ""
+    if isinstance(blob, memoryview):
+        blob = bytes(blob)
+    if not blob:
+        return ""
+    prefix = blob[:3]
+    if prefix in (b"v10", b"v11"):
+        ct = blob[3:]
+        ct = ct[: len(ct) // 16 * 16]
+        if not ct:
+            return ""
+        plain = _unpad(_aes_cbc_decrypt(key, b" " * 16, ct))
+        return _decode_chromium_plain(plain)
+    if prefix == b"v20":
+        raise UnsupportedEncryption(
+            "v20 app-bound encryption is not supported on Linux")
+    return blob.decode("utf-8", "replace")
+
+
+def _decode_chromium_plain(plain):
+    # Chromium >= 80 prepends a 32-byte SHA256(domain) to cookie values.
+    try:
+        return plain.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    if len(plain) > 32:
+        try:
+            return plain[32:].decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+    return plain.decode("utf-8", "replace")
+
+
+# ------------------------------------------------------------------ chromium read
+
+
+def chromium_expiry(expires_utc):
+    try:
+        v = int(expires_utc or 0)
+    except (TypeError, ValueError):
+        return 0
+    if v <= 0:
+        return 0
+    unix = v / 1_000_000 - 11_644_473_600
+    return int(unix) if unix > 0 else 0
+
+
+def read_chromium_cookies(profile, browser, domain, exact, keyring_app=None):
+    db = profile.get("cookies_db")
+    if not db or not os.path.exists(db):
+        return []
+    conn = open_sqlite(db)
+    key = chromium_key(keyring_app or browser.get("app_id"))
+    try:
+        rows = conn.execute("select * from cookies").fetchall()
+    except sqlite3.Error:
+        return []
+    out = []
+    for r in rows:
+        host = pick(r, "host_key", default="")
+        if not host_matches(host, domain, exact):
+            continue
+        value = pick(r, "value", default="") or ""
+        if not value:
+            enc = pick(r, "encrypted_value", default=b"")
+            try:
+                value = decrypt_chromium(enc, key)
+            except UnsupportedEncryption:
+                value = "<v20: app-bound, unsupported>"
+        out.append({
+            "name": pick(r, "name", default=""),
+            "value": value,
+            "host": host,
+            "path": pick(r, "path", default="/") or "/",
+            "expires": chromium_expiry(pick(r, "expires_utc", default=0)),
+            "secure": bool(pick(r, "is_secure", "secure", default=0)),
+            "http_only": bool(pick(r, "is_httponly", "httponly", default=0)),
+            "same_site": pick(r, "samesite", "same_site", default=None),
+        })
+    return out
+
+
+def read_chromium_logins(profile, browser, domain, exact, keyring_app=None):
+    db = profile.get("login_db")
+    if not db or not os.path.exists(db):
+        return []
+    conn = open_sqlite(db)
+    key = chromium_key(keyring_app or browser.get("app_id"))
+    try:
+        rows = conn.execute("select * from logins").fetchall()
+    except sqlite3.Error:
+        return []
+    out = []
+    for r in rows:
+        if pick(r, "blacklisted_by_user", default=0):
+            continue
+        origin = pick(r, "origin_url", "origin", default="") or ""
+        host = urlparse(origin).hostname or origin
+        if not host_matches(host, domain, exact):
+            continue
+        pw = pick(r, "password_value", default=b"")
+        try:
+            pw = decrypt_chromium(pw, key)
+        except UnsupportedEncryption:
+            pw = "<v20: app-bound, unsupported>"
+        out.append({
+            "origin": origin,
+            "username": pick(r, "username_value", default="") or "",
+            "password": pw,
+        })
+    return out
+
+
+# -------------------------------------------------------------------- firefox read
+
+
+def read_firefox_cookies(profile, domain, exact):
+    db = profile.get("cookies_db")
+    if not db or not os.path.exists(db):
+        return []
+    conn = open_sqlite(db)
+    try:
+        rows = conn.execute("select * from moz_cookies").fetchall()
+    except sqlite3.Error:
+        return []
+    out = []
+    for r in rows:
+        host = pick(r, "host", default="")
+        if not host_matches(host, domain, exact):
+            continue
+        expiry = int(pick(r, "expiry", default=0) or 0)
+        if expiry > 10 ** 11:  # newer Firefox stores milliseconds
+            expiry //= 1000
+        out.append({
+            "name": pick(r, "name", default=""),
+            "value": pick(r, "value", default="") or "",
+            "host": host,
+            "path": pick(r, "path", default="/") or "/",
+            "expires": expiry,
+            "secure": bool(pick(r, "isSecure", default=0)),
+            "http_only": bool(pick(r, "isHttpOnly", default=0)),
+            "same_site": pick(r, "sameSite", default=None),
+        })
+    return out
+
+
+# ---- NSS (key4.db) ----------------------------------------------------------
+
+
+OID_PBES2 = bytes.fromhex("2a864886f70d01050d")
+OID_DES3 = bytes.fromhex("2b0e0307")
+# NSS PBES2 cipher / PRF OIDs, mapped to their key length and hashlib name.
+AES_OIDS = {
+    bytes.fromhex("608648016503040102"): (16, "aes-128-cbc"),
+    bytes.fromhex("608648016503040116"): (24, "aes-192-cbc"),
+    bytes.fromhex("60864801650304012a"): (32, "aes-256-cbc"),
+}
+PRF_OIDS = {
+    bytes.fromhex("2a864886f70d0207"): "sha1",     # hmacWithSHA1
+    bytes.fromhex("2a864886f70d0208"): "sha224",   # hmacWithSHA224
+    bytes.fromhex("2a864886f70d0209"): "sha256",   # hmacWithSHA256
+    bytes.fromhex("2a864886f70d020a"): "sha384",   # hmacWithSHA384
+    bytes.fromhex("2a864886f70d020b"): "sha512",   # hmacWithSHA512
+}
+
+
+def _der(data, off):
+    tag = data[off]
+    off += 1
+    length = data[off]
+    off += 1
+    if length & 0x80:
+        n = length & 0x7F
+        length = int.from_bytes(data[off:off + n], "big")
+        off += n
+    return tag, data[off:off + length], off + length
+
+
+def _der_children(seq):
+    out = []
+    off = 0
+    while off < len(seq):
+        tag, value, off = _der(seq, off)
+        out.append((tag, value))
+    return out
+
+
+def _seq_at(children, index):
+    return [v for t, v in children if t == 0x30][index]
+
+
+def _parse_pbes2(blob):
+    """Parse an NSS PBES2 blob.
+
+    Returns ``(salt, iterations, prf, iv, ciphertext, key_length)``.  Firefox
+    >= 140 stores key4.db secrets as PKCS#5 PBES2 (PBKDF2 plus AES-CBC).  The
+    AES IV is written DER-encoded as ``04 0e`` plus 14 random bytes and used
+    verbatim -- a long-standing NSS quirk we have to reproduce here.
+    """
+    _, outer, _ = _der(blob, 0)
+    children = _der_children(outer)
+    if not children or children[0][0] != 0x30:
+        raise CryptoError("not a PBES2 blob")
+    algorithm, ciphertext = children[0][1], children[-1][1]
+    alg_children = _der_children(algorithm)
+    oid = next((v for t, v in alg_children if t == 0x06), None)
+    if oid != OID_PBES2:
+        raise CryptoError("not a PBES2 blob")
+    parts = _der_children(_seq_at(alg_children, 0))
+    kdf, enc = parts[0][1], parts[1][1]
+    kdf_params = _der_children(_der_children(kdf)[1][1])
+    salt = next(v for t, v in kdf_params if t == 0x04)
+    iterations = int.from_bytes(next(v for t, v in kdf_params if t == 0x02), "big")
+    prf = "sha256"
+    try:
+        prf_oid = _der_children(_seq_at(kdf_params, 0))[0][1]
+        prf = PRF_OIDS.get(prf_oid, prf)
+    except (IndexError, CryptoError):
+        pass
+    enc_children = _der_children(enc)
+    enc_oid = next((v for t, v in enc_children if t == 0x06), None)
+    if enc_oid not in AES_OIDS:
+        raise CryptoError("unsupported PBES2 cipher")
+    key_length = AES_OIDS[enc_oid][0]
+    iv14 = next(v for t, v in enc_children if t == 0x04)
+    iv = bytes([0x04, len(iv14)]) + iv14  # NSS stores the DER-encoded IV
+    if len(iv) != 16:
+        iv = iv14 if len(iv14) == 16 else (iv14 + b"\x00" * 16)[:16]
+    return salt, iterations, prf, iv, ciphertext, key_length
+
+
+def _db_key(global_salt, password):
+    """NSS derives its database key as ``SHA1(globalSalt || password)``."""
+    return hashlib.sha1(global_salt + password).digest()
+
+
+def _decrypt_pbes2(blob, db_key):
+    salt, iterations, prf, iv, ct, key_length = _parse_pbes2(blob)
+    key = hashlib.pbkdf2_hmac(prf, db_key, salt, iterations, key_length)
+    ct = ct[: len(ct) // 16 * 16]
+    return _unpad(_aes_cbc_decrypt(key, iv, ct))
+
+
+def _parse_legacy_blob(blob):
+    """Return (oid, iv, ciphertext) from an old-style NSS SECItem."""
+    _, seq, _ = _der(blob, 0)
+    oid = None
+    octets = []
+    for tag, value in _der_children(seq):
+        if tag == 0x06:
+            oid = value
+        elif tag == 0x30:
+            for t2, v2 in _der_children(value):
+                if t2 == 0x06:
+                    oid = v2
+        elif tag == 0x04:
+            octets.append(value)
+    if len(octets) < 2:
+        raise CryptoError("unexpected NSS blob layout")
+    return oid, octets[0], octets[1]
+
+
+def _legacy_key(global_salt, password, oid):
+    hp = hashlib.sha1(global_salt + password).digest()
+    chp = hashlib.sha1(global_salt + hp).digest()
+    return chp[:24] if oid == OID_DES3 else (chp + b"\x00" * 12)[:32]
+
+
+def _legacy_crypt(key, iv, ct, oid):
+    if oid == OID_DES3:
+        return _des3_cbc_decrypt(key[:24], iv, ct)
+    return _aes_cbc_decrypt(key[:32], iv, ct)
+
+
+def _is_pbes2(blob):
+    try:
+        _parse_pbes2(blob)
+        return True
+    except (CryptoError, IndexError, StopIteration, ValueError):
+        return False
+
+
+def nss_open(key4_path, master_password=None):
+    """Open key4.db, unlocking it if needed.
+
+    Returns ``(connection, global_salt, password, uses_pbes2)``.  Uses an empty
+    password when the store is unprotected, otherwise the given/prompted
+    Firefox primary password (raises :class:`CryptoError` when it is wrong).
+    """
+    conn = sqlite3.connect(f"file:{key4_path}?mode=ro", uri=True)
+    row = conn.execute("select item1, item2 from metadata where id='password'").fetchone()
+    if row is None:
+        raise CryptoError("key4.db has no password metadata")
+    global_salt, check = bytes(row[0]), bytes(row[1])
+    pbes2 = _is_pbes2(check)
+
+    def valid(password):
+        db_key = _db_key(global_salt, password)
+        try:
+            if pbes2:
+                plain = _decrypt_pbes2(check, db_key)
+            else:
+                oid, iv, ct = _parse_legacy_blob(check)
+                key = _legacy_key(global_salt, password, oid)
+                plain = _unpad(_legacy_crypt(key, iv, ct, oid))
+            return plain.startswith(b"password-check")
+        except Exception:
+            return False
+
+    if valid(b""):
+        return conn, global_salt, b"", pbes2
+    if master_password is None:
+        master_password = getpass.getpass("Firefox primary password: ")
+    password = master_password.encode("utf-8")
+    if not valid(password):
+        raise CryptoError("wrong Firefox primary password")
+    return conn, global_salt, password, pbes2
+
+
+def _extract_private_key(plain):
+    """Return the raw key bytes from a decrypted nssPrivate value.
+
+    Legacy entries wrap the key in ``SEQUENCE { INTEGER, OCTET, OCTET }``;
+    the modern login store keeps the 32-byte key directly.
+    """
+    if len(plain) >= 2 and plain[0] == 0x30:
+        try:
+            _, inner, end = _der(plain, 0)
+            if end == len(plain):
+                octets = [v for t, v in _der_children(inner) if t == 0x04]
+                if octets:
+                    return octets[-1]
+        except (CryptoError, IndexError, ValueError):
+            pass
+    return plain
+
+
+def nss_private_keys(key4_path, master_password=None):
+    """Decrypt and return the private keys stored in key4.db.
+
+    Returns a list of ``(label, key_bytes)``.  Raises when the store is
+    password-protected and the password is wrong (prompting when needed).
+    """
+    conn, global_salt, password, pbes2 = nss_open(key4_path, master_password)
+    db_key = _db_key(global_salt, password)
+    columns = [row[1] for row in conn.execute("pragma table_info(nssPrivate)")]
+    keys = []
+    for row in conn.execute("select * from nssPrivate"):
+        values = dict(zip(columns, row))
+        blob = values.get("a11")
+        if not blob:
+            continue
+        try:
+            if pbes2:
+                plain = _decrypt_pbes2(bytes(blob), db_key)
+            else:
+                oid, iv, ct = _parse_legacy_blob(bytes(blob))
+                key = _legacy_key(global_salt, password, oid)
+                plain = _unpad(_legacy_crypt(key, iv, ct, oid))
+        except Exception:
+            continue
+        keys.append((values.get("a3") or "", _extract_private_key(plain)))
+    return keys
+
+
+# ---- firefox logins ---------------------------------------------------------
+
+
+def _b64url(data):
+    pad = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data + pad)
+
+
+def _decrypt_jwe(secfields, keys):
+    """Decrypt a login-store ``secFields`` JWE (alg=dir, enc=A256GCM).
+
+    The AES-GCM AAD is the ASCII of the protected header, per the JWE spec.
+    """
+    parts = secfields.split(".")
+    if len(parts) != 5:
+        return None
+    aad = parts[0].encode("ascii")
+    try:
+        iv = _b64url(parts[2])
+        ct = _b64url(parts[3])
+        tag = _b64url(parts[4])
+    except (ValueError, binascii.Error):
+        return None
+    ordered = sorted(keys, key=lambda pair: pair[0] != "as-logins-key")
+    for _, key in ordered:
+        if len(key) < 32:
+            continue
+        try:
+            return _aes_gcm_decrypt(key[:32], iv, ct, tag, aad)
+        except Exception:
+            continue
+    return None
+
+
+def _login_secret_fields(plain):
+    """Extract (username, password) from a decrypted secFields JSON value.
+
+    The Rust login store uses short canonical keys: ``u`` for the username and
+    ``p`` for the password (the latter is itself JSON for Firefox Accounts).
+    """
+    if plain is None:
+        return None, None
+    try:
+        obj = json.loads(plain.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        try:
+            return None, plain.decode("utf-8")
+        except UnicodeDecodeError:
+            return None, ""
+    if isinstance(obj, dict):
+        user = obj.get("u") or obj.get("username") or obj.get("user") or ""
+        pw = obj.get("p") or obj.get("password") or obj.get("pass") or ""
+        if isinstance(pw, (dict, list)):
+            pw = json.dumps(pw)
+        if user or pw:
+            return user, pw
+        strings = [v for v in obj.values() if isinstance(v, str)]
+        if len(strings) == 1:
+            return None, strings[0]
+    return None, None
+
+
+def _decrypt_legacy_field(blob64, keys):
+    if not blob64:
+        return ""
+    try:
+        raw = base64.b64decode(blob64)
+        oid, iv, ct = _parse_legacy_blob(raw)
+    except (ValueError, binascii.Error, CryptoError, IndexError):
+        return ""
+    for _, key in keys:
+        if oid == OID_DES3 and len(key) < 24:
+            continue
+        try:
+            plain = _unpad(_legacy_crypt(key, iv, ct, oid))
+        except Exception:
+            continue
+        # NSS prefixes secrets with a 2-byte big-endian length.
+        if len(plain) >= 2 and int.from_bytes(plain[:2], "big") == len(plain) - 2:
+            plain = plain[2:]
+        try:
+            return plain.rstrip(b"\x00").decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+    return ""
+
+
+def read_firefox_logins(profile, domain, exact, master_password=None):
+    db = profile.get("login_db")
+    if db and os.path.exists(db):
+        return _read_logins_db(profile, db, domain, exact, master_password)
+    js = profile.get("login_data")
+    if js and os.path.exists(js):
+        return _read_logins_json(profile, js, domain, exact, master_password)
+    return []
+
+
+def _key4_path(db_path):
+    return os.path.join(os.path.dirname(db_path), "key4.db")
+
+
+def _read_logins_db(profile, db, domain, exact, master_password):
+    key4 = _key4_path(db)
+    keys = []
+    if os.path.exists(key4):
+        try:
+            keys = nss_private_keys(key4, master_password)
+        except CryptoError:
+            keys = []
+    conn = open_sqlite(db)
+    try:
+        rows = conn.execute("select * from loginsL where is_deleted=0").fetchall()
+    except sqlite3.Error:
+        rows = []
+    out = []
+    for r in rows:
+        origin = pick(r, "origin", "hostname", "formActionOrigin", default="") or ""
+        host = urlparse(origin).hostname or origin
+        if not host_matches(host, domain, exact):
+            continue
+        user, pw = "", ""
+        secfields = pick(r, "secFields", default="") or ""
+        if secfields:
+            plain = _decrypt_jwe(secfields, keys)
+            u2, p2 = _login_secret_fields(plain)
+            if u2:
+                user = u2
+            if p2 is not None:
+                pw = p2
+        # Older migrated profiles may still carry the legacy encrypted columns.
+        if not pw:
+            pw = _decrypt_legacy_field(pick(r, "encryptedPassword", default=""), keys)
+        if not user:
+            user = _decrypt_legacy_field(pick(r, "encryptedUsername", default=""), keys)
+        out.append({"origin": origin, "username": user, "password": pw})
+    return out
+
+
+def _read_logins_json(profile, js_path, domain, exact, master_password):
+    try:
+        data = json.loads(Path(js_path).read_text(errors="replace"))
+    except (OSError, ValueError):
+        return []
+    key4 = _key4_path(js_path)
+    keys = []
+    if os.path.exists(key4):
+        try:
+            keys = nss_private_keys(key4, master_password)
+        except CryptoError:
+            keys = []
+    out = []
+    for login in data.get("logins", []):
+        origin = login.get("hostname") or login.get("formActionOrigin") or ""
+        host = urlparse(origin).hostname or origin
+        if not host_matches(host, domain, exact):
+            continue
+        out.append({
+            "origin": origin,
+            "username": _decrypt_legacy_field(login.get("encryptedUsername", ""), keys),
+            "password": _decrypt_legacy_field(login.get("encryptedPassword", ""), keys),
+        })
+    return out
+
+
+# ----------------------------------------------------------------- target choice
+
+
+def ordered_profiles(browsers, args):
+    pairs = []
+    seen = set()
+    for b in browsers:
+        if args.browser:
+            wanted = {x.lower() for x in args.browser}
+            if b["id"].lower() not in wanted and b["name"].lower() not in wanted:
+                continue
+        if args.family and b["family"] != args.family:
+            continue
+        for p in b["profiles"]:
+            if args.open_only and not p["is_open"]:
+                continue
+            if args.profile:
+                cand = {p["name"].lower(), os.path.basename(p["path"]).lower(), p["path"].lower()}
+                if args.profile.lower() not in cand:
+                    continue
+            real = os.path.realpath(p["path"])
+            if real in seen:
+                continue
+            seen.add(real)
+            pairs.append((b, p))
+    pairs.sort(key=lambda bp: (
+        not bp[1]["is_open"], not bp[1]["is_default"], bp[1]["name"]))
+    return pairs
+
+
+def extract(browser, profile, domain, exact, kind,
+            master_password=None, keyring_app=None):
+    family = browser["family"]
+    result = {"cookies": [], "logins": []}
+    if kind in ("cookies", "both"):
+        if family == "chromium":
+            result["cookies"] = read_chromium_cookies(
+                profile, browser, domain, exact, keyring_app)
+        else:
+            result["cookies"] = read_firefox_cookies(profile, domain, exact)
+    if kind in ("logins", "both"):
+        if family == "chromium":
+            result["logins"] = read_chromium_logins(
+                profile, browser, domain, exact, keyring_app)
+        else:
+            result["logins"] = read_firefox_logins(profile, domain, exact, master_password)
+    return result
+
+
+# --------------------------------------------------------------------- formatting
+
+
+def format_header(cookies):
+    return "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+
+
+def format_netscape(cookies):
+    lines = ["# Netscape HTTP Cookie File"]
+    for c in cookies:
+        host = c["host"]
+        include_sub = "TRUE" if host.startswith(".") else "FALSE"
+        secure = "TRUE" if c["secure"] else "FALSE"
+        expires = c["expires"] or 0
+        lines.append("\t".join([
+            host, include_sub, c["path"] or "/", secure, str(expires),
+            c["name"], c["value"],
+        ]))
+    return "\n".join(lines)
+
+
+def print_cookies_table(cookies):
+    print(f"{'HOST':<32} {'NAME':<24} {'SEC':<4} {'HTTP':<5} {'EXPIRES':<12} VALUE")
+    for c in cookies:
+        print(f"{c['host']:<32} {c['name']:<24} "
+              f"{'S' if c['secure'] else '-':<4} "
+              f"{'H' if c['http_only'] else '-':<5} "
+              f"{str(c['expires'] or 0):<12} {c['value']}")
+
+
+def print_logins_table(logins):
+    print(f"{'ORIGIN':<40} {'USERNAME':<28} PASSWORD")
+    for l in logins:
+        print(f"{l['origin']:<40} {l['username']:<28} {l['password']}")
+
+
+# ---------------------------------------------------------------------- storage hint
+
+
+def storage_hint(target, args):
+    """One-line hint to ``browser.storage`` when no cookies/logins were found.
+
+    Tokens that only live in ``localStorage`` are a common SPA pattern, so a
+    cookie-less site is worth a second look.  The probe runs ``browser.storage``
+    with the same filters, without values, and reports only the key names.
+    """
+    exe = os.path.join(HERE, "browser.storage")
+    if not os.path.exists(exe):
+        exe = shutil.which("browser.storage")
+    if not exe:
+        return None
+    cmd = [exe, target, "--format", "json", "--no-values"]
+    for name in args.browser:
+        cmd += ["--browser", name]
+    if args.profile:
+        cmd += ["--profile", args.profile]
+    if args.family:
+        cmd += ["--family", args.family]
+    if args.open_only:
+        cmd.append("--open-only")
+    if args.exact:
+        cmd.append("--exact")
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not out.stdout.strip():
+        return None
+    try:
+        data = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return None
+    matches = data.get("matches") or []
+    if not matches:
+        return None
+    match = matches[0]
+    keys = match.get("keys") or []
+    seen = list(dict.fromkeys(keys))
+    shown = ", ".join(seen[:6])
+    if len(seen) > 6:
+        shown += f", +{len(seen) - 6} more"
+    plural = "entry" if len(keys) == 1 else "entries"
+    return (f"hint: no {args.kind} for {target}, but localStorage in "
+            f"{match['browser']} profile '{match['profile']}' has {len(keys)} "
+            f"{plural} ({shown}); try: browser.storage {target}")
+
+
+# ------------------------------------------------------------------------- CLI
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="cookies",
+        description="Extract cookies and saved logins for a site from Chromium/Firefox browsers.")
+    p.add_argument("target", nargs="?", help="domain or URL, e.g. grok.com or https://x.com")
+    p.add_argument("--browser", action="append", default=[],
+                   help="restrict to a browser id (repeatable, e.g. firefox, brave)")
+    p.add_argument("--profile", default=None, help="restrict to a profile name/path")
+    p.add_argument("--family", choices=["chromium", "firefox"], default=None)
+    p.add_argument("--open-only", action="store_true",
+                   help="only use browsers/profiles that are currently running")
+    p.add_argument("--all", action="store_true",
+                   help="use every matching browser/profile, not just the first")
+    p.add_argument("--exact", action="store_true",
+                   help="match the host exactly instead of including subdomains")
+    p.add_argument("--kind", choices=["cookies", "logins", "both"], default="cookies")
+    p.add_argument("--format", choices=["table", "json", "header", "netscape"],
+                   default="table")
+    p.add_argument("--list", action="store_true",
+                   help="list matching profiles and counts without printing secrets")
+    p.add_argument("--no-hint", action="store_true",
+                   help="do not suggest browser.storage when nothing matches")
+    p.add_argument("--keyring-app", default=None,
+                   help="override the libsecret application id (chromium family)")
+    p.add_argument("--master-password", default=None,
+                   help="Firefox primary password (otherwise prompted when needed)")
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if not args.target:
+        build_parser().print_usage(sys.stderr)
+        return 2
+    domain = domain_of(args.target)
+    if not domain:
+        print("cookies: could not parse a domain from the target", file=sys.stderr)
+        return 2
+
+    try:
+        browsers = get_browsers()
+    except CryptoError as exc:
+        print(f"cookies: {exc}", file=sys.stderr)
+        return 1
+
+    pairs = ordered_profiles(browsers, args)
+    if not pairs:
+        print("cookies: no matching browser/profile", file=sys.stderr)
+        return 1
+
+    matches = []
+    for browser, profile in pairs:
+        got = extract(browser, profile, domain, args.exact, args.kind,
+                      args.master_password, args.keyring_app)
+        if got["cookies"] or got["logins"]:
+            matches.append((browser, profile, got))
+            if not args.all:
+                break
+
+    if not matches:
+        if args.format == "json":
+            print(json.dumps({"target": domain, "matches": []}, indent=2))
+        else:
+            print(f"No {args.kind} found for {domain}.")
+        if not args.no_hint:
+            try:
+                hint = storage_hint(args.target, args)
+            except Exception:
+                hint = None
+            if hint:
+                print(hint, file=sys.stderr)
+        return 1
+
+    if args.list:
+        for browser, profile, got in matches:
+            print(f"{browser['id']}\t{profile['name']}\t{profile['path']}\t"
+                  f"{len(got['cookies'])} cookies, {len(got['logins'])} logins")
+        return 0
+
+    if args.format == "json":
+        payload = {
+            "target": domain,
+            "kind": args.kind,
+            "matches": [{
+                "browser": b["id"],
+                "browser_name": b["name"],
+                "family": b["family"],
+                "profile": p["name"],
+                "path": p["path"],
+                "is_open": p["is_open"],
+                "cookies": got["cookies"],
+                "logins": got["logins"],
+            } for b, p, got in matches],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if args.format == "header":
+        cookies = [c for _, _, got in matches for c in got["cookies"]]
+        if cookies:
+            print(format_header(cookies))
+        return 0
+
+    if args.format == "netscape":
+        cookies = [c for _, _, got in matches for c in got["cookies"]]
+        if cookies:
+            print(format_netscape(cookies))
+        return 0
+
+    # table
+    for i, (browser, profile, got) in enumerate(matches):
+        if i:
+            print()
+        print(f"# {browser['id']} / {profile['name']} "
+              f"({profile['path']}){' [open]' if profile['is_open'] else ''}")
+        if got["cookies"]:
+            print_cookies_table(got["cookies"])
+        if got["logins"]:
+            if got["cookies"]:
+                print()
+            print("# saved logins")
+            print_logins_table(got["logins"])
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)
+    except CryptoError as exc:
+        print(f"cookies: {exc}", file=sys.stderr)
+        sys.exit(1)
