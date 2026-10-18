@@ -18,12 +18,12 @@ Read sources:
     parser (SST tables + write-ahead log; no ``plyvel``/``snappy`` needed).
 
 Usage:
-  browser.storage example.com                 # storage entries, first matching profile
-  browser.storage https://example.com --exact # exact origin instead of subdomains
-  browser.storage example.com --key Authorization --format raw
-  browser.storage example.com --format json
-  browser.storage example.com --value-only    # just the values, one per line
-  browser.storage example.com --kind all --all
+  browser.storage linom.net                 # storage entries, first matching profile
+  browser.storage https://linom.net --exact # exact origin instead of subdomains
+  browser.storage linom.net --key Authorization --format raw
+  browser.storage linom.net --format json
+  browser.storage linom.net --value-only    # just the values, one per line
+  browser.storage linom.net --kind all --all
   browser.storage --list                    # which profiles have storage, no secrets
 
 Exit status is 0 when data was found, 1 when nothing matched, 2 on usage errors.
@@ -588,7 +588,7 @@ def build_parser():
         prog="browser.storage",
         description="Read web-storage (localStorage/sessionStorage) for a site.")
     p.add_argument("target", nargs="?",
-                   help="domain, host:port or URL, e.g. example.com or https://x.com")
+                   help="domain, host:port or URL, e.g. linom.net or https://x.com")
     p.add_argument("--browser", action="append", default=[],
                    help="restrict to a browser id (repeatable, e.g. firefox, brave)")
     p.add_argument("--profile", default=None, help="restrict to a profile name/path")

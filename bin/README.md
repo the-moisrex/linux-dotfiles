@@ -239,12 +239,12 @@ write-ahead log — so no external `plyvel`/`snappy` is needed and locked stores
 still safe to read.
 
 ```bash
-browser.storage example.com                  # storage entries (first match)
-browser.storage https://example.com --exact  # exact origin, no subdomains
-browser.storage example.com --key Authorization --value-only
-browser.storage example.com --grep 'auth|token'
-browser.storage example.com --kind all --all # localStorage + sessionStorage, every match
-browser.storage example.com --format json    # machine-readable, values included
+browser.storage linom.net                  # storage entries (first match)
+browser.storage https://linom.net --exact  # exact origin, no subdomains
+browser.storage linom.net --key Authorization --value-only
+browser.storage linom.net --grep 'auth|token'
+browser.storage linom.net --kind all --all # localStorage + sessionStorage, every match
+browser.storage linom.net --format json    # machine-readable, values included
 browser.storage --list                     # profiles with storage, no secrets
 ```
 
