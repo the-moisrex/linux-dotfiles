@@ -11,14 +11,14 @@ namespace {
 
 // plan.sh embeds through _common.sh's embed_file, whose shape differs from the
 // inline loops the other prompts use (leading blank line, no trailing one).
-std::string embed_file_block(std::filesystem::path const& path, std::optional<std::size_t> head_lines) {
+std::string embed_plan_file(std::filesystem::path const& path, file_options opts) {
     if (!std::filesystem::is_regular_file(path)) return {};
 
     std::string name = path.filename().string();
     std::string output;
     output += '\n';
     output += std::format("File: {}\n```{}\n", name, infer_lang(path));
-    output += trim_context_nl(read_file(path), head_lines);
+    output += number_lines(trim_context_nl(read_file(path), opts.head_lines), opts.numbered);
     output += "```\n";
     return output;
 }
@@ -26,7 +26,7 @@ std::string embed_file_block(std::filesystem::path const& path, std::optional<st
 } // namespace
 
 static void execute_plan(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output;
     output += R"HELP(You are in PLAN MODE. Your goal is to produce a detailed, decision-complete
@@ -100,9 +100,9 @@ Produce a structured plan with these sections:
         auto resolved = resolve_input_file(ctx, arg);
         std::filesystem::path file(arg);
         if (resolved && std::filesystem::is_regular_file(*resolved)) {
-            output += embed_file_block(*resolved, head_lines);
+            output += embed_plan_file(*resolved, opts);
         } else if (std::filesystem::is_regular_file(file)) {
-            output += embed_file_block(file, head_lines);
+            output += embed_plan_file(file, opts);
         } else {
             error += std::format("Warning: File not found: {}\n", arg);
         }
@@ -113,9 +113,7 @@ Produce a structured plan with these sections:
 }
 
 static void render_help_plan(std::ostream& os) {
-    os << R"EOF(Usage: prompt plan [--head N] [FILE...]
-       echo "task description" | prompt plan [--head N] [FILE...]
-
+    os << file_usage_help("plan", "[FILE...]", "echo \"task description\"") << R"EOF(
 Generates a structured plan mode prompt for an AI assistant.
 The AI will be instructed to ask clarifying questions, analyze provided code,
 and produce a detailed implementation plan before writing any code.
@@ -124,8 +122,7 @@ Designed for chat mode where the AI cannot access files directly.
 Use this when you want the AI to plan before implementing.
 
 Options:
-  --head N   Keep only the first N lines of embedded context files
-)EOF";
+)EOF" << file_options_help("embedded context files");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

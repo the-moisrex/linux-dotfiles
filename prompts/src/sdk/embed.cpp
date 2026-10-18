@@ -1,5 +1,6 @@
 #include "embed.hpp"
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -103,8 +104,40 @@ std::string read_file(std::filesystem::path const& path) {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
-std::string embed_file(std::filesystem::path const& path, std::string_view label,
-                       std::optional<std::size_t> head_lines) {
+std::string number_lines(std::string_view text, bool numbered) {
+    if (!numbered || text.empty()) return std::string(text);
+
+    bool ends_with_newline = text.back() == '\n';
+
+    std::vector<std::string_view> lines;
+    std::size_t start = 0;
+    while (start < text.size()) {
+        std::size_t end = text.find('\n', start);
+        if (end == std::string_view::npos) {
+            lines.push_back(text.substr(start));
+            break;
+        }
+        lines.push_back(text.substr(start, end - start));
+        start = end + 1;
+    }
+    if (lines.empty()) return std::string(text);
+
+    std::size_t width = std::to_string(lines.size()).size();
+    std::string out;
+    out.reserve(text.size() + (lines.size() * (width + 3)));
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        std::string number = std::to_string(i + 1);
+        out.append(width - number.size(), ' ');
+        out += number;
+        out += " | ";
+        out += lines[i];
+        out += '\n';
+    }
+    if (!ends_with_newline) out.pop_back(); // the input had no final newline
+    return out;
+}
+
+std::string embed_file(std::filesystem::path const& path, std::string_view label, file_options opts) {
 
     if (!std::filesystem::exists(path)) return "";
 
@@ -115,7 +148,7 @@ std::string embed_file(std::filesystem::path const& path, std::string_view label
     std::string output;
     output += std::format("File: {}\n\n", name);
     output += std::format("```{}\n", infer_lang(path));
-    output += trim_context(content, head_lines);
+    output += number_lines(trim_context(content, opts.head_lines), opts.numbered);
     output += "\n```\n\n";
     return output;
 }
@@ -126,11 +159,11 @@ std::string embed_stdin(std::string_view content, std::optional<std::size_t> hea
     return std::string(content) + "\n\n";
 }
 
-std::string embed_file_block(std::filesystem::path const& file, std::optional<std::size_t> head_lines) {
+std::string embed_file_block(std::filesystem::path const& file, file_options opts) {
     std::string output;
     output += std::format("File: {}\n\n", file.filename().string());
     output += std::format("```{}\n", infer_lang(file));
-    output += trim_context_nl(read_file(file), head_lines);
+    output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
     output += "```\n\n";
     return output;
 }

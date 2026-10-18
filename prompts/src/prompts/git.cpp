@@ -45,7 +45,7 @@ std::string head_lines_raw(std::string_view s, std::size_t n) {
 } // namespace
 
 static void execute_git(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     // parse_arguments leaves the non-flag files in ARGS (with --head N removed).
     auto files = positional_args(ctx);
@@ -96,7 +96,7 @@ Common scenarios you can help with:
             output += std::format("File: {}\n", name);
             output += '\n';
             output += std::format("```{}\n", lang);
-            output += trim_context_nl(content, head_lines);
+            output += number_lines(trim_context_nl(content, opts.head_lines), opts.numbered);
             output += "\n```\n\n";
         } else {
             error += std::format("Warning: File '{}' not found.\n", file);
@@ -110,15 +110,12 @@ Common scenarios you can help with:
 }
 
 static void render_help_git(std::ostream& os) {
-    os << R"EOF(Usage: prompt git [--head N] [FILE...]
-       echo "task description" | prompt git [--head N] [FILE...]
-
+    os << file_usage_help("git", "[FILE...]", "echo \"task description\"") << R"EOF(
 Git workflow assistance prompt.
 Helps with branching strategies, merge conflicts, rebasing, bisecting, and other git operations.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

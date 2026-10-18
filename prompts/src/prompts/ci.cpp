@@ -43,7 +43,7 @@ bool contains_ci_path(std::string const& line) {
 } // namespace
 
 static void execute_ci(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output;
     output +=
@@ -100,7 +100,7 @@ Searched for: GitHub Actions, GitLab CI, Jenkins, Docker, CircleCI, Travis CI.
             std::filesystem::path p(file);
             auto label = fs::relative_path(p, ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
             output += std::format("File: {}\n\n```{}\n", label.string(), infer_lang(p));
-            output += trim_context_nl(read_file(p), head_lines);
+            output += number_lines(trim_context_nl(read_file(p), opts.head_lines), opts.numbered);
             output += "\n```\n\n";
         }
     }
@@ -109,16 +109,13 @@ Searched for: GitHub Actions, GitLab CI, Jenkins, Docker, CircleCI, Travis CI.
 }
 
 static void render_help_ci(std::ostream& os) {
-    os << R"EOF(Usage: prompt ci [--head N]
-       echo "task description" | prompt ci [--head N]
-
+    os << file_usage_help("ci", "", "echo \"task description\"") << R"EOF(
 CI/CD pipeline review prompt.
 Automatically finds and embeds all CI/CD configuration files from the repository
 (GitHub Actions, GitLab CI, Jenkins, Docker, etc.).
 
 Options:
-  --head N   Keep only the first N lines of each embedded context
-)EOF";
+)EOF" << file_options_help("each embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

@@ -55,7 +55,7 @@ std::string strip_source_lists(std::string const& content) {
 static void execute_cmake(prompt_context& ctx) {
     // init_prompt -> parse_arguments runs first (validates --head); the script
     // then walks the remaining args for its own flags.
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
     auto remaining = positional_args(ctx);
 
     std::vector<std::string> exclude_patterns;
@@ -118,7 +118,7 @@ Please review the build setup, dependencies, and target structures.
 
         output += std::format("File: {}\n", f);
         output += "\n    ```cmake\n";
-        output += trim_context_nl(content, head_lines);
+        output += number_lines(trim_context_nl(content, opts.head_lines), opts.numbered);
         output += "\n    ```\n\n";
     }
 
@@ -126,13 +126,12 @@ Please review the build setup, dependencies, and target structures.
 }
 
 static void render_help_cmake(std::ostream& os) {
-    os << R"EOF(Usage: prompt cmake [--head N] [--exclude PATTERN] [--strip-lists]
-
+    os << file_usage_help("cmake", "[--exclude PATTERN] [--strip-lists]", "") << R"EOF(
 Gathers all CMakeLists.txt and *.cmake files in the current project to provide full context on the CMake build setup.
 
 Options:
-  --head N          Keep only the first N lines of each file
-  --exclude PATTERN Exclude files or directories matching the pattern (can be specified multiple times)
+)EOF" << file_options_help("each file")
+       << R"EOF(  --exclude PATTERN Exclude files or directories matching the pattern (can be specified multiple times)
   --strip-lists     Replace long lists of source files (.c, .cpp, .h, etc.) with a comment to save context window space
 )EOF";
 }

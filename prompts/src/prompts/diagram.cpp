@@ -10,7 +10,7 @@ namespace prompt::prompts {
 static void execute_diagram(prompt_context& ctx) {
     // diagram.sh runs init_prompt (which already validated --head) before its
     // own --type loop, so --head errors win.
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     // diagram.sh's loop walks the ORIGINAL arguments, not the parsed ARGS.
     std::string diagram_type = "mermaid";
@@ -48,7 +48,7 @@ If the code is complex, produce multiple focused diagrams rather than one overwh
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
-        output += trim_context_nl(read_file(file), head_lines);
+        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
         // diagram.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";
     }
@@ -61,14 +61,12 @@ If the code is complex, produce multiple focused diagrams rather than one overwh
 }
 
 static void render_help_diagram(std::ostream& os) {
-    os << R"EOF(Usage: prompt diagram [--head N] [--type TYPE] [FILE...]
-       echo "task description" | prompt diagram [--head N] [--type TYPE] [FILE...]
-
+    os << file_usage_help("diagram", "[--type TYPE] [FILE...]", "echo \"task description\"") << R"EOF(
 Generates code diagrams (Mermaid, PlantUML, ASCII) from source code or descriptions.
 
 Options:
-  --head N       Keep only the first N lines of the embedded context
-  --type, -t     Diagram type: mermaid (default), plantuml, ascii, flowchart, sequence, class
+)EOF" << file_options_help("the embedded context")
+       << R"EOF(  --type, -t     Diagram type: mermaid (default), plantuml, ascii, flowchart, sequence, class
 )EOF";
 }
 

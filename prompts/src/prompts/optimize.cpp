@@ -8,7 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_optimize_prompt(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output = R"PROMPT(Act as an expert prompt engineer. Review the provided prompt(s) or instructions below.
 Your goal is to optimize the input to create a clearer, more effective, and more robust prompt for an AI assistant.
@@ -27,7 +27,7 @@ Here is the input to optimize:
     for (auto const& file : sources.files) {
         // optimize-prompt.sh puts no blank line between "File:" and the fence.
         output += std::format("File: {}\n```{}\n", file.filename().string(), infer_lang(file));
-        output += trim_context_nl(read_file(file), head_lines);
+        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
         output += "```\n\n";
     }
     for (auto arg : sources.missing) {
@@ -39,14 +39,11 @@ Here is the input to optimize:
 }
 
 static void render_help_optimize_prompt(std::ostream& os) {
-    os << R"EOF(Usage: prompt optimize-prompt [--head N] [FILE...]
-       echo "my rough prompt" | prompt optimize-prompt [--head N] [FILE...]
-
+    os << file_usage_help("optimize-prompt", "[FILE...]", "echo \"my rough prompt\"") << R"EOF(
 Ask the AI to analyze and improve an input prompt.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

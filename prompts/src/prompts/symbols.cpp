@@ -7,7 +7,7 @@
 namespace prompt::prompts {
 
 static void execute_symbols(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output = R"PROMPT(Review the symbols in this code and find bad names that should be renamed.
 Focus on unclear, misleading, overly abbreviated, inconsistent, or non-idiomatic symbol names.
@@ -28,7 +28,7 @@ Only suggest renames that materially improve readability or maintainability.
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
         output += std::format("\nFile: {}\n```{}\n", file.filename().string(), infer_lang(file));
-        output += trim_context_nl(read_file(file), head_lines);
+        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
         output += "\n```\n";
     }
     for (auto arg : sources.missing) {
@@ -40,15 +40,13 @@ Only suggest renames that materially improve readability or maintainability.
 }
 
 static void render_help_symbols(std::ostream& os) {
-    os << R"EOF(Usage: prompt symbols [--head N] [file...]
-
+    os << file_usage_help("symbols") << R"EOF(
 Builds a prompt that reviews symbol names.
 If file paths are given, it reads those files; otherwise it reads stdin.
 Example: `prompt symbols $(fzf)`
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

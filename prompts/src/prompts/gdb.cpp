@@ -10,7 +10,7 @@
 namespace prompt::prompts {
 
 static void execute_gdb(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     auto files = positional_args(ctx);
 
@@ -67,7 +67,7 @@ Running the command: `gdb -q --nh -batch -ex "help" -ex "help data" -ex "help br
         if (std::filesystem::is_regular_file(p)) {
             std::string file_name = p.filename().string();
             output += std::format("File: {}\n\n```{}\n", file_name, infer_lang(p));
-            output += trim_context_nl(read_file(p), head_lines);
+            output += number_lines(trim_context_nl(read_file(p), opts.head_lines), opts.numbered);
             output += "\n```\n\n";
         } else {
             error += std::format("Warning: File '{}' not found.\n", file);
@@ -79,14 +79,11 @@ Running the command: `gdb -q --nh -batch -ex "help" -ex "help data" -ex "help br
 }
 
 static void render_help_gdb(std::ostream& os) {
-    os << R"EOF(Usage: prompt gdb [--head N] [FILE...]
-       some-command | prompt gdb [--head N] [FILE...]
-
+    os << file_usage_help("gdb") << R"EOF(
 Generates a prompt asking the LLM to write a GDB script that helps debug the specified code (e.g., tracking variables in loops, pretty-printing).
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

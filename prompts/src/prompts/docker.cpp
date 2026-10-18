@@ -9,7 +9,7 @@
 namespace prompt::prompts {
 
 static void execute_docker(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     auto files = positional_args(ctx);
 
@@ -29,7 +29,7 @@ static void execute_docker(prompt_context& ctx) {
         if (std::filesystem::is_regular_file(p)) {
             std::string file_name = p.filename().string();
             output += std::format("File: {}\n\n```{}\n", file_name, infer_lang(p));
-            output += trim_context_nl(read_file(p), head_lines);
+            output += number_lines(trim_context_nl(read_file(p), opts.head_lines), opts.numbered);
             output += "\n```\n\n";
         } else {
             error += std::format("Warning: File '{}' not found.\n", file);
@@ -41,15 +41,12 @@ static void execute_docker(prompt_context& ctx) {
 }
 
 static void render_help_docker(std::ostream& os) {
-    os << R"EOF(Usage: prompt docker [--head N] [FILE...]
-       echo "task description" | prompt docker [--head N] [FILE...]
-
+    os << file_usage_help("docker", "[FILE...]", "echo \"task description\"") << R"EOF(
 Docker and container review prompt.
 Analyzes Dockerfiles, docker-compose files, and container configurations for best practices.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

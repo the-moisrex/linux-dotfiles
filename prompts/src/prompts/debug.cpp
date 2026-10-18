@@ -8,7 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_debug(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output = R"PROMPT(You are an expert debugger across all programming languages and runtimes.
 Analyze the provided code, error messages, stack traces, or logs and identify the root cause of the issue.
@@ -25,7 +25,7 @@ Analyze the provided code, error messages, stack traces, or logs and identify th
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
-        output += trim_context_nl(read_file(file), head_lines);
+        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
         // debug.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";
     }
@@ -38,15 +38,12 @@ Analyze the provided code, error messages, stack traces, or logs and identify th
 }
 
 static void render_help_debug(std::ostream& os) {
-    os << R"EOF(Usage: prompt debug [--head N] [FILE...]
-       some-command | prompt debug [--head N] [FILE...]
-
+    os << file_usage_help("debug") << R"EOF(
 General-purpose multi-language debugging prompt.
 Analyzes error messages, stack traces, or suspicious code and identifies the root cause.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

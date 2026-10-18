@@ -116,6 +116,10 @@ static void execute_paths(prompt_context& ctx) {
                 head_lines = prompt::text::to_size(head_value, 0);
             }
             ++i;
+        } else if (is_number_flag(a)) {
+            // Accepted so it is not mistaken for a path; paths already renders
+            // line-numbered windows, so there is nothing to add.
+            continue;
         } else {
             file_args.push_back(a);
         }

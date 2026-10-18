@@ -62,7 +62,7 @@ std::string_view infer_lang(std::string_view base) {
 } // namespace
 
 static void execute_git_diff(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
@@ -80,7 +80,7 @@ static void execute_git_diff(prompt_context& ctx) {
         std::string diff_output = strip_trailing_newlines(git_raw(args));
         if (!diff_output.empty()) {
             output += "Diffs:\n\n```diff\n";
-            output += trim_context_nl(diff_output, head_lines);
+            output += trim_context_nl(diff_output, opts.head_lines);
             output += "```\n";
         } else {
             ctx.out.clear();
@@ -94,7 +94,7 @@ static void execute_git_diff(prompt_context& ctx) {
 
         if (!unstaged_diff.empty()) {
             output += "Unstaged changes:\n\n```diff\n";
-            output += trim_context_nl(unstaged_diff, head_lines);
+            output += trim_context_nl(unstaged_diff, opts.head_lines);
             output += "```\n\n";
         }
 
@@ -116,7 +116,7 @@ static void execute_git_diff(prompt_context& ctx) {
                     output += std::format("File: {} (new)\n", filepath);
                     output += '\n';
                     output += std::format("```{}\n", lang);
-                    output += trim_context_nl(content, head_lines);
+                    output += number_lines(trim_context_nl(content, opts.head_lines), opts.numbered);
                     output += "```\n\n";
                 }
                 if (nl == std::string::npos) break;
@@ -135,14 +135,12 @@ static void execute_git_diff(prompt_context& ctx) {
 }
 
 static void render_help_git_diff(std::ostream& os) {
-    os << R"EOF(Usage: prompt git.diff [--head N] [FILE...]
-
+    os << file_usage_help("git.diff", "[FILE...]", "") << R"EOF(
 Shows Git diffs for the specified files.
 If no files are provided, shows all unstaged changes and untracked files.
 
 Options:
-  --head N   Keep only the first N lines of embedded context
-)EOF";
+)EOF" << file_options_help("embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

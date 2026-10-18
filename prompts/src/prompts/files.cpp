@@ -10,7 +10,7 @@
 namespace prompt::prompts {
 
 static void execute_files(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     auto file_args = positional_args(ctx);
 
@@ -44,13 +44,13 @@ static void execute_files(prompt_context& ctx) {
         auto content = read_file(file);
 
         if (!content.empty()) {
-            if (head_lines) {
-                output += std::format("File {} (first {} lines)\n\n", rel.string(), std::to_string(*head_lines));
+            if (opts.head_lines) {
+                output += std::format("File {} (first {} lines)\n\n", rel.string(), std::to_string(*opts.head_lines));
             } else {
                 output += std::format("File {}\n\n", rel.string());
             }
             output += std::format("```{}\n", lang);
-            output += trim_context(content, head_lines);
+            output += number_lines(trim_context(content, opts.head_lines), opts.numbered);
             output += "\n```\n\n";
         }
     }
@@ -62,17 +62,14 @@ static void execute_files(prompt_context& ctx) {
 }
 
 static void render_help_files(std::ostream& os) {
-    os << R"EOF(Usage: prompt files [--head N] [FILE...]
-       some-command | prompt files [--head N] [FILE...]
-
+    os << file_usage_help("files") << R"EOF(
 Appends the given fuzzily found files as Markdown code blocks.
 If you're inside a Git repository, file headings are printed relative to the
 repository root.
 If no files are provided, `fzf -m` is used to choose them interactively.
 
 Options:
-  --head N   Keep only the first N lines of each embedded file
-)EOF";
+)EOF" << file_options_help("each embedded file");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

@@ -8,7 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_fix(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output = R"PROMPT(Find the root problem here and propose the smallest useful fix.
 Explain the issue briefly, mention any important assumptions, and provide the answer primarily as a git diff that can be applied directly.
@@ -20,7 +20,7 @@ Prefer minimal, surgical changes over broad rewrites.
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
-        output += trim_context_nl(read_file(file), head_lines);
+        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
         output += "\n```\n";
     }
     for (auto arg : sources.missing) {
@@ -32,14 +32,11 @@ Prefer minimal, surgical changes over broad rewrites.
 }
 
 static void render_help_fix(std::ostream& os) {
-    os << R"EOF(Usage: prompt fix [--head N] [FILE...]
-       some-command | prompt fix [--head N] [FILE...]
-
+    os << file_usage_help("fix") << R"EOF(
 Find the root problem here and propose the smallest useful fix.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

@@ -117,6 +117,7 @@ static void execute_git_dirty(prompt_context& ctx) {
     // and its --head accepts any value verbatim. --help/-h are intercepted by
     // the native dispatcher before we run.
     std::optional<std::size_t> head_lines;
+    bool numbered = false;
     bool filter_staged = false;
     bool filter_unstaged = false;
     bool filter_all = false;
@@ -136,6 +137,9 @@ static void execute_git_dirty(prompt_context& ctx) {
             }
             head_lines = static_cast<std::size_t>(std::strtoull(std::string(ctx.args[i + 1]).c_str(), nullptr, 10));
             i += 2;
+        } else if (is_number_flag(a)) {
+            numbered = true;
+            ++i;
         } else if (a == "--staged" || a == "-s") {
             filter_staged = true;
             ++i;
@@ -245,7 +249,7 @@ static void execute_git_dirty(prompt_context& ctx) {
         output += std::format("File: {} {}\n", filepath, heading);
         output += '\n';
         output += std::format("```{}\n", infer_lang(name));
-        output += trim_context_nl(content, head_lines);
+        output += number_lines(trim_context_nl(content, head_lines), numbered);
         output += "```\n\n";
     };
 
@@ -342,9 +346,8 @@ OUTPUT OPTIONS (how to show):
   --full-diff, -F        Show full files + diff context (@@ hunks with +/-)
 
 OTHER:
-  --head N               Keep only the first N lines of embedded context
-  -h, --help             Show this help
-
+)EOF" << file_options_help("embedded context", true)
+       << R"EOF(
 DEFAULTS: --all --files
 
 EXAMPLES:

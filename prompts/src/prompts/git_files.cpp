@@ -93,7 +93,7 @@ std::string strip_trailing_newlines(std::string_view s) {
 } // namespace
 
 static void execute_git_files(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     auto file_args = positional_args(ctx);
 
@@ -134,10 +134,10 @@ static void execute_git_files(prompt_context& ctx) {
         if (strip_trailing_newlines(raw).empty()) continue;
 
         output += std::format("File {}", rel.string());
-        if (head_lines) output += " (first " + std::to_string(*head_lines) + " lines)";
+        if (opts.head_lines) output += " (first " + std::to_string(*opts.head_lines) + " lines)";
         output += "\n\n";
         output += std::format("```{}\n", lang);
-        output += trim_context_nl(raw, head_lines);
+        output += number_lines(trim_context_nl(raw, opts.head_lines), opts.numbered);
         output += "\n```\n\n";
     }
 
@@ -148,16 +148,13 @@ static void execute_git_files(prompt_context& ctx) {
 }
 
 static void render_help_git_files(std::ostream& os) {
-    os << R"EOF(Usage: prompt git.files [--head N] [FILE...]
-       some-command | prompt git.files [--head N] [FILE...]
-
+    os << file_usage_help("git.files") << R"EOF(
 Embeds the given files as Markdown code blocks.
 File headings are printed relative to the Git repository root.
 If no files are provided, `fzf -m` is used to choose from tracked files.
 
 Options:
-  --head N   Keep only the first N lines of each embedded file
-)EOF";
+)EOF" << file_options_help("each embedded file");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

@@ -269,7 +269,7 @@ std::string find_rec(std::string const& results, std::string const& name) {
 } // namespace
 
 static void execute_skill(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     // command -v jq is required before anything else.
     {
@@ -280,13 +280,16 @@ static void execute_skill(prompt_context& ctx) {
 
     std::string first = ctx.args_count > 0 ? std::string(ctx.args[0]) : std::string();
 
-    // Build the positional arg list (parse_arguments drops --head + value).
+    // Build the positional arg list (parse_arguments drops --head + value and
+    // the value-less --num/--numbered line-number flags).
     auto positionals = [&] {
         std::vector<std::string> pos;
         for (std::size_t i = 0; i < ctx.args_count;) {
             if (ctx.args[i] == "--head") {
                 ++i;
                 if (i < ctx.args_count) ++i;
+            } else if (is_number_flag(ctx.args[i])) {
+                ++i;
             } else {
                 pos.emplace_back(ctx.args[i++]);
             }
@@ -422,7 +425,7 @@ static void execute_skill(prompt_context& ctx) {
             out += std::format("File: {}\n", file_name);
             out += '\n';
             out += std::format("```{}\n", bash_infer_lang(file_name));
-            out += trim_context_nl(read_file(fp), head_lines);
+            out += number_lines(trim_context_nl(read_file(fp), opts.head_lines), opts.numbered);
             out += "```\n";
         } else {
             err += std::format("Warning: File '{}' not found.\n", file);
@@ -434,9 +437,8 @@ static void execute_skill(prompt_context& ctx) {
 }
 
 static void render_help_skill(std::ostream& os) {
-    os << R"EOF(Usage: prompt skill <name> [--head N] [FILE...]
-       some-command | prompt skill <name> [--head N] [FILE...]
-       prompt skill list [--remote <query>]
+    os << file_usage_help("skill", "[FILE...]", "some-command", "<name>")
+       << R"EOF(       prompt skill list [--remote <query>]
        prompt skill install <name>
        prompt skill uninstall <name>
 
@@ -452,9 +454,8 @@ Subcommands:
   uninstall <name>  Remove a cached skill
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-  -h, --help Show this help message
-
+)EOF" << file_options_help("the embedded context", true)
+       << R"EOF(
 Examples:
   prompt skill docker                      # load cached docker skill
   cat file.cpp | prompt skill cpp-testing  # load skill + embed file

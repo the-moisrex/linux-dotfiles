@@ -93,7 +93,7 @@ std::string detect_base_branch(std::string const& given) {
 } // namespace
 
 static void execute_git_worktree_files(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
@@ -166,10 +166,10 @@ static void execute_git_worktree_files(prompt_context& ctx) {
         if (strip_trailing_newlines(raw).empty()) continue;
 
         output += std::format("File {}", rel.string());
-        if (head_lines) output += " (first " + std::to_string(*head_lines) + " lines)";
+        if (opts.head_lines) output += " (first " + std::to_string(*opts.head_lines) + " lines)";
         output += "\n\n";
         output += std::format("```{}\n", lang);
-        output += trim_context_nl(raw, head_lines);
+        output += number_lines(trim_context_nl(raw, opts.head_lines), opts.numbered);
         output += "\n```\n\n";
     }
 
@@ -180,16 +180,15 @@ static void execute_git_worktree_files(prompt_context& ctx) {
 }
 
 static void render_help_git_worktree_files(std::ostream& os) {
-    os << R"EOF(Usage: prompt git.worktree.files [--not <commit>] [--base <branch>] [--head N] [FILE...]
-
+    os << file_usage_help("git.worktree.files", "[FILE...]", "", "[--not <commit>] [--base <branch>]") << R"EOF(
 Embeds files changed since the upstream branch as Markdown code blocks.
 By default, compares against the upstream tracking branch (or origin/main).
 Explicit FILE arguments restrict embedding to only those changed files.
 
 Options:
-  --not <commit>   Exclude a commit (and its ancestors) from the diff
+)EOF" << file_options_help("each embedded file")
+       << R"EOF(  --not <commit>   Exclude a commit (and its ancestors) from the diff
   --base <branch>  Base branch to compare against (default: upstream or origin/main)
-  --head N         Keep only the first N lines of each embedded file
 )EOF";
 }
 

@@ -9,6 +9,13 @@
 
 namespace prompt {
 
+// How to render an embedded file: `head_lines` caps the kept lines (--head) and
+// `numbered` prefixes each kept line with its line number (--num/--numbered).
+struct file_options {
+    std::optional<std::size_t> head_lines;
+    bool numbered = false;
+};
+
 std::string_view infer_lang(std::filesystem::path const& file);
 
 // Port of `_common.sh trim_context`'s body with a `$(cat ...)`-style content:
@@ -32,16 +39,21 @@ std::string head_output(std::string_view text, std::size_t n);
 
 std::string read_file(std::filesystem::path const& path);
 
-std::string embed_file(std::filesystem::path const& path, std::string_view label = {},
-                       std::optional<std::size_t> head_lines = std::nullopt);
+// Prefix every line of `text` with a right-aligned line number and " | " when
+// `numbered`; returns `text` unchanged otherwise. The numbers are relative to
+// `text` (so a --head-trimmed file numbers 1..N) and the input's trailing
+// newline, if any, is preserved exactly once.
+std::string number_lines(std::string_view text, bool numbered);
 
-// The file-embedding shape every file-prompt uses (28 sites): a "File: <name>"
-// header, the content in a language-tagged fence, capped by --head, and a
-// trailing blank line. Unlike embed_file this keeps the exact byte layout of
-// the open-coded `output += ...` sequence (including the "File:" header and the
-// blank line after the closing fence), so prompts can be simplified without
-// changing a single output byte.
-std::string embed_file_block(std::filesystem::path const& file, std::optional<std::size_t> head_lines);
+std::string embed_file(std::filesystem::path const& path, std::string_view label = {}, file_options opts = {});
+
+// The file-embedding shape every file-prompt uses: a "File: <name>" header, the
+// content in a language-tagged fence, capped by --head, and a trailing blank
+// line. Unlike embed_file this keeps the exact byte layout of the open-coded
+// `output += ...` sequence (including the "File:" header and the blank line
+// after the closing fence), so prompts can be simplified without changing the
+// output layout.
+std::string embed_file_block(std::filesystem::path const& file, file_options opts);
 
 // The warning every file-prompt prints to stderr when a FILE argument does not
 // resolve to a readable regular file (10 identical sites), in the exact bytes

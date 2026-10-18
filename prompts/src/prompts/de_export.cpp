@@ -47,7 +47,7 @@ bool matches_any_line(std::string const& content, std::regex const& re) {
 } // namespace
 
 static void execute_de_export(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     // de-export.sh reads $stdin_content, which the dispatcher never exports and
     // the script never fills (it has no read_stdin), so piped stdin never
@@ -102,7 +102,7 @@ static void execute_de_export(prompt_context& ctx) {
 
     for (auto const& file : cpp_files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
-        output += trim_context_nl(read_file(file), head_lines);
+        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
         output += "\n```\n\n";
     }
 
@@ -110,16 +110,13 @@ static void execute_de_export(prompt_context& ctx) {
 }
 
 static void render_help_de_export(std::ostream& os) {
-    os << R"EOF(Usage: prompt de-export [--head N] [FILE...]
-       some-command | prompt de-export [--head N] [FILE...]
-
+    os << file_usage_help("de-export") << R"EOF(
 Reduce unnecessary exports from C++20 modules and move implementations out of headers.
 
 Only applies de-export advice if the project uses C++20 modules and contains `export`s.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

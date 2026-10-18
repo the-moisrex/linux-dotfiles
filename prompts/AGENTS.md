@@ -1,9 +1,10 @@
 # AGENTS.md — `prompts/` (native prompt dispatcher, C++)
 
 Native C++ replacement for the bash dispatcher under `../prompts-shell/`. This
-directory builds the `prompt` command; the bash side is a frozen reference for
-the parity harness only. The repo-wide guide is `../AGENTS.md`; this file is the
-working guide for this subtree.
+directory builds the `prompt` command. The bash scripts are kept only as a
+historical reference: the native dispatcher is now authoritative and its output
+is **not** required to match them (see "Output bytes"). The repo-wide guide is
+`../AGENTS.md`; this file is the working guide for this subtree.
 
 ## Build, test, lint
 
@@ -38,9 +39,8 @@ whole tree must stay clang-format clean.
   clipboarded), `ctx.err` (stderr, exit stays 0), `ctx.no_clipboard`.
 - Fail by **throwing** (`src/sdk/errors.hpp`): `usage_error` (exit 2),
   `soft_error` (exit 1), or `prompt_error` with `message`, `partial_output`,
-  `no_clipboard`, `stdin_consumed`. `main.cpp` catches them once and reproduces
-  the bash bytes; a failed prompt's partial stdout is still accumulated and the
-  chain continues.
+  `no_clipboard`, `stdin_consumed`. `main.cpp` catches them once; a failed
+  prompt's partial stdout is still accumulated and the chain continues.
 - Chained prompts share the **original** piped stdin. A prompt that reads stdin
   (`read_stdin` / `embed_stdin`) spends the pipe for later prompts by setting
   `ctx.stdin_consumed`.
@@ -52,14 +52,22 @@ Use these instead of re-open-coding the same loops:
 - `args.hpp`:
   - `parse_head_option(args, head_lines, strict)` — the raw `--head` validator.
   - `head_lines_or_throw(ctx, strict = true)` — the parser plus the
-    `throw usage_error{...}` preamble most prompts open with.
-  - `positional_args(ctx)` — the arguments with the `--head <value>` pair
-    removed (`std::vector<std::string>`).
-  - `collect_file_args(ctx)` — splits FILE arguments into `files` (regular
-    files) and `missing`; embed the first list and warn about the second.
+    `throw usage_error{...}` preamble, for prompts that only cap output.
+  - `file_options_or_throw(ctx, strict = true)` — the file prompts' whole CLI:
+    the validated `--head N` cap plus the value-less `--num`/`--numbered` flag,
+    returned as a `file_options {head_lines, numbered}` (built on
+    `is_number_flag(arg)`, whose spellings live in `kNumberFlags`).
+  - `positional_args(ctx)` / `collect_file_args(ctx)` — the FILE arguments with
+    the `--head <value>` pair and the `--num`/`--numbered` flags removed.
+    `collect_file_args` splits them into `files` (regular files) and `missing`;
+    embed the first list and warn about the second.
+  - `file_usage_help(name, tail, pipe, prefix)` and
+    `file_options_help(what, show_help)` — the shared usage lines and the
+    `--head`/`--num` Options block, so every file prompt's help stays identical.
 - `embed.hpp`: `infer_lang` (`std::string_view`), `trim_context`,
-  `trim_context_nl`, `head_output`, `read_file`, `embed_file`,
-  `embed_file_block`, `warn_missing_file`, `embed_stdin`.
+  `trim_context_nl`, `head_output`, `read_file`, `number_lines(text, numbered)`
+  (the `N | line` prefixing `--num` enables), `embed_file`,
+  `embed_file_block(file, file_options)`, `warn_missing_file`, `embed_stdin`.
 - `prompt_context.hpp`: the struct is a plain data bag; the dispatcher-injected
   services are free functions taking the context — `clear_output(ctx)`,
   `clipboard_content(ctx)`, `clipboard_identifier(ctx)`, `select_files(ctx)`,
@@ -68,31 +76,29 @@ Use these instead of re-open-coding the same loops:
   timeout)` — fork/exec, no shell, no quoting. `src/core/fs.hpp::bin_tool`
   locates sibling `bin/` tools (exe dir → git root → cwd → `$PATH`).
 
-## Output bytes and parity
+## Output bytes
 
-Prompt stdout/stderr/help are byte-locked to `../prompts-shell/`. The harness
-(`~/parity/`: `gen_cases.py` + `parity.sh` + `run_all.sh`) runs both dispatchers
-and diffs live output — there are no golden files, so an output-neutral
-refactor is verified by re-running it.
+The native dispatcher is authoritative; its output is no longer byte-locked to
+`../prompts-shell/`. The old parity harness (`~/parity/`: `gen_cases.py` +
+`parity.sh` + `run_all.sh`) still exists and can be run as a smoke test, but
+deliberate divergences from the bash reference are expected and fine:
 
-```bash
-env -u WAYLAND_DISPLAY -u KDE_SESSION_VERSION -u DISPLAY PATH=~/parity/fakebin:$PATH \
-    bash ~/parity/gen_cases.py && bash ~/parity/run_all.sh
-```
-
-- `#native-only <names>` arms a one-shot filter that drops those whole lines
-  from the native side of the next case (used by `tse`/`rigor`, which have no
-  bash counterpart).
 - The native dispatcher prepends a one-line **redaction legend**
   (`sanitize::kRedactionLegend`) whenever `clean_privacy` rewrites personal data
   (`HOME`, `USER`, `HOSTNAME`, `IP_ADDRESS`, `MAC_ADDRESS`, `EMAIL_ADDRESS`,
-  `PHONE_NUMBER`, `SSN`). This is a deliberate divergence from the bash
-  reference; `parity.sh` strips that line from the native output.
+  `PHONE_NUMBER`, `SSN`).
+- Native-only prompts (`tse`, `rigor`) and options (`--num`/`--numbered`) have no
+  bash counterpart; the shared help helpers also standardised the usage lines.
+
+When changing output, prefer the shared helpers (`file_usage_help`,
+`file_options_help`) and keep the wording consistent across prompts.
 
 ## Rendering text
 
 - Prefer a raw string literal (`R"PROMPT(...)PROMPT"`) for multi-line prose and
-  `std::format` for interpolation; keep the exact bytes the bash script emits.
+  `std::format` for interpolation.
+- The usage lines and the shared `--head`/`--num` options come from
+  `file_usage_help` / `file_options_help` (`sdk/args.hpp`); don't re-type them.
 - `new` (`new.cpp`) generates a new native prompt and embeds the SDK headers
   plus `fix.cpp` as assets. Those snapshots are baked in at build time from
   `PROMPT_ASSETS` in `CMakeLists.txt` (add a header there when the guidance

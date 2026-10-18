@@ -7,7 +7,7 @@
 namespace prompt::prompts {
 
 static void execute_perf(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output = R"PROMPT(Review this for performance issues.
 Look for unnecessary allocations, wasteful copies, bad algorithms, blocking work, repeated parsing, excessive syscalls, poor data layout, and avoidable hot-path overhead.
@@ -19,7 +19,7 @@ Do not sacrifice correctness or readability for tiny wins.
     std::string error;
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
-        output += embed_file_block(file, head_lines);
+        output += embed_file_block(file, opts);
     }
     for (auto arg : sources.missing) {
         error += std::format("Warning: File not found or is not a regular file: {}\n", std::string(arg));
@@ -30,14 +30,11 @@ Do not sacrifice correctness or readability for tiny wins.
 }
 
 static void render_help_perf(std::ostream& os) {
-    os << R"EOF(Usage: prompt perf [--head N] [FILE...]
-       some-command | prompt perf [--head N] [FILE...]
-
+    os << file_usage_help("perf") << R"EOF(
 Review this for performance issues.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

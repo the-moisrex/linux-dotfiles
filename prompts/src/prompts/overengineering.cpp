@@ -163,6 +163,7 @@ static void execute_overengineering(prompt_context& ctx) {
     std::vector<std::string_view> selected;
     std::vector<std::string_view> files;
     std::string head_spec;
+    bool numbered = false;
 
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         std::string_view arg = ctx.args[i];
@@ -177,6 +178,10 @@ static void execute_overengineering(prompt_context& ctx) {
             }
             head_spec = std::string(ctx.args[i + 1]);
             ++i;
+            continue;
+        }
+        if (is_number_flag(arg)) {
+            numbered = true;
             continue;
         }
         if (arg == "list") {
@@ -205,7 +210,7 @@ static void execute_overengineering(prompt_context& ctx) {
         std::filesystem::path file(arg);
         if (std::filesystem::is_regular_file(file)) {
             output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
-            output += head_spec.empty() ? read_file(file) : run_head(head_spec, file);
+            output += number_lines(head_spec.empty() ? read_file(file) : run_head(head_spec, file), numbered);
             output += "```\n\n";
         } else {
             error += std::format("Warning: File '{}' not found or is not a regular file.\n", std::string(arg));
@@ -217,8 +222,8 @@ static void execute_overengineering(prompt_context& ctx) {
 }
 
 static void render_help_overengineering(std::ostream& os) {
-    os << R"EOF(Usage: prompt overengineering [PATTERN...] [--head N] [FILE...]
-       prompt overengineering list
+    os << file_usage_help("overengineering", "[FILE...]", "", "[PATTERN...]")
+       << R"EOF(       prompt overengineering list
 
 Critique code for over-engineering patterns.
 
@@ -237,8 +242,7 @@ Patterns:
   config-over-code        Excessive config files, DSLs, rule engines for simple logic
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

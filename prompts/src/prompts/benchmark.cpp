@@ -8,7 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_benchmark(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output = R"PROMPT(You are a performance engineering expert.
 Analyze the provided code and design meaningful benchmarks to measure its performance.
@@ -38,7 +38,7 @@ Guidelines:
     auto sources = collect_file_args(ctx);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
-        output += trim_context_nl(read_file(file), head_lines);
+        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
         // benchmark.sh leaves a blank line before the closing fence.
         output += "\n```\n\n";
     }
@@ -51,15 +51,12 @@ Guidelines:
 }
 
 static void render_help_benchmark(std::ostream& os) {
-    os << R"EOF(Usage: prompt benchmark [--head N] [FILE...]
-       some-command | prompt benchmark [--head N] [FILE...]
-
+    os << file_usage_help("benchmark") << R"EOF(
 Performance benchmarking prompt.
 Analyzes code and suggests concrete benchmarks to measure performance.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

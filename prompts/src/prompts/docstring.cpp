@@ -8,7 +8,7 @@
 namespace prompt::prompts {
 
 static void execute_docstring(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+    auto opts = file_options_or_throw(ctx);
 
     std::string output =
         R"PROMPT(Add comprehensive docstrings to all functions, classes, and methods in the following code.
@@ -36,7 +36,7 @@ Return the updated code with the newly added docstrings or write a patch file.
             continue;
         }
         output += std::format("File: {}\n\n```{}\n", resolved->filename().string(), infer_lang(*resolved));
-        output += trim_context_nl(read_file(*resolved), head_lines);
+        output += number_lines(trim_context_nl(read_file(*resolved), opts.head_lines), opts.numbered);
         output += "\n```\n";
     }
 
@@ -45,14 +45,11 @@ Return the updated code with the newly added docstrings or write a patch file.
 }
 
 static void render_help_docstring(std::ostream& os) {
-    os << R"EOF(Usage: prompt docstring [--head N] [FILE...]
-       some-command | prompt docstring [--head N] [FILE...]
-
+    os << file_usage_help("docstring") << R"EOF(
 Asks the AI to add or improve docstrings for functions, classes, and methods in the provided code.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
-)EOF";
+)EOF" << file_options_help("the embedded context");
 }
 
 // This file is the prompt: it implements it and registers it at static-init time

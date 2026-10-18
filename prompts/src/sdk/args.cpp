@@ -1,6 +1,8 @@
 #include "args.hpp"
 #include "errors.hpp"
+#include <algorithm>
 #include <cstdlib>
+#include <format>
 #include <limits>
 
 namespace prompt {
@@ -44,6 +46,44 @@ std::optional<std::size_t> head_lines_or_throw(prompt_context const& ctx, bool s
     return head_lines;
 }
 
+bool is_number_flag(std::string_view arg) {
+    return std::ranges::any_of(kNumberFlags, [arg](std::string_view flag) { return arg == flag; });
+}
+
+file_options file_options_or_throw(prompt_context const& ctx, bool strict) {
+    file_options opts;
+    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, opts.head_lines, strict); !msg.empty()) {
+        throw usage_error{std::move(msg)};
+    }
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        if (is_number_flag(ctx.args[i])) {
+            opts.numbered = true;
+            break;
+        }
+    }
+    return opts;
+}
+
+std::string file_usage_help(std::string_view name, std::string_view tail, std::string_view pipe,
+                            std::string_view prefix) {
+    std::string flags = std::format("{}[--head N] [--num]", prefix.empty() ? "" : std::format("{} ", prefix));
+    std::string args = tail.empty() ? flags : std::format("{} {}", flags, tail);
+    std::string out = std::format("Usage: prompt {0} {1}\n", name, args);
+    if (!pipe.empty()) {
+        out += std::format("       {0} | prompt {1} {2}\n", pipe, name, args);
+    }
+    return out;
+}
+
+std::string file_options_help(std::string_view what, bool show_help) {
+    std::string help = std::format("  --head N   Keep only the first N lines of {}\n", what);
+    help += "  --num      Prefix each embedded line with its line number (alias: --numbered)\n";
+    if (show_help) {
+        help += "  -h, --help Show this help message\n";
+    }
+    return help;
+}
+
 std::vector<std::string> positional_args(prompt_context const& ctx) {
     std::vector<std::string> out;
     out.reserve(ctx.args_count);
@@ -52,6 +92,7 @@ std::vector<std::string> positional_args(prompt_context const& ctx) {
             ++i;
             continue;
         }
+        if (is_number_flag(ctx.args[i])) continue;
         out.emplace_back(ctx.args[i]);
     }
     return out;
@@ -64,6 +105,7 @@ file_args collect_file_args(prompt_context const& ctx) {
             ++i;
             continue;
         }
+        if (is_number_flag(ctx.args[i])) continue;
         std::filesystem::path file(ctx.args[i]);
         if (std::filesystem::is_regular_file(file)) {
             result.files.push_back(std::move(file));
