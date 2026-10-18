@@ -94,7 +94,7 @@ deliberate divergences from the bash reference are expected and fine:
   (`sanitize::kRedactionLegend`) whenever `clean_privacy` rewrites personal data
   (`HOME`, `USER`, `HOSTNAME`, `IP_ADDRESS`, `MAC_ADDRESS`, `EMAIL_ADDRESS`,
   `PHONE_NUMBER`, `SSN`).
-- Native-only prompts (`tse`, `tse.rigor`) and options (`--num`/`--numbered`) have no
+- Native-only prompts (`tse`, `tse.rigor`, `tse.times`) and options (`--num`/`--numbered`) have no
   bash counterpart; the shared help helpers also standardised the usage lines.
 
 When changing output, prefer the shared helpers (`file_usage_help`,

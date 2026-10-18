@@ -64,8 +64,8 @@ Examples:
   prompt stock https://d.easytrader.ir/easy-chart/IRT1DARA0001
   prompt stock فولاد --days 30
   prompt stock فولاد --unadjusted
-  prompt stock stocks/20261009_فولاد_IRO1FOLD0009.stock
-  prompt stock stocks/20261009_فولاد_IRO1FOLD0009.stock stocks/20261009_وبملت_IRO1BMLT0007.stock
+  prompt stock stocks/14050717_فولاد_IRO1FOLD0009.stock
+  prompt stock stocks/14050717_فولاد_IRO1FOLD0009.stock stocks/14050717_وبملت_IRO1BMLT0007.stock
 
 Options:
   --days N         Number of daily trading records (max: 365; default: full history)

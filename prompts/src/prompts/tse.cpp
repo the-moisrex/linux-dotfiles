@@ -38,7 +38,7 @@ Examples:
   prompt tse IRT1DARA0001
   prompt tse فولاد --days 30
   prompt tse فولاد --no-codal
-  prompt tse stocks/20261009_فولاد_IRO1FOLD0009.stock
+  prompt tse stocks/14050717_فولاد_IRO1FOLD0009.stock
   prompt tse فولاد .note "compare with فخوز"
 
 Options:
