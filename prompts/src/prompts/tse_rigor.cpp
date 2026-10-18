@@ -4,11 +4,11 @@
 
 namespace prompt::prompts {
 
-static void render_help_rigor(std::ostream& os);
+static void render_help_tse_rigor(std::ostream& os);
 
 // A standalone checklist that keeps market/TSE analysis and backtests honest.
-// Chain it onto a data prompt (`prompt tse فولاد .rigor`) or run it on its own.
-static void execute_rigor(prompt_context& ctx) {
+// Chain it onto a data prompt (`prompt tse فولاد .tse.rigor`) or run it on its own.
+static void execute_tse_rigor(prompt_context& ctx) {
     ctx.out = R"EOF(**When analyzing Tehran Stock Exchange (TSE) data or any market backtest:**
 
 1. **Never compute buyer/seller power or ratios manually in prose.**
@@ -53,27 +53,27 @@ static void execute_rigor(prompt_context& ctx) {
 )EOF";
 }
 
-static void render_help_rigor(std::ostream& os) {
-    os << R"EOF(Usage: prompt rigor
+static void render_help_tse_rigor(std::ostream& os) {
+    os << R"EOF(Usage: prompt tse.rigor
 
 A verification checklist that keeps Tehran Stock Exchange (TSE) and general market analysis or backtests honest: compute ratios from a table instead of prose, never cite uncomputed averages or levels, avoid look-ahead bias, require baseline/median/win-loss/expectancy statistics, separate tested facts from discretionary judgment, and give left-tail risk the same prominence as mean returns. Works standalone or chained onto a data prompt.
 
 Examples:
-  prompt rigor
-  prompt tse فولاد .rigor
-  prompt stock فولاد .rigor
+  prompt tse.rigor
+  prompt tse فولاد .tse.rigor
+  prompt stock فولاد .tse.rigor
 )EOF";
 }
 
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_prompt(
-    "rigor",
+    "tse.rigor",
     "A verification checklist that keeps Tehran Stock Exchange (TSE) and general market analysis or backtests "
     "honest: compute ratios from a table instead of prose, never cite uncomputed averages or levels, avoid "
     "look-ahead bias, require baseline/median/win-loss/expectancy statistics, separate tested facts from "
     "discretionary judgment, and give left-tail risk the same prominence as mean returns. Works standalone or "
     "chained onto a data prompt.",
-    &execute_rigor, &render_help_rigor);
+    &execute_tse_rigor, &render_help_tse_rigor);
 
 } // namespace prompt::prompts
