@@ -15,7 +15,7 @@ std::string strip_osc(std::string_view input) {
     return std::regex_replace(std::string(input), osc_regex, "");
 }
 
-std::string clean_privacy_impl(std::string_view input, bool* redacted) {
+static std::string clean_privacy_impl(std::string_view input, bool* redacted) {
     // $HOME/$USER/$TMPDIR are interpolated into regular expressions: any regex
     // metacharacter they contain would throw std::regex_error. Escaping keeps
     // a hostile environment from aborting the dispatcher.

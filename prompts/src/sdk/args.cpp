@@ -17,7 +17,7 @@ std::string parse_head_option(std::span<std::string_view const> args, std::optio
             // Scripts with their own parser accept any value verbatim (they
             // never read it); bash's `shift 2` keeps the last --head.
             bool digits = !value.empty() && value.find_first_not_of("0123456789") == std::string_view::npos;
-            if (digits) head_lines = static_cast<std::size_t>(std::strtoul(std::string(value).c_str(), nullptr, 10));
+            if (digits) head_lines = std::strtoul(std::string(value).c_str(), nullptr, 10);
             ++i;
             continue;
         }

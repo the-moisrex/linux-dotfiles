@@ -3,9 +3,9 @@
 
 namespace prompt::prompts {
 
-void execute_tse_find(prompt_context& ctx) { execute_tse_find_impl(ctx); }
+static void execute_tse_find(prompt_context& ctx) { execute_tse_find_impl(ctx); }
 
-void render_help_tse_find(std::ostream& os) { render_help_tse_find_impl(os); }
+static void render_help_tse_find(std::ostream& os) { render_help_tse_find_impl(os); }
 
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).

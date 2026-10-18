@@ -9,12 +9,19 @@ is **not** required to match them (see "Output bytes"). The repo-wide guide is
 ## Build, test, lint
 
 ```bash
-cmake -S prompts -B prompts/build && cmake --build prompts/build -j 8      # Release
-cmake --build prompts/build-asan -j 8 && (cd prompts/build-asan && ctest)  # Debug + tests
+cmake -S prompts -B prompts/build -DCMAKE_BUILD_TYPE=Release && cmake --build prompts/build -j 8   # Release
+cmake -S prompts -B prompts/build-asan -DCMAKE_BUILD_TYPE=Debug
+cmake --build prompts/build-asan -j 8 && (cd prompts/build-asan && ctest)                          # Debug + tests
 clang-format -i prompts/src/**/*.{cpp,hpp} && clang-format --dry-run -Werror prompts/src/**/*.{cpp,hpp}
-clang-tidy -p prompts/build src/*.cpp src/*/*.cpp tests/*.cpp              # zero findings
-cmake --install prompts/build --prefix "$HOME/cmd" --component prompt      # -> bin/prompt
+clang-tidy -p prompts/build src/*.cpp src/*/*.cpp && clang-tidy -p prompts/build-asan tests/*.cpp  # zero findings
+cmake --install prompts/build --prefix "$HOME/cmd" --component prompt                              # -> bin/prompt
 ```
+
+The build type is **not** defaulted (only the `Debug` branch adds the warning
+flags), so pass `-DCMAKE_BUILD_TYPE=Release` for the installed binary — a bare
+`cmake -B prompts/build` yields an unoptimised no-config binary. `Debug` adds
+`-g3 -Wall -Wpedantic -Wextra -Wconversion -Wshadow -fsanitize=address` and must
+stay warning-free under **both GCC and clang**.
 
 `enable_testing()`/`add_subdirectory(tests)` only run in a `Debug` build, so use
 `build-asan` for `ctest`. `.clang-tidy` is treated as warnings-as-errors; the

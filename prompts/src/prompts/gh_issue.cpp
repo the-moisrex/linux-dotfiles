@@ -29,10 +29,9 @@ std::string gh_issue_field(std::string const& number, std::string const& field, 
 } // namespace
 
 static void execute_gh_issue(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
-
-    // init_prompt --no-files: --head is the only recognized flag; everything
-    // else is treated as the issue number.
+    // init_prompt --no-files: --head is validated (but unused -- this prompt
+    // takes no files); everything else is treated as the issue number.
+    head_lines_or_throw(ctx);
     auto rest = positional_args(ctx);
 
     std::string issue_number = rest.empty() ? std::string{} : rest.front();

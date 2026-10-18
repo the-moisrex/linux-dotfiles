@@ -10,8 +10,9 @@ namespace prompt::prompts {
 
 static void execute_list_prompts(prompt_context& ctx) {
     // list-prompts.sh runs init_prompt --no-files, so parse_arguments validates
-    // and strips --head before the script's "takes no arguments" check.
-    auto head_lines = head_lines_or_throw(ctx);
+    // and strips --head before the script's "takes no arguments" check; the
+    // value is never used.
+    head_lines_or_throw(ctx);
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         if (ctx.args[i] == "--head") {
             ++i;

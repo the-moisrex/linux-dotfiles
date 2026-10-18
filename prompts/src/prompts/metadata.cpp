@@ -5,9 +5,9 @@
 namespace prompt::prompts {
 
 static void execute_metadata(prompt_context& ctx) {
-    // metadata.sh calls init_prompt (validating --head) but never uses ARGS,
-    // so --head errors are the only failure mode besides --format's.
-    auto head_lines = head_lines_or_throw(ctx);
+    // metadata.sh calls init_prompt (validating --head, whose value is never
+    // used) so --head errors are the only failure mode besides --format's.
+    head_lines_or_throw(ctx);
 
     // metadata.sh's loop walks the ORIGINAL arguments, ignoring everything
     // that is not --format/-f.
