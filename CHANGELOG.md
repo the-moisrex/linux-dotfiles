@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `prompts/src/sdk/args.hpp` helpers for the boilerplate every prompt repeated: `head_lines_or_throw()` (the `--head` parse plus the `throw usage_error{…}` preamble), `file_options_or_throw()` (`--head` + `--num`), `positional_args()` (args minus the `--head <value>` pair and the `--num`/`--numbered` flags) and `collect_file_args()` (splits FILE arguments into the regular files to embed and the missing ones to warn about)
 - `prompts/tests/test_embed.cpp` — `number_lines`, `file_options_or_throw`, the flag filtering and the shared help helpers, plus a ctest smoke that runs the built binary with `files --num`
 - `prompts/AGENTS.md` — a subtree guide for working on the native dispatcher (build/test/lint commands, the prompt contract, the SDK helpers and the output-bytes policy)
+- `bin/browser.find`, `bin/cookies` and `bin/browser.storage` — shared browser-profile discovery plus credential/web-storage extraction, Chromium-family first then Firefox-family: `browser.find` lists installed browsers, their profiles, running instances and the system default; `cookies` extracts cookies and saved logins (Chromium AES-128-CBC values via the login keyring, Firefox `logins.db` or `logins.json`+`key4.db`) to stdout, pointing at `browser.storage` on a miss (`--no-hint` to disable); `browser.storage` reads per-origin `localStorage`/`sessionStorage` (Firefox `ls/data.sqlite` with in-process Snappy, Chromium's LevelDB through a built-in read-only SST/WAL parser)
 
 ### Changed
 
@@ -49,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `prompt ask-for-help` copies its output to the clipboard again: the native port set `no_clipboard` unconditionally, while the bash reference only suppresses the copy of the *inner* `list.sh` catalog it embeds (`PROMPT_NO_CLIPBOARD_FILE=/dev/null`) — `list`/`list-prompts` remain the only prompts that opt out
 - `fs::bin_tool` now finds repo tools when the binary is **installed** in `bin/`: it looked in `exe_dir/bin/<tool>` (`bin/bin/tse`) instead of `exe_dir/<tool>`, so `prompt stock` (and every tool-invoking prompt) failed outside the build tree with `python3: can't open file '.../tse'` — the miss also fell back to a bare name, which callers then opened relative to the cwd. The `$PATH` fallback now resolves to an absolute path, and `tests/test_fs.cpp` locks the installed/build/git-root/PATH layouts
 - Empty-but-piped stdin handling: `note` (and other stdin-reading prompts) print the same blank embed block as `embed_stdin || true` when the pipe is empty, keeping chained output byte-identical to bash
 - `resolve_input_file` matches the bash implementation (cwd → git root → `git ls-files | fzf -f`)

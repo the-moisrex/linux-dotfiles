@@ -116,8 +116,10 @@ static void execute_ask_for_help(prompt_context& ctx) {
            "Make sure to properly escape characters.\n"
            "\n";
 
+    // No clipboard opt-out: bash only suppresses the inner `list.sh` copy (via
+    // PROMPT_NO_CLIPBOARD_FILE=/dev/null), so ask-for-help's own output copies
+    // like every other prompt's.
     ctx.out = std::move(out);
-    ctx.no_clipboard = true;
 }
 
 static void render_help_ask_for_help(std::ostream& os) {
