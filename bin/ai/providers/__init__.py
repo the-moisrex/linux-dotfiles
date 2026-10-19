@@ -76,4 +76,5 @@ def all_providers():
     from .chatgpt import ChatGPT
     from .grok import Grok
     from .deepseek import DeepSeek
-    return {p.name: p for p in (ChatGPT, Grok, DeepSeek)}
+    from .gap import Gap
+    return {p.name: p for p in (ChatGPT, Grok, DeepSeek, Gap)}
