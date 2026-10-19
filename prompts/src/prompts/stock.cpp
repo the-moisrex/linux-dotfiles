@@ -50,15 +50,16 @@ static void execute_stock(prompt_context& ctx) {
 }
 
 static void render_help_stock(std::ostream& os) {
-    os << R"EOF(Usage: prompt stock [<symbol|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
+    os << R"EOF(Usage: prompt stock [<symbol|finglish|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
        prompt stock <FILE.stock>... [--head N]
 
-Fetch TSETMC market data, fundamentals (price ranges, average volume, fund NAV, Codal-derived ratios), market benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP growth, large-cap breadth) and Codal financial statements (including monthly fund portfolio reports) for an Iranian بورس instrument and build a bilingual AI analysis prompt. Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), TSETMC insCode, or an easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one. One or more `.stock` snapshot files (written by tse.snapshot) build the same prompt from cached data instead, warning when a snapshot is older than 24 hours.
+Fetch TSETMC market data, fundamentals (price ranges, average volume, fund NAV, Codal-derived ratios), market benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP growth, large-cap breadth) and Codal financial statements (including monthly fund portfolio reports) for an Iranian بورس instrument and build a bilingual AI analysis prompt. Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the clipboard is searched for one. One or more `.stock` snapshot files (written by tse.snapshot) build the same prompt from cached data instead, warning when a snapshot is older than 24 hours.
 
 An Iranian IP is required for the public data sources. Prices are in rial.
 
 Examples:
   prompt stock فولاد
+  prompt stock foolad
   prompt stock اهرم
   prompt stock IRT1DARA0001
   prompt stock https://d.easytrader.ir/easy-chart/IRT1DARA0001
@@ -88,8 +89,10 @@ bool const registered = prompt::register_prompt(
     "Fetch TSETMC market data, fundamentals (price ranges, average volume, fund NAV, Codal-derived ratios), "
     "market benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP growth, large-cap "
     "breadth) and Codal financial statements (including monthly fund portfolio reports) for an Iranian بورس "
-    "instrument and build a bilingual AI analysis prompt. Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), "
-    "TSETMC insCode, or an easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one. "
+    "instrument and build a bilingual AI analysis prompt. Accepts a Persian symbol, a finglish name (`foolad`, "
+    "`khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an "
+    "easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through "
+    "`tse.resolve`; with no argument the clipboard is searched for one. "
     "One "
     "or more `.stock` snapshot files (written by tse.snapshot) build the same prompt from cached data instead, "
     "warning when a snapshot is older than 24 hours.",

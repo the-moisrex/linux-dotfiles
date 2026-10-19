@@ -164,14 +164,15 @@ static void execute_intraday(prompt_context& ctx) {
 }
 
 static void render_help_intraday(std::ostream& os) {
-    os << R"EOF(Usage: prompt intraday [<symbol|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
+    os << R"EOF(Usage: prompt intraday [<symbol|finglish|ISIN|insCode|URL>] [--days N | --full] [--top N] [--no-codal] [--unadjusted] [--head N]
 
-Fetch TSETMC market data, order-book/flow snapshot, recent daily history, market context (free-market USD/IRR, Iran macro indicators, large-cap breadth) and Codal news for an Iranian بورس instrument and build an AI prompt that decides a same-day trade: buy tomorrow and sell the same day (LONG) or stand aside (NO-TRADE). Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), TSETMC insCode, or an easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one.
+Fetch TSETMC market data, order-book/flow snapshot, recent daily history, market context (free-market USD/IRR, Iran macro indicators, large-cap breadth) and Codal news for an Iranian بورس instrument and build an AI prompt that decides a same-day trade: buy tomorrow and sell the same day (LONG) or stand aside (NO-TRADE). Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the clipboard is searched for one.
 
 An Iranian IP is required for the public data sources. Prices are in rial.
 
 Examples:
   prompt intraday فولاد
+  prompt intraday foolad
   prompt intraday اهرم
   prompt intraday IRT1DARA0001
   prompt intraday https://d.easytrader.ir/easy-chart/IRT1DARA0001
@@ -197,8 +198,10 @@ bool const registered = prompt::register_prompt(
     "USD/IRR, Iran macro indicators, large-cap breadth) and Codal news for an Iranian بورس instrument and "
     "build "
     "an AI prompt that decides a same-day trade: buy tomorrow and sell the same day (LONG) or stand aside "
-    "(NO-TRADE). Accepts a Persian symbol, ISIN (e.g. IRT1DARA0001), TSETMC insCode, or an "
-    "easytrader/tsetmc/codal URL; with no argument the clipboard is searched for one.",
+    "(NO-TRADE). Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name "
+    "fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite "
+    "`فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the clipboard is "
+    "searched for one.",
     &execute_intraday, &render_help_intraday);
 
 } // namespace prompt::prompts

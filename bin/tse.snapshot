@@ -27,6 +27,7 @@ _loader = SourceFileLoader("tse", str(TSE))
 _spec = importlib.util.spec_from_loader("tse", _loader)
 tse = importlib.util.module_from_spec(_spec)
 _loader.exec_module(tse)
+sys.modules.setdefault("tse", tse)
 
 
 class SnapshotError(Exception):

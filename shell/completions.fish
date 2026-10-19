@@ -270,3 +270,38 @@ complete -c pod -f -l names -d 'Bare recipe names, one per line (recipes)'
 complete -c pod -f -l porcelain -d 'name + TAB + description (recipes)'
 complete -c pod -f -s f -d 'Follow logs (logs)'
 complete -c pod -f -s e -r -d 'Set env var K=V (exec)'
+
+# ---- tse / tse.* / prompt stock|tse|intraday ----
+# Symbol completion comes from tse.resolve (cache-only, no network on Tab).
+# It inserts a readable `SYMBOL-ISIN` token with the name/market as description.
+function __fish_tse_symbols
+    tse.resolve --complete (commandline -ct) 2>/dev/null
+end
+
+function __fish_tse_needs_symbol
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2
+    and contains -- $tokens[2] search quote book flow history info codal all
+    and not string match -q -- '-*' (commandline -ct)
+end
+
+complete -c tse -f -n 'not __fish_seen_subcommand_from search quote book flow history info codal all snapshot markdown' -a 'search quote book flow history info codal all snapshot markdown' -d 'tse command'
+complete -c tse -f -n __fish_tse_needs_symbol -a '(__fish_tse_symbols)'
+complete -c tse -f -s h -l help -d 'Show help'
+complete -c tse -f -n __fish_tse_needs_symbol -l json -d 'JSON output'
+complete -c tse -f -n __fish_tse_needs_symbol -l days -r -d 'Trading days'
+complete -c tse -f -n __fish_tse_needs_symbol -l top -r -d 'Recent Codal announcements'
+complete -c tse -f -n __fish_tse_needs_symbol -l no-codal -d 'Skip Codal data'
+complete -c tse -f -n __fish_tse_needs_symbol -l unadjusted -d 'Unadjusted prices only'
+
+complete -c tse.intraday -f -n "not string match -q -- '-*' (commandline -ct)" -a '(__fish_tse_symbols)'
+complete -c tse.resolve -f -n "not string match -q -- '-*' (commandline -ct)" -a '(__fish_tse_symbols)'
+
+function __fish_prompt_tse_symbol
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2
+    and contains -- $tokens[2] stock tse intraday
+    and not string match -q -- '-*' (commandline -ct)
+end
+
+complete -c prompt -f -n __fish_prompt_tse_symbol -a '(__fish_tse_symbols)'

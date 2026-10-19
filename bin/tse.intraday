@@ -1,0 +1,1027 @@
+#!/usr/bin/env python3
+"""tse.intraday — intraday (per-minute) OHLCV bars for a TSETMC instrument.
+
+TSETMC publishes no historical intraday aggregate: the finest source for a past
+session is the per-trade tape (``Trade/GetTradeHistory``), which this tool
+fetches (the CDN gzips it, so a busy day is ~0.5 MB on the wire) and aggregates
+locally into N-minute OHLCV bars. The live session comes from the raw live tape
+(``Trade/GetTrade``), so it aggregates the same way, with
+``Trade/GetTradeIntraDay`` (native 2-minute bars) only as a fallback.
+
+Consecutive bars with identical OHLC are collapsed — automatically, only once a
+run grows past ``--collapse-threshold`` rows (a trailing ``bars`` column records
+how many bars each row merged) — and the bar interval is chosen automatically to
+keep the output within ``--max-rows``, the finest interval that still fits, so
+the least data is lost. The daily حقیقی/حقوقی (individual/legal) breakdown is
+attached per day; TSETMC does not publish that per bar.
+"""
+
+import argparse
+import csv
+import importlib.util
+import io
+import json
+import os
+import re
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from importlib.machinery import SourceFileLoader
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+_loader = SourceFileLoader("tse", os.path.join(HERE, "tse"))
+_spec = importlib.util.spec_from_loader("tse", _loader)
+tse = importlib.util.module_from_spec(_spec)
+_loader.exec_module(tse)
+sys.modules.setdefault("tse", tse)
+
+API = tse.TSETMC
+MAX_BYTES = 64 * 1024 * 1024
+INTERVAL_LADDER = (1, 2, 3, 5, 6, 10, 15, 30, 60)
+DEFAULT_MAX_ROWS = 2000
+DEFAULT_COLLAPSE_THRESHOLD = 120
+LAG_WARN_MINUTES = 1
+MAX_DAYS = 30
+FETCH_WORKERS = 4
+TRADING_WEEKDAYS = (5, 6, 0, 1, 2)  # Sat, Sun, Mon, Tue, Wed
+BAR_COLUMNS = (
+    "from",
+    "to",
+    "open_rial",
+    "high_rial",
+    "low_rial",
+    "close_rial",
+    "volume_shares",
+    "trades",
+)
+COLLAPSED_BAR_COLUMNS = BAR_COLUMNS + ("bars",)
+TICK_COLUMNS = ("time", "price_rial", "volume_shares", "trade_no", "canceled")
+PROFILE_COLUMNS = ("price_rial", "volume_shares", "trades", "first_time", "last_time")
+
+
+def minute_of(hhmmss):
+    """An HHMMSS int -> minutes since midnight."""
+    return (hhmmss // 10000) * 60 + (hhmmss // 100) % 100
+
+
+def fmt_minute(minute):
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def payload_rows(payload, key):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return rows
+        if len(payload) == 1:
+            only = next(iter(payload.values()))
+            if isinstance(only, list):
+                return only
+    return []
+
+
+def parse_jalali(parser, text, label):
+    """A Jalali date argument -> zero-padded (jalali, gregorian_compact)."""
+    match = re.fullmatch(r"(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})", tse.normal(text))
+    if not match:
+        parser.error(f"{label}: invalid Jalali date {text!r} (expected YYYY/MM/DD)")
+    year, month, day = (int(part) for part in match.groups())
+    if not 1 <= month <= 12 or not 1 <= day <= 31:
+        parser.error(f"{label}: invalid Jalali date {text!r}")
+    gy, gm, gd = tse.jalali_to_gregorian(year, month, day)
+    return f"{year:04d}/{month:02d}/{day:02d}", f"{gy:04d}{gm:02d}{gd:02d}"
+
+
+# --- fetching -------------------------------------------------------------
+
+
+def fetch_sessions(client, code):
+    """Every trading session, oldest first, with its official daily aggregates.
+
+    ``zTotTran``/``qTotTran5J`` are TSETMC's own trade count and volume for the
+    day; they validate the tick tape (which sometimes carries duplicate rows).
+    """
+    rows = client.api(
+        f"ClosingPrice/GetClosingPriceDailyList/{code}/0", "closingPriceDaily"
+    )
+    sessions = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        greg = tse.normal(tse.pick(row, "dEven"))
+        if re.fullmatch(r"\d{8}", greg):
+            sessions[greg] = {
+                "jalali": tse.trade_date(greg),
+                "trades": tse.value(row, "zTotTran"),
+                "volume": tse.value(row, "qTotTran5J"),
+            }
+    return [{"greg": greg, **sessions[greg]} for greg in sorted(sessions)]
+
+
+def fetch_ticks(client, code, greg, retries=6):
+    """Every trade for one session; retries while the endpoint flakily returns empty."""
+    url = f"{API}/Trade/GetTradeHistory/{code}/{greg}/false"
+    for attempt in range(retries):
+        payload = None
+        try:
+            payload = client.json(url, max_bytes=MAX_BYTES)
+        except tse.DataError:
+            payload = None
+        rows = payload_rows(payload, "tradeHistory")
+        if rows:
+            return rows
+        if attempt < retries - 1:
+            time.sleep(1.5 * (attempt + 1))
+    return []
+
+
+def fetch_live_ticks(client, code):
+    """Today's live tape (``Trade/GetTrade``), empty when the session has none.
+
+    A live tape can never contain trades later than the wall clock, so a feed
+    whose last trade time is in the future is a stale previous-session snapshot
+    (TSETMC serves one before the open) and is treated as "no data yet".
+    """
+    payload = client.json(f"{API}/Trade/GetTrade/{code}", max_bytes=MAX_BYTES)
+    rows = payload_rows(payload, "trade")
+    now = tse.tehran_now()
+    clock = now.hour * 10000 + now.minute * 100 + now.second
+    if clock < 80000:
+        return []
+    last = 0
+    for row in rows:
+        if isinstance(row, dict):
+            raw = tse.normal(tse.pick(row, "hEven"))
+            if re.fullmatch(r"\d{1,6}", raw or ""):
+                last = max(last, int(raw))
+    if rows and last > clock + 300:
+        return []
+    return rows
+
+
+def dedup_ticks(rows, include_canceled):
+    """Drop canceled rows (unless kept) and repeated trade numbers.
+
+    ``GetTradeHistory``/``GetTrade`` occasionally repeat a handful of ``nTran``
+    rows at replica boundaries, inflating the trade count and volume; keeping one
+    row per trade number makes every session match TSETMC's daily aggregate.
+    """
+    seen = set()
+    kept = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if not include_canceled and tse.value(row, "canceled"):
+            continue
+        key = tse.normal(tse.pick(row, "nTran"))
+        if key:
+            if key in seen:
+                continue
+            seen.add(key)
+        kept.append(row)
+    return kept
+
+
+def fetch_live_bars(client, code):
+    """The live session's native 2-minute OHLCV bars."""
+    payload = client.json(f"{API}/Trade/GetTradeIntraDay/{code}")
+    bars = []
+    for row in payload_rows(payload, "tradeIntraDay"):
+        if not isinstance(row, dict):
+            continue
+        raw = tse.normal(tse.pick(row, "hEven"))
+        if not re.fullmatch(r"\d{1,6}", raw or ""):
+            continue
+        bars.append(
+            {
+                "minute": minute_of(int(raw)),
+                "open": tse.price(tse.pick(row, "openPrice")),
+                "high": tse.price(tse.pick(row, "maxPrice")),
+                "low": tse.price(tse.pick(row, "minPrice")),
+                "close": tse.price(tse.pick(row, "closePrice")),
+                "volume": tse.value(row, "volume") or 0,
+                "trades": None,
+            }
+        )
+    bars.sort(key=lambda bar: bar["minute"])
+    return bars
+
+
+def fetch_live_quote(client, code):
+    """The real-time quote, which stays current while the live tape lags.
+
+    ``GetTrade`` is served from CDN replicas that can sit minutes behind the
+    exchange, so its last row is not "now"; ``ClosingPriceInfo`` is refreshed to
+    the second and carries the running totals, so it anchors the live session.
+    """
+    info = client.api(f"ClosingPrice/GetClosingPriceInfo/{code}", "closingPriceInfo")
+    if not isinstance(info, dict):
+        return None
+    raw = tse.normal(tse.pick(info, "lastHEven"))
+    minute = minute_of(int(raw)) if re.fullmatch(r"\d{1,6}", raw or "") else None
+    if not minute:
+        return None
+    return {
+        "minute": minute,
+        "time": fmt_minute(minute),
+        "last_price": tse.price(tse.pick(info, "pDrCotVal")),
+        "trades": tse.value(info, "zTotTran"),
+        "volume": tse.value(info, "qTotTran5J"),
+        "first": tse.price(tse.pick(info, "priceFirst")),
+        "low": tse.price(tse.pick(info, "priceMin")),
+        "high": tse.price(tse.pick(info, "priceMax")),
+    }
+
+
+# --- aggregation ----------------------------------------------------------
+
+
+def ticks_to_bars(rows, include_canceled):
+    """Raw trades -> 1-minute OHLCV bars."""
+    samples = []
+    for row in dedup_ticks(rows, include_canceled):
+        raw = tse.normal(tse.pick(row, "hEven"))
+        if not re.fullmatch(r"\d{1,6}", raw or ""):
+            continue
+        secs = int(raw)
+        samples.append(
+            (
+                secs,
+                tse.value(row, "nTran") or 0,
+                tse.price(tse.pick(row, "pTran")),
+                tse.value(row, "qTitTran") or 0,
+            )
+        )
+    samples.sort(key=lambda sample: (sample[0], sample[1]))
+    bars = {}
+    for secs, _trade_no, price, volume in samples:
+        minute = minute_of(secs)
+        bar = bars.get(minute)
+        if bar is None:
+            bar = {
+                "minute": minute,
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "volume": 0,
+                "trades": 0,
+            }
+            bars[minute] = bar
+        if price is not None:
+            bar["high"] = price if bar["high"] is None else max(bar["high"], price)
+            bar["low"] = price if bar["low"] is None else min(bar["low"], price)
+            bar["close"] = price
+            if bar["open"] is None:
+                bar["open"] = price
+        bar["volume"] += volume
+        bar["trades"] += 1
+    return [bars[minute] for minute in sorted(bars)]
+
+
+def merge_bars(bars, interval):
+    """Merge ordered bars up to ``interval`` minutes (interval 1 returns them as-is)."""
+    if interval <= 1:
+        return list(bars)
+    merged = {}
+    for bar in bars:
+        key = (bar["minute"] // interval) * interval
+        target = merged.get(key)
+        if target is None:
+            merged[key] = dict(bar, minute=key)
+            continue
+        if bar["high"] is not None:
+            target["high"] = (
+                bar["high"] if target["high"] is None else max(target["high"], bar["high"])
+            )
+        if bar["low"] is not None:
+            target["low"] = (
+                bar["low"] if target["low"] is None else min(target["low"], bar["low"])
+            )
+        if bar["close"] is not None:
+            target["close"] = bar["close"]
+        target["volume"] = (target["volume"] or 0) + (bar["volume"] or 0)
+        if bar["trades"] is not None:
+            target["trades"] = (target["trades"] or 0) + bar["trades"]
+    return [merged[key] for key in sorted(merged)]
+
+
+def collapse_bars(bars):
+    """Merge consecutive bars whose OHLC is identical into one ``from``-``to`` row.
+
+    Each merged row records ``count`` — how many bars it swallowed — so the
+    output can show that a row is a collapsed run, not a single bar.
+    """
+    collapsed = []
+    for bar in bars:
+        if collapsed:
+            previous = collapsed[-1]
+            if previous["ohlc"] == (bar["open"], bar["high"], bar["low"], bar["close"]):
+                previous["to"] = bar["minute"]
+                previous["volume"] += bar["volume"] or 0
+                previous["count"] += 1
+                if previous["trades"] is not None:
+                    previous["trades"] += bar["trades"] or 0
+                continue
+        collapsed.append(
+            {
+                "from": bar["minute"],
+                "to": bar["minute"],
+                "open": bar["open"],
+                "high": bar["high"],
+                "low": bar["low"],
+                "close": bar["close"],
+                "volume": bar["volume"] or 0,
+                "trades": bar["trades"],
+                "ohlc": (bar["open"], bar["high"], bar["low"], bar["close"]),
+                "count": 1,
+            }
+        )
+    return collapsed
+
+
+def choose_interval(day_bars, max_rows, collapse):
+    """The finest ladder interval whose (collapsed) row count fits the budget."""
+    for interval in INTERVAL_LADDER:
+        total = 0
+        for bars in day_bars:
+            merged = merge_bars(bars, interval)
+            total += len(collapse_bars(merged)) if collapse else len(merged)
+        if total <= max_rows:
+            return interval
+    return INTERVAL_LADDER[-1]
+
+
+def profile_rows(rows, include_canceled):
+    """Raw trades -> a price-level volume profile."""
+    agg = {}
+    for row in dedup_ticks(rows, include_canceled):
+        price = tse.price(tse.pick(row, "pTran"))
+        raw = tse.normal(tse.pick(row, "hEven"))
+        if price is None or not re.fullmatch(r"\d{1,6}", raw or ""):
+            continue
+        secs = int(raw)
+        record = agg.get(price)
+        if record is None:
+            agg[price] = {
+                "price": price,
+                "volume": tse.value(row, "qTitTran") or 0,
+                "trades": 1,
+                "first": secs,
+                "last": secs,
+            }
+            continue
+        record["volume"] += tse.value(row, "qTitTran") or 0
+        record["trades"] += 1
+        record["first"] = min(record["first"], secs)
+        record["last"] = max(record["last"], secs)
+    return [agg[price] for price in sorted(agg)]
+
+
+# --- day loading ----------------------------------------------------------
+
+
+def load_day(client, code, entry, mode, include_canceled):
+    """Fetch one session into its artifact, or None when it has no data.
+
+    A completed session comes from its per-trade tape (validated against the
+    official daily aggregate). The live session (today, before its daily bar is
+    published) uses the raw live tape too — it is fresh, 1-minute and carries
+    trade numbers — falling back to TSETMC's native 2-minute ``GetTradeIntraDay``
+    bars only if the tape has nothing.
+    """
+    greg, jalali, live = entry["greg"], entry["jalali"], entry["live"]
+    if not live:
+        rows = fetch_ticks(client, code, greg)
+        if not rows:
+            return None
+        day = day_from_rows(jalali, "ticks", rows, mode, include_canceled)
+        day["check"] = tape_check(entry, rows)
+        return day
+
+    try:
+        rows = fetch_live_ticks(client, code)
+    except tse.DataError:
+        rows = []
+    if rows:
+        return day_from_rows(jalali, "live", rows, mode, include_canceled)
+    bars = fetch_live_bars(client, code)
+    if not bars or mode != "bars":
+        return None
+    return {"date": jalali, "source": "live", "native_interval": 2, "bars": bars}
+
+
+def day_from_rows(jalali, source, rows, mode, include_canceled):
+    """One session's raw tape rows -> the artifact for the requested output mode."""
+    if mode == "ticks":
+        return {"date": jalali, "source": source, "ticks": rows}
+    if mode == "profile":
+        return {
+            "date": jalali,
+            "source": source,
+            "profile": profile_rows(rows, include_canceled),
+        }
+    bars = ticks_to_bars(rows, include_canceled)
+    return {"date": jalali, "source": source, "bars": bars, "native_interval": 1}
+
+
+def tape_check(entry, rows):
+    """Compare a completed session's tape with its official daily aggregate.
+
+    Returns a human-readable note when they differ, else None. The tape is
+    deduplicated first, so an intact session matches exactly.
+    """
+    expected_trades = entry.get("expected_trades")
+    if expected_trades is None:
+        return None
+    clean = dedup_ticks(rows, include_canceled=False)
+    count = len(clean)
+    volume = sum(tse.value(row, "qTitTran") or 0 for row in clean)
+    problems = []
+    if count != expected_trades:
+        problems.append(f"{count} trades vs {expected_trades} reported")
+    expected_volume = entry.get("expected_volume")
+    if expected_volume and volume != expected_volume:
+        problems.append(f"volume {volume} vs {expected_volume} reported")
+    return "; ".join(problems) if problems else None
+
+
+def select_entries(sessions, args, parser, today):
+    """The candidate sessions (oldest first, live marked) and the wanted count.
+
+    ``wanted`` is the requested session count for the ``--days`` path — the
+    caller backfills older sessions when the newest has no data yet — and None
+    for an explicit ``--date``/``--from``/``--to``, which fetches exactly the
+    named sessions.
+    """
+    by_greg = {session["greg"]: session for session in sessions}
+    today_greg, today_jalali = today["greg"], today["jalali"]
+    live_ok = today["trading"] and not args.no_live
+
+    def is_live(greg):
+        # Today is only genuinely live while it is absent from the completed
+        # daily list; once its daily bar is published it has a full tape.
+        return live_ok and greg == today_greg and greg not in by_greg
+
+    def make(greg, jalali, live=False):
+        session = by_greg.get(greg, {})
+        return {
+            "greg": greg,
+            "jalali": jalali,
+            "live": live,
+            "expected_trades": session.get("trades"),
+            "expected_volume": session.get("volume"),
+        }
+
+    def entry(greg, jalali):
+        return make(greg, jalali, is_live(greg))
+
+    if args.date:
+        jalali, greg = parse_jalali(parser, args.date, "--date")
+        if greg in by_greg:
+            return [entry(greg, jalali)], None
+        if greg == today_greg:
+            if live_ok:
+                return [make(greg, jalali, True)], None
+            parser.error(
+                f"--date {jalali}: today's session is only available live "
+                "(remove --no-live)"
+            )
+        parser.error(f"--date {jalali}: not a trading session")
+
+    if args.start or args.end:
+        low_jalali = high_jalali = None
+        if args.start:
+            low_jalali = parse_jalali(parser, args.start, "--from")[0]
+        if args.end:
+            high_jalali = parse_jalali(parser, args.end, "--to")[0]
+        if low_jalali and high_jalali and low_jalali > high_jalali:
+            parser.error("--from must not be later than --to")
+        entries = [
+            entry(session["greg"], session["jalali"])
+            for session in sessions
+            if (low_jalali is None or session["jalali"] >= low_jalali)
+            and (high_jalali is None or session["jalali"] <= high_jalali)
+        ]
+        if (
+            live_ok
+            and today_greg not in by_greg
+            and (low_jalali is None or today_jalali >= low_jalali)
+            and (high_jalali is None or today_jalali <= high_jalali)
+        ):
+            entries.append(make(today_greg, today_jalali, True))
+        if not entries:
+            parser.error("no trading sessions in the requested range")
+        return entries, None
+
+    entries = [entry(session["greg"], session["jalali"]) for session in sessions]
+    if live_ok and today_greg not in by_greg:
+        entries.append(make(today_greg, today_jalali, True))
+    return entries, args.days
+
+
+# --- rendering ------------------------------------------------------------
+
+
+def bars_to_rows(bars):
+    """Un-collapsed bars -> rows, each spanning its own single minute bucket."""
+    return [
+        {
+            "from": fmt_minute(bar["minute"]),
+            "to": fmt_minute(bar["minute"]),
+            "open_rial": bar["open"],
+            "high_rial": bar["high"],
+            "low_rial": bar["low"],
+            "close_rial": bar["close"],
+            "volume_shares": bar["volume"],
+            "trades": bar["trades"],
+        }
+        for bar in bars
+    ]
+
+
+def collapsed_to_rows(collapsed):
+    """Collapsed flat runs -> rows spanning ``from``..``to`` with the run's OHLCV."""
+    return [
+        {
+            "from": fmt_minute(bar["from"]),
+            "to": fmt_minute(bar["to"]),
+            "open_rial": bar["open"],
+            "high_rial": bar["high"],
+            "low_rial": bar["low"],
+            "close_rial": bar["close"],
+            "volume_shares": bar["volume"],
+            "trades": bar["trades"],
+            "bars": bar["count"],
+        }
+        for bar in collapsed
+    ]
+
+
+def tick_rows(rows, include_canceled):
+    return [
+        {
+            "time": tse.trade_time(tse.pick(row, "hEven")),
+            "price_rial": tse.price(tse.pick(row, "pTran")),
+            "volume_shares": tse.value(row, "qTitTran"),
+            "trade_no": tse.value(row, "nTran"),
+            "canceled": tse.value(row, "canceled") or 0,
+        }
+        for row in dedup_ticks(rows, include_canceled)
+    ]
+
+
+def live_client_type(client, code):
+    row = client.api(f"ClientType/GetClientType/{code}/1/0", "clientType")
+    if not isinstance(row, dict):
+        return None
+    buy_i = tse.value(row, "buy_I_Volume")
+    sell_i = tse.value(row, "sell_I_Volume")
+    buy_n = tse.value(row, "buy_N_Volume")
+    sell_n = tse.value(row, "sell_N_Volume")
+    return {
+        "individual_buy_shares": buy_i,
+        "individual_sell_shares": sell_i,
+        "legal_buy_shares": buy_n,
+        "legal_sell_shares": sell_n,
+        "legal_net_shares": buy_n - sell_n
+        if buy_n is not None and sell_n is not None
+        else None,
+        "individual_buyers": tse.value(row, "buy_CountI"),
+        "individual_sellers": tse.value(row, "sell_CountI"),
+        "legal_buyers": tse.value(row, "buy_CountN"),
+        "legal_sellers": tse.value(row, "sell_CountN"),
+    }
+
+
+def render_markdown(result):
+    lines = [
+        f"Fetched at: {result['fetched_at']}",
+        f"Market session open by schedule: {result['market_session_open']}",
+        "Prices and traded value are in rial, volume in shares.",
+    ]
+    mode = result["mode"]
+    if mode == "ticks":
+        lines.append("Rows: every trade (raw tape)")
+    elif mode == "profile":
+        lines.append("Rows: price-level volume profile")
+    else:
+        parts = [f"{result['interval_minutes']}-minute OHLCV bars"]
+        parts.append("auto interval" if result["interval_auto"] else "fixed interval")
+        parts.append("collapsed" if result["collapsed"] else "not collapsed")
+        lines.append("Rows: " + ", ".join(parts))
+        if result["collapsed"]:
+            lines.append(
+                "Collapsed: consecutive identical-OHLC bars merged; the `bars`"
+                " column is how many bars each row merged (1 = untouched)."
+            )
+    if result.get("interval_note"):
+        lines.append(result["interval_note"])
+    if result.get("live_note"):
+        lines.append(result["live_note"])
+    instrument = result["instrument"]
+    label = instrument.get("symbol") or instrument.get("name") or instrument["ins_code"]
+    for day in result["days"]:
+        source = day["source"]
+        title = f"## {label} — {day['date']}  (source: {source})"
+        lines.extend(("", title))
+        if mode == "bars" and day.get("native_interval") == 2:
+            lines.append(
+                "Bar resolution: 2-minute (TSETMC's native intraday fallback;"
+                " per-bar trade count is not published)"
+            )
+        flow = day.get("client_type")
+        if flow:
+            lines.append(
+                "حقیقی/حقوقی (day): "
+                + json.dumps(flow, ensure_ascii=False, separators=(",", ":"))
+            )
+        quote = day.get("live_quote")
+        if quote:
+            detail = [f"Live quote: last {quote['last_price']} @ {quote['time']}"]
+            if quote.get("trades") is not None:
+                detail.append(f"{quote['trades']} trades")
+            if quote.get("volume") is not None:
+                detail.append(f"{quote['volume']} shares")
+            if quote.get("low") is not None and quote.get("high") is not None:
+                detail.append(f"day {quote['low']}–{quote['high']}")
+            text = " · ".join(detail)
+            if quote.get("lag_minutes"):
+                text += (
+                    f" — tape through {quote['tape_time']}"
+                    f" ({quote['lag_minutes']}m behind)"
+                )
+            lines.append(text)
+        buffer = io.StringIO()
+        writer = csv.DictWriter(
+            buffer, fieldnames=day["columns"], lineterminator="\n", extrasaction="ignore"
+        )
+        writer.writeheader()
+        writer.writerows(day["rows"])
+        lines.extend(("```csv", buffer.getvalue().rstrip(), "```"))
+    if result["errors"]:
+        lines.extend(
+            (
+                "",
+                "## Missing or failed sources / داده‌های ناموجود",
+                "```json",
+                json.dumps(result["errors"], ensure_ascii=False, separators=(",", ":")),
+                "```",
+            )
+        )
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="tse.intraday",
+        description="Intraday (per-minute) OHLCV bars for a Tehran Stock Exchange instrument.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  tse.intraday فولاد
+  tse.intraday فولاد --days 5
+  tse.intraday فولاد --date 1405/07/25
+  tse.intraday فولاد --from 1405/07/20 --to 1405/07/25
+  tse.intraday فولاد --interval 5
+  tse.intraday فولاد --days 3 --ticks
+  tse.intraday فولاد --days 3 --profile
+  tse.intraday فولاد --no-live --json
+
+Every session, including the live one, comes from the per-trade tape and is
+aggregated here into N-minute bars (the live day falls back to TSETMC's native
+2-minute bars only if its tape is empty). --interval auto (default) picks the
+finest interval that fits --max-rows, and --collapse auto (default) merges
+consecutive identical-OHLC bars only once a run exceeds --collapse-threshold
+rows; the merged rows carry a `bars` column with the bar count they swallowed.""",
+    )
+    parser.add_argument(
+        "symbol",
+        metavar="SYMBOL",
+        help="Persian symbol, ISIN, insCode, or easytrader/tsetmc/codal URL",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"Last N trading sessions (1-{MAX_DAYS}; default 1). The live session counts as the most recent when available",
+    )
+    parser.add_argument(
+        "--date", metavar="DATE", help="One session, as a Jalali date (YYYY/MM/DD)"
+    )
+    parser.add_argument("--from", dest="start", metavar="DATE", help="First Jalali date (with --to)")
+    parser.add_argument("--to", dest="end", metavar="DATE", help="Last Jalali date (with --from)")
+    parser.add_argument(
+        "--interval",
+        default="auto",
+        metavar="auto|M",
+        help="Bar size in minutes, or 'auto' (default: finest that fits --max-rows)",
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=DEFAULT_MAX_ROWS,
+        metavar="N",
+        help=f"Row budget for the automatic interval (default {DEFAULT_MAX_ROWS})",
+    )
+    parser.add_argument(
+        "--collapse",
+        dest="collapse_mode",
+        choices=("auto", "on", "off"),
+        default="auto",
+        metavar="auto|on|off",
+        help=(
+            "Merge consecutive identical-OHLC bars into one row: auto (default)"
+            " condenses only a big run, on always, off never"
+        ),
+    )
+    parser.add_argument(
+        "--collapse-threshold",
+        type=int,
+        default=DEFAULT_COLLAPSE_THRESHOLD,
+        metavar="N",
+        help=(
+            "With --collapse auto, condense once a run exceeds N bars"
+            f" (default {DEFAULT_COLLAPSE_THRESHOLD})"
+        ),
+    )
+    parser.add_argument(
+        "--no-collapse",
+        action="store_true",
+        help="Alias for --collapse off (keep every bar)",
+    )
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument(
+        "--ticks", action="store_true", help="Emit the raw per-trade tape instead of bars"
+    )
+    output.add_argument(
+        "--profile",
+        action="store_true",
+        help="Emit a price-level volume profile instead of time bars",
+    )
+    parser.add_argument(
+        "--canceled",
+        action="store_true",
+        help="Keep canceled rows (default: they are dropped)",
+    )
+    parser.add_argument(
+        "--no-live", action="store_true", help="Skip the current (live) session"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Output JSON instead of Markdown"
+    )
+    args = parser.parse_args(argv)
+
+    if args.days is not None and not 1 <= args.days <= MAX_DAYS:
+        parser.error(f"--days must be between 1 and {MAX_DAYS}")
+    if bool(args.start) != bool(args.end):
+        parser.error("--from and --to must be used together")
+    if args.max_rows < 1:
+        parser.error("--max-rows must be positive")
+    if args.collapse_threshold < 1:
+        parser.error("--collapse-threshold must be positive")
+    if args.date and (args.start or args.end):
+        parser.error("--date cannot be combined with --from/--to")
+    if args.date and args.days is not None:
+        parser.error("--date cannot be combined with --days")
+    if args.days is None:
+        args.days = 1
+
+    interval = None
+    if args.interval != "auto":
+        try:
+            interval = int(args.interval)
+        except ValueError:
+            parser.error("--interval must be 'auto' or a positive integer")
+        if interval < 1:
+            parser.error("--interval must be a positive integer")
+
+    mode = "ticks" if args.ticks else "profile" if args.profile else "bars"
+    collapse_mode = args.collapse_mode
+    if args.no_collapse:
+        if collapse_mode == "on":
+            parser.error("--no-collapse conflicts with --collapse on")
+        collapse_mode = "off"
+
+    client = tse.Client()
+    now = tse.tehran_now()
+    try:
+        instrument = tse.resolve(client, args.symbol)
+        code = instrument["ins_code"]
+        if not instrument.get("symbol"):
+            try:
+                ident = tse.identity(client, code)
+                instrument = {**instrument, **{k: v for k, v in ident.items() if v}}
+            except tse.DataError:
+                pass
+        sessions = fetch_sessions(client, code)
+        if not sessions:
+            raise tse.DataError("no trading sessions found for this instrument")
+        today = {
+            "greg": now.strftime("%Y%m%d"),
+            "jalali": tse.trade_date(now.strftime("%Y%m%d")),
+            "trading": now.weekday() in TRADING_WEEKDAYS,
+        }
+        entries, wanted = select_entries(sessions, args, parser, today)
+        if not entries:
+            raise tse.DataError("no sessions selected")
+
+        errors = {}
+        try:
+            flow = tse.client_type_history(client, code)
+        except tse.DataError as exc:
+            flow = {}
+            errors["client_type_history"] = str(exc)
+
+        loaded = {}
+
+        def load_batch(indices):
+            indices = list(indices)
+            if not indices:
+                return
+            with ThreadPoolExecutor(
+                max_workers=min(FETCH_WORKERS, len(indices))
+            ) as pool:
+                futures = {
+                    pool.submit(
+                        load_day, client, code, entries[index], mode, args.canceled
+                    ): index
+                    for index in indices
+                }
+                for future, index in futures.items():
+                    try:
+                        loaded[index] = future.result()
+                    except tse.DataError as exc:
+                        loaded[index] = None
+                        errors[entries[index]["jalali"]] = str(exc)
+
+        if wanted is not None:
+            # The newest `wanted` candidates, backfilling older sessions while a
+            # newer one (often today's not-yet-open live session) has no data.
+            start = max(0, len(entries) - wanted)
+            load_batch(range(start, len(entries)))
+            have = sorted(index for index, day in loaded.items() if day)
+            cursor = start - 1
+            while len(have) < wanted and cursor >= 0:
+                load_batch([cursor])
+                if loaded.get(cursor):
+                    have.append(cursor)
+                cursor -= 1
+            days = [loaded[index] for index in sorted(have)[-wanted:]]
+        else:
+            load_batch(range(len(entries)))
+            days = []
+            for index in sorted(loaded):
+                day = loaded[index]
+                if day:
+                    days.append(day)
+                elif entries[index]["jalali"] not in errors:
+                    errors[entries[index]["jalali"]] = "no data"
+
+        if not days:
+            raise tse.DataError(
+                "no intraday data available for the requested session(s)"
+            )
+
+        # A completed day's tape occasionally disagrees with TSETMC's own daily
+        # aggregate; report it instead of silently trusting the tape.
+        for day in days:
+            check = day.pop("check", None)
+            if check:
+                errors[day["date"]] = f"tape vs daily aggregate: {check}"
+
+        live_note = None
+        newest = entries[-1]
+        if newest["live"] and not any(day["date"] == newest["jalali"] for day in days):
+            live_note = (
+                f"Live session ({newest['jalali']}) has no data yet; "
+                "showing the most recent completed sessions."
+            )
+
+        # The live tape is served from lagging CDN replicas, so anchor the live
+        # session with the real-time quote and say how far the tape trails it.
+        live_day = next((day for day in days if day["source"] == "live"), None)
+        if live_day is not None:
+            try:
+                quote = fetch_live_quote(client, code)
+            except tse.DataError as exc:
+                quote = None
+                errors.setdefault("live_quote", str(exc))
+            if quote:
+                if mode == "bars":
+                    tape_minute = max(
+                        (bar["minute"] for bar in live_day["bars"]), default=None
+                    )
+                    lag = (
+                        quote["minute"] - tape_minute
+                        if tape_minute is not None
+                        else 0
+                    )
+                    if lag >= LAG_WARN_MINUTES:
+                        quote["tape_time"] = fmt_minute(tape_minute)
+                        quote["lag_minutes"] = lag
+                live_day["live_quote"] = quote
+
+        interval_auto = False
+        interval_note = None
+        collapse = False
+        if mode == "bars":
+            if collapse_mode == "auto":
+                # Small runs stay raw; only a big run is condensed.
+                total_minutes = sum(len(day["bars"]) for day in days)
+                collapse = total_minutes > args.collapse_threshold
+            else:
+                collapse = collapse_mode == "on"
+            if interval is None:
+                interval_auto = True
+                bars_per_day = [day["bars"] for day in days]
+                forced = choose_interval(bars_per_day, args.max_rows, collapse)
+                raw_one_minute = sum(
+                    len(collapse_bars(day["bars"])) if collapse else len(day["bars"])
+                    for day in days
+                )
+                interval = forced
+                if forced > 1:
+                    interval_note = (
+                        f"Auto interval: {forced}-minute to stay within "
+                        f"{args.max_rows} rows (1-minute would have produced "
+                        f"{raw_one_minute} rows)."
+                    )
+        else:
+            interval = 1
+
+        rendered = []
+        for day in days:
+            if mode == "ticks":
+                columns, rows = TICK_COLUMNS, tick_rows(day["ticks"], args.canceled)
+            elif mode == "profile":
+                columns = PROFILE_COLUMNS
+                rows = [
+                    {
+                        "price_rial": item["price"],
+                        "volume_shares": item["volume"],
+                        "trades": item["trades"],
+                        "first_time": fmt_minute(minute_of(item["first"])),
+                        "last_time": fmt_minute(minute_of(item["last"])),
+                    }
+                    for item in day["profile"]
+                ]
+            else:
+                columns = COLLAPSED_BAR_COLUMNS if collapse else BAR_COLUMNS
+                merged = merge_bars(day["bars"], interval)
+                rows = (
+                    collapsed_to_rows(collapse_bars(merged))
+                    if collapse
+                    else bars_to_rows(merged)
+                )
+            client_type = flow.get(day["date"])
+            if day["source"] == "live" and client_type is None:
+                try:
+                    client_type = live_client_type(client, code)
+                except tse.DataError:
+                    client_type = None
+            rendered.append(
+                {
+                    "date": day["date"],
+                    "source": day["source"],
+                    "interval_minutes": max(interval, day.get("native_interval") or 1)
+                    if mode == "bars"
+                    else None,
+                    "native_interval": day.get("native_interval"),
+                    "client_type": client_type,
+                    "live_quote": day.get("live_quote"),
+                    "columns": list(columns),
+                    "rows": rows,
+                }
+            )
+
+        result = {
+            "fetched_at": tse.jalali_stamp(now),
+            "market_session_open": tse.market_session_open(now),
+            "instrument": instrument,
+            "mode": mode,
+            "interval_minutes": interval if mode == "bars" else None,
+            "interval_auto": interval_auto,
+            "interval_note": interval_note,
+            "live_note": live_note,
+            "collapsed": collapse if mode == "bars" else False,
+            "collapse_mode": collapse_mode if mode == "bars" else None,
+            "collapse_threshold": args.collapse_threshold,
+            "days": rendered,
+            "errors": errors,
+        }
+    except tse.DataError as exc:
+        print(f"tse.intraday: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(render_markdown(result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

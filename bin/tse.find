@@ -23,6 +23,22 @@ _loader = SourceFileLoader("tse", os.path.join(HERE, "tse"))
 _spec = importlib.util.spec_from_loader("tse", _loader)
 tse = importlib.util.module_from_spec(_spec)
 _loader.exec_module(tse)
+sys.modules.setdefault("tse", tse)
+
+_resolver = None
+
+
+def resolve_module():
+    """Lazily load `bin/tse.resolve` for watchlist identifier resolution."""
+    global _resolver
+    if _resolver is None:
+        loader = SourceFileLoader("tse_resolve", os.path.join(HERE, "tse.resolve"))
+        spec = importlib.util.spec_from_loader("tse_resolve", loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["tse_resolve"] = module
+        loader.exec_module(module)
+        _resolver = module
+    return _resolver
 
 # The bulk market-watch helpers live in bin/tse so `tse` and `tse.find` share one
 # implementation and one field-mapping.
@@ -275,6 +291,10 @@ def parse_row(row):
 
 def watchlist_filter(path):
     symbols = set()
+    try:
+        resolver = resolve_module()
+    except Exception:
+        resolver = None
     with open(path, encoding="utf-8") as handle:
         for line in handle:
             token = line.split("#", 1)[0].split()[0] if line.split("#", 1)[0].split() else ""
@@ -283,6 +303,22 @@ def watchlist_filter(path):
             token = tse.normalize_input(token)
             symbols.add(tse.normal(token).upper())
             symbols.add(token.upper())
+            if resolver is None:
+                continue
+            # Resolve finglish/fuzzy names and composite tokens to the canonical
+            # insCode/ISIN/symbol so a watchlist can say "foolad" or "خودرو".
+            try:
+                instrument = resolver.resolve_one(token, offline=True, allow_live=False, min_score=95)
+                candidates = [{"instrument": instrument}]
+            except resolver.Ambiguous as exc:
+                candidates = exc.candidates
+            except Exception:
+                candidates = []
+            for candidate in candidates:
+                record = candidate["instrument"]
+                for key in (record.get("ins_code"), record.get("isin"), record.get("symbol")):
+                    if key:
+                        symbols.add(str(key).upper())
     return symbols
 
 

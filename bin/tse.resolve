@@ -1,0 +1,1022 @@
+#!/usr/bin/env python3
+"""tse.resolve — resolve Persian / finglish / fuzzy instrument names to TSETMC identifiers.
+
+Turns a human name (`فولاد`, `foolad`, `khodro`, `فنفت`, a company-name
+fragment, an ISIN, an insCode, a composite `فولاد-IRO1FOLD0001` token, or an
+easytrader/tsetmc/codal URL) into the canonical TSETMC identifiers — symbol,
+ISIN, insCode, market and board — so every other `tse.*` tool can share one
+resolution path.
+
+Matching runs exact (symbol/name/ISIN/insCode) -> finglish (Latin input is
+reverse-transliterated through `bin/finglish` and also compared against the
+forward finglish forms baked into the cache) -> fuzzy (`rapidfuzz` when
+available, `difflib` otherwise). Candidates are ranked by market tier so a
+duplicated symbol resolves to the traded/main-market instrument (e.g. `فنفت`
+picks the `بازار دوم` listing over the `بازار پایه` one) and only truly tied
+candidates are reported as ambiguous.
+
+The active-instrument index comes from the same bulk market watch `bin/tse`
+uses; it is cached (XDG cache, one week by default, `--refresh` to force) and a
+live `Instrument/GetInstrumentSearch` backfills anything the index misses.
+"""
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CACHE_VERSION = 3
+DEFAULT_TTL_DAYS = 7
+DEFAULT_MIN_SCORE = 62.0
+FUZZY_ACCEPT_SCORE = 76.0
+AMBIGUITY_MARGIN = 4.0
+
+# Market tier: lower is "more correct" when one symbol is listed twice.
+# 1/2/6/7 are the main bourse/farabourse markets, 4 the پایه market, 3 the
+# derivatives market.
+MARKET_RANK = {1: 0, 2: 1, 6: 1, 7: 1, 4: 2, 3: 3}
+MARKET_DEFAULT_RANK = 2.5
+FLOW_NAMES = {1: "بورس", 2: "فرابورس", 3: "مشتقه", 4: "پایه", 6: "فرابورس", 7: "فرابورس"}
+# Base-market board codes (پایه), penalised after the flow tier.
+BASE_BOARDS = {"P1", "P2", "C1", "L1"}
+BOARD_CODES = {
+    "1A": "بازار ابزارهاي نوين مالي فرابورس", "1N": "بازار اول (تابلوی اصلی) بورس",
+    "1Z": "بازار اول فرابورس", "2A": "بازار ابزارهاي نوين مالي فرابورس",
+    "2Z": "بازار دوم فرابورس", "41": "بازار ابزارهاي نوين مالي",
+    "4A": "بازار ابزارهاي نوين مالي فرابورس", "51": "بازار صندوق های قابل معامله",
+    "5A": "بازار صندوق های قابل معامله", "5N": "بازار صندوق های قابل معامله",
+    "61": "بازار ابزارهای مشتقه", "71": "بازار ابزارهای مشتقه",
+    "91": "بازار ابزارهای مشتقه", "C1": "بازار پایه نارنجی فرابورس",
+    "D1": "بازار دوم فرابورس", "EQ": "بازار سایر اوراق بهادار قابل معامله",
+    "F1": "بازار عادی آتی", "G1": "بازار دوم (تابلوی اصلی) بورس",
+    "H1": "بازار صندوق های قابل معامله", "HN": "بازار صندوق های قابل معامله",
+    "I1": "بازار ابزارهاي نوين مالي فرابورس", "I2": "بازار ابزارهاي نوين مالي فرابورس",
+    "K2": "بازار دوم فرابورس", "L1": "بازار پایه قرمز فرابورس",
+    "M1": "بازار ابزارهاي نوين مالي فرابورس", "M2": "بازار ابزارهاي نوين مالي فرابورس",
+    "N1": "بازار اول (تابلوی فرعی) بورس", "N2": "بازار دوم (تابلوی فرعی) بورس",
+    "N4": "بازار اوراق بدهی", "NS": "بازار سرمایه گذاری حرفه ای",
+    "O1": "بازار خرده فروشی بورس", "P1": "بازار پایه زرد فرابورس",
+    "P2": "بازار پایه زرد فرابورس", "Q1": "بورس کالا",
+    "QS": "صندوق های کالایی", "T1": "بازار ابزارهاي نوين مالي فرابورس",
+    "T2": "بازار ابزارهاي نوين مالي فرابورس", "V1": "بازار نوآفرین - رشد",
+    "W1": "بازار نوآفرین - دانش بنیان", "Z1": "بازار دوم فرابورس",
+}
+
+KIND_TYPES = {
+    300: "stock", 303: "stock", 309: "stock", 313: "stock",
+    305: "fund", 380: "fund", 315: "fund",
+    311: "option", 312: "option", 320: "option", 321: "option",
+    304: "future", 307: "mortgage",
+    400: "right", 403: "right", 404: "right",
+    306: "bond", 706: "bond", 301: "bond", 206: "bond", 208: "bond",
+    200: "forward", 308: "forward", 701: "forward",
+    201: "other", 801: "other", 802: "other", 803: "other",
+}
+
+TYPE_ALIASES = {
+    "stock": "stock", "stocks": "stock", "equity": "stock", "سهم": "stock",
+    "fund": "fund", "funds": "fund", "etf": "fund", "صندوق": "fund",
+    "option": "option", "options": "option",
+    "bond": "bond", "bonds": "bond",
+    "right": "right", "rights": "right", "حق": "right",
+    "future": "future", "futures": "future",
+    "mortgage": "mortgage",
+}
+MARKET_ALIASES = {
+    "bourse": {1}, "tse": {1}, "1": {1},
+    "farabourse": {2, 6, 7}, "ifb": {2, 6, 7}, "fara": {2, 6, 7},
+    "paye": {4}, "base": {4}, "4": {4},
+    "derivative": {3}, "moshtaghe": {3}, "3": {3},
+    "6": {6}, "7": {7},
+}
+
+
+class ResolveError(Exception):
+    """Base class for resolver failures."""
+
+
+class NotFound(ResolveError):
+    """No instrument matched the query."""
+
+
+class Ambiguous(ResolveError):
+    """Several instruments are equally good matches; the caller must choose."""
+
+    def __init__(self, query, candidates):
+        self.query = query
+        self.candidates = candidates
+        super().__init__(format_candidates(candidates))
+
+
+_TSE = None
+_FINGLISH = None
+
+
+def _load_sibling(name, filename):
+    """Load a dotted-name script from this directory as an importable module."""
+    module = sys.modules.get(name)
+    if module is not None and getattr(module, "__file__", None) == filename:
+        return module
+    loader = SourceFileLoader(name, filename)
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
+def tse_module():
+    """`bin/tse`, reused rather than re-executed when it is already loaded."""
+    global _TSE
+    if _TSE is None:
+        _TSE = _load_sibling("tse", os.path.join(HERE, "tse"))
+    return _TSE
+
+
+def transliterator():
+    """A configured `bin/finglish` transliterator (literal vowels)."""
+    global _FINGLISH
+    if _FINGLISH is None:
+        module = _load_sibling("tse_finglish", os.path.join(HERE, "finglish"))
+        _FINGLISH = module.FinglishTransliterator()
+    return _FINGLISH
+
+
+# ---------------------------------------------------------------------------
+# similarity
+# ---------------------------------------------------------------------------
+
+
+def _similarity_factory():
+    try:
+        from rapidfuzz import fuzz  # type: ignore
+
+        return lambda a, b: float(fuzz.WRatio(a, b))
+    except Exception:  # pragma: no cover - rapidfuzz is a soft dependency
+        from difflib import SequenceMatcher
+
+        return lambda a, b: SequenceMatcher(None, a, b).ratio() * 100.0
+
+
+_SIMILARITY = None
+
+
+def similarity(a, b):
+    global _SIMILARITY
+    if _SIMILARITY is None:
+        _SIMILARITY = _similarity_factory()
+    return _SIMILARITY(a, b)
+
+
+# ---------------------------------------------------------------------------
+# normalization helpers
+# ---------------------------------------------------------------------------
+
+
+def persian(text):
+    return any("\u0600" <= ch <= "\u06ff" for ch in str(text or ""))
+
+
+def latin_only(text):
+    """Lowercased ASCII letters/digits of a Latin query, or None for Persian."""
+    text = str(text or "")
+    if not text or persian(text):
+        return None
+    cleaned = re.sub(r"[^a-z0-9]+", "", text.lower())
+    return cleaned or None
+
+
+def reverse_persian(latin):
+    """Finglish -> Persian candidate, normalised; None when it cannot help."""
+    if not latin:
+        return None
+    try:
+        candidate = transliterator().finglish_to_persian(latin)
+    except Exception:
+        return None
+    candidate = tse_module().normal(candidate)
+    return candidate or None
+
+
+def fold_latin(text):
+    """Collapse repeated letters so `foolad`/`folad` share a key."""
+    return re.sub(r"(.)\1+", r"\1", text)
+
+
+def latin_keys(symbol, name):
+    """Forward finglish forms for a symbol and a company name.
+
+    Returns (symbol_keys, name_keys): only symbol keys are exact-tier (a company
+    name that merely contains the word `فولاد` must not outrank the symbol).
+    """
+    fa = transliterator()
+
+    def tokenize(text):
+        raw = fa.persian_to_finglish(text).lower()
+        tokens = re.findall(r"[a-z0-9]+", raw)
+        keys = set()
+        for token in tokens:
+            if len(token) >= 2:
+                keys.add(token)
+                keys.add(fold_latin(token))
+        joined = "".join(tokens)
+        if joined:
+            keys.add(joined)
+            keys.add(fold_latin(joined))
+        return keys
+
+    symbol_keys = tokenize(symbol) if symbol else set()
+    name_keys = (tokenize(name) if name else set()) - symbol_keys
+    return sorted(symbol_keys), sorted(name_keys)
+
+
+def guess_type(isin, name):
+    isin = isin or ""
+    if isin.startswith(("IRO9", "IROA", "IROB", "IROF")):
+        return "option"
+    if isin.startswith("IRO4"):
+        return "future"
+    if isin.startswith("IRO6"):
+        return "mortgage"
+    if isin.startswith(("IRO1", "IRO3", "IRO5", "IRO7")):
+        return "stock"
+    if isin[:4] in ("IRT1", "IRT3", "IRTK", "IRTE"):
+        return "fund"
+    if isin.startswith("IRR"):
+        return "right"
+    if isin.startswith(("IRBK", "IRBE")) or isin[:4] == "IRK1":
+        return "forward"
+    if isin[:4] == "IRB3":
+        return "bond"
+    text = tse_module().normal(name)
+    if "اختيار" in text or "اختیار" in text:
+        return "option"
+    if "صندوق" in text:
+        return "fund"
+    if "سلف" in text:
+        return "forward"
+    if any(word in text for word in ("مرابحه", "مشاركت", "مشارکت", "صكوك", "صکوک", "اراد", "گام")):
+        return "bond"
+    if "آتي" in text or "آتی" in text:
+        return "future"
+    if "تسه" in text or "امتياز" in text or "امتیاز" in text:
+        return "mortgage"
+    if re.match(r"^ح\s*\.|^ح\s", text):
+        return "right"
+    return "stock" if not text else "other"
+
+
+
+# ---------------------------------------------------------------------------
+# identifier parsing
+# ---------------------------------------------------------------------------
+
+
+def parse_identifier(text):
+    """Return (kind, value) for ISIN/insCode/URL/composite tokens, or ('text', s).
+
+    Accepts a bare identifier, a URL, and composite `NAME-ISIN`, `NAME:ISIN`,
+    `NAME(ISIN)`, `NAME@ISIN` or `NAME ISIN` tokens (ISIN/insCode wins over the
+    human name) — the forms autocomplete and the other tools emit.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return ("text", raw)
+    tse = tse_module()
+    normalized = tse.normalize_input(raw)
+    match = tse.ISIN_RE.search(normalized)
+    if match:
+        return ("isin", match.group(0).upper())
+    match = re.search(r"(?<!\d)(\d{12,})(?!\d)", normalized)
+    if match:
+        return ("ins_code", match.group(1))
+    return ("text", raw)
+
+
+def token_for(instrument):
+    """The readable `SYMBOL-ISIN` (or `SYMBOL-insCode`) autocomplete token."""
+    symbol = instrument.get("symbol") or ""
+    suffix = instrument.get("isin") or instrument.get("ins_code") or ""
+    if symbol and suffix:
+        return f"{symbol}-{suffix}"
+    return symbol or suffix or ""
+
+
+def public_instrument(instrument):
+    """Drop the internal finglish-key fields from machine output."""
+    return {key: value for key, value in instrument.items() if key not in ("latin", "name_latin")}
+
+
+def description_for(instrument):
+    parts = [instrument.get("symbol") or instrument.get("ins_code") or "?"]
+    name = instrument.get("name")
+    if name and name != parts[0]:
+        parts.append(f"— {name}")
+    where = instrument.get("board") or instrument.get("market")
+    tail = []
+    if where:
+        tail.append(where)
+    if instrument.get("ins_code"):
+        tail.append(f"insCode {instrument['ins_code']}")
+    if tail:
+        parts.append("(" + "; ".join(tail) + ")")
+    return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# instrument records
+# ---------------------------------------------------------------------------
+
+
+def _clean(value):
+    value = str(value).strip() if value is not None else ""
+    return value or None
+
+
+def _market_instrument(row):
+    tse = tse_module()
+    code = _clean(tse.pick(row, "insCode"))
+    if not code:
+        return None
+    symbol = tse.normal(tse.pick(row, "lva", "lVal18AFC"))
+    name = tse.normal(tse.pick(row, "lvc", "lVal30"))
+    isin = _clean(tse.pick(row, "insID", "cIsin", "instrumentID"))
+    if isin and not tse.ISIN_RE.fullmatch(isin.upper()):
+        # `instrumentID` can be an internal code, not an ISIN.
+        isin = None if not isin.upper().startswith("IR") else isin
+    flow = tse.number(tse.pick(row, "flow"))
+    flow = int(flow) if flow is not None else None
+    kind = tse.number(tse.pick(row, "yVal"))
+    shares = tse.number(tse.pick(row, "ztd"))
+    close = tse.price(tse.pick(row, "pcl")) or tse.price(tse.pick(row, "pdv"))
+    value = tse.number(tse.pick(row, "qtc"))
+    board_code = _clean(tse.pick(row, "cGrValCot", "cgrValCot"))
+    symbol_keys, name_keys = latin_keys(symbol, name)
+    return {
+        "ins_code": code,
+        "symbol": symbol,
+        "name": name,
+        "isin": isin,
+        "flow": flow,
+        "market": _clean(tse.pick(row, "flowTitle")) or FLOW_NAMES.get(flow),
+        "board_code": board_code,
+        "board": _clean(tse.pick(row, "cgrValCotTitle")) or BOARD_CODES.get((board_code or "").upper()),
+        "kind": int(kind) if kind is not None else None,
+        "type": KIND_TYPES.get(int(kind), guess_type(isin, name)) if kind is not None else guess_type(isin, name),
+        "traded": bool(value and value > 0),
+        "value": int(value) if value is not None else None,
+        "mcap": int(shares * close) if shares and close else None,
+        "latin": symbol_keys,
+        "name_latin": name_keys,
+    }
+
+
+def _search_instrument(row):
+    tse = tse_module()
+    code = _clean(tse.pick(row, "insCode"))
+    if not code:
+        return None
+    symbol = tse.normal(tse.pick(row, "lVal18AFC", "lVal18"))
+    name = tse.normal(tse.pick(row, "lVal30"))
+    isin = _clean(tse.pick(row, "cIsin", "insID"))
+    flow = tse.number(tse.pick(row, "flow"))
+    flow = int(flow) if flow is not None else None
+    board_code = _clean(tse.pick(row, "cgrValCot"))
+    symbol_keys, name_keys = latin_keys(symbol, name)
+    return {
+        "ins_code": code,
+        "symbol": symbol,
+        "name": name,
+        "isin": isin,
+        "flow": flow,
+        "market": _clean(tse.pick(row, "flowTitle")) or FLOW_NAMES.get(flow),
+        "board_code": board_code,
+        "board": _clean(tse.pick(row, "cgrValCotTitle")) or BOARD_CODES.get((board_code or "").upper()),
+        "kind": None,
+        "type": guess_type(isin, name),
+        "traded": False,
+        "value": None,
+        "mcap": None,
+        "latin": symbol_keys,
+        "name_latin": name_keys,
+    }
+
+
+def _synthetic(ins_code=None, isin=None, symbol="", name=""):
+    symbol_keys, name_keys = latin_keys(symbol, name)
+    return {
+        "ins_code": ins_code or "",
+        "symbol": symbol,
+        "name": name,
+        "isin": isin,
+        "flow": None,
+        "market": None,
+        "board_code": None,
+        "board": None,
+        "kind": None,
+        "type": guess_type(isin, name),
+        "traded": False,
+        "value": None,
+        "mcap": None,
+        "latin": symbol_keys,
+        "name_latin": name_keys,
+    }
+
+
+def market_rank(flow, isin=None):
+    """Rank a listing's market; lower is the more canonical listing.
+
+    `flow` is authoritative when the market-watch payload carries it, but that
+    payload intermittently omits it, so the ISIN prefix is the fallback tier
+    (IRO1/IRO5 bonded-market, IRO3 فرابورس, IRO7 پایه, IRO4/9/6 derivatives).
+    """
+    if flow is not None:
+        return float(MARKET_RANK.get(int(flow), MARKET_DEFAULT_RANK))
+    code = (isin or "").upper()
+    if code.startswith("IRO7"):
+        return 2.0
+    if code.startswith(("IRO9", "IRO4", "IRO6", "IROA", "IROB", "IROF")):
+        return 3.0
+    if code.startswith("IRO3"):
+        return 1.0
+    if code.startswith(("IRO1", "IRO2", "IRO5")):
+        return 0.0
+    return MARKET_DEFAULT_RANK
+
+
+def board_rank(board_code):
+    return 1.0 if (board_code or "").upper() in BASE_BOARDS else 0.0
+
+
+def _merge(index, records):
+    """Merge new records into the index in place, keyed by insCode."""
+    known = {inst["ins_code"]: inst for inst in index}
+    added = 0
+    for record in records:
+        if not record:
+            continue
+        code = record["ins_code"]
+        current = known.get(code)
+        if current is None:
+            index.append(record)
+            known[code] = record
+            added += 1
+            continue
+        for key, value in record.items():
+            if value not in (None, "", [], 0, False) and current.get(key) in (None, "", [], 0, False):
+                current[key] = value
+    return added
+
+
+# ---------------------------------------------------------------------------
+# cache
+# ---------------------------------------------------------------------------
+
+
+def default_cache_path():
+    root = os.environ.get("XDG_CACHE_HOME") or os.path.join(Path.home(), ".cache")
+    return Path(root) / "tse" / "instruments.json"
+
+
+def read_cache(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("version") != CACHE_VERSION:
+        return None
+    if not isinstance(data.get("instruments"), list):
+        return None
+    return data
+
+
+def write_cache(path, instruments, source, fetched_at=None):
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        document = {
+            "version": CACHE_VERSION,
+            "fetched_at": fetched_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "source": source,
+            "count": len(instruments),
+            "instruments": instruments,
+        }
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(document, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
+def cache_age(data):
+    fetched = data.get("fetched_at")
+    if not fetched:
+        return None
+    try:
+        moment = datetime.fromisoformat(fetched)
+    except (TypeError, ValueError):
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - moment
+
+
+def cache_fresh(data, ttl_days):
+    age = cache_age(data)
+    return age is not None and age < timedelta(days=ttl_days)
+
+
+def build_index(client):
+    rows = tse_module().fetch_market_watch(client)
+    index = []
+    seen = set()
+    for row in rows:
+        record = _market_instrument(row)
+        if record is None or record["ins_code"] in seen:
+            continue
+        seen.add(record["ins_code"])
+        index.append(record)
+    return index
+
+
+def get_index(client=None, *, cache_path=None, ttl_days=DEFAULT_TTL_DAYS, refresh=False,
+              no_cache=False, offline=False):
+    """Return (instruments, meta); reads the cache unless refresh/no_cache."""
+    path = Path(cache_path).expanduser() if cache_path else default_cache_path()
+    data = None if no_cache else read_cache(path)
+    if data is not None and not refresh:
+        fresh = cache_fresh(data, max(ttl_days, 0))
+        if fresh or offline:
+            return data["instruments"], {
+                "source": "cache",
+                "fresh": fresh,
+                "fetched_at": data.get("fetched_at"),
+                "path": str(path),
+            }
+    if offline:
+        if data is not None:
+            return data["instruments"], {
+                "source": "cache-stale",
+                "fresh": False,
+                "fetched_at": data.get("fetched_at"),
+                "path": str(path),
+            }
+        return [], {"source": "none", "fresh": False, "path": str(path)}
+    try:
+        if client is None:
+            client = tse_module().Client()
+        instruments = build_index(client)
+    except Exception:
+        # A stale index is better than no resolution when the refresh fails.
+        if data is not None:
+            return data["instruments"], {
+                "source": "cache-stale",
+                "fresh": False,
+                "fetched_at": data.get("fetched_at"),
+                "path": str(path),
+            }
+        raise
+    write_cache(path, instruments, "marketwatch")
+    return instruments, {"source": "marketwatch", "fresh": True, "path": str(path)}
+
+
+# ---------------------------------------------------------------------------
+# matching
+# ---------------------------------------------------------------------------
+
+
+def _candidate(instrument, tier, score, matched):
+    return {
+        "instrument": instrument,
+        "tier": tier,
+        "score": round(float(score), 1),
+        "market_rank": market_rank(instrument.get("flow"), instrument.get("isin")),
+        "matched": matched,
+    }
+
+
+def _score_index(index, query, query_latin, reverse, min_score):
+    candidates = []
+    for instrument in index:
+        symbol = instrument.get("symbol") or ""
+        name = instrument.get("name") or ""
+        tier, score, matched = 2, 0.0, "fuzzy"
+        if query and (query == symbol or query == name):
+            tier, score, matched = 0, 100.0, "exact"
+        elif query_latin and query_latin in instrument.get("latin", ()):
+            tier, score, matched = 1, 97.0, "finglish"
+        elif query_latin and reverse and reverse in (symbol, name):
+            tier, score, matched = 1, 97.0, "finglish"
+        if tier == 2:
+            best = 0.0
+            if query:
+                if symbol:
+                    best = max(best, similarity(query, symbol))
+                if name:
+                    best = max(best, similarity(query, name))
+            if query_latin:
+                for key in instrument.get("latin", ()):
+                    best = max(best, similarity(query_latin, key))
+                for key in instrument.get("name_latin", ()):
+                    best = max(best, similarity(query_latin, key))
+                if reverse:
+                    if symbol:
+                        best = max(best, similarity(reverse, symbol))
+                    if name:
+                        best = max(best, similarity(reverse, name))
+            score = best
+        if tier <= 1 or score >= min_score:
+            candidates.append(_candidate(instrument, tier, score, matched))
+    return candidates
+
+
+def _rank_key(candidate):
+    instrument = candidate["instrument"]
+    return (
+        candidate["tier"],
+        -candidate["score"],
+        candidate["market_rank"],
+        0 if instrument.get("traded") else 1,
+        board_rank(instrument.get("board_code")),
+        -(instrument.get("value") or 0),
+        -(instrument.get("mcap") or 0),
+    )
+
+
+def choose(candidates, margin=AMBIGUITY_MARGIN):
+    """Pick the clearly-best candidate; return (candidate, ambiguous)."""
+    top = candidates[0]
+    contenders = [top]
+    for candidate in candidates[1:]:
+        if candidate["tier"] != top["tier"] or top["score"] - candidate["score"] > margin:
+            break
+        contenders.append(candidate)
+    best_rank = min(candidate["market_rank"] for candidate in contenders)
+    winners = [candidate for candidate in contenders if candidate["market_rank"] == best_rank]
+    if len(winners) == 1:
+        return winners[0], False
+    traded = [candidate for candidate in winners if candidate["instrument"].get("traded")]
+    if len(traded) == 1:
+        return traded[0], False
+    winners.sort(
+        key=lambda candidate: (
+            -(candidate["instrument"].get("value") or 0),
+            -(candidate["instrument"].get("mcap") or 0),
+        )
+    )
+    return winners[0], True
+
+
+def format_candidates(candidates):
+    parts = []
+    for candidate in candidates[:10]:
+        instrument = candidate["instrument"]
+        label = instrument.get("symbol") or instrument.get("name") or "?"
+        where = instrument.get("board") or instrument.get("market")
+        suffix = instrument.get("ins_code") or ""
+        if where:
+            suffix = f"{suffix} {where}".strip()
+        parts.append(f"{label} ({suffix})")
+    return ", ".join(parts) if parts else "none"
+
+
+def _lookup_live(term, client):
+    if client is None or not term:
+        return []
+    try:
+        rows = tse_module().search(client, term)
+    except Exception:
+        return []
+    records = []
+    for row in rows:
+        if isinstance(row, dict) and not row.get("ins_code"):
+            continue
+        record = _search_instrument(row) if isinstance(row, dict) else None
+        if record:
+            records.append(record)
+    return records
+
+
+def _live_refresh(query, query_latin, reverse, client, index, path, fetched_at):
+    term = reverse if (query_latin and reverse) else query
+    records = _lookup_live(term, client)
+    if not records:
+        return 0
+    added = _merge(index, records)
+    write_cache(path, index, "merged", fetched_at=fetched_at)
+    return added
+
+
+def resolve_query(query, *, client=None, index=None, cache_path=None, ttl_days=DEFAULT_TTL_DAYS,
+                  refresh=False, no_cache=False, offline=False, min_score=DEFAULT_MIN_SCORE,
+                  limit=0, types=None, markets=None, allow_live=True):
+    """Return the ranked candidate list for `query` (possibly empty)."""
+    path = Path(cache_path).expanduser() if cache_path else default_cache_path()
+    meta = {"fetched_at": None}
+    if index is None:
+        index, meta = get_index(
+            client,
+            cache_path=path,
+            ttl_days=ttl_days,
+            refresh=refresh,
+            no_cache=no_cache,
+            offline=offline,
+        )
+    if types:
+        wanted = {TYPE_ALIASES.get(item.lower(), item.lower()) for item in types}
+        index = [inst for inst in index if inst.get("type") in wanted]
+    if markets:
+        wanted_flows = set()
+        for item in markets:
+            wanted_flows |= MARKET_ALIASES.get(item.lower(), set())
+        index = [inst for inst in index if inst.get("flow") in wanted_flows]
+
+    kind, value = parse_identifier(query)
+    if kind in ("isin", "ins_code"):
+        key = "isin" if kind == "isin" else "ins_code"
+        upper = value.upper()
+        matches = [
+            inst for inst in index
+            if (inst.get(key) or "").upper() == upper
+        ]
+        if not matches and allow_live and not offline:
+            if kind == "ins_code":
+                return [_candidate(_synthetic(ins_code=value), 0, 100.0, "exact")]
+            if client is None:
+                client = tse_module().Client()
+            try:
+                found = tse_module().resolve_isin(client, value)
+            except Exception:
+                found = None
+            if found:
+                record = _synthetic(found.get("ins_code"), found.get("isin"), found.get("symbol", ""),
+                                    found.get("name", ""))
+                record["flow"] = found.get("flow")
+                record["market"] = found.get("market")
+                _merge(index, [record])
+                write_cache(path, index, "merged", fetched_at=meta.get("fetched_at"))
+                matches = [record]
+        matches.sort(key=lambda inst: (market_rank(inst.get("flow"), inst.get("isin")), -(inst.get("value") or 0)))
+        return [_candidate(inst, 0, 100.0, "exact") for inst in matches]
+
+    text = value
+    normalized = tse_module().normal(text)
+    query_latin = latin_only(text)
+    reverse = reverse_persian(query_latin) if query_latin else None
+    candidates = _score_index(index, normalized, query_latin, reverse, min_score)
+    if not candidates and allow_live and not offline:
+        client = client or tse_module().Client()
+        _live_refresh(normalized, query_latin, reverse, client, index, path, meta.get("fetched_at"))
+        candidates = _score_index(index, normalized, query_latin, reverse, min_score)
+    candidates.sort(key=_rank_key)
+    if limit and limit > 0:
+        candidates = candidates[:limit]
+    return candidates
+
+
+def resolve_one(query, **kwargs):
+    """Return the best instrument or raise NotFound/Ambiguous."""
+    kwargs.setdefault("min_score", FUZZY_ACCEPT_SCORE)
+    candidates = resolve_query(query, **kwargs)
+    if not candidates:
+        raise NotFound(f"no instrument matches {query!r}")
+    best, ambiguous = choose(candidates, margin=AMBIGUITY_MARGIN)
+    if ambiguous:
+        raise Ambiguous(query, candidates)
+    return best["instrument"]
+
+
+def complete_query(prefix, index, limit=60):
+    """Cache-only completion: [(token, description)] for the current token."""
+    prefix = prefix or ""
+    if not prefix.strip():
+        return []
+    tse = tse_module()
+    kind, value = parse_identifier(prefix)
+    normalized = tse.normal(prefix)
+    query_latin = latin_only(prefix)
+    reverse = reverse_persian(query_latin) if query_latin else None
+    isin_prefix = None
+    code_prefix = None
+    if kind == "isin":
+        isin_prefix = value.upper()
+    elif kind == "ins_code":
+        code_prefix = value
+    elif prefix.isascii():
+        raw = prefix.strip().upper()
+        if raw.startswith("IR") and len(raw) >= 2:
+            isin_prefix = raw
+        elif raw.isdigit():
+            code_prefix = raw
+    rows = []
+    seen = set()
+    for instrument in index:
+        symbol = instrument.get("symbol") or ""
+        name = instrument.get("name") or ""
+        isin = (instrument.get("isin") or "").upper()
+        code = instrument.get("ins_code") or ""
+        keys = (*instrument.get("latin", ()), *instrument.get("name_latin", ())) if query_latin else ()
+        if isin_prefix and isin.startswith(isin_prefix):
+            score = 0
+        elif code_prefix and code.startswith(code_prefix):
+            score = 0
+        elif normalized and symbol.startswith(normalized):
+            score = 1
+        elif query_latin and any(key.startswith(query_latin) for key in keys):
+            score = 2
+        elif reverse and symbol.startswith(reverse):
+            score = 2
+        elif normalized and name.startswith(normalized):
+            score = 3
+        elif normalized and normalized in symbol:
+            score = 4
+        elif query_latin and any(query_latin in key for key in keys):
+            score = 5
+        elif reverse and reverse in symbol:
+            score = 5
+        elif normalized and normalized in name:
+            score = 6
+        else:
+            continue
+        token = token_for(instrument)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        rows.append((score, -(instrument.get("value") or 0), token, description_for(instrument)))
+    rows.sort()
+    return [(token, description) for _, _, token, description in rows[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def render_table(candidates):
+    header = ("SYMBOL", "NAME", "INSCODE", "ISIN", "MARKET/BOARD", "TYPE")
+    rows = []
+    for candidate in candidates:
+        inst = candidate["instrument"]
+        rows.append((
+            inst.get("symbol") or "-",
+            inst.get("name") or "-",
+            inst.get("ins_code") or "-",
+            inst.get("isin") or "-",
+            inst.get("board") or inst.get("market") or "-",
+            inst.get("type") or "-",
+        ))
+    widths = [len(text) for text in header]
+    for row in rows:
+        for index, text in enumerate(row):
+            widths[index] = max(widths[index], len(text))
+    lines = ["  ".join(text.ljust(widths[index]) for index, text in enumerate(header))]
+    lines.append("  ".join("-" * width for width in widths))
+    for row in rows:
+        lines.append("  ".join(text.ljust(widths[index]) for index, text in enumerate(row)).rstrip())
+    return "\n".join(lines)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="tse.resolve",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Resolve Persian, finglish or fuzzy instrument names to TSETMC\n"
+            "identifiers (symbol, ISIN, insCode, market/board)."
+        ),
+        epilog="""examples:
+  tse.resolve فولاد                 # exact Persian symbol
+  tse.resolve foolad                # finglish (reverse-transliterated)
+  tse.resolve khodro                # خودرو
+  tse.resolve فنفت                  # duplicated symbol -> main market wins
+  tse.resolve "فولاد-IRO1FOLD0001"  # composite token
+  tse.resolve IRO1FOLD0001          # bare ISIN
+  tse.resolve --json fملی
+  tse.resolve --best foolad         # single match or exit 1 if ambiguous
+  tse.resolve --complete فول        # shell completion (cache-only)
+  tse.resolve --refresh             # rebuild the one-week index cache
+
+The index is cached at ${XDG_CACHE_HOME:-~/.cache}/tse/instruments.json for
+one week; --refresh forces a rebuild, --clear removes it, --no-cache bypasses
+it and --offline never touches the network.""",
+    )
+    parser.add_argument("query", nargs="*", help="name, symbol, ISIN, insCode, URL or composite token")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="print matching instruments as JSON")
+    output.add_argument("--jsonl", action="store_true", help="print one JSON object per line")
+    output.add_argument("--token", action="store_true", help="print only SYMBOL-ISIN tokens")
+    parser.add_argument("-1", "--best", action="store_true",
+                        help="print the single best match (exit 1 when ambiguous)")
+    parser.add_argument("--complete", nargs="?", const="", metavar="PREFIX", default=None,
+                        help="print TOKEN<TAB>description completion candidates (cache-only)")
+    parser.add_argument("--limit", type=int, default=None, metavar="N",
+                        help="keep only the first N matches")
+    parser.add_argument("--all", action="store_true", help="keep every match (no limit)")
+    parser.add_argument("--type", action="append", metavar="LIST",
+                        help="restrict to instrument types (stock, fund, option, ...; repeatable)")
+    parser.add_argument("--market", action="append", metavar="LIST",
+                        help="restrict to markets (bourse, farabourse, paye, derivative; repeatable)")
+    parser.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE, metavar="N",
+                        help=f"fuzzy score floor (default: {DEFAULT_MIN_SCORE:g})")
+    parser.add_argument("--refresh", action="store_true", help="rebuild the instrument index cache")
+    parser.add_argument("--clear", action="store_true", help="delete the cache and exit")
+    parser.add_argument("--no-cache", action="store_true", help="ignore the cache (still refreshes it)")
+    parser.add_argument("--offline", action="store_true", help="never touch the network (cache only)")
+    parser.add_argument("--cache", metavar="PATH", help="cache file path (default: XDG cache)")
+    parser.add_argument("--ttl", type=int, default=DEFAULT_TTL_DAYS, metavar="DAYS",
+                        help=f"cache lifetime in days (default: {DEFAULT_TTL_DAYS})")
+    parser.add_argument("-q", "--quiet", action="store_true", help="suppress the cache note on stderr")
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.ttl < 0:
+        parser.error("--ttl must be 0 or positive")
+    path = Path(args.cache).expanduser() if args.cache else default_cache_path()
+
+    if args.clear:
+        try:
+            path.unlink()
+            print(f"tse.resolve: removed {path}", file=sys.stderr)
+        except FileNotFoundError:
+            print(f"tse.resolve: no cache at {path}", file=sys.stderr)
+        except OSError as exc:
+            print(f"tse.resolve: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    if args.complete is not None:
+        index, _ = get_index(
+            cache_path=path, ttl_days=args.ttl, refresh=False,
+            no_cache=args.no_cache, offline=True,
+        )
+        for token, description in complete_query(args.complete, index):
+            print(f"{token}\t{description}")
+        return 0
+
+    query = " ".join(args.query).strip()
+    if not query:
+        parser.error("no query given (or use --complete PREFIX)")
+
+    limit = None if args.all else args.limit
+    try:
+        candidates = resolve_query(
+            query,
+            cache_path=path,
+            ttl_days=args.ttl,
+            refresh=args.refresh,
+            no_cache=args.no_cache,
+            offline=args.offline,
+            min_score=args.min_score,
+            limit=limit or 0,
+            types=args.type,
+            markets=args.market,
+        )
+    except Exception as exc:
+        print(f"tse.resolve: {exc}", file=sys.stderr)
+        return 1
+
+    if not candidates:
+        print(f"tse.resolve: no instrument matches {query!r}", file=sys.stderr)
+        return 1
+
+    if args.best:
+        best, ambiguous = choose(candidates)
+        if ambiguous:
+            print(
+                f"tse.resolve: {query!r} is ambiguous; candidates: {format_candidates(candidates)}. "
+                "Use an ISIN/insCode or a composite token",
+                file=sys.stderr,
+            )
+            return 1
+        candidates = [best]
+
+    if not (args.json or args.jsonl or args.token or args.best) and not args.all and len(candidates) > 20:
+        candidates = candidates[:20]
+
+    if args.json:
+        print(json.dumps([public_instrument(candidate["instrument"]) for candidate in candidates],
+                         ensure_ascii=False, indent=2, default=str))
+    elif args.jsonl:
+        for candidate in candidates:
+            print(json.dumps(public_instrument(candidate["instrument"]), ensure_ascii=False, default=str))
+    elif args.token or args.best:
+        for candidate in candidates:
+            print(token_for(candidate["instrument"]))
+    else:
+        print(render_table(candidates))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

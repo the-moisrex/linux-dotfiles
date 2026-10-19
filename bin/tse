@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import gzip
 import http.client
 import importlib.util
 import io
@@ -15,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.parse
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from importlib.machinery import SourceFileLoader
@@ -295,6 +297,31 @@ def marker_hit(text, markers):
 HTTP_TIMEOUT = 12
 _REDIRECT_CODES = (301, 302, 303, 307, 308)
 
+
+def decode_body(raw, encoding):
+    """Decompress an HTTP body per its Content-Encoding (gzip or deflate).
+
+    ``http.client`` returns the encoded bytes untouched. The TSETMC CDN gzips
+    its JSON — which shrinks a busy intraday tape roughly 30x on the wire — and
+    advertises that through ``Content-Encoding``, so every fetch decompresses it.
+    """
+    encoding = (encoding or "").strip().lower()
+    if encoding == "gzip":
+        try:
+            return gzip.decompress(raw)
+        except (OSError, EOFError) as exc:
+            raise urllib.error.URLError(f"bad Content-Encoding gzip: {exc}") from exc
+    if encoding == "deflate":
+        try:
+            return zlib.decompress(raw)
+        except zlib.error:
+            try:
+                return zlib.decompress(raw, -zlib.MAX_WBITS)
+            except zlib.error as exc:
+                raise urllib.error.URLError(f"bad Content-Encoding deflate: {exc}") from exc
+    return raw
+
+
 # Shared leaf executor for independent fetches submitted from workers of the
 # per-command fan-out pool (history components, breadth fallbacks, World Bank
 # series). It is deliberately separate from that pool: a worker blocking on a
@@ -364,8 +391,13 @@ class Client:
         if store is not None and store.get((scheme, host, port)) is conn:
             store.pop((scheme, host, port), None)
 
-    def _open(self, url, accept):
-        """Return (status, body); follows redirects; raises URLError on transport failure."""
+    def _open(self, url, accept, max_bytes=6_000_000):
+        """Return (status, body); follows redirects; raises URLError on transport failure.
+
+        Negotiates gzip/deflate and decompresses, so ``max_bytes`` bounds the
+        decoded body (the CDN compresses its JSON ~30x, so a busy intraday tape
+        is a few hundred KB on the wire even when it decodes to many MB).
+        """
         target = url
         for _ in range(6):
             parts = urllib.parse.urlsplit(target)
@@ -377,13 +409,21 @@ class Client:
             conn = self._connection(scheme, host, port)
             try:
                 conn.request(
-                    "GET", path, headers={"User-Agent": USER_AGENT, "Accept": accept}
+                    "GET",
+                    path,
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept": accept,
+                        "Accept-Encoding": "gzip, deflate",
+                    },
                 )
                 response = conn.getresponse()
-                body = response.read(6_000_001)
+                raw = response.read(max_bytes + 1)
                 status = response.status
+                encoding = response.getheader("Content-Encoding")
                 location = response.getheader("Location")
-                if len(body) > 6_000_000:
+                body = decode_body(raw, encoding)
+                if len(raw) > max_bytes or len(body) > max_bytes:
                     # Undrained bytes would corrupt the reused connection.
                     self._discard(scheme, host, port, conn)
             except (http.client.HTTPException, OSError) as exc:
@@ -395,15 +435,15 @@ class Client:
             return status, body
         raise DataError(f"Too many redirects: {url}")
 
-    def get(self, url, *, accept="application/json"):
+    def get(self, url, *, accept="application/json", max_bytes=6_000_000):
         host = urllib.parse.urlsplit(url).hostname
         if host in self.blocked_hosts:
             raise DataError(f"{host} requires browser verification; try again later")
         verification_retried = False
         for attempt in range(3):
             try:
-                status, body = self._open(url, accept)
-                if len(body) > 6_000_000:
+                status, body = self._open(url, accept, max_bytes)
+                if len(body) > max_bytes:
                     raise DataError(f"Response too large: {url}")
                 if status == 429:
                     raise DataError(
@@ -438,8 +478,8 @@ class Client:
             time.sleep(1.5 * (attempt + 1))
         raise DataError(f"Cannot retrieve {url}")
 
-    def json(self, url):
-        text = self.get(url)
+    def json(self, url, max_bytes=6_000_000):
+        text = self.get(url, max_bytes=max_bytes)
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
@@ -518,7 +558,43 @@ def normalize_input(symbol):
         return urllib.parse.unquote_plus(m.group(1))
     if re.fullmatch(r"[A-Za-z]{2}[A-Za-z0-9]{10}", s):
         return s.upper()
+    # Composite `NAME-ISIN` / `NAME:ISIN` / `NAME(ISIN)` / `NAME ISIN` tokens
+    # (what tse.resolve/autocomplete emit): an embedded ISIN or insCode wins.
+    m = ISIN_RE.search(s)
+    if m:
+        return m.group(0).upper()
+    m = re.search(r"(?<!\d)(\d{12,})(?!\d)", s)
+    if m:
+        return m.group(1)
     return s
+
+
+_resolver_module = None
+
+
+def resolve_module():
+    """Lazily load `bin/tse.resolve` (the shared identifier resolver).
+
+    Registers the running `tse` module under its own name first so the resolver
+    reuses it instead of re-executing this file (and so there is no import
+    cycle: `tse.resolve` imports `tse`, never the other way at import time).
+    """
+    global _resolver_module
+    if _resolver_module is not None:
+        return _resolver_module
+    if "tse" not in sys.modules:
+        current = sys.modules.get(__name__)
+        if current is None and __name__ == "__main__":
+            current = sys.modules.get("__main__")
+        if current is not None:
+            sys.modules["tse"] = current
+    loader = SourceFileLoader("tse_resolve", os.path.join(HERE, "tse.resolve"))
+    spec = importlib.util.spec_from_loader("tse_resolve", loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["tse_resolve"] = module
+    loader.exec_module(module)
+    _resolver_module = module
+    return module
 
 
 def resolve(client, symbol):
@@ -533,6 +609,31 @@ def resolve(client, symbol):
             "flow": None,
             "market": None,
         }
+    try:
+        resolver = resolve_module()
+    except Exception:
+        resolver = None
+    if resolver is not None:
+        try:
+            instrument = resolver.resolve_one(symbol, client=client)
+            return {
+                "ins_code": instrument.get("ins_code") or code,
+                "symbol": instrument.get("symbol") or "",
+                "name": instrument.get("name") or "",
+                "isin": instrument.get("isin"),
+                "flow": instrument.get("flow"),
+                "market": instrument.get("market"),
+            }
+        except resolver.Ambiguous as exc:
+            details = resolver.format_candidates(exc.candidates)
+            raise DataError(
+                f"Expected one exact symbol for {symbol!r}; candidates: {details or 'none'}. "
+                "Use an insCode if ambiguous"
+            ) from None
+        except resolver.NotFound:
+            pass
+        except Exception:
+            pass
     if code.isascii() and ISIN_RE.fullmatch(code):
         found = resolve_isin(client, code)
         if found is None:
