@@ -94,6 +94,35 @@ LADDER_COLUMNS = (
     "ask_orders",
     "ask_cum_shares",
 )
+FLOW_COLUMNS = (
+    "buy_initiated_shares",
+    "sell_initiated_shares",
+    "net_shares",
+    "buy_pct",
+)
+# The extra sources a run can carry, their default, and what they cost. `auto`
+# settles once the sessions are known: the index only exists live, and breadth
+# costs ~175 KB per session so it is dropped past a handful of them.
+EXTRA_NAMES = ("book", "orders", "opening", "stats", "index", "breadth", "flow")
+EXTRA_DEFAULTS = {
+    "book": True,
+    "orders": True,
+    "opening": True,
+    "stats": True,
+    "index": None,
+    "breadth": None,
+    "flow": False,
+}
+EXTRA_CATALOG = (
+    ("book", "on", "end-of-session order book summary", "~440 KB per session"),
+    ("orders", "on", "order counts and average order size in that summary", "free"),
+    ("opening", "on", "the opening-auction book next to the close", "free"),
+    ("stats", "on", "3-month averages vs the latest published session", "~1 KB once"),
+    ("index", "auto", "live market index, breadth of the index and totals", "~0.3 KB, live only"),
+    ("breadth", "auto", "whole-market advancers/decliners per session", "~175 KB per session"),
+    ("flow", "off", "buy/sell-initiated volume (tape x book estimate)", "free"),
+)
+BREADTH_AUTO_MAX_DAYS = 5
 
 
 def minute_of(hhmmss):
@@ -413,8 +442,10 @@ def depth_snapshot(state):
     return {
         "bid_rial": bid_rial,
         "bid_shares": best["bid_shares"],
+        "bid_orders": best["bid_orders"],
         "ask_rial": ask_rial,
         "ask_shares": best["ask_shares"],
+        "ask_orders": best["ask_orders"],
         "spread_rial": ask_rial - bid_rial
         if ask_rial is not None and bid_rial is not None
         else None,
@@ -688,6 +719,20 @@ def profile_rows(rows, include_canceled):
 # --- day loading ----------------------------------------------------------
 
 
+def book_covers_session(day, updates):
+    """True when the level stream begins before the session's first bar.
+
+    A published day's stream opens with the pre-open book, roughly 08:45. The
+    exchange (or a lagging CDN replica) can serve a partial stream that starts
+    after trading began while it is still publishing the date; replaying that
+    would describe a book that never existed, so it is refused.
+    """
+    minutes = [bar["minute"] for bar in day.get("bars") or ()]
+    if not minutes or not updates:
+        return True
+    return updates[0]["hhmmss"] <= minute_hhmmss(min(minutes))
+
+
 def attach_day_depth(client, code, greg, day):
     """Fetch a completed session's book stream; never fails the day."""
     try:
@@ -699,6 +744,13 @@ def attach_day_depth(client, code, greg, day):
         day["depth_note"] = (
             "order book not published for this date (it appears after the close,"
             " and only for roughly the last two months)"
+        )
+        return
+    if not book_covers_session(day, updates):
+        day["depth_note"] = (
+            "the level stream starts at"
+            f" {fmt_minute(minute_of(updates[0]['hhmmss']))}, after trading began"
+            " (the exchange is still publishing this date); rerun later"
         )
         return
     day["depth_updates"] = updates
@@ -721,7 +773,9 @@ def attach_live_depth(client, code, day):
     )
 
 
-def load_day(client, code, entry, mode, include_canceled, depth=False):
+def load_day(
+    client, code, entry, mode, include_canceled, depth=False, keep_ticks=False
+):
     """Fetch one session into its artifact, or None when it has no data.
 
     A completed session comes from its per-trade tape (validated against the
@@ -736,8 +790,11 @@ def load_day(client, code, entry, mode, include_canceled, depth=False):
         if not rows:
             return None
         day = day_from_rows(jalali, "ticks", rows, mode, include_canceled)
+        day["greg"] = greg
         day["check"] = tape_check(entry, rows)
         day["official"] = entry.get("official")
+        if keep_ticks:
+            day["tape"] = rows
         if depth:
             attach_day_depth(client, code, greg, day)
         return day
@@ -748,13 +805,22 @@ def load_day(client, code, entry, mode, include_canceled, depth=False):
         rows = []
     if rows:
         day = day_from_rows(jalali, "live", rows, mode, include_canceled)
+        day["greg"] = greg
+        if keep_ticks:
+            day["tape"] = rows
         if depth:
             attach_live_depth(client, code, day)
         return day
     bars = fetch_live_bars(client, code)
     if not bars or mode != "bars":
         return None
-    day = {"date": jalali, "source": "live", "native_interval": 2, "bars": bars}
+    day = {
+        "date": jalali,
+        "greg": greg,
+        "source": "live",
+        "native_interval": 2,
+        "bars": bars,
+    }
     if depth:
         attach_live_depth(client, code, day)
     return day
@@ -910,12 +976,13 @@ def collapsed_to_rows(collapsed):
     ]
 
 
-def bar_columns(collapsed=False, depth=False):
-    """The bar row's column order, with the depth block before ``bars``."""
+def bar_columns(collapsed=False, depth=False, flow=False):
+    """The bar row's column order, with the extras before ``bars``."""
     columns = list(COLLAPSED_BAR_COLUMNS if collapsed else BAR_COLUMNS)
-    if depth:
+    extra = list(DEPTH_COLUMNS if depth else ()) + list(FLOW_COLUMNS if flow else ())
+    if extra:
         at = columns.index("bars") if collapsed else len(columns)
-        columns[at:at] = DEPTH_COLUMNS
+        columns[at:at] = extra
     return columns
 
 
@@ -991,19 +1058,30 @@ def official_line(official, tape_vwap):
     return f"Official: {' · '.join(pieces)}" if pieces else None
 
 
-def depth_line(summary, live=False):
-    """One compact line for the end-of-session (or live) order book."""
+def depth_line(summary, kind="close", orders=True):
+    """One compact line for an order-book snapshot.
+
+    ``kind`` labels the moment: ``auction`` (opening queue), ``close`` (end of
+    the session) or ``live`` (the current snapshot). Order counts saturate at
+    9,999 on the exchange feed, so a capped count is printed as ``>=9,999``.
+    """
     if not summary:
         return None
     pieces = []
     if summary.get("bid_rial") is not None:
-        pieces.append(
-            f"bid {summary['bid_rial']:,} × {summary.get('bid_shares') or 0:,}"
-        )
+        text = f"bid {summary['bid_rial']:,} × {summary.get('bid_shares') or 0:,}"
+        if orders:
+            count = summary.get("bid_orders")
+            if count is not None:
+                text += f" ({'>=9,999' if count >= 9999 else f'{count:,}'} ord)"
+        pieces.append(text)
     if summary.get("ask_rial") is not None:
-        pieces.append(
-            f"ask {summary['ask_rial']:,} × {summary.get('ask_shares') or 0:,}"
-        )
+        text = f"ask {summary['ask_rial']:,} × {summary.get('ask_shares') or 0:,}"
+        if orders:
+            count = summary.get("ask_orders")
+            if count is not None:
+                text += f" ({'>=9,999' if count >= 9999 else f'{count:,}'} ord)"
+        pieces.append(text)
     if summary.get("spread_rial") is not None:
         pieces.append(f"spread {summary['spread_rial']:,}")
     bid_depth = summary.get("bid_depth_shares")
@@ -1015,14 +1093,253 @@ def depth_line(summary, live=False):
         pieces.append(f"imbalance {imbalance:+.1f}%")
     if not pieces:
         return None
-    if live:
-        if summary.get("time"):
-            label = f"Depth (live {summary['time']})"
-        else:
-            label = "Depth (live)"
-    else:
-        label = f"Depth ({summary['time']})"
-    return f"{label}: " + " · ".join(pieces)
+    stamp = f" {summary['time']}" if summary.get("time") else ""
+    return f"Depth ({kind}{stamp}): " + " · ".join(pieces)
+
+
+def format_shares(count):
+    """A share count as a compact human-readable magnitude."""
+    if count is None:
+        return "?"
+    for scale, suffix in ((1_000_000_000, "bn"), (1_000_000, "m"), (1_000, "k")):
+        if abs(count) >= scale:
+            return f"{count / scale:,.2f} {suffix}"
+    return f"{count:,.0f}"
+
+
+def format_rial(amount):
+    """A rial amount as a compact human-readable magnitude."""
+    if amount is None:
+        return "?"
+    for scale, suffix in ((1e15, "e15"), (1e12, "T"), (1e9, "bn"), (1e6, "m")):
+        if abs(amount) >= scale:
+            return f"{amount / scale:,.2f} {suffix}".replace(" ", "")
+    return f"{amount:,.0f}"
+
+
+def trade_sides(rows, updates):
+    """Per-minute buy/sell-initiated volume, from the tape classified against the book.
+
+    Each trade is matched to the prevailing best bid/ask (the Lee-Ready rule):
+    at or above the ask is buyer-initiated, at or below the bid seller-initiated,
+    and an inside-the-spread print goes to the side of the midpoint. TSETMC
+    publishes no aggressor flag, so this is an estimate and whatever cannot be
+    classified is counted separately instead of guessed.
+    """
+    samples = []
+    for row in dedup_ticks(rows, include_canceled=False):
+        raw = tse.normal(tse.pick(row, "hEven"))
+        if not re.fullmatch(r"\d{1,6}", raw or ""):
+            continue
+        samples.append(
+            (
+                int(raw),
+                tse.value(row, "nTran") or 0,
+                tse.price(tse.pick(row, "pTran")),
+                tse.value(row, "qTitTran") or 0,
+            )
+        )
+    samples.sort(key=lambda sample: (sample[0], sample[1]))
+    buckets = {}
+    state = {}
+    cursor = 0
+    for secs, _trade_no, price, volume in samples:
+        cursor = advance_book(updates, cursor, state, secs)
+        best = state.get(1)
+        bid = best["bid_rial"] if best else None
+        ask = best["ask_rial"] if best else None
+        side = None
+        if price is not None and bid is not None and ask is not None:
+            if price >= ask:
+                side = "buy"
+            elif price <= bid:
+                side = "sell"
+            else:
+                mid = (bid + ask) / 2
+                side = "buy" if price > mid else "sell" if price < mid else None
+        bucket = buckets.setdefault(
+            minute_of(secs), {"buy": 0, "sell": 0, "unknown": 0}
+        )
+        bucket[side or "unknown"] += volume
+    return buckets
+
+
+def attach_flow(rows, buckets, interval=1, last_minute=None):
+    """Add the flow columns, summing each bucket over the row's whole span."""
+    span = max(0, interval - 1)
+    for row in rows:
+        start = minute_of(text_hhmmss(row["from"]))
+        end = minute_of(text_hhmmss(row["to"])) + span
+        if last_minute is not None:
+            end = min(end, last_minute)
+        buy = sell = unknown = 0
+        for minute in range(start, end + 1):
+            bucket = buckets.get(minute)
+            if bucket:
+                buy += bucket["buy"]
+                sell += bucket["sell"]
+                unknown += bucket["unknown"]
+        total = buy + sell + unknown
+        row["buy_initiated_shares"] = buy
+        row["sell_initiated_shares"] = sell
+        row["net_shares"] = buy - sell
+        row["buy_pct"] = round(buy / total * 100, 1) if total else None
+
+
+def flow_totals(buckets):
+    """The session's day-level flow, matching the per-row columns."""
+    buy = sum(bucket["buy"] for bucket in buckets.values())
+    sell = sum(bucket["sell"] for bucket in buckets.values())
+    unknown = sum(bucket["unknown"] for bucket in buckets.values())
+    total = buy + sell + unknown
+    return {
+        "buy_initiated_shares": buy,
+        "sell_initiated_shares": sell,
+        "unclassified_shares": unknown,
+        "net_shares": buy - sell,
+        "buy_pct": round(buy / total * 100, 1) if total else None,
+    }
+
+
+def flow_line(totals):
+    """One compact line for the session's estimated aggressor split."""
+    if not totals:
+        return None
+    total = (
+        totals["buy_initiated_shares"]
+        + totals["sell_initiated_shares"]
+        + totals["unclassified_shares"]
+    )
+    if not total:
+        return None
+    pieces = [
+        f"{totals['buy_pct']:.1f}% buy-initiated",
+        f"net {totals['net_shares']:+,} shares",
+    ]
+    if totals["unclassified_shares"]:
+        pieces.append(
+            f"{totals['unclassified_shares'] / total * 100:.1f}% unclassified"
+        )
+    return "Flow (estimated): " + " · ".join(pieces)
+
+
+def stats_line(stats, session=None):
+    """3-month averages, and — when it matches — the latest session beside them."""
+    if not stats:
+        return None
+    pieces = []
+    average = stats.get("avg_volume_3m_shares")
+    if average is not None:
+        text = f"3-mo avg {format_shares(average)} shares/day"
+        older = stats.get("avg_volume_12m_shares")
+        if older is not None:
+            text += f" (12-mo {format_shares(older)})"
+        pieces.append(text)
+    trades = stats.get("avg_trades_3m")
+    if trades is not None:
+        pieces.append(f"{trades:,.0f} trades/day")
+    buyers = stats.get("avg_individual_buyers_3m")
+    if buyers is not None:
+        pieces.append(f"{buyers:,.0f} real buyers/day")
+    if session and session.get("volume") is not None:
+        session_trades = session.get("trades")
+        text = f"session {format_shares(session['volume'])}"
+        if average:
+            text += f" ({session['volume'] / average:.2f}x)"
+        if session_trades is not None:
+            text += f", {session_trades:,} trades"
+        if session.get("buyers") is not None:
+            text += f", {session['buyers']:,} real buyers"
+        pieces.append(text)
+    value = stats.get("company_value_rial")
+    if value is not None:
+        text = f"company value {format_rial(value)} rial"
+        rank = stats.get("company_value_rank")
+        if rank is not None:
+            text += f" (#{rank:,.0f} by value)"
+        pieces.append(text)
+    return "Context: " + " · ".join(pieces) if pieces else None
+
+
+def index_line(overview):
+    """One compact line for the live market overview."""
+    if not overview:
+        return None
+    pieces = []
+    value = overview.get("index_value")
+    if value is not None:
+        text = f"TEDPIX {value:,.2f}"
+        change = overview.get("index_change_pct")
+        if change is not None:
+            text += f" {change:+.2f}%"
+        pieces.append(text)
+    equal = overview.get("equal_weighted_change_pct")
+    if equal is not None:
+        pieces.append(f"equal-weighted {equal:+.2f}%")
+    bits = []
+    if overview.get("trades") is not None:
+        bits.append(f"{overview['trades']:,.0f} trades")
+    if overview.get("volume_shares") is not None:
+        bits.append(f"{format_shares(overview['volume_shares'])} shares")
+    if overview.get("value_rial") is not None:
+        bits.append(f"{format_rial(overview['value_rial'])} rial")
+    if bits:
+        pieces.append("market " + ", ".join(bits))
+    if overview.get("state"):
+        pieces.append(str(overview["state"]))
+    if not pieces:
+        return None
+    stamp = f" {overview['time']}" if overview.get("time") else ""
+    return f"Market{stamp}: " + " · ".join(pieces)
+
+
+def breadth_line(breadth):
+    """One compact line for a published session's whole-market breadth."""
+    if not breadth:
+        return None
+    pieces = [
+        f"{breadth['advancers']:,} up / {breadth['decliners']:,} down /"
+        f" {breadth['unchanged']:,} flat",
+        f"median {breadth['median_change_pct']:+.2f}%",
+    ]
+    own = breadth.get("instrument_change_pct")
+    if own is not None:
+        text = f"this stock {own:+.2f}%"
+        percentile = breadth.get("instrument_percentile")
+        if percentile is not None:
+            text += (
+                f" (above {percentile:.0f}% of {breadth['instruments']:,} quoted)"
+            )
+        pieces.append(text)
+    return f"Breadth ({breadth['date']}): " + " · ".join(pieces)
+
+
+def book_entries(day, updates, last_minute):
+    """The book summaries for one session: auction, close — or just "now".
+
+    A completed session's level stream is replayed twice: once at its first
+    bar's end (the opening auction that set the first price) and once at its
+    last trade. The live session publishes no stream, so it only has the
+    current snapshot.
+    """
+    if updates:
+        entries = []
+        if day.get("bars"):
+            auction_time = minute_hhmmss(day["bars"][0]["minute"])
+            auction = depth_summary(updates, auction_time)
+            if auction:
+                entries.append({"kind": "auction", "summary": auction})
+        close_time = minute_hhmmss(last_minute) if last_minute is not None else None
+        close = depth_summary(updates, close_time)
+        if close and (not entries or close != entries[-1]["summary"]):
+            entries.append({"kind": "close", "summary": close})
+        return entries
+    if day.get("live_book"):
+        live = depth_summary(day["live_book"])
+        if live:
+            live["time"] = (day.get("live_quote") or {}).get("time")
+            return [{"kind": "live", "summary": live}]
+    return []
 
 
 def render_markdown(result):
@@ -1040,6 +1357,12 @@ def render_markdown(result):
             "Order-book depth: 5 levels only, from TSETMC's level-update stream;"
             " published per day after the close (the live session shows the current"
             " snapshot) and available for roughly the last two months."
+        )
+    if result.get("flow"):
+        lines.append(
+            "Buy/sell-initiated volume is an estimate: TSETMC publishes no"
+            " aggressor flag, so each trade is classified against the best bid/ask"
+            " at that moment and the leftovers are reported, not guessed."
         )
     mode = result["mode"]
     if mode == "ticks":
@@ -1065,6 +1388,18 @@ def render_markdown(result):
         lines.append(result["interval_note"])
     if result.get("live_note"):
         lines.append(result["live_note"])
+    line = stats_line(result.get("statistics"), result.get("latest_session"))
+    if line:
+        lines.append(line)
+    line = index_line(result.get("market"))
+    if line:
+        lines.append(line)
+    skipped = (result.get("extras") or {}).get("skipped") or {}
+    if skipped:
+        lines.append(
+            "Skipped extras: "
+            + "; ".join(f"{name} ({reason})" for name, reason in skipped.items())
+        )
     instrument = result["instrument"]
     label = instrument.get("symbol") or instrument.get("name") or instrument["ins_code"]
     for day in result["days"]:
@@ -1081,17 +1416,24 @@ def render_markdown(result):
             line = official_line(official, day.get("tape_vwap"))
             if line:
                 lines.append(line)
-        summary = day.get("depth")
-        if summary:
-            line = depth_line(summary, live=bool(day.get("depth_live")))
+        for entry in day.get("book") or ():
+            line = depth_line(
+                entry["summary"], kind=entry["kind"], orders=result.get("orders", True)
+            )
             if line:
                 lines.append(line)
-        flow = day.get("client_type")
-        if flow:
+        line = breadth_line(day.get("breadth"))
+        if line:
+            lines.append(line)
+        client_type = day.get("client_type")
+        if client_type:
             lines.append(
                 "حقیقی/حقوقی (day): "
-                + json.dumps(flow, ensure_ascii=False, separators=(",", ":"))
+                + json.dumps(client_type, ensure_ascii=False, separators=(",", ":"))
             )
+        line = flow_line(day.get("flow"))
+        if line:
+            lines.append(line)
         quote = day.get("live_quote")
         if quote:
             detail = [f"Live quote: last {quote['last_price']} @ {quote['time']}"]
@@ -1130,6 +1472,101 @@ def render_markdown(result):
             )
         )
     return "\n".join(lines)
+
+
+# --- extras selection ------------------------------------------------------
+
+
+def parse_extra_names(values):
+    """``--with``/``--without``/``--only`` arguments -> a flat, unique name list."""
+    names = []
+    for value in values or []:
+        for item in value.split(","):
+            item = item.strip().lower()
+            if item and item not in names:
+                names.append(item)
+    return names
+
+
+def validate_extras(names, parser):
+    """Reject an unknown extra name, showing the catalog."""
+    for name in names:
+        if name not in EXTRA_NAMES and name != "all":
+            parser.error(
+                f"unknown extra {name!r}; choose from {', '.join(EXTRA_NAMES)}"
+                " (or 'all')"
+            )
+
+
+def resolve_extras(args, parser):
+    """Every extra's on/off state, before the sessions are known.
+
+    ``--only`` replaces the registry outright; otherwise ``--without`` wins over
+    ``--with``, and the flags that need the book (``--depth``, ``--depth-ladder``,
+    ``--flow``) force it back on. The ``auto`` entries stay None until
+    :func:`settle_extras` has seen which sessions were selected.
+    """
+    with_names = parse_extra_names(args.with_extras)
+    without_names = parse_extra_names(args.without_extras)
+    only_names = parse_extra_names(args.only_extras)
+    for names in (with_names, without_names, only_names):
+        validate_extras(names, parser)
+    if only_names:
+        if with_names or without_names:
+            parser.error("--only cannot be combined with --with/--without")
+        if "all" in only_names:
+            only_names = list(EXTRA_NAMES)
+        chosen = {name: name in only_names for name in EXTRA_NAMES}
+    else:
+        chosen = dict(EXTRA_DEFAULTS)
+        for name in with_names:
+            if name == "all":
+                chosen = {key: True for key in EXTRA_NAMES}
+            else:
+                chosen[name] = True
+        for name in without_names:
+            if name == "all":
+                chosen = {key: False for key in EXTRA_NAMES}
+            else:
+                chosen[name] = False
+    if args.depth or args.depth_ladder or args.flow:
+        chosen["book"] = True
+    if args.flow:
+        chosen["flow"] = True
+    return chosen
+
+
+def settle_extras(chosen, days, notes):
+    """Resolve the ``auto`` extras now that the selected sessions are known."""
+    if chosen["index"] is None:
+        chosen["index"] = any(day["source"] == "live" for day in days)
+        if not chosen["index"]:
+            notes["index"] = "the market index is published live only"
+    published = [day for day in days if day["source"] != "live"]
+    if chosen["breadth"] is None:
+        if not published:
+            chosen["breadth"] = False
+            notes["breadth"] = "no published session selected"
+        elif len(published) > BREADTH_AUTO_MAX_DAYS:
+            chosen["breadth"] = False
+            notes["breadth"] = (
+                f"{len(published)} sessions x ~175 KB; use --with breadth"
+            )
+        else:
+            chosen["breadth"] = True
+    return chosen
+
+
+def extras_table(chosen):
+    """The registry as an aligned table, for ``--extras``."""
+    lines = ["Extras: name, default, now, what it adds, cost"]
+    for name, default, what, cost in EXTRA_CATALOG:
+        if chosen.get(name) is None:
+            state = "auto"
+        else:
+            state = "on" if chosen[name] else "off"
+        lines.append(f"  {name:<8} {default:<6} {state:<4} {what} — {cost}")
+    return lines
 
 
 def main(argv=None):
@@ -1173,6 +1610,7 @@ just its current snapshot.""",
     parser.add_argument(
         "symbol",
         metavar="SYMBOL",
+        nargs="?",
         help="Persian symbol, ISIN, insCode, or easytrader/tsetmc/codal URL",
     )
     parser.add_argument(
@@ -1234,6 +1672,41 @@ just its current snapshot.""",
             " 5-level depth and the bid/ask imbalance"
         ),
     )
+    parser.add_argument(
+        "--flow",
+        action="store_true",
+        help=(
+            "Add buy/sell-initiated volume columns and a Flow line: each trade"
+            " classified against the best bid/ask at its moment (an estimate;"
+            " needs the order book)"
+        ),
+    )
+    parser.add_argument(
+        "--with",
+        dest="with_extras",
+        action="append",
+        metavar="NAME[,NAME...]",
+        help="Force extras on (repeatable): " + ", ".join(EXTRA_NAMES),
+    )
+    parser.add_argument(
+        "--without",
+        dest="without_extras",
+        action="append",
+        metavar="NAME[,NAME...]",
+        help="Force extras off (repeatable; 'all' for everything)",
+    )
+    parser.add_argument(
+        "--only",
+        dest="only_extras",
+        action="append",
+        metavar="NAME[,NAME...]",
+        help="Keep only these extras and drop the rest",
+    )
+    parser.add_argument(
+        "--extras",
+        action="store_true",
+        help="Print the extras table (defaults, state, cost) and exit",
+    )
     output = parser.add_mutually_exclusive_group()
     output.add_argument(
         "--ticks", action="store_true", help="Emit the raw per-trade tape instead of bars"
@@ -1284,6 +1757,12 @@ just its current snapshot.""",
         )
     if args.depth and args.depth_ladder:
         parser.error("--depth and --depth-ladder are mutually exclusive")
+    if args.flow and (args.ticks or args.profile):
+        parser.error(
+            "--flow adds columns to bars; it cannot be combined with --ticks/--profile"
+        )
+    if args.flow and args.depth_ladder:
+        parser.error("--flow and --depth-ladder are mutually exclusive")
 
     interval = None
     if args.interval != "auto":
@@ -1295,7 +1774,14 @@ just its current snapshot.""",
             parser.error("--interval must be a positive integer")
 
     mode = "ticks" if args.ticks else "profile" if args.profile else "bars"
-    depth = args.depth or args.depth_ladder
+    extras = resolve_extras(args, parser)
+    if args.extras:
+        for line in extras_table(extras):
+            print(line)
+        return 0
+    if not args.symbol:
+        parser.error("SYMBOL is required")
+    depth = extras["book"]
     collapse_mode = args.collapse_mode
     if args.no_collapse:
         if collapse_mode == "on":
@@ -1350,6 +1836,7 @@ just its current snapshot.""",
                         mode,
                         args.canceled,
                         depth,
+                        extras["flow"],
                     ): index
                     for index in indices
                 }
@@ -1429,6 +1916,87 @@ just its current snapshot.""",
                         quote["lag_minutes"] = lag
                 live_day["live_quote"] = quote
 
+        # --- extras -------------------------------------------------------
+        notes = {}
+        settle_extras(extras, days, notes)
+        if mode != "bars":
+            for name in ("book", "orders", "opening", "flow"):
+                if extras[name]:
+                    extras[name] = False
+                    notes[name] = f"only sampled in bars mode (not --{mode})"
+
+        statistics = None
+        if extras["stats"]:
+            try:
+                statistics = tse.instrument_statistics(client, code)
+            except tse.DataError as exc:
+                errors["statistics"] = str(exc)
+            if statistics is None:
+                skip_reason = (
+                    "the exchange publishes none for this instrument"
+                    " (funds and ETFs carry no statistics)"
+                )
+                notes["stats"] = skip_reason
+
+        overview = None
+        if extras["index"]:
+            try:
+                overview = tse.market_overview(client)
+            except tse.DataError as exc:
+                errors["market_overview"] = str(exc)
+            if overview is None:
+                notes["index"] = "the market overview returned nothing"
+
+        breadth = {}
+        if extras["breadth"]:
+            published = [day for day in days if day["source"] != "live"]
+            with ThreadPoolExecutor(
+                max_workers=max(1, min(FETCH_WORKERS, len(published)))
+            ) as pool:
+                futures = {
+                    pool.submit(tse.market_breadth_day, client, day["greg"], code): day
+                    for day in published
+                }
+                for future, day in futures.items():
+                    try:
+                        breadth[day["date"]] = future.result()
+                    except tse.DataError as exc:
+                        errors[f"{day['date']} (breadth)"] = str(exc)
+            missing = [
+                day["date"]
+                for day in published
+                if not breadth.get(day["date"])
+                and f"{day['date']} (breadth)" not in errors
+            ]
+            if missing:
+                notes["breadth"] = (
+                    "the exchange has not published whole-market rows for "
+                    + ", ".join(missing)
+                )
+
+        flow_maps = {}
+        if extras["flow"]:
+            for day in days:
+                if day.get("depth_updates") and day.get("tape"):
+                    flow_maps[day["date"]] = trade_sides(
+                        day["tape"], day["depth_updates"]
+                    )
+            missing = [
+                day["date"]
+                for day in days
+                if day["source"] != "live" and day["date"] not in flow_maps
+            ]
+            if missing:
+                notes["flow"] = (
+                    "needs the day's order-book stream, missing for "
+                    + ", ".join(missing)
+                )
+            elif live_day is not None and live_day["date"] not in flow_maps:
+                notes["flow"] = (
+                    "the live session has only its current book snapshot, not the"
+                    " per-level stream a classification needs"
+                )
+
         interval_auto = False
         interval_note = None
         collapse = False
@@ -1480,8 +2048,7 @@ just its current snapshot.""",
         rendered = []
         for day in days:
             depth_updates = day.get("depth_updates") or []
-            summary = None
-            summary_live = False
+            book = []
             if mode == "ticks":
                 columns, rows = TICK_COLUMNS, tick_rows(day["ticks"], args.canceled)
             elif mode == "profile":
@@ -1497,7 +2064,8 @@ just its current snapshot.""",
                     for item in day["profile"]
                 ]
             else:
-                columns = bar_columns(bool(collapse), args.depth)
+                flow_here = extras["flow"] and day["date"] in flow_maps
+                columns = bar_columns(bool(collapse), args.depth, flow_here)
                 merged = merge_bars(day["bars"], interval)
                 rows = (
                     collapsed_to_rows(collapse_bars(merged))
@@ -1507,34 +2075,25 @@ just its current snapshot.""",
                 last_minute = max(
                     (bar["minute"] for bar in day["bars"]), default=None
                 )
-                final = (
-                    minute_hhmmss(last_minute) if last_minute is not None else None
-                )
                 if args.depth_ladder:
                     if depth_updates and rows:
-                        summary = depth_summary(depth_updates, final)
                         rows = ladder_rows(
                             rows, depth_updates, interval, last_minute
                         )
                     elif day.get("live_book"):
-                        summary = depth_summary(day["live_book"])
-                        summary_live = True
                         label = (day.get("live_quote") or {}).get("time") or "live"
-                        if summary:
-                            summary["time"] = label
                         rows = ladder_block(
                             {item["level"]: item for item in day["live_book"]}, label
                         )
                     columns = LADDER_COLUMNS
                 elif depth_updates and rows:
                     attach_depth(rows, depth_updates, interval, last_minute)
-                    summary = depth_summary(depth_updates, final)
-                elif day.get("live_book"):
-                    # The live day has no published stream: only "now" is known.
-                    summary = depth_summary(day["live_book"])
-                    summary_live = True
-                    if summary:
-                        summary["time"] = (day.get("live_quote") or {}).get("time")
+                if flow_here:
+                    attach_flow(rows, flow_maps[day["date"]], interval, last_minute)
+                if extras["book"]:
+                    book = book_entries(day, depth_updates, last_minute)
+                    if not extras["opening"]:
+                        book = [item for item in book if item["kind"] != "auction"]
             client_type = flow.get(day["date"])
             if day["source"] == "live" and client_type is None:
                 try:
@@ -1551,21 +2110,78 @@ just its current snapshot.""",
                     "native_interval": day.get("native_interval"),
                     "official": day.get("official"),
                     "tape_vwap": session_vwap(day["bars"]) if mode == "bars" else None,
-                    "depth": summary,
-                    "depth_live": summary_live,
+                    "book": book,
                     "client_type": client_type,
+                    "breadth": breadth.get(day["date"]),
+                    "flow": flow_totals(flow_maps[day["date"]])
+                    if extras["flow"] and day["date"] in flow_maps
+                    else None,
                     "live_quote": day.get("live_quote"),
                     "columns": list(columns),
                     "rows": rows,
                 }
             )
 
+        # The latest-session numbers beside the 3-month averages: the live tape's
+        # running totals, or the published day the statistics actually describe.
+        latest_session = None
+        if live_day is not None:
+            quote = live_day.get("live_quote") or {}
+            live_rendered = next(
+                (item for item in rendered if item["source"] == "live"), None
+            )
+            latest_session = {
+                "volume": quote.get("volume"),
+                "trades": quote.get("trades"),
+                "buyers": ((live_rendered or {}).get("client_type") or {}).get(
+                    "individual_buyers"
+                ),
+            }
+        elif statistics:
+            for item in rendered:
+                official = item.get("official") or {}
+                if official.get("volume") == statistics.get("last_volume_shares"):
+                    latest_session = {
+                        "volume": official.get("volume"),
+                        "trades": official.get("trades"),
+                        "buyers": (item.get("client_type") or {}).get(
+                            "individual_buyers"
+                        ),
+                    }
+                    break
+
+        used = []
+        if any(item["book"] for item in rendered):
+            used.append("book")
+            if any(
+                entry["kind"] == "auction"
+                for item in rendered
+                for entry in item["book"]
+            ):
+                used.append("opening")
+            if extras["orders"]:
+                used.append("orders")
+        if statistics:
+            used.append("stats")
+        if overview:
+            used.append("index")
+        if any(item["breadth"] for item in rendered):
+            used.append("breadth")
+        if any(item["flow"] for item in rendered):
+            used.append("flow")
+        skipped = {
+            name: notes.get(name, "off")
+            for name in EXTRA_NAMES
+            if name not in used
+        }
         result = {
             "fetched_at": tse.jalali_stamp(now),
             "market_session_open": tse.market_session_open(now),
             "instrument": instrument,
             "mode": "ladder" if args.depth_ladder else mode,
             "depth": depth,
+            "orders": extras["orders"],
+            "flow": "flow" in used,
             "interval_minutes": interval if mode == "bars" else None,
             "interval_auto": interval_auto,
             "interval_note": interval_note,
@@ -1573,6 +2189,10 @@ just its current snapshot.""",
             "collapsed": collapse if mode == "bars" else False,
             "collapse_mode": collapse_mode if mode == "bars" else None,
             "collapse_threshold": args.collapse_threshold,
+            "statistics": statistics,
+            "market": overview,
+            "latest_session": latest_session,
+            "extras": {"used": used, "skipped": skipped},
             "days": rendered,
             "errors": errors,
         }

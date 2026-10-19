@@ -11,6 +11,7 @@ import os
 import re
 import socket
 import ssl
+import statistics
 import sys
 import threading
 import time
@@ -1339,7 +1340,173 @@ def economy(client):
     }
 
 
-def market_breadth(client):
+# The rows of MarketData/GetInstrumentStatistic that are worth carrying: the
+# exchange publishes 88, most of them ranks and duplicated 12-month variants.
+STATISTIC_FIELDS = {
+    (1, 5): "avg_value_3m_rial",
+    (2, 5): "avg_value_12m_rial",
+    (5, 7): "avg_volume_3m_shares",
+    (6, 7): "avg_volume_12m_shares",
+    (9, 4): "avg_trades_3m",
+    (10, 4): "avg_trades_12m",
+    (13, 8): "last_vwap_rial",
+    (14, 8): "last_vwap_capped_rial",
+    (15, 5): "last_value_rial",
+    (16, 7): "last_volume_shares",
+    (17, 4): "last_trades",
+    (36, 6): "company_value_rial",
+    (37, 6): "company_value_rank",
+    (50, 11): "avg_individual_buy_volume_3m_shares",
+    (54, 11): "avg_legal_buy_volume_3m_shares",
+    (58, 11): "avg_individual_buyers_3m",
+    (62, 11): "avg_legal_buyers_3m",
+    (70, 11): "avg_individual_sell_volume_3m_shares",
+    (74, 11): "avg_legal_sell_volume_3m_shares",
+    (78, 11): "avg_individual_sellers_3m",
+    (82, 11): "avg_legal_sellers_3m",
+}
+
+
+def instrument_statistics(client, code):
+    """Selected per-instrument statistics, or None when the exchange has none.
+
+    Stocks carry the 88-row set; funds and ETFs return an empty list, so this
+    stays None rather than raising.
+    """
+    rows = client.api(
+        f"MarketData/GetInstrumentStatistic/{code}", "instrumentStatistic"
+    )
+    if not isinstance(rows, list):
+        raise DataError("Unexpected instrument statistics result")
+    fields = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        field = STATISTIC_FIELDS.get(
+            (value(row, "dataType"), value(row, "partitionCode"))
+        )
+        if field is None:
+            continue
+        parsed = number(pick(row, "dataValue"))
+        if parsed is not None:
+            fields[field] = parsed
+    return fields or None
+
+
+def market_overview(client):
+    """The live whole-market overview: index levels, trade/volume/value totals."""
+    row = client.api("MarketData/GetMarketOverview/1", "marketOverview")
+    if not isinstance(row, dict):
+        raise DataError("Unexpected market overview result")
+    index = number(pick(row, "indexLastValue"))
+    change = number(pick(row, "indexChange"))
+    equal = number(pick(row, "indexEqualWeightedLastValue"))
+    equal_change = number(pick(row, "indexEqualWeightedChange"))
+
+    def change_pct(current, delta):
+        base = current - delta if current is not None and delta is not None else None
+        if not base:
+            return None
+        return round(delta / base * 100, 2)
+
+    return {
+        "date": trade_date(pick(row, "marketActivityDEven")),
+        "time": trade_time(pick(row, "marketActivityHEven")),
+        "index_value": index,
+        "index_change": change,
+        "index_change_pct": change_pct(index, change),
+        "equal_weighted_value": equal,
+        "equal_weighted_change_pct": change_pct(equal, equal_change),
+        "trades": number(pick(row, "marketActivityZTotTran")),
+        "volume_shares": number(pick(row, "marketActivityQTotTran")),
+        "value_rial": number(pick(row, "marketActivityQTotCap")),
+        "state": pick(row, "marketStateTitle"),
+    }
+
+
+def market_breadth_day(client, greg, code=None):
+    """Whole-market breadth for one published session (one ~175 KB request).
+
+    Every quoted instrument's daily row for the date: how many rose and fell,
+    the median move, and — when ``code`` is given — where that instrument sat in
+    the distribution. Returns None for a day the exchange has not published yet
+    (the live session), which is the normal case for today.
+    """
+    rows = client.api(
+        f"ClosingPrice/GetInstrmentsHistoryInDay/{greg}",
+        "closingPriceDailyHistoryWithInstDetails",
+    )
+    if not isinstance(rows, list) or not rows:
+        return None
+    changes = []
+    counts = {"up": 0, "down": 0, "flat": 0}
+    own = None
+    skipped = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        yesterday = price(pick(row, "priceYesterday"))
+        change = number(pick(row, "priceChange"))
+        # Settled right issues and fresh listings carry a placeholder previous
+        # close of 1 rial, which turns into a ±1000000% "move"; no real daily
+        # change on this market leaves the band, so those rows are dropped.
+        if not yesterday or yesterday < 10 or change is None:
+            skipped += 1
+            continue
+        pct = change / yesterday * 100
+        if abs(pct) > 25:
+            skipped += 1
+            continue
+        changes.append(pct)
+        if pct > 0.01:
+            counts["up"] += 1
+        elif pct < -0.01:
+            counts["down"] += 1
+        else:
+            counts["flat"] += 1
+        if code is not None and str(pick(row, "insCode")) == str(code):
+            own = pct
+    if not changes:
+        return None
+    result = {
+        "date": trade_date(greg),
+        "scope": "whole market, every quoted instrument",
+        "instruments": len(changes),
+        "skipped": skipped,
+        "advancers": counts["up"],
+        "decliners": counts["down"],
+        "unchanged": counts["flat"],
+        "median_change_pct": round(statistics.median(changes), 2),
+        "avg_change_pct": round(sum(changes) / len(changes), 2),
+    }
+    if own is not None:
+        result["instrument_change_pct"] = round(own, 2)
+        result["instrument_percentile"] = round(
+            sum(1 for pct in changes if pct < own) / len(changes) * 100, 1
+        )
+    return result
+
+
+def market_breadth(client, code=None):
+    """Whole-market breadth for the newest published session.
+
+    The whole-market rows only exist once the exchange has published the daily
+    data (overnight), so on a live day this walks back to the previous session;
+    if even that is unavailable it falls back to the tracked large-cap proxy.
+    """
+    now = tehran_now()
+    for offset in range(8):
+        greg = (now - timedelta(days=offset)).strftime("%Y%m%d")
+        try:
+            exact = market_breadth_day(client, greg, code)
+        except DataError:
+            exact = None
+        if exact:
+            return exact
+    return market_breadth_proxy(client)
+
+
+def market_breadth_proxy(client):
     # Fifteen per-symbol quotes on the shared leaf pool (warm keep-alive
     # connections) beat the single bulk market-watch request for this scope: the
     # bulk payload carries the whole market (~1 MB, measured median ~1.7s) while
@@ -1428,7 +1595,7 @@ def indexes(client):
     ]
 
 
-def collect(client, symbol, days, top, with_codal, adjusted=False):
+def collect(client, symbol, days, top, with_codal, adjusted=False, skip=frozenset()):
     instrument = resolve(client, symbol)
     code = instrument["ins_code"]
     now = tehran_now()
@@ -1441,6 +1608,7 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
         "order_book": None,
         "client_type": None,
         "indexes": None,
+        "statistics": None,
         "market_context": None,
         "history": None,
         "fundamentals": None,
@@ -1465,8 +1633,11 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
             "history": pool.submit(history, client, code, days, adjusted, errors),
             "currencies": pool.submit(market_currencies, client),
             "economy": pool.submit(economy, client),
-            "breadth": pool.submit(market_breadth, client),
         }
+        if "statistics" not in skip:
+            futures["statistics"] = pool.submit(instrument_statistics, client, code)
+        if "breadth" not in skip:
+            futures["breadth"] = pool.submit(market_breadth, client, code)
 
         def take(key):
             try:
@@ -1481,6 +1652,8 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
             for field in ("symbol", "name", "isin"):
                 instrument[field] = instrument[field] or ident[field]
         output["quote"] = take("quote")
+        if "statistics" in futures:
+            output["statistics"] = take("statistics")
         codal_future = None
         if with_codal:
             if instrument["symbol"]:
@@ -1507,7 +1680,11 @@ def collect(client, symbol, days, top, with_codal, adjusted=False):
         )
         for key in ("order_book", "client_type", "indexes", "history"):
             output[key] = take(key)
-        context = {key: take(key) for key in ("currencies", "economy", "breadth")}
+        context = {
+            key: take(key)
+            for key in ("currencies", "economy", "breadth")
+            if key in futures
+        }
         output["market_context"] = {
             key: value for key, value in context.items() if value is not None
         } or None
@@ -1541,6 +1718,7 @@ def markdown(data):
         ("Money flow / حقیقی و حقوقی", "client_type"),
         ("Market benchmarks / شاخص‌های بازار", "indexes"),
         ("Market context / دلار، اقتصاد و عمق بازار", "market_context"),
+        ("Statistics / آمار معاملات", "statistics"),
         ("Fundamentals / اطلاعات بنیادی", "fundamentals"),
         ("Codal / اطلاعیه‌ها و صورت‌های مالی", "codal"),
     )
@@ -1710,7 +1888,7 @@ def snapshot_meta_text(meta, data):
 def render_snapshot_command(command, path):
     """Handle `tse snapshot` / `tse markdown`: read a .stock file and print its
     header lines or its Markdown. Errors keep the wording of the inline probes
-    `prompt stock` used before (no `tse: ` prefix)."""
+    `prompt tse` used before (no `tse: ` prefix)."""
     try:
         if path == "-":
             doc = json.load(sys.stdin)
@@ -1760,7 +1938,7 @@ def main():
   tse all فولاد --days 90 --markdown
   tse all IRT1DARA0001 --markdown
   tse all https://d.easytrader.ir/easy-chart/IRT1DARA0001 --markdown
-  prompt stock فولاد
+  prompt .tse فولاد .tse.analyze
 History options: --full (all records) is the default; --days N overrides it.""",
     )
     sub = parser.add_subparsers(
@@ -1836,6 +2014,15 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 help="Skip Codal announcements and financial statements",
             )
             command.add_argument(
+                "--without",
+                action="append",
+                metavar="NAME",
+                help=(
+                    "Skip a section: codal, statistics, breadth"
+                    " (repeatable, comma-separated)"
+                ),
+            )
+            command.add_argument(
                 "--markdown",
                 action="store_true",
                 help="Output prompt-ready Markdown instead of JSON",
@@ -1845,6 +2032,20 @@ History options: --full (all records) is the default; --days N overrides it.""",
         parser.error("--days must be between 1 and 365")
     if hasattr(args, "top") and not 1 <= args.top <= 20:
         parser.error("--top must be between 1 and 20")
+    skip = set()
+    if args.command == "all":
+        for item in getattr(args, "without", None) or []:
+            for name in item.split(","):
+                name = name.strip().lower()
+                if name:
+                    skip.add(name)
+        unknown = skip - {"codal", "statistics", "breadth"}
+        if unknown:
+            parser.error(
+                "unknown --without name(s): "
+                + ", ".join(sorted(unknown))
+                + " (choose from codal, statistics, breadth)"
+            )
     if args.command in ("snapshot", "markdown"):
         return render_snapshot_command(args.command, args.path)
     history_days = 0 if getattr(args, "days", None) is None else args.days
@@ -1858,8 +2059,9 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 args.symbol,
                 history_days,
                 args.top,
-                not args.no_codal,
+                not args.no_codal and "codal" not in skip,
                 not getattr(args, "unadjusted", False),
+                frozenset(skip),
             )
         else:
             instrument = resolve(client, args.symbol)
