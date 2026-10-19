@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""browser.session — compose an authenticated HTTP session for a site.
+
+A thin bridge over the browser helpers: given a domain/URL it collects the
+matching profile's **cookies** (``cookies``) and **web storage**
+(``browser.storage``), adds a matching **User-Agent** (``browser.find``), and
+emits a single ready-to-use bundle for an HTTP client.  Useful when a site's
+login lives partly in cookies and partly in ``localStorage`` (SPAs), which is
+the normal shape of modern chat/AI sites.
+
+It is read-only: nothing is launched and no browser is touched.  Profile
+selection honours the same filters as ``cookies``/``browser.storage`` and the
+same ordering (open first, then default, then by name).
+
+Usage:
+  browser.session grok.com                       # first matching profile
+  browser.session chat.deepseek.com --format json
+  browser.session https://x.com --browser firefox --profile default-3
+  browser.session grok.com --all --format json   # every matching profile
+  browser.session grok.com --format cookie       # just the Cookie: value
+  browser.session grok.com --format header       # User-Agent + Cookie lines
+  browser.session grok.com --ua "custom UA"
+
+The JSON has a ``matches`` list; each entry carries ``cookies`` (as returned by
+``cookies``), ``storage`` (a ``localstorage``/``sessionstorage`` mapping), the
+derived ``cookie_header`` and the ``user_agent``.  Exit status is 0 when a
+session was found, 1 when nothing matched, 2 on usage errors.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+from importlib.machinery import SourceFileLoader
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# ------------------------------------------------------------------- siblings
+
+
+def _load_module(name, filename):
+    path = os.path.join(HERE, filename)
+    if not os.path.exists(path):
+        path = shutil.which(filename) or ""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        loader = SourceFileLoader(name, path)
+        spec = importlib.util.spec_from_loader(name, loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        loader.exec_module(module)
+    except Exception:
+        return None
+    return module
+
+
+_BROWSER_FIND = None
+
+
+def _browser_find():
+    global _BROWSER_FIND
+    if _BROWSER_FIND is None:
+        _BROWSER_FIND = _load_module("browser_find", "browser.find")
+    return _BROWSER_FIND
+
+
+def _tool(name):
+    path = os.path.join(HERE, name)
+    if os.path.exists(path):
+        return path
+    return shutil.which(name)
+
+
+def _run_tool(name, argv):
+    exe = _tool(name)
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, *argv], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not out.stdout.strip():
+        return None
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+# -------------------------------------------------------------------- collecting
+
+
+def filter_args(args):
+    out = []
+    for b in args.browser:
+        out += ["--browser", b]
+    if args.profile:
+        out += ["--profile", args.profile]
+    if args.family:
+        out += ["--family", args.family]
+    if args.open_only:
+        out.append("--open-only")
+    if args.exact:
+        out.append("--exact")
+    return out
+
+
+def _new_match(browser, name, path, family, is_open):
+    return {
+        "browser": browser,
+        "browser_name": name,
+        "family": family,
+        "profile": name,
+        "path": path,
+        "is_open": is_open,
+        "version": "",
+        "user_agent": "",
+        "cookies": [],
+        "storage": [],
+    }
+
+
+def gather(target, args):
+    """Merge ``cookies`` and ``browser.storage`` results into ordered matches."""
+    fa = filter_args(args)
+    cookie_data = _run_tool("cookies",
+                            [target, "--format", "json", "--all", "--no-hint", *fa])
+    storage_data = _run_tool("browser.storage",
+                             [target, "--format", "json", "--kind", "all", *fa])
+
+    pairs = {}
+    order = []
+
+    def slot(browser, name, path, family, is_open):
+        key = (browser, path)
+        if key not in pairs:
+            pairs[key] = _new_match(browser, name, path, family, is_open)
+            order.append(key)
+        else:
+            pairs[key]["is_open"] = pairs[key]["is_open"] or is_open
+        return pairs[key]
+
+    for m in (cookie_data or {}).get("matches") or []:
+        entry = slot(m.get("browser", ""), m.get("profile", ""), m.get("path", ""),
+                     m.get("family", ""), bool(m.get("is_open")))
+        entry["browser_name"] = m.get("browser_name") or entry["browser_name"]
+        entry["cookies"] = m.get("cookies") or []
+    for m in (storage_data or {}).get("matches") or []:
+        entry = slot(m.get("browser", ""), m.get("profile", ""), m.get("path", ""),
+                     m.get("family", ""), bool(m.get("is_open")))
+        entry["browser_name"] = m.get("browser_name") or entry["browser_name"]
+        entry["storage"] += m.get("storage") or []
+
+    return [pairs[k] for k in order]
+
+
+def enrich(match, args, browser_index=None):
+    """Attach browser version/user-agent and derive the Cookie header."""
+    ua = args.ua or ""
+    version = ""
+    if browser_index is None:
+        browser_index = {}
+        module = _browser_find()
+        if module is not None:
+            try:
+                for b in module.collect():
+                    browser_index[b["id"]] = b
+            except Exception:
+                pass
+    info = browser_index.get(match["browser"]) or {}
+    version = info.get("version") or ""
+    if not ua:
+        ua = info.get("user_agent") or ""
+    match["version"] = version
+    match["user_agent"] = ua
+    match["cookie_header"] = cookie_header(match["cookies"])
+    match["storage"] = storage_map(match["storage"])
+    return match
+
+
+def browser_index():
+    index = {}
+    module = _browser_find()
+    if module is not None:
+        try:
+            for b in module.collect():
+                index[b["id"]] = b
+        except Exception:
+            pass
+    return index
+
+
+def cookie_header(cookies):
+    return "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+
+
+def storage_map(entries):
+    out = {"localstorage": {}, "sessionstorage": {}}
+    for e in entries:
+        out.setdefault(e.get("kind") or "localstorage", {})
+        out[e.get("kind") or "localstorage"][e.get("key", "")] = e.get("value", "")
+    return out
+
+
+# --------------------------------------------------------------------- selection
+
+
+def select(matches, args):
+    def rank(item):
+        return (not item["is_open"], not bool(item["cookies"]))
+    ordered = sorted(matches, key=rank)
+    return ordered if args.all else ordered[:1]
+
+
+# -------------------------------------------------------------------- rendering
+
+
+def render_json(target, matches):
+    print(json.dumps({"target": target, "matches": matches}, indent=2))
+
+
+def render_cookie(matches):
+    for m in matches:
+        if m.get("cookie_header"):
+            print(m["cookie_header"])
+
+
+def render_header(matches):
+    for m in matches:
+        print(f"User-Agent: {m.get('user_agent', '')}")
+        if m.get("cookie_header"):
+            print(f"Cookie: {m['cookie_header']}")
+        for kind, entries in (m.get("storage") or {}).items():
+            for key, value in entries.items():
+                print(f"# storage.{kind}.{key}: {value}")
+
+
+# -------------------------------------------------------------------------- CLI
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="browser.session",
+        description="Compose an authenticated HTTP session (cookies + web storage + UA) for a site.")
+    p.add_argument("target", nargs="?", help="domain or URL, e.g. grok.com or https://x.com")
+    p.add_argument("--browser", action="append", default=[],
+                   help="restrict to a browser id (repeatable)")
+    p.add_argument("--profile", default=None, help="restrict to a profile name/path")
+    p.add_argument("--family", choices=["chromium", "firefox"], default=None)
+    p.add_argument("--open-only", action="store_true",
+                   help="only use browsers/profiles that are currently running")
+    p.add_argument("--all", action="store_true",
+                   help="include every matching profile, not just the best")
+    p.add_argument("--exact", action="store_true",
+                   help="match the host exactly instead of including subdomains")
+    p.add_argument("--ua", default=None, help="override the User-Agent")
+    p.add_argument("--format", choices=["json", "cookie", "header"], default="json")
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if not args.target:
+        build_parser().print_usage(sys.stderr)
+        return 2
+
+    index = browser_index()
+    matches = [enrich(m, args, index) for m in gather(args.target, args)]
+    matches = [m for m in matches if m["cookies"] or any(m["storage"].values())]
+    matches = select(matches, args)
+
+    if not matches:
+        if args.format == "json":
+            print(json.dumps({"target": args.target, "matches": []}, indent=2))
+        else:
+            print(f"browser.session: no session found for {args.target}", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        render_json(args.target, matches)
+    elif args.format == "cookie":
+        render_cookie(matches)
+    else:
+        render_header(matches)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)

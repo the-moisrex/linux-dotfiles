@@ -31,6 +31,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -201,6 +203,124 @@ def _parse_ini(path):
             k, v = line.split("=", 1)
             sections[cur][k.strip()] = v.strip()
     return sections
+
+
+# -------------------------------------------------------------------------- version
+
+
+def _read_text(path):
+    try:
+        return Path(path).read_text(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+_EXEC_RE = re.compile(r"^\s*exec\s+(\S+)", re.M)
+
+
+def _exec_target(path):
+    """If *path* is a launcher shell script, return the binary it execs."""
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return None
+    if not text.startswith("#!"):
+        return None
+    m = _EXEC_RE.search(text)
+    return m.group(1) if m else None
+
+
+def firefox_install_dir(exe):
+    """Directory holding ``application.ini`` for a Firefox-family binary."""
+    if not exe:
+        return None
+    p = Path(exe)
+    try:
+        p = p.resolve()
+    except OSError:
+        pass
+    cands = [p.parent, p.parent.parent]
+    target = _exec_target(p)
+    if target:
+        tp = Path(target)
+        cands = [tp.parent, tp, *cands]
+    for cand in cands:
+        if (cand / "application.ini").is_file():
+            return cand
+    return None
+
+
+def exe_version(exe):
+    """Fall back to ``--version`` (cheap; never opens a window)."""
+    if not exe:
+        return ""
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True,
+                             text=True, timeout=8)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    line = (out.stdout or out.stderr).strip().splitlines()
+    if not line:
+        return ""
+    for tok in reversed(line[0].replace("Mozilla", " ").split()):
+        if tok[:1].isdigit():
+            return tok.strip("()")
+    return ""
+
+
+def browser_version(entry, exe, config_dir):
+    """Best-effort version string, read from disk when possible."""
+    if entry.family == "firefox":
+        d = firefox_install_dir(exe)
+        if d:
+            ini = _parse_ini(d / "application.ini")
+            v = (ini.get("App") or {}).get("Version") or ""
+            if v:
+                return v
+        return exe_version(exe)
+    if config_dir:
+        # Chromium-family writes its running version to ``Last Version``.
+        v = _read_text(Path(config_dir) / "Last Version")
+        if v:
+            return v
+    return exe_version(exe)
+
+
+_PLATFORM_TOKEN = None
+
+
+def platform_token():
+    """A Gecko/WebKit style platform token for the current host (Linux oriented)."""
+    global _PLATFORM_TOKEN
+    if _PLATFORM_TOKEN is None:
+        machine = platform.machine() or "x86_64"
+        sysname = platform.system() or "Linux"
+        if sysname == "Linux":
+            _PLATFORM_TOKEN = f"X11; Linux {machine}"
+        elif sysname == "Darwin":
+            _PLATFORM_TOKEN = "Macintosh; Intel Mac OS X 10.15"
+        else:
+            _PLATFORM_TOKEN = f"{sysname} {machine}"
+    return _PLATFORM_TOKEN
+
+
+def build_user_agent(browser_id, family, version):
+    """A plausible User-Agent for a browser id/version (overridable by the caller)."""
+    ver = version or ""
+    major = ver.split(".")[0] if ver else "0"
+    plat = platform_token()
+    if family == "firefox":
+        rv = ver or "0"
+        return f"Mozilla/5.0 ({plat}; rv:{rv}) Gecko/20100101 Firefox/{rv}"
+    base = (f"Mozilla/5.0 ({plat}) AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{major}.0.0.0 Safari/537.36")
+    suffix = {
+        "edge": f" Edg/{ver}",
+        "opera": f" OPR/{ver}",
+        "vivaldi": f" Vivaldi/{major}.0",
+    }.get(browser_id)
+    return base + suffix if suffix and ver else base
+
 
 
 # ------------------------------------------------------------------------- profiles
@@ -410,6 +530,7 @@ def collect():
                 profiles = chromium_profiles(config_dir)
             else:
                 profiles = firefox_profiles(config_dir)
+        version = browser_version(entry, exe, config_dir)
         browsers[entry.id] = {
             "id": entry.id,
             "name": entry.name,
@@ -417,6 +538,8 @@ def collect():
             "app_id": entry.app_id,
             "executable": exe or "",
             "config_dir": config_dir or "",
+            "version": version,
+            "user_agent": build_user_agent(entry.id, entry.family, version),
             "is_system_default": False,
             "profiles": profiles,
         }
@@ -546,10 +669,10 @@ def render_list(browsers):
     if not browsers:
         print("No browsers found.")
         return 1
-    print(f"{'ID':<26} {'FAMILY':<8} {'DEFAULT':<7} {'OPEN':<5} {'PROFILES':<8} CONFIG")
+    print(f"{'ID':<26} {'FAMILY':<8} {'VERSION':<14} {'DEFAULT':<7} {'OPEN':<5} {'PROFILES':<8} CONFIG")
     for b in browsers:
         opened = sum(1 for p in b["profiles"] if p.is_open)
-        print(f"{b['id']:<26} {b['family']:<8} "
+        print(f"{b['id']:<26} {b['family']:<8} {(b.get('version') or '-'):<14} "
               f"{_yes(b['is_system_default']):<7} {str(opened):<5} "
               f"{len(b['profiles']):<8} {b['config_dir'] or '(no config)'}")
     return 0
@@ -691,6 +814,8 @@ def browser_dict(b):
         "app_id": b.get("app_id", ""),
         "executable": b["executable"],
         "config_dir": b["config_dir"],
+        "version": b.get("version", ""),
+        "user_agent": b.get("user_agent", ""),
         "is_system_default": b["is_system_default"],
         "profiles": [profile_dict(p) for p in b["profiles"]],
     }

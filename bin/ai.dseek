@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""ai.dseek — start a new DeepSeek chat from a prompt or stdin.
+
+Replays the signed-in chat.deepseek.com session (bearer token from
+``localStorage``) over its own completion API — no API key.
+See ``ai.dseek --help``.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from ai.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main("deepseek"))

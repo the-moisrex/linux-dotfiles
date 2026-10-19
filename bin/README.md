@@ -251,6 +251,43 @@ browser.storage --list                     # profiles with storage, no secrets
 `--format` is `table` (default), `json` or `raw`; `--no-values` shows only key names
 (`--format json` then reports `keys`/`count`), and `--value-only` prints just values.
 
+### `browser.session`
+
+Compose a complete authenticated HTTP session for one site — cookies (via `cookies`),
+`localStorage`/`sessionStorage` (via `browser.storage`) and a matching `User-Agent`
+(via `browser.find`) — so a script can replay the site's own API calls without a
+browser. It is what the `ai.*` chat commands (below) use to sign in.
+
+```bash
+browser.session grok.com                      # json summary (best match)
+browser.session https://x.com --format header # ready-to-paste request headers
+browser.session grok.com --format cookie      # "name=value; ..." cookie header
+browser.session grok.com --family firefox --open-only
+browser.session grok.com --ua 'Mozilla/5.0 …' # override the User-Agent
+browser.session grok.com --all                # every matching profile
+```
+
+`--format` is `json` (default), `cookie` or `header`.
+
+### `browser.record`
+
+**Development-only** recorder for reverse-engineering a site's own API: it drives a
+real browser (Playwright + the system Chromium/Firefox) against the signed-in session
+and saves every XHR/fetch/SSE request with its headers, body, response and — for
+`text/event-stream` — the full streamed body, plus any WebSocket frames
+(`websockets.json`). It is what the `ai.*` adapters were derived from; nothing here
+runs at chat time.
+
+```bash
+browser.record https://chatgpt.com --session chatgpt.com --prompt "hi" \
+               --wait 60 --idle 6 --out /tmp/rec
+browser.record https://grok.com --session grok.com --prompt "say pong" --headful
+browser.record https://example.com --all-requests   # include scripts/images too
+```
+
+`--js` evaluates JavaScript after load (before sending the prompt) and `--input` pins
+the composer selector, otherwise autodetected.
+
 ### Other Web tools
 
 - __blogs__ — print random blog post links from indieblog.page
@@ -417,6 +454,48 @@ The pod's web UI service is managed with `pods/stack start agents`
   (`--seed` / `--reseed` / `--print`, takes a volume name or directory); this is
   what `oc` runs for project-mode containers, same recorded rules as the agents
   entrypoint
+
+### `ai.chatgpt` / `ai.grok` / `ai.dseek`
+
+Ask ChatGPT, Grok or DeepSeek from the shell by replaying each site's own web API
+with the session already in your browser — **no API key, no official API, and no
+browser at run time**. Each command reads a prompt from its arguments or stdin,
+streams the answer (reasoning and tool calls included) and renders Markdown on a TTY.
+
+The three are thin wrappers over one shared engine (`bin/ai/`); each provider adapts
+its site's transport:
+
+- **ChatGPT** replays `/backend-api/f/conversation`, passing the sentinel gate
+  (requirements token, proof-of-work, turnstile) and the conduit, then reads the
+  answer from the SSE stream — or from `GET /backend-api/conversation/<id>` when the
+  turn is handed off to the site's WebSocket.
+- **Grok** drives the site's application WebSocket (`wss://grok.com/ws/mgw/`) with
+  `session.create` / `response.create`, turning `response.chunk` frames into text,
+  reasoning and tool calls.
+- **DeepSeek** creates a chat session, solves the `DeepSeekHashV1` proof-of-work (in
+  pure Python, parallelised across cores) and reads the site's fragment-patch stream.
+
+```bash
+ai.chatgpt "explain this stack trace"           # prompt as an argument
+cat main.rs | ai.dseek                          # …or piped on stdin
+ai.grok -m expert "compare mTLS and JWT"
+ai.chatgpt -s "be terse" "what is 2+2?"         # system/custom instructions
+ai.chatgpt --json "hi" | jq -r 'select(.kind=="text").text'
+ai.dseek --show-thinking --copy "summarise this" # reasoning->stderr, copy answer
+```
+
+Sessions load through `browser.session` (the browser must have been logged in once);
+`--browser`/`--profile`/`--family`/`--open-only`/`--exact` narrow the match and
+`--print-session` shows what would be used. Tool calls are **display-only** — they are
+never executed. Reasoning shows on a TTY by default (`--no-thinking` hides it); with
+piped output the answer goes to stdout and reasoning/tools to stderr, and `--json`
+emits one normalised event per line. `--model` selects a site model (`auto`/`gpt-*`/
+`o*` for ChatGPT, `fast`/`expert`/`grok-*` for Grok, `deepseek_reasoner`/
+`deepseek_chat` for DeepSeek) and `--timeout` bounds a turn.
+
+Requires Python 3 with `curl_cffi` (or `httpx`), `rich`/`pygments` for the TTY
+renderer and `websocket-client` for Grok; a free account's own rate limits still
+apply.
 
 - __ai-find-skills__ — cross-registry (skills.sh + clawhub.ai + GitHub) AI agent-skill finder with security scan
 - __ai-save__ — sync AI chat histories (gapgpt.app) to local Markdown and commit them to git

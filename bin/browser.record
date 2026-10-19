@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""browser.record — record a page's XHR/fetch traffic to derive its internal API.
+
+Development aid for replaying a site's own streaming endpoints: it launches a
+real Chromium via Playwright, optionally injects a signed-in session (cookies +
+web storage from ``browser.session``, so you don't have to log in again), drives
+it, and dumps every ``xhr``/``fetch``/``eventsource`` request and response —
+method, URL, headers, post body and the full response body (including a whole
+SSE stream) — to files, plus an ``index.json``.
+
+This tool *does* run a browser; the ``ai.*`` commands it is meant to support do
+not.  Use it to discover endpoints, then let ``bin/ai`` replay them over plain
+HTTP.
+
+Usage:
+  browser.record https://chat.deepseek.com
+  browser.record https://chat.deepseek.com --session chat.deepseek.com \
+      --prompt "hello" --input "textarea"
+  browser.record https://grok.com --session grok.com --prompt "hi" --headful
+  browser.record https://chatgpt.com --all-requests --wait 20
+
+Requires Playwright (``python3 -m pip install playwright``) plus an installed
+Chromium-family browser (used via ``browser.find``).  Exit status is 0 when a
+recording was written, 1 on failure, 2 on usage errors.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime
+from importlib.machinery import SourceFileLoader
+from urllib.parse import urlparse
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+XHR_TYPES = {"xhr", "fetch", "eventsource"}
+
+
+# ------------------------------------------------------------------- siblings
+
+
+def _load_module(name, filename):
+    path = os.path.join(HERE, filename)
+    if not os.path.exists(path):
+        path = shutil.which(filename) or ""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        loader = SourceFileLoader(name, path)
+        spec = importlib.util.spec_from_loader(name, loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        loader.exec_module(module)
+    except Exception:
+        return None
+    return module
+
+
+def _tool(name):
+    path = os.path.join(HERE, name)
+    if os.path.exists(path):
+        return path
+    return shutil.which(name)
+
+
+def load_session(target):
+    exe = _tool("browser.session")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, target, "--format", "json"],
+                             capture_output=True, text=True, timeout=120)
+        data = json.loads(out.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return None
+    matches = data.get("matches") or []
+    return matches[0] if matches else None
+
+
+def target_host(target):
+    parsed = urlparse(target if "://" in target else "//" + target)
+    return parsed.hostname or target
+
+
+def resolve_executable(args):
+    if args.executable:
+        return args.executable
+    module = _load_module("browser_find", "browser.find")
+    if module is not None:
+        wanted = args.browser_id
+        try:
+            for b in module.collect():
+                if not b["executable"] or b["family"] != "chromium":
+                    continue
+                if wanted and b["id"] != wanted:
+                    continue
+                return b["executable"]
+        except Exception:
+            pass
+    for name in ("chromium", "chromium-browser", "google-chrome", "brave"):
+        p = shutil.which(name)
+        if p:
+            return p
+    return ""
+
+
+# -------------------------------------------------------------------- recording
+
+
+def _find_record(records, request):
+    for rec in reversed(records):
+        if rec.get("_request") is request:
+            return rec
+    for rec in reversed(records):
+        if (rec["method"] == request.method and rec["url"] == request.url
+                and rec.get("_response") is None):
+            return rec
+    return None
+
+
+def attach_recorders(page, records, all_requests, websockets=None):
+    def on_request(request):
+        if not all_requests and request.resource_type not in XHR_TYPES:
+            return
+        rec = {
+            "seq": len(records) + 1,
+            "method": request.method,
+            "url": request.url,
+            "resource_type": request.resource_type,
+            "headers": _safe(lambda: request.headers, {}),
+            "post_data": _safe(lambda: request.post_data, None),
+            "status": None,
+            "response_headers": {},
+            "body_file": None,
+            "error": None,
+            "_request": request,
+            "_response": None,
+        }
+        records.append(rec)
+
+    def on_response(response):
+        rec = _find_record(records, response.request)
+        if rec is None:
+            return
+        rec["status"] = response.status
+        rec["response_headers"] = _safe(lambda: response.headers, {})
+        rec["_response"] = response
+
+    def on_failed(request):
+        rec = _find_record(records, request)
+        if rec is not None:
+            rec["error"] = _safe(lambda: request.failure, "failed")
+
+    page.on("request", on_request)
+    page.on("response", on_response)
+    page.on("requestfailed", on_failed)
+
+    if websockets is not None:
+        _attach_websockets(page, websockets)
+
+
+def _attach_websockets(page, websockets):
+    def on_websocket(ws):
+        import time as _time
+        record = {"url": ws.url, "frames": []}
+        websockets.append(record)
+
+        def received(payload):
+            record["frames"].append({
+                "dir": "recv", "t": round(_time.time(), 3),
+                "text": payload if isinstance(payload, str) else None,
+                "b64": None if isinstance(payload, str) else _b64(payload),
+            })
+
+        def sent(payload):
+            record["frames"].append({
+                "dir": "sent", "t": round(_time.time(), 3),
+                "text": payload if isinstance(payload, str) else None,
+                "b64": None if isinstance(payload, str) else _b64(payload),
+            })
+
+        ws.on("framereceived", received)
+        ws.on("framesent", sent)
+
+    page.on("websocket", on_websocket)
+
+
+def _b64(data):
+    import base64
+    return base64.b64encode(data).decode()
+
+
+def _safe(fn, default):
+    try:
+        value = fn()
+        return default if value is None else value
+    except Exception:
+        return default
+
+
+def inject_session(context, session, target):
+    """Install cookies + web storage from a browser.session bundle."""
+    cookies = []
+    for c in session.get("cookies", []):
+        cookies.append({
+            "name": c["name"],
+            "value": c["value"],
+            "domain": c.get("host", ""),
+            "path": c.get("path") or "/",
+            "expires": c.get("expires") or -1,
+            "secure": bool(c.get("secure")),
+            "httpOnly": bool(c.get("http_only")),
+            "sameSite": {0: "None", 1: "Lax", 2: "Strict"}.get(c.get("same_site"), "Lax"),
+        })
+    if cookies:
+        try:
+            context.add_cookies(cookies)
+        except Exception as exc:
+            print(f"browser.record: cookie injection failed: {exc}", file=sys.stderr)
+
+    storage = session.get("storage") or {}
+    local = storage.get("localstorage") or {}
+    sess = storage.get("sessionstorage") or {}
+    if not local and not sess:
+        return
+    host = target_host(target)
+    script = (
+        "(() => {\n"
+        f"  const LS = {json.dumps(local)};\n"
+        f"  const SS = {json.dumps(sess)};\n"
+        f"  const WANT = {json.dumps(host)};\n"
+        "  const h = location.hostname;\n"
+        "  if (!(h === WANT || h.endsWith('.' + WANT) || WANT.endsWith('.' + h))) return;\n"
+        "  for (const [k, v] of Object.entries(LS)) { try { localStorage.setItem(k, v); } catch (e) {} }\n"
+        "  for (const [k, v] of Object.entries(SS)) { try { sessionStorage.setItem(k, v); } catch (e) {} }\n"
+        "})();"
+    )
+    context.add_init_script(script)
+
+
+# -------------------------------------------------------------------- driving
+
+
+def send_prompt(page, args):
+    selectors = [args.input] if args.input else [
+        "textarea", "[contenteditable='true']", "div[role='textbox']",
+        "input[type='text']"]
+    selector = None
+    deadline = time.time() + 45
+    while time.time() < deadline and selector is None:
+        for candidate in selectors:
+            try:
+                if page.locator(candidate).count() > 0:
+                    selector = candidate
+                    break
+            except Exception:
+                continue
+        if selector is None:
+            page.wait_for_timeout(300)
+    if selector is None:
+        print("browser.record: could not find an input to type into "
+              "(the page may still be loading, or need a login)", file=sys.stderr)
+        return False
+    target = page.locator(selector).first
+    try:
+        target.click(timeout=8000)
+        page.keyboard.type(args.prompt, delay=15)
+        page.wait_for_timeout(250)
+    except Exception as exc:
+        print(f"browser.record: typing failed ({exc}); trying fill", file=sys.stderr)
+        for candidate in selectors:
+            try:
+                page.fill(candidate, args.prompt, timeout=5000)
+                page.wait_for_timeout(150)
+                break
+            except Exception:
+                continue
+    for send in ("button[aria-label*='ubmit']", "button[aria-label*='Send']",
+                 "button[aria-label*='send']", "[data-testid='send-button']",
+                 "[data-testid*='send']", "button[type='submit']"):
+        try:
+            button = page.locator(send).first
+            if button.count() > 0 and button.is_enabled():
+                button.click(timeout=3000)
+                return True
+        except Exception:
+            continue
+    try:
+        page.keyboard.press("Enter")
+        return True
+    except Exception:
+        pass
+    print("browser.record: could not send the prompt", file=sys.stderr)
+    return False
+
+
+class Idle:
+    def __init__(self):
+        self.last = time.time()
+
+    def touch(self, _=None):
+        self.last = time.time()
+
+
+def wait_idle(page, idle, args):
+    """Return once traffic has been quiet for ``--idle`` seconds (or timeout)."""
+    idle.touch()
+    page.on("request", lambda *_: idle.touch())
+    page.on("response", lambda *_: idle.touch())
+    deadline = time.time() + args.wait
+    while time.time() < deadline:
+        if time.time() - idle.last >= args.idle:
+            return
+        page.wait_for_timeout(200)
+
+
+# -------------------------------------------------------------------- output
+
+
+_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _body_name(rec, outdir):
+    path = urlparse(rec["url"]).path or "/"
+    slug = _FILENAME_RE.sub("-", path.strip("/"))[:60] or "root"
+    return os.path.join(outdir, f"{rec['seq']:03d}-{rec['method']}-{slug}.body")
+
+
+def finalize(records, outdir):
+    for rec in records:
+        response = rec.pop("_response", None)
+        rec.pop("_request", None)
+        if response is None:
+            continue
+        try:
+            body = response.body()
+        except Exception as exc:
+            rec["error"] = rec.get("error") or f"body unavailable: {type(exc).__name__}"
+            continue
+        name = _body_name(rec, outdir)
+        try:
+            with open(name, "wb") as fh:
+                fh.write(body)
+            rec["body_file"] = os.path.basename(name)
+            rec["body_bytes"] = len(body)
+            rec["body_text"] = _decode(body)
+        except OSError:
+            pass
+
+
+def _decode(body):
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def save_index(records, outdir):
+    path = os.path.join(outdir, "index.json")
+    with open(path, "w") as fh:
+        json.dump({"captured_at": datetime.now().isoformat(),
+                   "requests": sorted(records, key=lambda r: r["seq"])}, fh, indent=2)
+    return path
+
+
+# -------------------------------------------------------------------------- CLI
+
+
+def default_outdir(url):
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    host = _FILENAME_RE.sub("-", target_host(url)) or "site"
+    return os.path.join(os.path.expanduser("~/.tmp/opencode/browser-record"),
+                        f"{stamp}-{host}")
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="browser.record",
+        description="Record a page's XHR/fetch/SSE traffic (dev aid for replaying an API).")
+    p.add_argument("url", help="page URL to open")
+    p.add_argument("--session", default=None,
+                   help="inject the signed-in session for this origin (via browser.session)")
+    p.add_argument("--prompt", default=None, help="text to type and send")
+    p.add_argument("--input", default=None, help="input selector (default: autodetect)")
+    p.add_argument("--js", default=None,
+                   help="JavaScript to evaluate after load, before sending the prompt")
+    p.add_argument("--out", default=None, help="output directory")
+    p.add_argument("--wait", type=float, default=45, help="max seconds to record (default 45)")
+    p.add_argument("--idle", type=float, default=1.5,
+                   help="finish after this many quiet seconds (default 1.5)")
+    p.add_argument("--unauthorized", dest="headful", action="store_true",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--headful", action="store_true", help="show the browser window")
+    p.add_argument("--all-requests", action="store_true",
+                   help="record every request, not just xhr/fetch/sse")
+    p.add_argument("--browser-id", default=None, help="browser id for the executable")
+    p.add_argument("--executable", default=None, help="explicit browser executable path")
+    p.add_argument("--ua", default=None, help="override the User-Agent")
+    return p
+
+
+def _load_playwright():
+    try:
+        from playwright.sync_api import sync_playwright
+        return sync_playwright
+    except Exception:
+        print("browser.record: Playwright is required "
+              "(python3 -m pip install playwright)", file=sys.stderr)
+        return None
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    sync_playwright = _load_playwright()
+    if sync_playwright is None:
+        return 1
+    exe = resolve_executable(args)
+    if not exe:
+        print("browser.record: no Chromium-family executable found", file=sys.stderr)
+        return 1
+
+    session = load_session(args.session) if args.session else None
+    if args.session and session is None:
+        print(f"browser.record: no session found for {args.session}", file=sys.stderr)
+        return 1
+    ua = args.ua or (session or {}).get("user_agent") or None
+
+    outdir = args.out or default_outdir(args.url)
+    os.makedirs(outdir, exist_ok=True)
+
+    records = []
+    websockets = []
+    idle = Idle()
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                executable_path=exe, headless=not args.headful,
+                args=["--no-first-run", "--no-default-browser-check",
+                      "--disable-dev-shm-usage"])
+            context = browser.new_context(user_agent=ua,
+                                          viewport={"width": 1440, "height": 900})
+            context.set_default_timeout(max(args.wait, 10) * 1000)
+            if session:
+                inject_session(context, session, args.session)
+            page = context.new_page()
+            attach_recorders(page, records, args.all_requests, websockets)
+            print(f"browser.record: opening {args.url}", file=sys.stderr)
+            page.goto(args.url, wait_until="domcontentloaded")
+            if args.js:
+                try:
+                    page.evaluate(args.js)
+                except Exception as exc:
+                    print(f"browser.record: --js failed: {exc}", file=sys.stderr)
+            if args.prompt is not None:
+                send_prompt(page, args)
+            wait_idle(page, idle, args)
+            finalize(records, outdir)
+            context.close()
+            browser.close()
+    except Exception as exc:
+        print(f"browser.record: {exc}", file=sys.stderr)
+        if not records:
+            return 1
+
+    index = save_index(records, outdir)
+    if websockets:
+        with open(os.path.join(outdir, "websockets.json"), "w") as fh:
+            json.dump(websockets, fh, indent=2)
+    captured = [r for r in records if r.get("body_file") or r.get("post_data")]
+    print(f"browser.record: {len(records)} request(s), {len(captured)} with a body, "
+          f"{len(websockets)} websocket(s) -> {outdir}", file=sys.stderr)
+    print(index)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)
