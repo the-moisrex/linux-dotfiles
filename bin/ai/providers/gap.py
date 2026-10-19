@@ -20,12 +20,18 @@ the handshake (the site omits the envelope's ``token`` field under cookie auth).
 A turn can also be read without the socket — ``GET
 /api/v1/get_chat/token/<chat_token>`` returns the same fragments — which is used
 here as a fallback when the socket goes quiet or drops.
+
+The site's edge (ArvanCloud) intermittently stalls the upgrade — a handshake or
+write that times out, or a garbled response line — so the connect plus the first
+frame are retried a few times, and writes get their own generous timeout
+(separate from the short read slice used to poll and heartbeat).
 """
 
 from __future__ import annotations
 
 import json
 import random
+import sys
 import time
 import uuid
 
@@ -40,6 +46,10 @@ CHAT_PATH = "/api/v1/get_chat/token/{token}"
 
 HEARTBEAT = 12.0        # send a heartbeat after this many idle seconds
 RECV_TIMEOUT = 2.0      # socket read slice, so we can heartbeat/poll
+SEND_TIMEOUT = 60.0     # writing one frame (large prompt + slow edge: 700 KiB ~ 17 s)
+CONNECT_TIMEOUT = 20.0  # per-attempt websocket handshake timeout
+CONNECT_ATTEMPTS = 3    # the site's edge is flaky; retry a failed handshake
+CONNECT_BACKOFF = (0.5, 1.5)
 POLL_AFTER = 4.0        # socket silence before falling back to get_chat
 ACK_TIMEOUT = 90.0      # how long the server has to acknowledge a message
 
@@ -137,6 +147,8 @@ class Gap(Provider):
             "free_sub_upgrade": "this model needs a paid plan",
             "sub_upgrade": "this model needs a higher plan",
             "invalid_request": "the model name was not accepted; see --model",
+            "token_limit": "the prompt is longer than the model's context window "
+                           "(shorten or split it)",
             "cancelled": "the request was cancelled",
         }
         message = f"GapGPT refused the message ({status})"
@@ -174,11 +186,11 @@ class _Conversation(Conversation):
             header.append(f"User-Agent: {self.match['user_agent']}")
         header.append(f"Cookie: {self.match['cookie_header']}")
         self.socket = websocket.create_connection(
-            self.provider._ws_url(), timeout=min(self.timeout, 120),
+            self.provider._ws_url(), timeout=CONNECT_TIMEOUT,
             origin=self.provider.origin, header=header, suppress_origin=False)
-        self.socket.settimeout(RECV_TIMEOUT)
 
     def _send(self, event, data):
+        self.socket.settimeout(SEND_TIMEOUT)
         rid = random.randint(0, 99999999)
         self.socket.send(json.dumps({"event": event, "rid": rid, "data": data,
                                      "version": EVENT_VERSION}))
@@ -186,6 +198,7 @@ class _Conversation(Conversation):
 
     def _receive(self):
         """Return the next frame (or None on a socket read timeout)."""
+        self.socket.settimeout(RECV_TIMEOUT)
         raw = self.socket.recv()
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", "replace")
@@ -228,12 +241,23 @@ class _Conversation(Conversation):
             "allow_downgrade": False,
             "enable_user_memory": False,
         }
-        try:
-            self._ensure()
-            rid = self._send("new_message", data)
-        except Exception as exc:  # noqa: BLE001 - surface any connect failure
-            yield ev.error(f"could not open the GapGPT websocket: {exc}")
-            self.close()
+        rid = None
+        failure = None
+        for attempt in range(CONNECT_ATTEMPTS):
+            try:
+                self._ensure()
+                rid = self._send("new_message", data)
+                break
+            except Exception as exc:  # noqa: BLE001 - retried below
+                failure = exc
+                self.close()
+                if self.debug:
+                    print(f"[gap] connect attempt {attempt + 1}/{CONNECT_ATTEMPTS} "
+                          f"failed: {exc}", file=sys.stderr)
+                if attempt < CONNECT_ATTEMPTS - 1:
+                    time.sleep(CONNECT_BACKOFF[attempt])
+        if rid is None:
+            yield ev.error(f"could not open the GapGPT websocket: {failure}")
             return
 
         self.blocks = {}
