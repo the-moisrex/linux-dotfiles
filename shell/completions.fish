@@ -273,7 +273,8 @@ complete -c pod -f -s e -r -d 'Set env var K=V (exec)'
 
 # ---- tse / tse.* / prompt stock|tse|intraday ----
 # Symbol completion comes from tse.resolve (cache-only, no network on Tab).
-# It inserts a readable `SYMBOL-ISIN` token with the name/market as description.
+# It inserts a readable `SYMBOL-ISIN` token (`finglish-ISIN` for Latin input)
+# with the name/market as description.
 function __fish_tse_symbols
     tse.resolve --complete (commandline -ct) 2>/dev/null
 end

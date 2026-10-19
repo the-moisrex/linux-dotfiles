@@ -31,11 +31,15 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 DEFAULT_TTL_DAYS = 7
 DEFAULT_MIN_SCORE = 62.0
 FUZZY_ACCEPT_SCORE = 76.0
 AMBIGUITY_MARGIN = 4.0
+# A Latin query this close to a symbol's forward finglish key is a finglish
+# match, not a fuzzy one (e.g. phonetic `mobin` vs the literal key `mbin`).
+FINGLISH_KEY_SCORE = 85.0
+FINGLISH_QUERY_MIN = 3
 
 # Market tier: lower is "more correct" when one symbol is listed twice.
 # 1/2/6/7 are the main bourse/farabourse markets, 4 the پایه market, 3 the
@@ -164,7 +168,25 @@ def _similarity_factory():
         return lambda a, b: SequenceMatcher(None, a, b).ratio() * 100.0
 
 
+def _key_similarity_factory():
+    """Length-aware scorer for finglish keys.
+
+    ``WRatio`` folds in ``partial_ratio``, so a short name token such as ``bin``
+    scores 90 against ``mobin`` and floods the results. Plain ``ratio`` keeps
+    short tokens honest while still tolerating phonetic spellings.
+    """
+    try:
+        from rapidfuzz import fuzz  # type: ignore
+
+        return lambda a, b: float(fuzz.ratio(a, b))
+    except Exception:  # pragma: no cover - rapidfuzz is a soft dependency
+        from difflib import SequenceMatcher
+
+        return lambda a, b: SequenceMatcher(None, a, b).ratio() * 100.0
+
+
 _SIMILARITY = None
+_KEY_SIMILARITY = None
 
 
 def similarity(a, b):
@@ -172,6 +194,13 @@ def similarity(a, b):
     if _SIMILARITY is None:
         _SIMILARITY = _similarity_factory()
     return _SIMILARITY(a, b)
+
+
+def key_similarity(a, b):
+    global _KEY_SIMILARITY
+    if _KEY_SIMILARITY is None:
+        _KEY_SIMILARITY = _key_similarity_factory()
+    return _KEY_SIMILARITY(a, b)
 
 
 # ---------------------------------------------------------------------------
@@ -214,25 +243,28 @@ def latin_keys(symbol, name):
 
     Returns (symbol_keys, name_keys): only symbol keys are exact-tier (a company
     name that merely contains the word `فولاد` must not outrank the symbol).
+    Name-derived tokens shorter than four characters are dropped — words like
+    `bin`, `min`, `si` and `in` are noise that fuzzy matching turns into false
+    positives.
     """
     fa = transliterator()
 
-    def tokenize(text):
+    def tokenize(text, min_len):
         raw = fa.persian_to_finglish(text).lower()
         tokens = re.findall(r"[a-z0-9]+", raw)
         keys = set()
         for token in tokens:
-            if len(token) >= 2:
+            if len(token) >= min_len:
                 keys.add(token)
                 keys.add(fold_latin(token))
         joined = "".join(tokens)
-        if joined:
+        if len(joined) >= min_len:
             keys.add(joined)
             keys.add(fold_latin(joined))
         return keys
 
-    symbol_keys = tokenize(symbol) if symbol else set()
-    name_keys = (tokenize(name) if name else set()) - symbol_keys
+    symbol_keys = tokenize(symbol, 2) if symbol else set()
+    name_keys = (tokenize(name, 4) if name else set()) - symbol_keys
     return sorted(symbol_keys), sorted(name_keys)
 
 
@@ -609,12 +641,27 @@ def _score_index(index, query, query_latin, reverse, min_score):
         symbol = instrument.get("symbol") or ""
         name = instrument.get("name") or ""
         tier, score, matched = 2, 0.0, "fuzzy"
+        symbol_key_score = 0.0
+        if query_latin:
+            symbol_key_score = max(
+                (key_similarity(query_latin, key) for key in instrument.get("latin", ())),
+                default=0.0,
+            )
         if query and (query == symbol or query == name):
             tier, score, matched = 0, 100.0, "exact"
         elif query_latin and query_latin in instrument.get("latin", ()):
-            tier, score, matched = 1, 97.0, "finglish"
+            tier, score, matched = 1, 100.0, "finglish"
         elif query_latin and reverse and reverse in (symbol, name):
-            tier, score, matched = 1, 97.0, "finglish"
+            tier, score, matched = 1, 100.0, "finglish"
+        elif (
+            query_latin
+            and len(query_latin) >= FINGLISH_QUERY_MIN
+            and symbol_key_score >= FINGLISH_KEY_SCORE
+        ):
+            # A phonetic spelling of the symbol's literal finglish key (`mobin`
+            # for `mbin`, `foolad` for `folad`) is still a finglish match, so it
+            # beats name-derived fuzzy candidates instead of tying with them.
+            tier, score, matched = 1, symbol_key_score, "finglish"
         if tier == 2:
             best = 0.0
             if query:
@@ -623,10 +670,9 @@ def _score_index(index, query, query_latin, reverse, min_score):
                 if name:
                     best = max(best, similarity(query, name))
             if query_latin:
-                for key in instrument.get("latin", ()):
-                    best = max(best, similarity(query_latin, key))
+                best = max(best, symbol_key_score)
                 for key in instrument.get("name_latin", ()):
-                    best = max(best, similarity(query_latin, key))
+                    best = max(best, key_similarity(query_latin, key))
                 if reverse:
                     if symbol:
                         best = max(best, similarity(reverse, symbol))
@@ -794,6 +840,43 @@ def resolve_one(query, **kwargs):
     return best["instrument"]
 
 
+def _best_latin_key(query, keys):
+    """Return (key, exact) for the closest finglish key to a Latin query."""
+    if not keys:
+        return None, False
+    if query in keys:
+        return query, True
+    prefixed = [key for key in keys if key.startswith(query)]
+    if prefixed:
+        return min(prefixed, key=len), False
+    contained = [key for key in keys if query in key]
+    if contained:
+        return min(contained, key=len), False
+    return max(keys, key=lambda key: key_similarity(query, key)), False
+
+
+def completion_token(instrument, latin_query=None):
+    """The inserted token: `SYMBOL-ISIN`, or `finglish-ISIN` for Latin input."""
+    symbol = instrument.get("symbol") or ""
+    suffix = instrument.get("isin") or instrument.get("ins_code") or ""
+    if latin_query is None:
+        return token_for(instrument)
+    key, exact = _best_latin_key(latin_query, instrument.get("latin") or [])
+    if exact or (
+        key is not None
+        and len(latin_query) >= 4
+        and key_similarity(latin_query, key) >= FINGLISH_KEY_SCORE
+    ):
+        name = latin_query
+    elif key:
+        name = key
+    else:
+        name = symbol
+    if name and suffix:
+        return f"{name}-{suffix}"
+    return name or suffix or ""
+
+
 def complete_query(prefix, index, limit=60):
     """Cache-only completion: [(token, description)] for the current token."""
     prefix = prefix or ""
@@ -806,16 +889,29 @@ def complete_query(prefix, index, limit=60):
     reverse = reverse_persian(query_latin) if query_latin else None
     isin_prefix = None
     code_prefix = None
+    isin_suffix = None
+    name_part = None
     if kind == "isin":
         isin_prefix = value.upper()
     elif kind == "ins_code":
         code_prefix = value
-    elif prefix.isascii():
-        raw = prefix.strip().upper()
-        if raw.startswith("IR") and len(raw) >= 2:
-            isin_prefix = raw
-        elif raw.isdigit():
-            code_prefix = raw
+    else:
+        raw = prefix.strip()
+        if raw.isascii():
+            upper = raw.upper()
+            if upper.startswith("IR") and len(upper) >= 2:
+                isin_prefix = upper
+            elif upper.isdigit():
+                code_prefix = upper
+        if not isin_prefix and not code_prefix:
+            # `foolad-IRO1F` / `فولاد-IRO1F`: complete the ISIN after a separator.
+            match = re.match(r"^(.*?)[-:@(\s]+(IR[A-Za-z0-9]*)$", raw, re.IGNORECASE)
+            if match:
+                name_part = match.group(1).strip()
+                isin_suffix = match.group(2).upper()
+                normalized = tse.normal(name_part)
+                query_latin = latin_only(name_part)
+                reverse = reverse_persian(query_latin) if query_latin else None
     rows = []
     seen = set()
     for instrument in index:
@@ -824,7 +920,15 @@ def complete_query(prefix, index, limit=60):
         isin = (instrument.get("isin") or "").upper()
         code = instrument.get("ins_code") or ""
         keys = (*instrument.get("latin", ()), *instrument.get("name_latin", ())) if query_latin else ()
-        if isin_prefix and isin.startswith(isin_prefix):
+        if isin_suffix:
+            if not isin.startswith(isin_suffix):
+                continue
+            name_hit = (
+                (normalized and (symbol.startswith(normalized) or name.startswith(normalized)))
+                or (query_latin and any(key.startswith(query_latin) for key in keys))
+            )
+            score = 0 if name_hit else 1
+        elif isin_prefix and isin.startswith(isin_prefix):
             score = 0
         elif code_prefix and code.startswith(code_prefix):
             score = 0
@@ -844,15 +948,36 @@ def complete_query(prefix, index, limit=60):
             score = 5
         elif normalized and normalized in name:
             score = 6
+        elif (
+            query_latin
+            and len(query_latin) >= FINGLISH_QUERY_MIN
+            and max((key_similarity(query_latin, key) for key in keys), default=0.0) >= FINGLISH_KEY_SCORE
+        ):
+            score = 7
         else:
             continue
-        token = token_for(instrument)
+        if isin_suffix:
+            token = f"{name_part}-{isin or code}" if name_part else (isin or code)
+        elif isin_prefix or code_prefix:
+            token = token_for(instrument)
+        elif query_latin:
+            token = completion_token(instrument, query_latin)
+        else:
+            token = token_for(instrument)
         if not token or token in seen:
             continue
         seen.add(token)
-        rows.append((score, -(instrument.get("value") or 0), token, description_for(instrument)))
+        rows.append(
+            (
+                score,
+                market_rank(instrument.get("flow"), instrument.get("isin")),
+                -(instrument.get("value") or 0),
+                token,
+                description_for(instrument),
+            )
+        )
     rows.sort()
-    return [(token, description) for _, _, token, description in rows[:limit]]
+    return [(token, description) for _, _, _, token, description in rows[:limit]]
 
 
 # ---------------------------------------------------------------------------
