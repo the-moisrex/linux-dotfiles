@@ -56,6 +56,9 @@ def build_parser(provider):
         description=f"Chat with {provider.label} from a prompt or interactively "
                     f"(replays the signed-in web session; no API key).")
     p.add_argument("prompt", nargs="*", help="prompt text (or pipe it on stdin)")
+    p.add_argument("-f", "--file", action="append", default=[], metavar="PATH",
+                   help="upload and attach a local file to the first message "
+                        "(repeatable)")
     p.add_argument("-m", "--model", default=None,
                    help=f"model (default: {provider.default_model}; one of {models})")
     p.add_argument("-s", "--system", default=None, help="system / custom instructions")
@@ -141,7 +144,9 @@ def run_turn(conversation, prompt, args, renderer):
     """Stream one turn; return ``(status, answer)``."""
     status = 0
     parts = []
-    for event in conversation.send(prompt):
+    # --file attaches to the first message only; the site keeps it in context.
+    files = args.file if not conversation.turns else None
+    for event in conversation.send(prompt, files=files):
         if args.json:
             emit_json(event)
         else:
@@ -288,6 +293,20 @@ def main(provider_name, argv=None):
     if args.print_session:
         print(json.dumps(_session_summary(match), indent=2))
         return 0
+
+    for path in args.file:
+        full = os.path.expanduser(path)
+        if not os.path.exists(full):
+            print(f"ai.{provider_name}: {path}: no such file", file=sys.stderr)
+            return 1
+        if not os.path.isfile(full):
+            print(f"ai.{provider_name}: {path}: not a regular file",
+                  file=sys.stderr)
+            return 1
+        if not os.access(full, os.R_OK):
+            print(f"ai.{provider_name}: {path}: permission denied",
+                  file=sys.stderr)
+            return 1
 
     if args.new:
         state.clear(provider_name)

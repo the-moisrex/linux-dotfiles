@@ -25,6 +25,10 @@ The site's edge (ArvanCloud) intermittently stalls the upgrade — a handshake o
 write that times out, or a garbled response line — so the connect plus the first
 frame are retried a few times, and writes get their own generous timeout
 (separate from the short read slice used to poll and heartbeat).
+
+``--file`` uploads through ``POST /api/v1/upload_file`` (multipart ``file``,
+authenticated with the ``accessToken`` cookie as a bearer token) and passes the
+returned ``file_token`` list in the action's ``file_tokens``.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ import time
 import uuid
 
 from .. import events as ev
+from .. import files as files_mod
 from .. import net
 from .. import session as session_mod
 from . import Conversation, Provider
@@ -43,6 +48,7 @@ from . import Conversation, Provider
 WS_PATH = "/ws/salam"
 EVENT_VERSION = 98
 CHAT_PATH = "/api/v1/get_chat/token/{token}"
+UPLOAD_PATH = "/api/v1/upload_file"
 
 HEARTBEAT = 12.0        # send a heartbeat after this many idle seconds
 RECV_TIMEOUT = 2.0      # socket read slice, so we can heartbeat/poll
@@ -116,7 +122,28 @@ class Gap(Provider):
     def _ws_url(self):
         return "wss://" + self.origin.split("://", 1)[-1] + WS_PATH
 
-    def _action(self, model, chat_token, text):
+    def _upload(self, match, attachment):
+        """Upload one attachment and return the site's ``file_token``."""
+        headers = session_mod.build_headers(match, {
+            "Accept": "application/json, text/plain, */*",
+            "Referer": self.origin + "/",
+            "Origin": self.origin,
+        })
+        token = session_mod.cookie_value(match, "accessToken")
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        body, content_type = net.encode_multipart([
+            ("file", (attachment.name, attachment.data, attachment.mime)),
+        ])
+        headers["Content-Type"] = content_type
+        data = net.request_json(self.origin + UPLOAD_PATH, method="POST",
+                                headers=headers, data=body, timeout=300)
+        file_token = (data or {}).get("file_token")
+        if not file_token:
+            raise net.StreamError(f"upload failed: {data}")
+        return file_token
+
+    def _action(self, model, chat_token, text, file_tokens=()):
         """The ``text_message`` action the composer builds (captured shape)."""
         mode_extra = {}
         if model == "A-GAP":
@@ -130,7 +157,7 @@ class Gap(Provider):
             "version": 4,
             "chat_token": chat_token or "",
             "text": text,
-            "file_tokens": [],
+            "file_tokens": list(file_tokens),
             "allow_downgrade": False,
             "enable_user_memory": False,
             "mode": "",
@@ -220,7 +247,7 @@ class _Conversation(Conversation):
 
     # -- streaming ---------------------------------------------------------
 
-    def send(self, prompt):
+    def send(self, prompt, files=None):
         try:
             import websocket  # noqa: F401  (websocket-client)
         except ImportError:
@@ -230,11 +257,25 @@ class _Conversation(Conversation):
         if not self.match.get("cookie_header"):
             yield ev.error("no cookies in the GapGPT session; log in to gapgpt.app")
             return
+        try:
+            attachments = self._attachments(files)
+        except files_mod.FileError as exc:
+            yield ev.error(str(exc))
+            return
+        file_tokens = []
+        for attachment in attachments:
+            try:
+                file_tokens.append(self.provider._upload(self.match, attachment))
+            except (net.StreamError, files_mod.FileError) as exc:
+                yield ev.error(str(exc))
+                return
+            yield ev.tool_call(name="upload", status="done", args=attachment.name)
 
         text = (f"{self.system}\n\n{prompt}"
                 if (self.system and self.turns == 0) else prompt)
         data = {
-            "action": self.provider._action(self.model, self.conversation_id, text),
+            "action": self.provider._action(self.model, self.conversation_id, text,
+                                            file_tokens),
             "chat_token": self.conversation_id,
             "chat_model": self.model,
             "message_token": "",

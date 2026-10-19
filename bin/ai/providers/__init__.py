@@ -1,7 +1,7 @@
 """Provider registry.
 
 Every provider exposes ``open_conversation(...)`` returning a
-:class:`Conversation` whose ``send(prompt)`` generator yields
+:class:`Conversation` whose ``send(prompt, files=None)`` generator yields
 :class:`ai.events.StreamEvent` for one turn, so the CLI and renderer never need
 to know which site is behind them.  A conversation can be continued later by
 opening it again with a saved ``conversation_id``/``resume`` (see
@@ -32,8 +32,12 @@ class Conversation:
         self.resume = dict(resume or {})
         self.turns = 0
 
-    def send(self, prompt):
-        """Yield the events of one turn, updating the conversation state."""
+    def send(self, prompt, files=None):
+        """Yield the events of one turn, updating the conversation state.
+
+        *files* is an optional list of local paths (``--file``) the provider
+        uploads and attaches to this message.
+        """
         raise NotImplementedError
 
     def close(self):
@@ -42,6 +46,12 @@ class Conversation:
     def _record(self, role, text):
         if text:
             self.history.append({"role": role, "text": text})
+
+    @staticmethod
+    def _attachments(files):
+        """Read the ``--file`` paths into attachments (raises ``FileError``)."""
+        from .. import files as files_mod
+        return files_mod.read_all(files)
 
 
 class Provider:

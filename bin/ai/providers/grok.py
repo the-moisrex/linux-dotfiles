@@ -17,6 +17,10 @@ The site computes a ``castle_request_token`` for each turn, but the server
 accepts a request without it (verified from a captured turn replayed over the
 socket), so it is deliberately omitted here.
 
+``--file`` uploads over plain HTTP — ``POST /rest/app-chat/upload-file`` with the
+file base64'd in the JSON body — and passes the returned ``fileMetadataId``
+list to the socket as ``event.file_attachment_ids``.
+
 .. note::
    Protocol confirmed with ``bin/browser.record https://grok.com`` (Phase 0) and
    verified end to end against the live site.
@@ -24,16 +28,20 @@ socket), so it is deliberately omitted here.
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import time
 import uuid
 
 from .. import events as ev
+from .. import files as files_mod
+from .. import net
 from .. import session as session_mod
 from . import Conversation, Provider
 
 WS_URL = "wss://grok.com/ws/mgw/?uid={uid}"
+UPLOAD_PATH = "/rest/app-chat/upload-file"
 
 #: How many transcript entries to replay when a conversation is resumed from a
 #: new process (the socket cannot be reattached).
@@ -88,6 +96,33 @@ class Grok(Provider):
         return _Conversation(self, match, model, system, debug, timeout,
                              conversation_id, history, resume)
 
+    # ------------------------------------------------------------------ upload
+
+    def _headers(self, match):
+        return session_mod.build_headers(match, {
+            "Accept": "*/*",
+            "Content-Type": "application/json",
+            "Referer": self.origin + "/",
+            "Origin": self.origin,
+        })
+
+    def _upload(self, match, attachment):
+        """Upload one attachment and return the site's ``fileMetadataId``."""
+        payload = {
+            "fileName": attachment.name,
+            "fileMimeType": attachment.mime,
+            "content": base64.b64encode(attachment.data).decode("ascii"),
+            "makePublic": False,
+            "fileSource": "SELF_UPLOAD_FILE_SOURCE",
+        }
+        data = net.request_json(self.origin + UPLOAD_PATH, method="POST",
+                                headers=self._headers(match), json_body=payload,
+                                timeout=300)
+        file_id = (data or {}).get("fileMetadataId")
+        if not file_id:
+            raise net.StreamError(f"upload failed: {data}")
+        return file_id
+
     # ----------------------------------------------------------------- socket
 
     def _connect(self, websocket, match, timeout):
@@ -109,8 +144,8 @@ class Grok(Provider):
         }})
         return self._await_session(socket, debug)
 
-    def _response_create(self, socket, session_id, prompt):
-        self._send(socket, {"session_id": session_id, "event": {
+    def _response_create(self, socket, session_id, prompt, file_ids=()):
+        event = {
             "type": "response.create",
             "event_id": "evt_resp_" + str(int(time.time() * 1000)),
             "item": {
@@ -121,7 +156,10 @@ class Grok(Provider):
                     "input_chunks": [{"text": {"text": prompt}}],
                 },
             },
-        }})
+        }
+        if file_ids:
+            event["file_attachment_ids"] = list(file_ids)
+        self._send(socket, {"session_id": session_id, "event": event})
         self._send(socket, {"session_id": session_id, "event": {
             "type": "presence.update", "visible": True}})
 
@@ -225,7 +263,7 @@ class _Conversation(Conversation):
             parts.append(prompt)
         return "\n\n".join(p for p in parts if p)
 
-    def send(self, prompt):
+    def send(self, prompt, files=None):
         try:
             import websocket  # websocket-client
         except ImportError:
@@ -235,6 +273,19 @@ class _Conversation(Conversation):
         if not self.match.get("cookie_header"):
             yield ev.error("no cookies in the Grok session; log in to grok.com")
             return
+        try:
+            attachments = self._attachments(files)
+        except files_mod.FileError as exc:
+            yield ev.error(str(exc))
+            return
+        file_ids = []
+        for attachment in attachments:
+            try:
+                file_ids.append(self.provider._upload(self.match, attachment))
+            except (net.StreamError, files_mod.FileError) as exc:
+                yield ev.error(str(exc))
+                return
+            yield ev.tool_call(name="upload", status="done", args=attachment.name)
         content = self._content(prompt)
         if self.socket is None:
             try:
@@ -249,7 +300,8 @@ class _Conversation(Conversation):
         self._replay = False
         answer = []
         try:
-            self.provider._response_create(self.socket, self.session_id, content)
+            self.provider._response_create(self.socket, self.session_id, content,
+                                           file_ids)
             for event in self.provider._read(self.socket, self.debug):
                 if event.kind == ev.TEXT:
                     answer.append(event.text)

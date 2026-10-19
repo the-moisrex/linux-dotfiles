@@ -13,6 +13,10 @@ protocol: an initial ``{"v":{"response":{...}}}`` snapshot carrying ``fragments`
 ``{"p": "...", "o": "APPEND", "v": ...}`` and the shorthand ``{"v": "text"}``
 that appends to the current fragment.  Endpoint paths, the payload shape and this
 protocol were captured with ``bin/browser.record https://chat.deepseek.com``.
+
+``--file`` uploads through ``POST /api/v0/file/upload_file`` (multipart ``file``,
+behind its own ``X-DS-PoW-Response`` header) and references the returned
+``file-<uuid>`` in the completion body's ``ref_file_ids``.
 """
 
 from __future__ import annotations
@@ -22,13 +26,20 @@ import time
 import uuid
 
 from .. import events as ev
+from .. import files as files_mod
 from .. import net
 from .. import session as session_mod
 from ..pow import PowError, deepseek_response, solve_deepseek
 from . import Conversation, Provider
 
 COMPLETION_PATH = "/api/v0/chat/completion"
+UPLOAD_PATH = "/api/v0/file/upload_file"
+FILES_PATH = "/api/v0/file/fetch_files"
 CLIENT_VERSION = "2.5.0"
+
+#: ``status`` values that mean the file can be referenced, and dead ends.
+FILE_READY = ("SUCCESS",)
+FILE_FAILED = ("FAILED", "CONTENT_EMPTY", "CONTENT_TOO_LONG")
 
 
 class DeepSeek(Provider):
@@ -75,10 +86,10 @@ class DeepSeek(Provider):
             return biz.get("id") or biz.get("chat_session_id")
         return None
 
-    def _pow(self, headers):
+    def _pow(self, headers, target_path=COMPLETION_PATH):
         data = net.request_json(self.origin + "/api/v0/chat/create_pow_challenge",
                                 method="POST", headers=headers,
-                                json_body={"target_path": COMPLETION_PATH})
+                                json_body={"target_path": target_path})
         challenge = self._biz(data)
         if isinstance(challenge, dict) and "challenge" in challenge:
             challenge = challenge["challenge"]
@@ -92,7 +103,48 @@ class DeepSeek(Provider):
                                  challenge=challenge.get("challenge", ""),
                                  signature=challenge.get("signature", ""),
                                  answer=answer,
-                                 target_path=COMPLETION_PATH)
+                                 target_path=target_path)
+
+    def _upload(self, headers, attachment):
+        """Upload one attachment and wait for it to become referenceable.
+
+        Returns the server's file record; raises :class:`net.StreamError` when
+        the site rejects the upload.
+        """
+        request_headers = dict(headers)
+        pow_header = self._pow(request_headers, UPLOAD_PATH)
+        if pow_header:
+            request_headers["x-ds-pow-response"] = pow_header
+        body, content_type = net.encode_multipart([
+            ("file", (attachment.name, attachment.data, attachment.mime)),
+        ])
+        request_headers["Content-Type"] = content_type
+        data = net.request_json(self.origin + UPLOAD_PATH, method="POST",
+                                headers=request_headers, data=body, timeout=300)
+        record = self._biz(data)
+        if not isinstance(record, dict) or not record.get("id"):
+            raise net.StreamError(f"upload failed: {data}")
+        return self._await_file(request_headers, record)
+
+    def _await_file(self, headers, record, timeout=120):
+        """Poll ``fetch_files`` until the file is parsed (or clearly dead)."""
+        file_id = record.get("id")
+        deadline = time.monotonic() + timeout
+        while record.get("status") not in FILE_READY + FILE_FAILED:
+            if time.monotonic() >= deadline:
+                return record
+            time.sleep(1.0)
+            try:
+                data = net.request_json(
+                    f"{self.origin}{FILES_PATH}?file_ids={file_id}",
+                    headers=headers, timeout=60)
+            except net.StreamError:
+                return record
+            found = _find_file(self._biz(data), file_id)
+            if not found:
+                return record
+            record = found
+        return record
 
     @staticmethod
     def _biz(data):
@@ -100,6 +152,23 @@ class DeepSeek(Provider):
         if isinstance(biz, dict) and "biz_data" in biz:
             biz = biz["biz_data"]
         return biz
+
+
+def _find_file(node, file_id):
+    """Find the ``{"id": file_id, ...}`` record inside a nested response."""
+    if isinstance(node, dict):
+        if node.get("id") == file_id and "status" in node:
+            return node
+        for value in node.values():
+            found = _find_file(value, file_id)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _find_file(value, file_id)
+            if found:
+                return found
+    return None
 
 
 class _Conversation(Conversation):
@@ -115,7 +184,7 @@ class _Conversation(Conversation):
         self.thinking = model in ("deepseek_reasoner", "reasoner")
         self.parent_message_id = (resume or {}).get("parent_message_id")
 
-    def send(self, prompt):
+    def send(self, prompt, files=None):
         if not self.token:
             yield ev.error("no DeepSeek token in web storage; log in to chat.deepseek.com")
             return
@@ -130,6 +199,24 @@ class _Conversation(Conversation):
             return
         if pow_header:
             headers["x-ds-pow-response"] = pow_header
+        ref_ids = []
+        try:
+            attachments = self._attachments(files)
+        except files_mod.FileError as exc:
+            yield ev.error(str(exc))
+            return
+        for attachment in attachments:
+            try:
+                record = self.provider._upload(headers, attachment)
+            except (net.StreamError, files_mod.FileError) as exc:
+                yield ev.error(str(exc))
+                return
+            status = record.get("status")
+            if status and status not in FILE_READY:
+                yield ev.error(f"{attachment.name}: upload failed ({status})")
+                return
+            ref_ids.append(record["id"])
+            yield ev.tool_call(name="upload", status="done", args=attachment.name)
         first = self.turns == 0
         content = f"{self.system}\n\n{prompt}" if (self.system and first) else prompt
         body = {
@@ -137,7 +224,7 @@ class _Conversation(Conversation):
             "parent_message_id": self.parent_message_id,
             "model_type": "default",
             "prompt": content,
-            "ref_file_ids": [],
+            "ref_file_ids": ref_ids,
             "thinking_enabled": self.thinking,
             "search_enabled": False,
             "action": None,

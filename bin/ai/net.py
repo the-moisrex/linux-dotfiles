@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 
 DEFAULT_IMPERSONATE = "firefox"
 
@@ -90,13 +91,17 @@ def stream_lines(url, method="POST", headers=None, json_body=None, data=None,
             yield line
 
 
-def request_json(url, method="GET", headers=None, json_body=None,
+def request_json(url, method="GET", headers=None, json_body=None, data=None,
                  impersonate=DEFAULT_IMPERSONATE, timeout=60):
-    """Perform a non-streaming request and return the decoded JSON (or None)."""
+    """Perform a non-streaming request and return the decoded JSON (or None).
+
+    ``data`` sends a raw body instead of ``json_body`` — the multipart uploads
+    built by :func:`encode_multipart` go through here.
+    """
     kind, module = _clients()
     if kind is None:
         raise StreamError("no HTTP client available (need curl_cffi or httpx)")
-    kwargs = _request_kwargs(kind, dict(headers or {}), json_body, None,
+    kwargs = _request_kwargs(kind, dict(headers or {}), json_body, data,
                              impersonate, timeout, stream=False)
     if kind == "curl_cffi":
         response = module.request(method, url, **kwargs)
@@ -127,6 +132,50 @@ def request_text(url, method="GET", headers=None, timeout=60):
     if response.status_code >= 400:
         raise StreamError(_http_error(response.status_code, response.content))
     return response.text
+
+
+def request_raw(url, method="PUT", headers=None, data=None,
+                impersonate=DEFAULT_IMPERSONATE, timeout=300):
+    """Send a raw body and return ``(status, body)`` without decoding.
+
+    The providers' upload steps hand back a pre-signed blob URL that has to be
+    written with ``PUT`` and *without* the site's cookies/token, so this is
+    deliberately a lower-level call than :func:`request_json`.
+    """
+    kind, module = _clients()
+    if kind is None:
+        raise StreamError("no HTTP client available (need curl_cffi or httpx)")
+    kwargs = _request_kwargs(kind, dict(headers or {}), None, data,
+                             impersonate, timeout, stream=False)
+    response = module.request(method, url, **kwargs)
+    return response.status_code, response.content
+
+
+def encode_multipart(fields, boundary=None):
+    """Build a ``multipart/form-data`` body for *fields*.
+
+    A field whose value is a ``(filename, bytes, content_type)`` tuple becomes
+    a file part; anything else is a plain form field.  Returns
+    ``(body, content_type_header)`` — the header carries the generated
+    boundary, so it must be sent as-is with the body.
+    """
+    boundary = boundary or uuid.uuid4().hex
+    marker = f"--{boundary}".encode()
+    out = bytearray()
+    for name, value in fields:
+        out += marker + b"\r\n"
+        if isinstance(value, tuple) and len(value) == 3:
+            filename, payload, content_type = value
+            out += (f'Content-Disposition: form-data; name="{name}"; '
+                    f'filename="{filename}"\r\n').encode()
+            out += f"Content-Type: {content_type}\r\n\r\n".encode()
+            out += payload + b"\r\n"
+        else:
+            out += (f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                    ).encode()
+            out += str(value).encode() + b"\r\n"
+    out += marker + b"--\r\n"
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
 
 
 def _http_error(status, body):

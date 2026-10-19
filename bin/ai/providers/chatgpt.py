@@ -12,6 +12,11 @@ A conversation is continued by sending the next user message with the stored
 message's id (verified: a follow-up in the same conversation answers with the
 earlier context).
 
+Any message can carry ``--file`` attachments: each is created with
+``POST /backend-api/files``, written to the returned pre-signed blob URL, marked
+uploaded, and then referenced from the message (images as
+``image_asset_pointer`` parts, documents as ``metadata.attachments`` entries).
+
 .. note::
    The request shapes, the token chain and the hand-off behaviour are confirmed
    with ``bin/browser.record https://chatgpt.com`` plus the site's own client
@@ -27,14 +32,22 @@ import time
 import uuid
 
 from .. import events as ev
+from .. import files as files_mod
 from .. import net
 from .. import sentinel
 from .. import session as session_mod
 from . import Conversation, Provider
 
 BASE = "https://chatgpt.com"
+FILES_PATH = "/backend-api/files"
 POLL_INTERVAL = 0.5
 ROOT_MESSAGE = "client-created-root"
+
+
+def _asset_pointer(file_id):
+    """The pointer a message part uses for an uploaded file id."""
+    scheme = "file-service://" if file_id.startswith("file-") else "sediment://"
+    return scheme + file_id
 
 
 class ChatGPT(Provider):
@@ -159,14 +172,58 @@ class ChatGPT(Provider):
             result["headers"]["OpenAI-Sentinel-SO-Token"] = finalized["so_token"]
         return result
 
+    # ------------------------------------------------------------------ uploads
+
+    def _upload(self, headers, attachment):
+        """Upload one attachment; return the descriptor the message needs."""
+        path = FILES_PATH
+        prepared = net.request_json(
+            self.origin + path, method="POST",
+            headers=self._target(headers, path),
+            json_body={
+                "file_name": attachment.name,
+                "file_size": attachment.size,
+                "mime_type": attachment.mime,
+                "client_resolved_mime_type": attachment.mime,
+                "mime_resolution_source": "client",
+                "use_case": "multimodal",
+                "timezone_offset_min": self._timezone()[0],
+                "reset_rate_limits": False,
+            }, timeout=120) or {}
+        file_id = prepared.get("file_id")
+        upload_url = prepared.get("upload_url")
+        if not file_id or not upload_url:
+            raise net.StreamError(f"upload failed: {str(prepared)[:300]}")
+        status, body = net.request_raw(
+            upload_url, method="PUT",
+            headers={
+                "Content-Type": attachment.mime,
+                "x-ms-blob-type": "BlockBlob",
+                "x-ms-blob-content-type": attachment.mime,
+                "x-ms-version": "2020-04-08",
+            },
+            data=attachment.data, timeout=600)
+        if status >= 400:
+            detail = body.decode("utf-8", "replace")[:200] if body else ""
+            raise net.StreamError(
+                f"uploading {attachment.name} failed: HTTP {status} {detail}")
+        path = f"{FILES_PATH}/{file_id}/uploaded"
+        net.request_json(self.origin + path, method="POST",
+                         headers=self._target(headers, path), json_body={},
+                         timeout=120)
+        return {"id": file_id, "name": attachment.name,
+                "mime": attachment.mime, "size": attachment.size,
+                "image": attachment.mime.startswith("image/")}
+
     # ------------------------------------------------------------------ payloads
 
     def _timezone(self):
         return time.timezone // 60, time.tzname[0]
 
     @staticmethod
-    def _message(text, role="user"):
-        return {
+    def _message(text, role="user", attachments=()):
+        attachments = list(attachments)
+        message = {
             "id": str(uuid.uuid4()),
             "author": {"role": role},
             "create_time": time.time(),
@@ -179,6 +236,24 @@ class ChatGPT(Provider):
                 "serialization_metadata": {"custom_symbol_offsets": []},
             },
         }
+        if not attachments:
+            return message
+        parts = [text] if text else []
+        for attachment in attachments:
+            if attachment["image"]:
+                parts.append({
+                    "content_type": "image_asset_pointer",
+                    "asset_pointer": _asset_pointer(attachment["id"]),
+                    "size_bytes": attachment["size"],
+                })
+        if parts != [text]:
+            message["content"] = {"content_type": "multimodal_text", "parts": parts}
+        message["metadata"]["attachments"] = [
+            {"id": item["id"], "size": item["size"], "name": item["name"],
+             "mime_type": item["mime"], "width": None, "height": None}
+            for item in attachments
+        ]
+        return message
 
     def _conduit_token(self, headers, prompt, model):
         offset, zone = self._timezone()
@@ -284,13 +359,26 @@ class _Conversation(Conversation):
             self.headers.get("User-Agent", ""), script, build)
         self._ready = True
 
-    def send(self, prompt):
+    def send(self, prompt, files=None):
         if not self._ready:
             try:
                 self._prepare()
             except (net.StreamError, sentinel.SentinelError) as exc:
                 yield ev.error(str(exc))
                 return
+        try:
+            attachments = self._attachments(files)
+        except files_mod.FileError as exc:
+            yield ev.error(str(exc))
+            return
+        uploaded = []
+        for attachment in attachments:
+            try:
+                uploaded.append(self.provider._upload(self.headers, attachment))
+            except (net.StreamError, files_mod.FileError) as exc:
+                yield ev.error(str(exc))
+                return
+            yield ev.tool_call(name="upload", status="done", args=attachment.name)
         message = (f"{self.system}\n\n{prompt}"
                    if (self.system and self.turns == 0) else prompt)
         try:
@@ -319,7 +407,8 @@ class _Conversation(Conversation):
             lines = net.stream_lines(
                 self.provider.origin + path, headers=stream_headers,
                 json_body=self.provider._stream_body(
-                    [self.provider._message(message)], self.model,
+                    [self.provider._message(message, attachments=uploaded)],
+                    self.model,
                     conversation_id=self.conversation_id,
                     parent=self.parent_message_id),
                 timeout=self.timeout, debug=self.debug)
@@ -385,6 +474,8 @@ def _walk_messages(data):
 def _part_text(part):
     if isinstance(part, str):
         return part
+    if isinstance(part, list):
+        return "".join(_part_text(item) for item in part)
     if isinstance(part, dict):
         return str(part.get("text") or "")
     return ""
@@ -399,7 +490,13 @@ def _is_finished(message):
 
 
 class _MessageStream:
-    """Turn cumulative conversation messages into deltas (deduplicated by id)."""
+    """Turn cumulative conversation messages into deltas (deduplicated by id).
+
+    The site interleaves whole ``message`` frames with JSON-patch frames
+    (``{"o": "patch", "v": [{"p": "/message/content/parts/0", …}]}``) that carry
+    the rest of a streaming answer; both are applied here, keyed by message id
+    so a fresh message starts from an empty part list.
+    """
 
     def __init__(self):
         self.text = 0
@@ -408,6 +505,8 @@ class _MessageStream:
         self.emitted = False
         self.answer_parts = []
         self.last_assistant_id = ""
+        self.current_id = ""
+        self.parts = []
 
     @property
     def answer(self):
@@ -418,9 +517,45 @@ class _MessageStream:
         message = event.get("message")
         if isinstance(message, dict):
             out += self.feed_message(message)
-        if isinstance(event.get("v"), dict):
-            out += self.feed(event["v"])
+        value = event.get("v")
+        if isinstance(value, dict):
+            out += self.feed(value)
+        elif isinstance(value, list) and event.get("o") == "patch":
+            out += self.apply_patches(value)
         return out
+
+    def apply_patches(self, patches):
+        """Apply ``/message/content/parts/<i>`` patches to the live answer."""
+        out = []
+        for patch in patches:
+            if not isinstance(patch, dict):
+                continue
+            path = str(patch.get("p") or "")
+            if not path.startswith("/message/content/parts/"):
+                continue
+            try:
+                index = int(path.rsplit("/", 1)[-1])
+            except ValueError:
+                continue
+            while len(self.parts) <= index:
+                self.parts.append("")
+            value = patch.get("v")
+            if patch.get("o") == "append" and isinstance(self.parts[index], str) \
+                    and isinstance(value, str):
+                self.parts[index] += value
+            else:
+                self.parts[index] = value
+            out += self._sync_text()
+        return out
+
+    def _sync_text(self):
+        full = "".join(_part_text(part) for part in self.parts)
+        if len(full) <= self.text:
+            return []
+        delta = full[self.text:]
+        self.text = len(full)
+        self.answer_parts.append(delta)
+        return [ev.text(delta)]
 
     def feed_message(self, message):
         out = []
@@ -428,7 +563,12 @@ class _MessageStream:
             return out
         identifier = message.get("id")
         if identifier:
-            self.last_assistant_id = str(identifier)
+            identifier = str(identifier)
+            self.last_assistant_id = identifier
+            if identifier != self.current_id:
+                self.current_id = identifier
+                self.parts = []
+                self.text = 0
         content = message.get("content") or {}
         ctype = content.get("content_type")
         recipient = message.get("recipient") or "all"
@@ -436,12 +576,8 @@ class _MessageStream:
             self.tool = recipient
             out.append(ev.tool_call(name=recipient, status="start"))
         if ctype in ("text", "multimodal_text"):
-            full = "".join(_part_text(part) for part in content.get("parts") or [])
-            if len(full) > self.text:
-                delta = full[self.text:]
-                out.append(ev.text(delta))
-                self.answer_parts.append(delta)
-                self.text = len(full)
+            self.parts = list(content.get("parts") or [])
+            out += self._sync_text()
         elif ctype in ("thoughts", "reasoning_recap"):
             parts = content.get("thoughts") or content.get("parts") or []
             full = "\n".join(_part_text(part) for part in parts)
