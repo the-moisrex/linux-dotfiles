@@ -14,6 +14,13 @@ how many bars each row merged) — and the bar interval is chosen automatically 
 keep the output within ``--max-rows``, the finest interval that still fits, so
 the least data is lost. The daily حقیقی/حقوقی (individual/legal) breakdown is
 attached per day; TSETMC does not publish that per bar.
+
+Every bar carries its own volume-weighted average price (``vwap_rial``, computed
+from the tape) and every completed session its official daily row — قیمت پایانی,
+last trade, first/low/high, trade/volume/value totals — so the tape can be read
+against TSETMC's own numbers. قیمت پایانی is the day's VWAP capped by حجم مبنا,
+not a closing-auction print: TSETMC publishes no auction detail, no per-minute
+حقیقی/حقوقی and no per-instrument NAV history.
 """
 
 import argparse
@@ -51,6 +58,7 @@ BAR_COLUMNS = (
     "high_rial",
     "low_rial",
     "close_rial",
+    "vwap_rial",
     "volume_shares",
     "trades",
 )
@@ -97,11 +105,44 @@ def parse_jalali(parser, text, label):
 # --- fetching -------------------------------------------------------------
 
 
+def official_from_row(row):
+    """TSETMC's official daily row for one session.
+
+    ``pClosing`` is قیمت پایانی — the day's volume-weighted average price capped
+    by حجم مبنا — and ``pDrCotVal`` the last continuous trade; ``hEven`` is the
+    timestamp TSETMC stamps that close with (a few seconds past the tape's last
+    trade, because no closing-auction print is ever published in the tape).
+    ``priceChange`` compares the last trade with the previous close.
+    """
+    if not isinstance(row, dict):
+        return None
+    last_price = tse.price(tse.pick(row, "pDrCotVal"))
+    yesterday = tse.price(tse.pick(row, "priceYesterday"))
+    official = {
+        "close": tse.price(tse.pick(row, "pClosing")),
+        "last_price": last_price,
+        "first": tse.price(tse.pick(row, "priceFirst")),
+        "low": tse.price(tse.pick(row, "priceMin")),
+        "high": tse.price(tse.pick(row, "priceMax")),
+        "yesterday": yesterday,
+        "change": last_price - yesterday
+        if last_price is not None and yesterday is not None
+        else tse.value(row, "priceChange"),
+        "close_time": tse.trade_time(tse.pick(row, "hEven")),
+        "trades": tse.value(row, "zTotTran"),
+        "volume": tse.value(row, "qTotTran5J"),
+        "value_rial": tse.value(row, "qTotCap"),
+    }
+    return official if any(item is not None for item in official.values()) else None
+
+
 def fetch_sessions(client, code):
     """Every trading session, oldest first, with its official daily aggregates.
 
     ``zTotTran``/``qTotTran5J`` are TSETMC's own trade count and volume for the
     day; they validate the tick tape (which sometimes carries duplicate rows).
+    The same rows carry the official daily figures, so no extra request is
+    needed to report them.
     """
     rows = client.api(
         f"ClosingPrice/GetClosingPriceDailyList/{code}/0", "closingPriceDaily"
@@ -116,6 +157,7 @@ def fetch_sessions(client, code):
                 "jalali": tse.trade_date(greg),
                 "trades": tse.value(row, "zTotTran"),
                 "volume": tse.value(row, "qTotTran5J"),
+                "official": official_from_row(row),
             }
     return [{"greg": greg, **sessions[greg]} for greg in sorted(sessions)]
 
@@ -203,6 +245,7 @@ def fetch_live_bars(client, code):
                 "close": tse.price(tse.pick(row, "closePrice")),
                 "volume": tse.value(row, "volume") or 0,
                 "trades": None,
+                "turnover": None,  # TSETMC's native bars publish no turnover
             }
         )
     bars.sort(key=lambda bar: bar["minute"])
@@ -223,15 +266,23 @@ def fetch_live_quote(client, code):
     minute = minute_of(int(raw)) if re.fullmatch(r"\d{1,6}", raw or "") else None
     if not minute:
         return None
+    last_price = tse.price(tse.pick(info, "pDrCotVal"))
+    yesterday = tse.price(tse.pick(info, "priceYesterday"))
     return {
         "minute": minute,
         "time": fmt_minute(minute),
-        "last_price": tse.price(tse.pick(info, "pDrCotVal")),
+        "last_price": last_price,
         "trades": tse.value(info, "zTotTran"),
         "volume": tse.value(info, "qTotTran5J"),
         "first": tse.price(tse.pick(info, "priceFirst")),
         "low": tse.price(tse.pick(info, "priceMin")),
         "high": tse.price(tse.pick(info, "priceMax")),
+        "vwap": tse.price(tse.pick(info, "pClosing")),
+        "change": last_price - yesterday
+        if last_price is not None and yesterday is not None
+        else tse.value(info, "priceChange"),
+        "yesterday": yesterday,
+        "value_rial": tse.value(info, "qTotCap"),
     }
 
 
@@ -268,6 +319,7 @@ def ticks_to_bars(rows, include_canceled):
                 "close": price,
                 "volume": 0,
                 "trades": 0,
+                "turnover": 0,
             }
             bars[minute] = bar
         if price is not None:
@@ -277,8 +329,36 @@ def ticks_to_bars(rows, include_canceled):
             if bar["open"] is None:
                 bar["open"] = price
         bar["volume"] += volume
+        bar["turnover"] += (price or 0) * volume
         bar["trades"] += 1
     return [bars[minute] for minute in sorted(bars)]
+
+
+def merge_turnover(total, extra):
+    """Accumulate trade turnover, or None when either side has none."""
+    if total is None or extra is None:
+        return None
+    return total + extra
+
+
+def bar_vwap(bar):
+    """A bar's volume-weighted average price, or None without turnover data."""
+    turnover, volume = bar.get("turnover"), bar.get("volume")
+    if turnover is None or not volume:
+        return None
+    return round(turnover / volume)
+
+
+def session_vwap(bars):
+    """The tape's own volume-weighted average price for a whole session."""
+    volume = 0
+    turnover = 0
+    for bar in bars:
+        if bar.get("turnover") is None:
+            return None
+        volume += bar.get("volume") or 0
+        turnover += bar["turnover"]
+    return round(turnover / volume) if volume else None
 
 
 def merge_bars(bars, interval):
@@ -303,6 +383,9 @@ def merge_bars(bars, interval):
         if bar["close"] is not None:
             target["close"] = bar["close"]
         target["volume"] = (target["volume"] or 0) + (bar["volume"] or 0)
+        target["turnover"] = merge_turnover(
+            target.get("turnover"), bar.get("turnover")
+        )
         if bar["trades"] is not None:
             target["trades"] = (target["trades"] or 0) + bar["trades"]
     return [merged[key] for key in sorted(merged)]
@@ -321,6 +404,9 @@ def collapse_bars(bars):
             if previous["ohlc"] == (bar["open"], bar["high"], bar["low"], bar["close"]):
                 previous["to"] = bar["minute"]
                 previous["volume"] += bar["volume"] or 0
+                previous["turnover"] = merge_turnover(
+                    previous["turnover"], bar.get("turnover")
+                )
                 previous["count"] += 1
                 if previous["trades"] is not None:
                     previous["trades"] += bar["trades"] or 0
@@ -335,6 +421,7 @@ def collapse_bars(bars):
                 "close": bar["close"],
                 "volume": bar["volume"] or 0,
                 "trades": bar["trades"],
+                "turnover": bar.get("turnover"),
                 "ohlc": (bar["open"], bar["high"], bar["low"], bar["close"]),
                 "count": 1,
             }
@@ -399,6 +486,7 @@ def load_day(client, code, entry, mode, include_canceled):
             return None
         day = day_from_rows(jalali, "ticks", rows, mode, include_canceled)
         day["check"] = tape_check(entry, rows)
+        day["official"] = entry.get("official")
         return day
 
     try:
@@ -473,6 +561,7 @@ def select_entries(sessions, args, parser, today):
             "live": live,
             "expected_trades": session.get("trades"),
             "expected_volume": session.get("volume"),
+            "official": session.get("official"),
         }
 
     def entry(greg, jalali):
@@ -535,6 +624,7 @@ def bars_to_rows(bars):
             "high_rial": bar["high"],
             "low_rial": bar["low"],
             "close_rial": bar["close"],
+            "vwap_rial": bar_vwap(bar),
             "volume_shares": bar["volume"],
             "trades": bar["trades"],
         }
@@ -552,6 +642,7 @@ def collapsed_to_rows(collapsed):
             "high_rial": bar["high"],
             "low_rial": bar["low"],
             "close_rial": bar["close"],
+            "vwap_rial": bar_vwap(bar),
             "volume_shares": bar["volume"],
             "trades": bar["trades"],
             "bars": bar["count"],
@@ -596,11 +687,51 @@ def live_client_type(client, code):
     }
 
 
+def official_line(official, tape_vwap):
+    """One compact line for TSETMC's official daily row."""
+    pieces = []
+    close = official.get("close")
+    if close is not None:
+        stamp = f" @ {official['close_time']}" if official.get("close_time") else ""
+        pieces.append(f"قیمت پایانی {close:,}{stamp}")
+    last = official.get("last_price")
+    if last is not None:
+        detail = ""
+        change, yesterday = official.get("change"), official.get("yesterday")
+        if change is not None:
+            detail = f" ({change:+}"
+            if yesterday:
+                detail += f", {change / yesterday * 100:+.1f}% vs {yesterday:,}"
+            detail += ")"
+        pieces.append(f"last trade {last:,}{detail}")
+    if tape_vwap is not None:
+        pieces.append(f"tape VWAP {tape_vwap:,}")
+    first, low, high = official.get("first"), official.get("low"), official.get("high")
+    if first is not None:
+        pieces.append(f"first {first:,}")
+    if low is not None and high is not None:
+        pieces.append(f"range {low:,}–{high:,}")
+    trades = official.get("trades")
+    volume = official.get("volume")
+    value_rial = official.get("value_rial")
+    if trades is not None:
+        pieces.append(f"{trades:,} trades")
+    if volume is not None:
+        pieces.append(f"{volume:,} shares")
+    if value_rial is not None:
+        pieces.append(f"{value_rial:,} rial")
+    return f"Official: {' · '.join(pieces)}" if pieces else None
+
+
 def render_markdown(result):
     lines = [
         f"Fetched at: {result['fetched_at']}",
         f"Market session open by schedule: {result['market_session_open']}",
         "Prices and traded value are in rial, volume in shares.",
+        "Not published by TSETMC: per-minute حقیقی/حقوقی (only the day-level"
+        " breakdown shown below), closing-auction detail (قیمت پایانی is a"
+        " volume-weighted average, not an auction print), and per-instrument"
+        " NAV history (only the current NAV is exposed).",
     ]
     mode = result["mode"]
     if mode == "ticks":
@@ -632,6 +763,11 @@ def render_markdown(result):
                 "Bar resolution: 2-minute (TSETMC's native intraday fallback;"
                 " per-bar trade count is not published)"
             )
+        official = day.get("official")
+        if official:
+            line = official_line(official, day.get("tape_vwap"))
+            if line:
+                lines.append(line)
         flow = day.get("client_type")
         if flow:
             lines.append(
@@ -647,6 +783,10 @@ def render_markdown(result):
                 detail.append(f"{quote['volume']} shares")
             if quote.get("low") is not None and quote.get("high") is not None:
                 detail.append(f"day {quote['low']}–{quote['high']}")
+            if quote.get("vwap") is not None:
+                detail.append(f"قیمت پایانی {quote['vwap']}")
+            if quote.get("change") is not None and quote.get("yesterday"):
+                detail.append(f"{quote['change']:+} vs {quote['yesterday']:,}")
             text = " · ".join(detail)
             if quote.get("lag_minutes"):
                 text += (
@@ -694,7 +834,14 @@ aggregated here into N-minute bars (the live day falls back to TSETMC's native
 2-minute bars only if its tape is empty). --interval auto (default) picks the
 finest interval that fits --max-rows, and --collapse auto (default) merges
 consecutive identical-OHLC bars only once a run exceeds --collapse-threshold
-rows; the merged rows carry a `bars` column with the bar count they swallowed.""",
+rows; the merged rows carry a `bars` column with the bar count they swallowed.
+
+Every bar carries `vwap_rial`, its own volume-weighted average price computed
+from the tape, and every completed session an `Official:` line with TSETMC's
+daily row: قیمت پایانی (the day's VWAP capped by حجم مبنا) and its timestamp,
+the last trade, first/range, change vs the previous close, and the trade,
+volume and value totals. TSETMC publishes no per-minute حقیقی/حقوقی, no
+closing-auction detail and no per-instrument NAV history.""",
     )
     parser.add_argument(
         "symbol",
@@ -990,6 +1137,8 @@ rows; the merged rows carry a `bars` column with the bar count they swallowed.""
                     if mode == "bars"
                     else None,
                     "native_interval": day.get("native_interval"),
+                    "official": day.get("official"),
+                    "tape_vwap": session_vwap(day["bars"]) if mode == "bars" else None,
                     "client_type": client_type,
                     "live_quote": day.get("live_quote"),
                     "columns": list(columns),
