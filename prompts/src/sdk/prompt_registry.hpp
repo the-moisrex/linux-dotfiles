@@ -61,7 +61,7 @@ bool register_prompt(std::string_view name, std::string_view help_summary, void 
 void init_prompt_registry();
 
 // Captures a prompt's own `render_help_*` output into a string, for prompts
-// that append it to a failure message (cli, man, stock, intraday) instead of
+// that append it to a failure message (cli, man, tse.analyze, tse.intraday) instead of
 // printing it directly (`help_text(render_help_cli)` instead of the
 // ostringstream dance).
 template <typename RenderFn>

@@ -72,10 +72,11 @@ output has no such header — rank only what the rows show.
 - Rank the rows and recommend the 3-5 most promising for that intent, strongest
   first, each justified with the concrete numbers from its own row (price, chg%,
   P/E, EPS, traded value, volume, market cap, sector, distance to the limit...).
-- For every recommendation offer a deeper look: `prompt stock <symbol>` (full
-  fundamentals and Codal) or `prompt intraday <symbol>` (same-day verdict). To
-  keep an offline copy of candidates, pipe `tse.find ... --format jsonl` into
-  `tse.snapshot <dir>/` and analyse the resulting `.stock` files with `prompt stock`.
+- For every recommendation offer a deeper look: `prompt .tse <symbol> .tse.analyze`
+  (full fundamentals and Codal) or `prompt tse.intraday <symbol>` (same-day
+  verdict). To keep an offline copy of candidates, pipe
+  `tse.find ... --format jsonl` into `tse.snapshot <dir>/` and analyse the
+  resulting `.stock` files with `prompt .tse <file>.stock .tse.analyze`.
 - Say what the screen's filters miss (thin liquidity, one sector, no history
   filters...) and whether widening any of them would change the ranking.
 - If the screen returned no matches, report that plainly instead of guessing
@@ -160,8 +161,9 @@ constexpr std::string_view kAgenticSteps =
    surprising, add `--stats` — it reports how many rows each filter stage dropped.
 2. N > 0 → stop. Summarise 3-8 of the top rows in the user's language with the numbers
    that justify them (price, chg%, P/E, traded value, RSI, distance to the limit...),
-   ordered as the request implies. Offer `prompt stock <symbol>` for a deeper look at
-   any single name, or `prompt intraday <symbol>` for a same-day trade verdict.
+   ordered as the request implies. Offer `prompt .tse <symbol> .tse.analyze` for
+   a deeper look at any single name, or `prompt tse.intraday <symbol>` for a same-day
+   trade verdict.
 3. N == 0 → change exactly ONE thing, then go back to step 1, in this order:
    a. widen the tightest numeric bound by roughly 2x slack
       (--pe-max 8→12, --rsi-max 30→40, --val-min 10b→5b, --chg-min 3→1.5, ...)
@@ -191,8 +193,8 @@ constexpr std::string_view kGroundRules = R"TSE1(
 - The screener is `tse.find` and it is on PATH in this user's shell (this repo's bin/);
   if that name is not found, run `<repo-root>/bin/tse.find` instead.
 - The request is about ONE instrument ("what about فولاد?"), not a screen? Do not
-  screen: answer with `prompt stock <symbol>` (full analysis) or `prompt intraday
-  <symbol>` (same-day LONG / NO-TRADE verdict) instead.
+  screen: answer with `prompt .tse <symbol> .tse.analyze` (full analysis) or
+  `prompt tse.intraday <symbol>` (same-day LONG / NO-TRADE verdict) instead.
 )TSE1";
 
 constexpr std::string_view kClassifyPy = R"TSE1(

@@ -41,3 +41,8 @@ set_tests_properties(complete_flags PROPERTIES PASS_REGULAR_EXPRESSION "--format
 
 add_test(NAME complete_values COMMAND $<TARGET_FILE:prompt> diagram --complete "" --type)
 set_tests_properties(complete_values PROPERTIES PASS_REGULAR_EXPRESSION "mermaid")
+
+# End-to-end smoke: `tse.analyze` is instructions only — it takes no arguments,
+# fetches nothing and needs no bin/ tool, so it can run without the network.
+add_test(NAME tse_analyze_instructions COMMAND $<TARGET_FILE:prompt> tse.analyze)
+set_tests_properties(tse_analyze_instructions PROPERTIES PASS_REGULAR_EXPRESSION "institutional analyst")

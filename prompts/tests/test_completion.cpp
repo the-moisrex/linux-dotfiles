@@ -112,18 +112,23 @@ void test_items_with_descriptions() {
 }
 
 // End-to-end wiring: the prompts that know their own operands registered a
-// complete_fn, and their help text feeds the flag parser. `stock`/`tse`/
-// `intraday` are only checked for registration — invoking them would shell out
-// to bin/tse.resolve.
+// complete_fn, and their help text feeds the flag parser. `tse`/`tse.intraday`
+// are only checked for registration — invoking them would shell out to
+// bin/tse.resolve. `tse.analyze` takes no arguments, so it registers no
+// complete_fn.
 void test_registry_wiring() {
     for (char const* name :
-         {"stock", "tse", "intraday", "run", "skill", "diagram", "metadata", "opportunities", "overengineering"}) {
+         {"tse", "tse.intraday", "run", "skill", "diagram", "metadata", "opportunities", "overengineering"}) {
         auto const* desc = find_prompt(name);
         check(desc != nullptr, "prompt is registered");
         if (desc != nullptr) {
             check(desc->complete_fn != nullptr, "prompt registered a complete_fn");
         }
     }
+
+    check(find_prompt("tse.analyze") != nullptr, "tse.analyze is registered");
+    check(find_prompt("tse.analyze") != nullptr && find_prompt("tse.analyze")->complete_fn == nullptr,
+          "tse.analyze takes no arguments, so it registers no complete_fn");
 
     auto const* metadata = find_prompt("metadata");
     if (metadata != nullptr && metadata->render_help_fn != nullptr) {

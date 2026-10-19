@@ -39,10 +39,10 @@ void test_prompt_with_args() {
 }
 
 void test_chain_two_prompts() {
-    std::array<char const*, 5> argv = {"prompt", "stock", "فولاد", ".note", "compare"};
+    std::array<char const*, 5> argv = {"prompt", "tse", "فولاد", ".note", "compare"};
     auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
     check(chain.count == 2, "chain: two invocations");
-    check(chain.count == 2 && chain.invocations[0].name == "stock", "chain: first is stock");
+    check(chain.count == 2 && chain.invocations[0].name == "tse", "chain: first is tse");
     check(chain.count == 2 && chain.invocations[1].name == "note", "chain: second is note");
     check(chain.count == 2 && chain.invocations[1].args_count >= 1, "chain: note has args");
 }

@@ -61,7 +61,7 @@ A verification checklist that keeps Tehran Stock Exchange (TSE) and general mark
 Examples:
   prompt tse.rigor
   prompt tse فولاد .tse.rigor
-  prompt stock فولاد .tse.rigor
+  prompt tse فولاد .tse.analyze .tse.rigor
 )EOF";
 }
 

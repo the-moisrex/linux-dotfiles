@@ -151,6 +151,9 @@ static void execute_auto(prompt_context& ctx) {
     }
 
     std::string target_script = "summarize";
+    // A stock identifier is answered by the split pair: the raw dataset
+    // (`tse`) followed by the data-free analysis instructions (`tse.analyze`).
+    bool want_analysis = false;
     std::string stock_identifier;
     std::vector<std::string> extra_args;
 
@@ -177,7 +180,8 @@ static void execute_auto(prompt_context& ctx) {
             target_script = "debug";
         } else if (is_stock_identifier(input_buffer, stock_identifier) ||
                    extract_stock_identifier(input_buffer, stock_identifier)) {
-            target_script = "stock";
+            target_script = "tse";
+            want_analysis = true;
             extra_args.push_back(stock_identifier);
         } else if (input_buffer.contains("class ") || input_buffer.contains("struct ") ||
                    input_buffer.contains("#include <")) {
@@ -194,7 +198,8 @@ static void execute_auto(prompt_context& ctx) {
         std::string arg_stock;
         if (is_stock_identifier(arg, arg_stock)) {
             // The identifier is passed along as this prompt's argument.
-            target_script = "stock";
+            target_script = "tse";
+            want_analysis = true;
             extra_args.clear();
             break;
         }
@@ -237,9 +242,10 @@ static void execute_auto(prompt_context& ctx) {
         }
     }
 
-    if (!ctx.stdin_consumed && target_script != "stock") {
+    if (!ctx.stdin_consumed && target_script != "tse") {
         if (auto id = clipboard_identifier(ctx)) {
-            target_script = "stock";
+            target_script = "tse";
+            want_analysis = true;
             extra_args.push_back(*id);
         }
     }
@@ -249,52 +255,79 @@ static void execute_auto(prompt_context& ctx) {
     std::string echo = input_buffer + "\n";
 
     // The buffer-derived stock identifier is only handed over when the
-    // target is still stock and the buffer came from a pipe (bash pipes
+    // target is still tse and the buffer came from a pipe (bash pipes
     // the buffer only when stdin was piped; interactively each prompt
     // reads the clipboard itself).
-    bool pass_extra = has_stdin && target_script == "stock" && !extra_args.empty();
+    bool pass_extra = has_stdin && target_script == "tse" && !extra_args.empty();
 
     // Dispatch in-process when the target prompt is implemented in this
-    // binary; avoid re-spawning `prompt` which would recurse.
-    if (const auto* target = prompt::find_prompt(target_script)) {
-        // A copy: `ctx` is still needed below to carry the sub-prompt's
-        // result out (and it holds the chain's stdin if the target doesn't
-        // read it).
-        prompt_context sub_ctx = ctx;
-        sub_ctx.name = target_script;
-        auto orig_args = sub_ctx.args;
-        auto orig_count = sub_ctx.args_count;
-        std::size_t n = 0;
-        if (pass_extra) {
-            for (auto const& a : extra_args) {
-                if (n >= sub_ctx.args.size()) break;
-                sub_ctx.args[n++] = a;
+    // binary; avoid re-spawning `prompt` which would recurse. A stock target
+    // runs the split pair: `tse` (dataset) followed by `tse.analyze`
+    // (data-free instructions).
+    if (prompt::find_prompt(target_script) != nullptr) {
+        std::vector<std::string_view> targets{target_script};
+        if (want_analysis) targets.emplace_back("tse.analyze");
+
+        std::string combined = echo;
+        std::string errors;
+        bool first_segment = true;
+        bool no_clipboard = false;
+        for (std::size_t t = 0; t < targets.size(); ++t) {
+            const auto* target = prompt::find_prompt(targets[t]);
+            if (target == nullptr) {
+                throw prompt_error{3, "prompt auto: prompt '" + std::string(targets[t]) + "' not found\n",
+                                   std::move(combined), false, has_stdin};
             }
+
+            // A copy: `ctx` is still needed below to carry the sub-prompt's
+            // result out (and it holds the chain's stdin if the target doesn't
+            // read it).
+            prompt_context sub_ctx = ctx;
+            sub_ctx.name = targets[t];
+            clear_output(sub_ctx);
+            if (t == 0) {
+                auto orig_args = sub_ctx.args;
+                auto orig_count = sub_ctx.args_count;
+                std::size_t n = 0;
+                if (pass_extra) {
+                    for (auto const& a : extra_args) {
+                        if (n >= sub_ctx.args.size()) break;
+                        sub_ctx.args[n++] = a;
+                    }
+                }
+                for (std::size_t i = 0; i < orig_count && n < sub_ctx.args.size(); ++i) {
+                    sub_ctx.args[n++] = orig_args[i];
+                }
+                sub_ctx.args_count = n;
+            } else {
+                sub_ctx.args_count = 0;
+            }
+            // `printf '%s\n' "$input_buffer"` re-adds the trailing newline that
+            // $(cat) stripped.
+            sub_ctx.stdin_content = has_stdin ? input_buffer + "\n" : std::string{};
+            sub_ctx.stdin_consumed = has_stdin;
+            try {
+                target->execute_fn(sub_ctx);
+            } catch (prompt_error const& err) {
+                combined += err.partial_output();
+                throw prompt_error{err.exit_code(), err.what(), std::move(combined), err.no_clipboard(), has_stdin};
+            }
+            // Separate the instructions from the dataset the way the
+            // dispatcher separates chained prompt segments.
+            if (!first_segment) combined += '\n';
+            combined += sub_ctx.out;
+            first_segment = false;
+            errors += sub_ctx.err;
+            no_clipboard = no_clipboard || sub_ctx.no_clipboard;
         }
-        for (std::size_t i = 0; i < orig_count && n < sub_ctx.args.size(); ++i) {
-            sub_ctx.args[n++] = orig_args[i];
-        }
-        sub_ctx.args_count = n;
-        // `printf '%s\n' "$input_buffer"` re-adds the trailing newline that
-        // $(cat) stripped.
-        clear_output(sub_ctx);
-        sub_ctx.stdin_content = has_stdin ? input_buffer + "\n" : std::string{};
-        sub_ctx.stdin_consumed = has_stdin;
-        try {
-            target->execute_fn(sub_ctx);
-            // Prepend the decision line the script echoes before the
-            // target's output. The chain's stdin is spent regardless of what
-            // the target did.
-            ctx.out = echo + sub_ctx.out;
-            ctx.err = sub_ctx.err;
-            ctx.no_clipboard = sub_ctx.no_clipboard;
-            ctx.stdin_consumed = has_stdin;
-            return;
-        } catch (prompt_error const& err) {
-            std::string combined = echo;
-            combined += err.partial_output();
-            throw prompt_error{err.exit_code(), err.what(), std::move(combined), err.no_clipboard(), has_stdin};
-        }
+        // The echoed decision line comes first, then the dataset and, for a
+        // stock identifier, the analysis instructions. The chain's stdin is
+        // spent regardless of what the targets did.
+        ctx.out = std::move(combined);
+        ctx.err = std::move(errors);
+        ctx.no_clipboard = no_clipboard;
+        ctx.stdin_consumed = has_stdin;
+        return;
     }
 
     // Every dispatch target of this binary is implemented natively; the
@@ -310,7 +343,7 @@ static void render_help_auto(std::ostream& os) {
 Automatically chooses and executes the most appropriate prompt script based on the input.
 For example, if it detects YouTube URLs, it delegates to the 'yt' prompt.
 If it detects C++ files, it delegates to 'cpp-reviewer'.
-A bare stock identifier (ISIN, insCode, or easytrader/tsetmc/codal URL) delegates to 'stock'.
+A bare stock identifier (ISIN, insCode, or easytrader/tsetmc/codal URL) delegates to 'tse' + 'tse.analyze'.
 Defaults to 'summarize' for English and Farsi text, or 'english' (translate) for other languages like Arabic.
 
 Options:
@@ -326,7 +359,7 @@ bool const registered = prompt::register_prompt(
     "Automatically chooses and executes the most appropriate prompt script based on the input. For "
     "example, if it detects YouTube URLs, it delegates to the 'yt' prompt. If it detects C++ files, "
     "it delegates to 'cpp-reviewer'. A bare stock identifier (ISIN, insCode, or "
-    "easytrader/tsetmc/codal URL) delegates to 'stock'. Defaults to 'summarize' for English and Farsi "
+    "easytrader/tsetmc/codal URL) delegates to 'tse' + 'tse.analyze'. Defaults to 'summarize' for English and Farsi "
     "text, or 'english' (translate) for other languages like Arabic.",
     &execute_auto, &render_help_auto);
 

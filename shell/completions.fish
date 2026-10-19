@@ -269,7 +269,7 @@ complete -c pod -f -l porcelain -d 'name + TAB + description (recipes)'
 complete -c pod -f -s f -d 'Follow logs (logs)'
 complete -c pod -f -s e -r -d 'Set env var K=V (exec)'
 
-# ---- tse / tse.* / prompt stock|tse|intraday ----
+# ---- tse / tse.* / prompt tse|tse.intraday ----
 # Symbol completion comes from tse.resolve (cache-only, no network on Tab).
 # It inserts a readable `SYMBOL-ISIN` token (`finglish-ISIN` for Latin input)
 # with the name/market as description.

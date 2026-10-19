@@ -101,7 +101,7 @@ exits 0 without running the prompt, reading stdin or touching the clipboard.
   prompt's argument parser and use the helpers: `completion::matches`,
   `write_item`, `write_items`, `write_values`, and `write_values_after_flag`
   (completes a flag's value when it is the previous argument).
-  `tse_data::complete_instrument` delegates the `stock`/`tse`/`intraday`
+  `tse_data::complete_instrument` delegates the `tse`/`tse.intraday`
   identifier lookup to `bin/tse.resolve --complete`; `skill`, `run`, `diagram`,
   `metadata`, `opportunities` and `overengineering` have small callbacks.
 - `prompt_descriptor::complete_fn` stays `nullptr` when a prompt registers no

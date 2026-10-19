@@ -103,7 +103,7 @@ Notes:
             }
         }
         if (wants_complete) {
-            // `.stock`/`-stock` shorthands name the same prompt.
+            // Leading `.`/`-` prefixes are shorthands for the same prompt name.
             while (!complete_name.empty() && (complete_name.front() == '.' || complete_name.front() == '-')) {
                 complete_name.remove_prefix(1);
             }

@@ -1,10 +1,10 @@
 #pragma once
 
-// Shared TSETMC data collection for the `stock` and `tse` prompts. `stock`
-// prepends its analysis instructions and `tse` emits the data on its own, but
-// both parse the same arguments, resolve the same symbol (or `.stock`
-// snapshots) and render it the same way — so the logic lives here once.
-// This is not a prompt: it registers nothing.
+// Shared TSETMC data collection for the `tse` prompt (the analysis prompt,
+// `tse.analyze`, is a data-free lens chained after it). `tse` parses these
+// arguments, resolves the symbol (or `.stock` snapshots) and renders the
+// dataset — so the logic lives here once. This is not a prompt: it registers
+// nothing.
 
 #include "../core/fs.hpp"
 #include "../core/process.hpp"
@@ -89,8 +89,8 @@ inline snapshot_info parse_snapshot_info(std::string_view output) {
     return info;
 }
 
-// Parses the arguments both prompts accept, mirroring stock.sh. `help_fn`
-// renders the invoking prompt's usage, appended to the "no identifier" error.
+// Parses the arguments the `tse` prompt accepts. `help_fn` renders the
+// invoking prompt's usage, appended to the "no identifier" error.
 template <typename RenderFn>
 config parse_args(prompt_context const& ctx, std::string_view name, RenderFn help_fn) {
     config cfg;
@@ -306,7 +306,7 @@ inline std::string collect(prompt_context& ctx, config const& cfg, std::string& 
 }
 
 // Shell completion for the identifier argument. The lookup is delegated to the
-// shared resolver (`bin/tse.resolve --complete`), so `prompt stock|tse|intraday`
+// shared resolver (`bin/tse.resolve --complete`), so `prompt tse|tse.intraday`
 // suggest exactly what `tse quote` does, from the same cached index and without
 // touching the network. Flags are added by the dispatcher from the prompt's
 // help text, so only positional candidates are emitted here.
