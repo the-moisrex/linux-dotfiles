@@ -2,7 +2,10 @@
 
 Uses the bearer token kept in the site's ``localStorage``, creates a chat
 session, solves the ``DeepSeekHashV1`` proof-of-work challenge and streams the
-completion.
+completion.  A conversation is continued by reusing the chat-session id and
+sending the next message with ``parent_message_id`` set to the previous
+assistant message's id (verified: a follow-up on the same session answers with
+the earlier context).
 
 The stream is not SSE-with-JSON-deltas but the site's own **fragment patch**
 protocol: an initial ``{"v":{"response":{...}}}`` snapshot carrying ``fragments``
@@ -22,7 +25,7 @@ from .. import events as ev
 from .. import net
 from .. import session as session_mod
 from ..pow import PowError, deepseek_response, solve_deepseek
-from . import Provider
+from . import Conversation, Provider
 
 COMPLETION_PATH = "/api/v0/chat/completion"
 CLIENT_VERSION = "2.5.0"
@@ -35,6 +38,11 @@ class DeepSeek(Provider):
     session_target = "chat.deepseek.com"
     default_model = "deepseek_reasoner"
     models = ("deepseek_reasoner", "deepseek_chat")
+
+    def open_conversation(self, match, model, system="", debug=False, timeout=600,
+                          conversation_id=None, history=None, resume=None):
+        return _Conversation(self, match, model, system, debug, timeout,
+                             conversation_id, history, resume)
 
     def _headers(self, match):
         device = session_mod.storage_value(match, "deepseek-device-id:chat") or str(uuid.uuid4())
@@ -93,39 +101,54 @@ class DeepSeek(Provider):
             biz = biz["biz_data"]
         return biz
 
-    # -- stream ------------------------------------------------------------
 
-    def stream(self, match, prompt, model, system, debug=False, timeout=600):
-        headers = self._headers(match)
-        token = self._token(match)
-        if not token:
+class _Conversation(Conversation):
+    """A DeepSeek chat: one session, threaded by ``parent_message_id``."""
+
+    def __init__(self, provider, match, model, system, debug, timeout,
+                 conversation_id, history, resume):
+        super().__init__(match, model, system, debug, timeout,
+                         conversation_id, history, resume)
+        self.provider = provider
+        self.headers = provider._headers(match)
+        self.token = provider._token(match)
+        self.thinking = model in ("deepseek_reasoner", "reasoner")
+        self.parent_message_id = (resume or {}).get("parent_message_id")
+
+    def send(self, prompt):
+        if not self.token:
             yield ev.error("no DeepSeek token in web storage; log in to chat.deepseek.com")
             return
-        headers["Authorization"] = "Bearer " + token
-        thinking = model in ("deepseek_reasoner", "reasoner")
+        headers = dict(self.headers)
+        headers["Authorization"] = "Bearer " + self.token
         try:
-            session_id = self._create_session(headers)
-            pow_header = self._pow(headers)
+            if not self.conversation_id:
+                self.conversation_id = self.provider._create_session(headers) or ""
+            pow_header = self.provider._pow(headers)
         except (net.StreamError, PowError) as exc:
             yield ev.error(str(exc))
             return
         if pow_header:
             headers["x-ds-pow-response"] = pow_header
+        first = self.turns == 0
+        content = f"{self.system}\n\n{prompt}" if (self.system and first) else prompt
         body = {
-            "chat_session_id": session_id,
-            "parent_message_id": None,
+            "chat_session_id": self.conversation_id,
+            "parent_message_id": self.parent_message_id,
             "model_type": "default",
-            "prompt": f"{system}\n\n{prompt}" if system else prompt,
+            "prompt": content,
             "ref_file_ids": [],
-            "thinking_enabled": thinking,
+            "thinking_enabled": self.thinking,
             "search_enabled": False,
             "action": None,
             "preempt": False,
         }
         parser = _Parser()
+        answer = []
         try:
-            lines = net.stream_lines(self.origin + COMPLETION_PATH, headers=headers,
-                                     json_body=body, timeout=timeout, debug=debug)
+            lines = net.stream_lines(self.provider.origin + COMPLETION_PATH,
+                                     headers=headers, json_body=body,
+                                     timeout=self.timeout, debug=self.debug)
             for line in lines:
                 for payload in net.sse_payloads([line]):
                     try:
@@ -135,12 +158,20 @@ class DeepSeek(Provider):
                             yield ev.raw(payload)
                         continue
                     for event in parser.feed(obj):
+                        if event.kind == ev.TEXT:
+                            answer.append(event.text)
                         yield event
-                if debug and line and not line.startswith(("data:", "event:")):
+                if self.debug and line and not line.startswith(("data:", "event:")):
                     yield ev.raw(line)
         except net.StreamError as exc:
             yield ev.error(str(exc))
             return
+        self.turns += 1
+        if isinstance(parser.message_id, int):
+            self.parent_message_id = parser.message_id
+            self.resume["parent_message_id"] = parser.message_id
+        self._record("user", prompt)
+        self._record("assistant", "".join(answer))
         yield ev.done()
 
 
@@ -150,6 +181,7 @@ class _Parser:
     def __init__(self):
         self.fragments = []
         self.usage = None
+        self.message_id = None
 
     def feed(self, obj):
         if not isinstance(obj, dict):
@@ -185,6 +217,8 @@ class _Parser:
 
     def _snapshot(self, response):
         out = []
+        if isinstance(response.get("message_id"), int):
+            self.message_id = response["message_id"]
         for fragment in response.get("fragments") or []:
             if not isinstance(fragment, dict):
                 continue

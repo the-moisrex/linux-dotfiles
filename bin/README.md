@@ -461,6 +461,8 @@ Ask ChatGPT, Grok or DeepSeek from the shell by replaying each site's own web AP
 with the session already in your browser — **no API key, no official API, and no
 browser at run time**. Each command reads a prompt from its arguments or stdin,
 streams the answer (reasoning and tool calls included) and renders Markdown on a TTY.
+It can also keep the conversation going: `-c`/`--continue` reopens your last
+conversation with that provider and `-i`/`--interactive` keeps it open for more turns.
 
 The three are thin wrappers over one shared engine (`bin/ai/`); each provider adapts
 its site's transport:
@@ -482,6 +484,10 @@ ai.grok -m expert "compare mTLS and JWT"
 ai.chatgpt -s "be terse" "what is 2+2?"         # system/custom instructions
 ai.chatgpt --json "hi" | jq -r 'select(.kind=="text").text'
 ai.dseek --show-thinking --copy "summarise this" # reasoning->stderr, copy answer
+ai.dseek -i                                      # chat in a loop (a new conversation)
+ai.chatgpt -c "and what about now?"              # continue the last conversation
+ai.chatgpt -c -i                                 # resume it, then keep chatting
+ai.dseek --new "start over"                      # ignore the saved conversation
 ```
 
 Sessions load through `browser.session` (the browser must have been logged in once);
@@ -492,6 +498,13 @@ piped output the answer goes to stdout and reasoning/tools to stderr, and `--jso
 emits one normalised event per line. `--model` selects a site model (`auto`/`gpt-*`/
 `o*` for ChatGPT, `fast`/`expert`/`grok-*` for Grok, `deepseek_reasoner`/
 `deepseek_chat` for DeepSeek) and `--timeout` bounds a turn.
+
+`-i` needs a terminal on stdin (and rejects `--json`); it reads one prompt per line,
+with `:q` to quit and `:new` to start a fresh conversation. Every run remembers its
+conversation — id, model and a short transcript — under
+`$XDG_STATE_HOME/ai/<provider>.json`, so `-c` continues it from a later process.
+ChatGPT and DeepSeek resume it by id; Grok's socket lives only for one process, so a
+resumed Grok conversation replays the stored transcript as context instead.
 
 Requires Python 3 with `curl_cffi` (or `httpx`), `rich`/`pygments` for the TTY
 renderer and `websocket-client` for Grok; a free account's own rate limits still

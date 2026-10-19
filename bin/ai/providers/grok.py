@@ -7,6 +7,12 @@ frames that carry the answer, its "notetaker" status headers and, for reasoning
 models, the thinking text.  We replay that socket with the signed-in cookies and
 translate the frames into the shared event model.
 
+A conversation keeps that socket open and sends a fresh ``response.create`` per
+turn, so ``-i`` continues in place.  The socket (and its session id) only exists
+for the lifetime of the process, so a resumed conversation from a *new* process
+replays its stored transcript as context on the first turn instead of
+reattaching.
+
 The site computes a ``castle_request_token`` for each turn, but the server
 accepts a request without it (verified from a captured turn replayed over the
 socket), so it is deliberately omitted here.
@@ -25,9 +31,13 @@ import uuid
 
 from .. import events as ev
 from .. import session as session_mod
-from . import Provider
+from . import Conversation, Provider
 
 WS_URL = "wss://grok.com/ws/mgw/?uid={uid}"
+
+#: How many transcript entries to replay when a conversation is resumed from a
+#: new process (the socket cannot be reattached).
+MAX_REPLAY = 20
 
 # The capability block the web client advertises in ``session.create``.
 CAPABILITIES = {
@@ -73,33 +83,10 @@ class Grok(Provider):
     default_model = "fast"
     models = ("fast", "expert", "grok-4", "grok-3", "grok-3-mini", "grok-3-thinking")
 
-    def stream(self, match, prompt, model, system, debug=False, timeout=600):
-        try:
-            import websocket  # websocket-client
-        except ImportError:
-            yield ev.error("Grok needs the 'websocket-client' package "
-                           "(pip install websocket-client)")
-            return
-        if not match.get("cookie_header"):
-            yield ev.error("no cookies in the Grok session; log in to grok.com")
-            return
-        if system:
-            prompt = f"{system}\n\n{prompt}"
-        try:
-            socket = self._connect(websocket, match, timeout)
-        except Exception as exc:  # noqa: BLE001 - surface any connect failure
-            yield ev.error(f"could not open the Grok websocket: {exc}")
-            return
-        try:
-            for event in self._run(socket, prompt, model, debug):
-                yield event
-        except Exception as exc:  # noqa: BLE001 - surface any stream failure
-            yield ev.error(f"Grok stream failed: {exc}")
-        finally:
-            try:
-                socket.close()
-            except Exception:
-                pass
+    def open_conversation(self, match, model, system="", debug=False, timeout=600,
+                          conversation_id=None, history=None, resume=None):
+        return _Conversation(self, match, model, system, debug, timeout,
+                             conversation_id, history, resume)
 
     # ----------------------------------------------------------------- socket
 
@@ -114,13 +101,15 @@ class Grok(Provider):
         socket.settimeout(timeout)
         return socket
 
-    def _run(self, socket, prompt, model, debug):
+    def _session_create(self, socket, model, debug):
         self._send(socket, {"event": {
             "type": "session.create",
             "event_id": "evt_init_" + str(uuid.uuid4()),
             "session": {"model": model, "x_grok": CAPABILITIES},
         }})
-        session_id = self._await_session(socket, debug)
+        return self._await_session(socket, debug)
+
+    def _response_create(self, socket, session_id, prompt):
         self._send(socket, {"session_id": session_id, "event": {
             "type": "response.create",
             "event_id": "evt_resp_" + str(int(time.time() * 1000)),
@@ -135,7 +124,6 @@ class Grok(Provider):
         }})
         self._send(socket, {"session_id": session_id, "event": {
             "type": "presence.update", "visible": True}})
-        yield from self._read(socket, debug)
 
     def _send(self, socket, payload):
         socket.send(json.dumps(payload))
@@ -204,6 +192,85 @@ class Grok(Provider):
                 return
             elif kind == "raw":
                 yield ev.raw(str(event.get("raw", "")))
+
+
+class _Conversation(Conversation):
+    """A Grok chat held open over one WebSocket session."""
+
+    def __init__(self, provider, match, model, system, debug, timeout,
+                 conversation_id, history, resume):
+        super().__init__(match, model, system, debug, timeout,
+                         conversation_id, history, resume)
+        self.provider = provider
+        self.socket = None
+        self.session_id = None
+        # Seeded history means ``-c`` in a new process: the socket is gone, so
+        # the next prompt carries the transcript as context.
+        self._replay = bool(self.history)
+
+    def _content(self, prompt):
+        parts = []
+        if self.turns == 0 and self.system:
+            parts.append(self.system)
+        if self._replay and self.history:
+            lines = ["This is a continuation of the conversation so far. "
+                     "Reply to the final user message below.", ""]
+            for turn in self.history[-MAX_REPLAY:]:
+                who = "User" if turn.get("role") == "user" else "Assistant"
+                lines.append(f"{who}: {turn.get('text', '')}")
+            lines.append("")
+            lines.append(f"User: {prompt}")
+            parts.append("\n".join(lines))
+        else:
+            parts.append(prompt)
+        return "\n\n".join(p for p in parts if p)
+
+    def send(self, prompt):
+        try:
+            import websocket  # websocket-client
+        except ImportError:
+            yield ev.error("Grok needs the 'websocket-client' package "
+                           "(pip install websocket-client)")
+            return
+        if not self.match.get("cookie_header"):
+            yield ev.error("no cookies in the Grok session; log in to grok.com")
+            return
+        content = self._content(prompt)
+        if self.socket is None:
+            try:
+                self.socket = self.provider._connect(
+                    websocket, self.match, self.timeout)
+                self.session_id = self.provider._session_create(
+                    self.socket, self.model, self.debug)
+            except Exception as exc:  # noqa: BLE001 - surface any connect failure
+                yield ev.error(f"could not open the Grok websocket: {exc}")
+                self.close()
+                return
+        self._replay = False
+        answer = []
+        try:
+            self.provider._response_create(self.socket, self.session_id, content)
+            for event in self.provider._read(self.socket, self.debug):
+                if event.kind == ev.TEXT:
+                    answer.append(event.text)
+                yield event
+        except Exception as exc:  # noqa: BLE001 - surface any stream failure
+            yield ev.error(f"Grok stream failed: {exc}")
+            self.close()
+            return
+        self.turns += 1
+        if self.session_id:
+            self.conversation_id = self.session_id
+        self._record("user", prompt)
+        self._record("assistant", "".join(answer))
+
+    def close(self):
+        if self.socket is not None:
+            try:
+                self.socket.close()
+            except Exception:
+                pass
+            self.socket = None
 
 
 def _tool_name(call):

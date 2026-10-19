@@ -7,6 +7,11 @@ conduit.  A turn is answered either on the ``f/conversation`` SSE stream or,
 when the site hands the turn off to its WebSocket, by reading
 ``GET /backend-api/conversation/<id>`` until the assistant message completes.
 
+A conversation is continued by sending the next user message with the stored
+``conversation_id`` and ``parent_message_id`` set to the previous assistant
+message's id (verified: a follow-up in the same conversation answers with the
+earlier context).
+
 .. note::
    The request shapes, the token chain and the hand-off behaviour are confirmed
    with ``bin/browser.record https://chatgpt.com`` plus the site's own client
@@ -25,10 +30,11 @@ from .. import events as ev
 from .. import net
 from .. import sentinel
 from .. import session as session_mod
-from . import Provider
+from . import Conversation, Provider
 
 BASE = "https://chatgpt.com"
 POLL_INTERVAL = 0.5
+ROOT_MESSAGE = "client-created-root"
 
 
 class ChatGPT(Provider):
@@ -38,6 +44,11 @@ class ChatGPT(Provider):
     session_target = "chatgpt.com"
     default_model = "auto"
     models = ("auto", "gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini")
+
+    def open_conversation(self, match, model, system="", debug=False, timeout=600,
+                          conversation_id=None, history=None, resume=None):
+        return _Conversation(self, match, model, system, debug, timeout,
+                             conversation_id, history, resume)
 
     # ----------------------------------------------------------------- requests
 
@@ -134,15 +145,12 @@ class ChatGPT(Provider):
             json_body={"prepare_token": prepare_token, "proofofwork": proof,
                        "turnstile": turnstile})
         finalized = finalized or {}
-        result = {"token": finalized.get("token") or "",
-                  "proof_token": proof, "turnstile_token": turnstile,
-                  "raw": finalized,
-                  "headers": {}}
-        if not result["token"]:
+        token = finalized.get("token") or ""
+        if not token:
             raise sentinel.SentinelError(
                 "the sentinel gate returned no chat-requirements token")
-        result["headers"] = {
-            "OpenAI-Sentinel-Chat-Requirements-Token": result["token"]}
+        result = {"token": token,
+                  "headers": {"OpenAI-Sentinel-Chat-Requirements-Token": token}}
         if proof:
             result["headers"]["OpenAI-Sentinel-Proof-Token"] = proof
         if turnstile:
@@ -177,7 +185,7 @@ class ChatGPT(Provider):
         body = {
             "action": "next",
             "fork_from_shared_post": False,
-            "parent_message_id": "client-created-root",
+            "parent_message_id": ROOT_MESSAGE,
             "model": model,
             "client_prepare_state": "none",
             "timezone_offset_min": offset,
@@ -203,12 +211,13 @@ class ChatGPT(Provider):
                 f"the conduit prepare returned no token: {str(prepared)[:200]}")
         return conduit
 
-    def _stream_body(self, messages, model):
+    def _stream_body(self, messages, model, conversation_id=None,
+                     parent=ROOT_MESSAGE):
         offset, zone = self._timezone()
-        return {
+        body = {
             "action": "next",
             "messages": messages,
-            "parent_message_id": "client-created-root",
+            "parent_message_id": parent,
             "model": model,
             "client_prepare_state": "success",
             "timezone_offset_min": offset,
@@ -227,76 +236,9 @@ class ChatGPT(Provider):
             "paragen_cot_summary_display_override": "allow",
             "force_parallel_switch": "auto",
         }
-
-    # -------------------------------------------------------------------- stream
-
-    def stream(self, match, prompt, model, system, debug=False, timeout=600):
-        headers = self._headers(match)
-        try:
-            self._authorize(headers)
-        except (net.StreamError, sentinel.SentinelError) as exc:
-            yield ev.error(str(exc))
-            return
-        script, build = self._bootstrap(headers)
-        fingerprint = sentinel.build_fingerprint(
-            headers.get("User-Agent", ""), script, build)
-        try:
-            gate = self._sentinel_headers(headers, fingerprint, debug)
-        except (net.StreamError, sentinel.SentinelError) as exc:
-            yield ev.error(f"sentinel: {exc}")
-            return
-
-        message = prompt if not system else f"{system}\n\n{prompt}"
-        try:
-            conduit = self._conduit_token(headers, message, model)
-        except (net.StreamError, sentinel.SentinelError) as exc:
-            yield ev.error(str(exc))
-            return
-
-        path = "/backend-api/f/conversation"
-        stream_headers = {
-            **self._target(headers, path),
-            **gate["headers"],
-            "Accept": "text/event-stream",
-            "X-Conduit-Token": conduit,
-        }
-        parser = _MessageStream()
-        conversation_id = ""
-        emitted = False
-        try:
-            lines = net.stream_lines(
-                self.origin + path, headers=stream_headers,
-                json_body=self._stream_body([self._message(message)], model),
-                timeout=timeout, debug=debug)
-            for payload in net.sse_payloads(lines):
-                if payload == "[DONE]":
-                    break
-                try:
-                    event = json.loads(payload)
-                except ValueError:
-                    yield ev.raw(payload)
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                kind = event.get("type")
-                if kind in ("stream_handoff", "resume_conversation_token"):
-                    conversation_id = (event.get("conversation_id")
-                                       or conversation_id)
-                    continue
-                if event.get("conversation_id"):
-                    conversation_id = event["conversation_id"]
-                events = parser.feed(event)
-                for item in events:
-                    if item.kind in (ev.TEXT, ev.THINKING, ev.TOOL_CALL):
-                        emitted = True
-                    yield item
-        except net.StreamError as exc:
-            yield ev.error(str(exc))
-            return
-
-        if conversation_id and not emitted:
-            yield from self._poll(headers, conversation_id, parser, timeout, debug)
-        yield ev.done()
+        if conversation_id:
+            body["conversation_id"] = conversation_id
+        return body
 
     def _poll(self, headers, conversation_id, parser, timeout, debug):
         """Stream the turn from ``GET /backend-api/conversation/<id>``."""
@@ -320,6 +262,103 @@ class ChatGPT(Provider):
             time.sleep(POLL_INTERVAL)
         if not parser.emitted:
             yield ev.error("the turn never produced a message to read")
+
+
+class _Conversation(Conversation):
+    """A ChatGPT conversation: one id, threaded by ``parent_message_id``."""
+
+    def __init__(self, provider, match, model, system, debug, timeout,
+                 conversation_id, history, resume):
+        super().__init__(match, model, system, debug, timeout,
+                         conversation_id, history, resume)
+        self.provider = provider
+        self.headers = provider._headers(match)
+        self.parent_message_id = (resume or {}).get("parent_message_id") or ROOT_MESSAGE
+        self.fingerprint = None
+        self._ready = False
+
+    def _prepare(self):
+        self.provider._authorize(self.headers)
+        script, build = self.provider._bootstrap(self.headers)
+        self.fingerprint = sentinel.build_fingerprint(
+            self.headers.get("User-Agent", ""), script, build)
+        self._ready = True
+
+    def send(self, prompt):
+        if not self._ready:
+            try:
+                self._prepare()
+            except (net.StreamError, sentinel.SentinelError) as exc:
+                yield ev.error(str(exc))
+                return
+        message = (f"{self.system}\n\n{prompt}"
+                   if (self.system and self.turns == 0) else prompt)
+        try:
+            gate = self.provider._sentinel_headers(
+                self.headers, self.fingerprint, self.debug)
+        except (net.StreamError, sentinel.SentinelError) as exc:
+            yield ev.error(f"sentinel: {exc}")
+            return
+        try:
+            conduit = self.provider._conduit_token(
+                self.headers, message, self.model)
+        except (net.StreamError, sentinel.SentinelError) as exc:
+            yield ev.error(str(exc))
+            return
+
+        path = "/backend-api/f/conversation"
+        stream_headers = {
+            **self.provider._target(self.headers, path),
+            **gate["headers"],
+            "Accept": "text/event-stream",
+            "X-Conduit-Token": conduit,
+        }
+        parser = _MessageStream()
+        emitted = False
+        try:
+            lines = net.stream_lines(
+                self.provider.origin + path, headers=stream_headers,
+                json_body=self.provider._stream_body(
+                    [self.provider._message(message)], self.model,
+                    conversation_id=self.conversation_id,
+                    parent=self.parent_message_id),
+                timeout=self.timeout, debug=self.debug)
+            for payload in net.sse_payloads(lines):
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except ValueError:
+                    yield ev.raw(payload)
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                kind = event.get("type")
+                if kind in ("stream_handoff", "resume_conversation_token"):
+                    self.conversation_id = (event.get("conversation_id")
+                                            or self.conversation_id)
+                    continue
+                if event.get("conversation_id"):
+                    self.conversation_id = event["conversation_id"]
+                for item in parser.feed(event):
+                    if item.kind in (ev.TEXT, ev.THINKING, ev.TOOL_CALL):
+                        emitted = True
+                    yield item
+        except net.StreamError as exc:
+            yield ev.error(str(exc))
+            return
+
+        if self.conversation_id and not emitted:
+            yield from self.provider._poll(
+                self.headers, self.conversation_id, parser, self.timeout,
+                self.debug)
+        self.turns += 1
+        if parser.last_assistant_id:
+            self.parent_message_id = parser.last_assistant_id
+            self.resume["parent_message_id"] = parser.last_assistant_id
+        self._record("user", prompt)
+        self._record("assistant", parser.answer)
+        yield ev.done()
 
 
 def _walk_messages(data):
@@ -367,6 +406,12 @@ class _MessageStream:
         self.thinking = 0
         self.tool = None
         self.emitted = False
+        self.answer_parts = []
+        self.last_assistant_id = ""
+
+    @property
+    def answer(self):
+        return "".join(self.answer_parts)
 
     def feed(self, event):
         out = []
@@ -381,6 +426,9 @@ class _MessageStream:
         out = []
         if (message.get("author") or {}).get("role") != "assistant":
             return out
+        identifier = message.get("id")
+        if identifier:
+            self.last_assistant_id = str(identifier)
         content = message.get("content") or {}
         ctype = content.get("content_type")
         recipient = message.get("recipient") or "all"
@@ -390,7 +438,9 @@ class _MessageStream:
         if ctype in ("text", "multimodal_text"):
             full = "".join(_part_text(part) for part in content.get("parts") or [])
             if len(full) > self.text:
-                out.append(ev.text(full[self.text:]))
+                delta = full[self.text:]
+                out.append(ev.text(delta))
+                self.answer_parts.append(delta)
                 self.text = len(full)
         elif ctype in ("thoughts", "reasoning_recap"):
             parts = content.get("thoughts") or content.get("parts") or []
