@@ -60,25 +60,30 @@ function __fish_prompt_needs_name
     test (count $tokens) -le 1
 end
 
-function __fish_prompt_is_run
-    set -l tokens (commandline -opc)
-    test (count $tokens) -ge 2; and test "$tokens[2]" = run
-end
-
 function __fish_prompt_has_name
     set -l tokens (commandline -opc)
     test (count $tokens) -ge 2
 end
 
-function __fish_prompt_supports_head
-    set -l tokens (commandline -opc)
-    test (count $tokens) -ge 2
-end
-
-# Check if the current token looks like a prompt name (. or - prefix)
+# Check if the current token looks like a prompt name (. or - prefix, but not a
+# long option such as --head). A bare `.` counts; a bare `-` is left to the
+# flag completion.
 function __fish_prompt_token_is_shorthand
     set -l token (commandline -ct)
-    string match -qr '^[-.]' -- "$token"
+    string match -qr '^\.|^-[^-]' -- "$token"
+end
+
+# All per-prompt argument completion lives in the native dispatcher: it answers
+# `prompt <name> --complete <prefix> [args typed before it...]` with
+# `value<TAB>description` lines, deriving flags from the prompt's own help and
+# positional/value candidates from the prompt's own code. Passing the tokens
+# already typed (`$tokens[3..-1]`) lets it complete values such as `--format <TAB>`
+# and detect which operand the user is on.
+function __fish_prompt_complete
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2; or return
+    set -l current (commandline -ct)
+    prompt $tokens[2] --complete "$current" $tokens[3..-1] 2>/dev/null
 end
 
 complete -c prompt -f -n __fish_prompt_needs_name -s h -l help -d "Show help message"
@@ -89,16 +94,9 @@ complete -c prompt -f -n __fish_prompt_needs_name -xa list-prompts -d "Print ful
 # -f suppresses fish's default file completion so . and - prefixes match prompt names.
 complete -c prompt -f -n __fish_prompt_needs_name -xa '(prompt list --names 2>/dev/null | awk \'{print $0; print "."$0; print "-"$0}\')' -d "Prompt name"
 complete -c prompt -f -n __fish_prompt_token_is_shorthand -xa '(prompt list --names 2>/dev/null | awk \'{print "."$0; print "-"$0}\')' -d "Prompt name"
-complete -c prompt -n __fish_prompt_has_name -s h -l help -d "Show help for the selected prompt"
-complete -c prompt -n __fish_prompt_supports_head -l head -x -d "Keep only the first N lines of embedded context"
-complete -c prompt -n __fish_prompt_is_run -l head -x -d "Trim run output with head"
-complete -c prompt -n __fish_prompt_is_run -a '(run print-targets)' -d "Run target"
-complete -c prompt -n __fish_prompt_is_run -a lldb -d "Debug in lldb"
-complete -c prompt -n __fish_prompt_is_run -a gdb -d "Debug in gdb"
-complete -c prompt -n __fish_prompt_is_run -a watch -d "Watch for changes"
-complete -c prompt -n __fish_prompt_is_run -a 'less -r -l l' -d "Pipe the results to less"
-complete -c prompt -n __fish_prompt_is_run -a print-targets -d "Print Targets"
-complete -c prompt -n __fish_prompt_is_run -a help -d "Print Help"
+# Prompt arguments: flags, identifiers, subcommands and enumerations. No -f, so
+# fish's default file completion still offers paths for prompts that embed files.
+complete -c prompt -n __fish_prompt_has_name -a '(__fish_prompt_complete)'
 
 # fish completion for detatch
 
@@ -297,12 +295,3 @@ complete -c tse -f -n __fish_tse_needs_symbol -l unadjusted -d 'Unadjusted price
 
 complete -c tse.intraday -f -n "not string match -q -- '-*' (commandline -ct)" -a '(__fish_tse_symbols)'
 complete -c tse.resolve -f -n "not string match -q -- '-*' (commandline -ct)" -a '(__fish_tse_symbols)'
-
-function __fish_prompt_tse_symbol
-    set -l tokens (commandline -opc)
-    test (count $tokens) -ge 2
-    and contains -- $tokens[2] stock tse intraday
-    and not string match -q -- '-*' (commandline -ct)
-end
-
-complete -c prompt -f -n __fish_prompt_tse_symbol -a '(__fish_tse_symbols)'

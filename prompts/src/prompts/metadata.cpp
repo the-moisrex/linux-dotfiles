@@ -1,6 +1,8 @@
 #include "../sdk/args.hpp"
 #include "../sdk/prompt_registry.hpp"
+#include <array>
 #include <string>
+#include <string_view>
 
 namespace prompt::prompts {
 
@@ -53,12 +55,19 @@ Options:
 )EOF";
 }
 
+// The output formats metadata.sh documents in its help text.
+static void complete_metadata(completion_request const& req, std::ostream& os) {
+    static constexpr std::array<std::string_view, 5> kFormats = {"json", "xml", "yaml", "toml", "conf"};
+    if (prompt::completion::write_values_after_flag(os, req, "--format", kFormats)) return;
+    prompt::completion::write_values_after_flag(os, req, "-f", kFormats);
+}
+
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered =
     prompt::register_prompt("metadata",
                             "Analyze the provided inputs and generate structured metadata representing "
                             "them.",
-                            &execute_metadata, &render_help_metadata);
+                            &execute_metadata, &render_help_metadata, &complete_metadata);
 
 } // namespace prompt::prompts

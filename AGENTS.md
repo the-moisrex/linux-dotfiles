@@ -14,6 +14,7 @@ The `prompt` command is a **native C++ dispatcher** — source in `prompts/`, in
 
 ```bash
 prompt <name> [-- args...]       # run a prompt
+prompt <name> --complete PREFIX  # shell-completion candidates for a prompt (fish)
 prompt list                      # list prompts + short descriptions (--names for bare names)
 prompt list-prompts              # print the full help of every prompt
 cat file.cpp | prompt fix        # pipe input to a prompt
@@ -21,6 +22,8 @@ echo "task" | prompt auto        # auto-detect best prompt from input
 ```
 
 `list` and `list-prompts` are ordinary native prompts (`prompts/src/prompts/list.cpp`, `list_prompts.cpp`), not special cases in the dispatcher.
+
+`prompt <name> --complete <prefix> [args...]` answers shell completion from inside the dispatcher (used by `shell/completions.fish`): it prints `value<TAB>description` candidates and exits without running the prompt, reading stdin or touching the clipboard. Every prompt completes its flags from its own help text; a prompt adds positional/value candidates by registering an optional `completion_fn` (see `prompts/AGENTS.md`).
 
 Argument tokens that match a prompt name — optionally prefixed with `.` or `-` — start a chained prompt: `prompt stock فولاد .note "compare with فخوز"` runs `stock`, then `note` (`.files` embeds files generically, `.note` appends a note, `.cli` a CLI hint). Chained prompts do NOT receive the previous prompt's output on stdin — each sees the original piped stdin, which is spent once a prompt that reads stdin has consumed it (the dispatcher separates segments with blank lines and copies only the combined output).
 

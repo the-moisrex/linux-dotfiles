@@ -44,6 +44,7 @@ set(PROMPT_ASSETS
     errors_hpp|src/sdk/errors.hpp
     embed_hpp|src/sdk/embed.hpp
     args_hpp|src/sdk/args.hpp
+    completion_hpp|src/sdk/completion.hpp
     process_hpp|src/core/process.hpp
     fs_hpp|src/core/fs.hpp
     example_fix_cpp|src/prompts/fix.cpp

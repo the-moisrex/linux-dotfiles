@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chaining.hpp"
+#include "completion.hpp"
 #include "embed.hpp"
 #include "errors.hpp"
 #include "pipeline.hpp"

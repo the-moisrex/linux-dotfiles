@@ -23,8 +23,21 @@ target_link_libraries(test_embed PRIVATE prompt_lib)
 target_include_directories(test_embed PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME embed COMMAND test_embed)
 
+add_executable(test_completion test_completion.cpp)
+target_link_libraries(test_completion PRIVATE prompt_lib)
+target_include_directories(test_completion PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME completion COMMAND test_completion)
+
 # End-to-end smoke: the built binary numbers the lines of an embedded file when
 # asked (and only then).
 add_test(NAME files_num
     COMMAND $<TARGET_FILE:prompt> files --num ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/numbered.txt)
 set_tests_properties(files_num PROPERTIES PASS_REGULAR_EXPRESSION "1 \\| one")
+
+# End-to-end smoke: `--complete` answers from the prompt's own help (flags) and
+# its own code (flag values) without running the prompt or the network.
+add_test(NAME complete_flags COMMAND $<TARGET_FILE:prompt> metadata --complete --)
+set_tests_properties(complete_flags PROPERTIES PASS_REGULAR_EXPRESSION "--format")
+
+add_test(NAME complete_values COMMAND $<TARGET_FILE:prompt> diagram --complete "" --type)
+set_tests_properties(complete_values PROPERTIES PASS_REGULAR_EXPRESSION "mermaid")

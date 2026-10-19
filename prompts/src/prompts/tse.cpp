@@ -69,6 +69,6 @@ bool const registered = prompt::register_prompt(
     "`فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with "
     "no argument the clipboard is searched for one. One or more `.stock` snapshot files (written by tse.snapshot) "
     "are rendered from cache instead, warning when a snapshot is older than 24 hours.",
-    &execute_tse, &render_help_tse);
+    &execute_tse, &render_help_tse, &tse_data::complete_instrument);
 
 } // namespace prompt::prompts

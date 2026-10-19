@@ -1,8 +1,10 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
+#include <array>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace prompt::prompts {
@@ -70,12 +72,21 @@ Options:
 )EOF";
 }
 
+// The diagram types diagram.sh accepts, from its own help text.
+static void complete_diagram(completion_request const& req, std::ostream& os) {
+    static constexpr std::array<std::string_view, 6> kTypes = {
+        "mermaid", "plantuml", "ascii", "flowchart", "sequence", "class",
+    };
+    if (prompt::completion::write_values_after_flag(os, req, "--type", kTypes)) return;
+    prompt::completion::write_values_after_flag(os, req, "-t", kTypes);
+}
+
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered =
     prompt::register_prompt("diagram",
                             "Generates code diagrams (Mermaid, PlantUML, ASCII) from source code or "
                             "descriptions.",
-                            &execute_diagram, &render_help_diagram);
+                            &execute_diagram, &render_help_diagram, &complete_diagram);
 
 } // namespace prompt::prompts

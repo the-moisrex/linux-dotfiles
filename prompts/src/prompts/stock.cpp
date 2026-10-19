@@ -96,6 +96,6 @@ bool const registered = prompt::register_prompt(
     "One "
     "or more `.stock` snapshot files (written by tse.snapshot) build the same prompt from cached data instead, "
     "warning when a snapshot is older than 24 hours.",
-    &execute_stock, &render_help_stock);
+    &execute_stock, &render_help_stock, &tse_data::complete_instrument);
 
 } // namespace prompt::prompts

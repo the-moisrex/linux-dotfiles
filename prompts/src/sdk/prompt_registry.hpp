@@ -1,5 +1,6 @@
 #pragma once
 
+#include "completion.hpp"
 #include "errors.hpp"
 #include "prompt_context.hpp"
 #include <filesystem>
@@ -16,6 +17,9 @@ struct prompt_descriptor {
     std::string_view help_summary;
     void (*execute_fn)(prompt_context&);
     void (*render_help_fn)(std::ostream&);
+    // Optional positional/value completion (`--complete`), in addition to the
+    // flags the dispatcher derives from render_help_fn. nullptr = flags only.
+    completion_fn complete_fn;
     // The bash dispatcher's collect_prompts pairs each name with its script
     // path, and list/list-prompts sort whole `name<TAB>file` lines under
     // LC_COLLATE — the file part influences the collation result. This build
@@ -50,7 +54,7 @@ std::vector<std::string_view> list_prompt_names();
 // later by assign_sort_files(). Returns false when the registry is full (a
 // dropped registration would silently shadow a prompt).
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
-                     void (*render_help_fn)(std::ostream&)) noexcept;
+                     void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr) noexcept;
 
 // Fills in the sort_file keys; callers must do this after main starts (it
 // needs the filesystem). Registration itself happens before main.

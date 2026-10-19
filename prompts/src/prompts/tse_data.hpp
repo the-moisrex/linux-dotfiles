@@ -9,6 +9,7 @@
 #include "../core/fs.hpp"
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
+#include "../sdk/completion.hpp"
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <format>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -301,6 +303,21 @@ inline std::string collect(prompt_context& ctx, config const& cfg, std::string& 
         return out;
     }
     return trim_context(fetch_live(cfg, tse_tool), cfg.head_lines);
+}
+
+// Shell completion for the identifier argument. The lookup is delegated to the
+// shared resolver (`bin/tse.resolve --complete`), so `prompt stock|tse|intraday`
+// suggest exactly what `tse quote` does, from the same cached index and without
+// touching the network. Flags are added by the dispatcher from the prompt's
+// help text, so only positional candidates are emitted here.
+inline void complete_instrument(completion_request const& req, std::ostream& os) {
+    if (req.prefix.starts_with('-')) return;
+    auto exe = prompt::fs::self_path().value_or(std::filesystem::path{});
+    auto tool = prompt::fs::bin_tool("tse.resolve", exe, prompt::fs::find_git_root());
+    auto result = prompt::process::command{"python3", tool.string(), "--complete", std::string(req.prefix)}
+                      .discard_stderr()
+                      .run();
+    if (result.exit_code == 0) os << result.stdout_data;
 }
 
 } // namespace prompt::prompts::tse_data

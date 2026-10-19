@@ -83,6 +83,31 @@ Use these instead of re-open-coding the same loops:
   timeout)` — fork/exec, no shell, no quoting. `src/core/fs.hpp::bin_tool`
   locates sibling `bin/` tools (exe dir → git root → cwd → `$PATH`).
 
+## Shell completion (`--complete`)
+
+`prompt <name> --complete <prefix> [args typed before it...]` prints the
+prompt's completion candidates — one `value<TAB>description` per line — and
+exits 0 without running the prompt, reading stdin or touching the clipboard.
+`main.cpp` handles it early (before clipboard init and stdin), and
+`../shell/completions.fish` (`__fish_prompt_complete`) is the caller.
+
+- **Flags are automatic.** `completion::write_help_flags` parses the `Options:`
+  block of the prompt's own `render_help_fn` output, so every prompt completes
+  `--head`, `--num`, `--days`, `--format`, … with no per-file code; both
+  spellings of `--type, -t` are emitted.
+- **Positional/value candidates** come from the prompt's optional
+  `completion_fn` — the fifth, defaulted `register_prompt` argument
+  (`sdk/completion.hpp`, embedded by `new`). Put the callback next to the
+  prompt's argument parser and use the helpers: `completion::matches`,
+  `write_item`, `write_items`, `write_values`, and `write_values_after_flag`
+  (completes a flag's value when it is the previous argument).
+  `tse_data::complete_instrument` delegates the `stock`/`tse`/`intraday`
+  identifier lookup to `bin/tse.resolve --complete`; `skill`, `run`, `diagram`,
+  `metadata`, `opportunities` and `overengineering` have small callbacks.
+- `prompt_descriptor::complete_fn` stays `nullptr` when a prompt registers no
+  callback (flags only). Tests: `tests/test_completion.cpp` plus the
+  `complete_flags`/`complete_values` ctest smokes.
+
 ## Output bytes
 
 The native dispatcher is authoritative; its output is no longer byte-locked to

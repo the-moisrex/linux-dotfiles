@@ -245,9 +245,24 @@ Options:
 )EOF" << file_options_help("the embedded context");
 }
 
+// The pattern names overengineering.sh accepts (plus its `list` subcommand),
+// completed as the first positional argument.
+static void complete_overengineering(completion_request const& req, std::ostream& os) {
+    if (!req.prior_args.empty()) return;
+    if (prompt::completion::matches(req.prefix, "list")) {
+        prompt::completion::write_item(os, "list", "List the available patterns");
+    }
+    for (auto const& pattern : kPatterns) {
+        if (prompt::completion::matches(req.prefix, pattern.name)) {
+            prompt::completion::write_item(os, pattern.name, {});
+        }
+    }
+}
+
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
-bool const registered = prompt::register_prompt("overengineering", "Critique code for over-engineering patterns.",
-                                                &execute_overengineering, &render_help_overengineering);
+bool const registered =
+    prompt::register_prompt("overengineering", "Critique code for over-engineering patterns.", &execute_overengineering,
+                            &render_help_overengineering, &complete_overengineering);
 
 } // namespace prompt::prompts

@@ -5,6 +5,7 @@
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
@@ -225,6 +226,23 @@ void list_cached_skills(std::string& out) {
         out += std::format("  Skills are cached in: {}\n", skills_dir());
         out += "  Use 'prompt skill <query>' to search and download skills.\n";
     }
+}
+
+std::vector<std::string> cached_skill_names() {
+    std::vector<std::string> names;
+    for (auto const& dir : cache_dirs()) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec)) continue;
+        for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+            if (!std::filesystem::is_directory(it->path())) continue;
+            std::error_code fec;
+            if (!std::filesystem::is_regular_file(it->path() / "SKILL.md", fec)) continue;
+            names.push_back(it->path().filename().string());
+        }
+    }
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    return names;
 }
 
 std::string ai_find_skills_tool(std::filesystem::path const& exe_path, std::filesystem::path const& git_root) {
@@ -464,6 +482,33 @@ Examples:
 )EOF";
 }
 
+// Subcommands and cached skill names for `prompt skill <TAB>` /
+// `prompt skill install|uninstall <TAB>`.
+static void complete_skill(completion_request const& req, std::ostream& os) {
+    static constexpr std::array<prompt::completion::item, 3> kSubcommands = {
+        {
+            {.value = "list", .description = "List locally cached skills"},
+            {.value = "install", .description = "Download a specific skill by exact name"},
+            {.value = "uninstall", .description = "Remove a cached skill"},
+        },
+    };
+    std::string_view first = req.prior_args.empty() ? std::string_view{} : req.prior_args.front();
+    if (first == "install" || first == "uninstall") {
+        for (auto const& name : cached_skill_names()) {
+            if (prompt::completion::matches(req.prefix, name)) {
+                prompt::completion::write_item(os, name, "cached skill");
+            }
+        }
+        return;
+    }
+    prompt::completion::write_items(os, req.prefix, kSubcommands);
+    for (auto const& name : cached_skill_names()) {
+        if (prompt::completion::matches(req.prefix, name)) {
+            prompt::completion::write_item(os, name, "cached skill");
+        }
+    }
+}
+
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_prompt(
@@ -471,6 +516,6 @@ bool const registered = prompt::register_prompt(
     "Loads a cached skill and outputs its content as an AI prompt. If the skill is not cached, it is "
     "downloaded automatically. Piped stdin and file arguments are embedded as context. It also "
     "manages skills: list, install, and uninstall (see below).",
-    &execute_skill, &render_help_skill);
+    &execute_skill, &render_help_skill, &complete_skill);
 
 } // namespace prompt::prompts

@@ -120,20 +120,21 @@ def complete_prompt [spans: list<string>] {
     let word = ($spans | last | default "")
     let parts = ($spans | where {|x| $x != ""})
 
-    if ($parts | length) > 1 and ($parts | get 1) == "run" {
-        let run_spans = (["run"] ++ ($parts | skip 2))
-        let run_completion = (complete_run $run_spans)
-        let static = [
-            {value: "--head", description: "Trim run output with head"}
-        ]
-        filter_completions $word ($static ++ $run_completion)
-    } else if ($parts | length) > 1 {
-        let static = [
-            {value: "-h", description: "Show help for the selected prompt"},
-            {value: "--help", description: "Show help for the selected prompt"},
-            {value: "--head", description: "Keep only the first N lines of embedded context"}
-        ]
-        filter_completions $word $static
+    if ($parts | length) > 1 {
+        # Delegate to the native dispatcher: `prompt <name> --complete <word> <args...>`
+        # answers with `value<TAB>description` (flags from the prompt's help,
+        # positional/value candidates from the prompt itself).
+        let name = ($parts | get 1)
+        let prior = ($spans | skip 2 | drop 1)
+        let candidates = try {
+            ^prompt $name --complete $word ...$prior
+            | lines
+            | each {|line|
+                let kv = ($line | split row (char tab))
+                {value: ($kv | get 0), description: ($kv | get 1? | default "")}
+            }
+        } catch { [] }
+        filter_completions $word $candidates
     } else {
         let static = [
             {value: "-h", description: "Show help"},
@@ -142,7 +143,7 @@ def complete_prompt [spans: list<string>] {
             {value: "list-prompts", description: "Print full help of every prompt"}
         ]
         let prompt_names = try {
-            prompt list --names 2>/dev/null
+            ^prompt list --names 2>/dev/null
             | lines
             | each {|name| [
                 {value: $name, description: "Prompt name"}

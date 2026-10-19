@@ -4,6 +4,7 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
+#include <array>
 #include <regex>
 #include <string>
 #include <unordered_set>
@@ -144,12 +145,43 @@ Options:
 )EOF";
 }
 
+// The `bin/run` subcommands `run.sh`/the old fish completions offered, plus the
+// CMake targets `bin/run print-targets` knows (empty outside a build tree).
+static void complete_run(completion_request const& req, std::ostream& os) {
+    if (req.prefix.starts_with('-')) return;
+    static constexpr std::array<prompt::completion::item, 5> kRunArgs = {
+        {
+            {.value = "lldb", .description = "Debug in lldb"},
+            {.value = "gdb", .description = "Debug in gdb"},
+            {.value = "watch", .description = "Watch for changes"},
+            {.value = "print-targets", .description = "Print CMake targets"},
+            {.value = "help", .description = "Print bin/run help"},
+        },
+    };
+    auto exe = prompt::fs::self_path().value_or(std::filesystem::path{});
+    auto tool = prompt::fs::bin_tool("run", exe, prompt::fs::find_git_root());
+    auto result = prompt::process::command{tool.string(), "print-targets"}.discard_stderr().run();
+    if (result.exit_code == 0) {
+        std::size_t start = 0;
+        while (start < result.stdout_data.size()) {
+            auto end = result.stdout_data.find('\n', start);
+            std::size_t stop = end == std::string::npos ? result.stdout_data.size() : end;
+            std::string_view line(result.stdout_data.data() + start, stop - start);
+            start = end == std::string::npos ? result.stdout_data.size() : end + 1;
+            if (!line.empty() && prompt::completion::matches(req.prefix, line)) {
+                prompt::completion::write_item(os, line, {});
+            }
+        }
+    }
+    prompt::completion::write_items(os, req.prefix, kRunArgs);
+}
+
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_prompt(
     "run",
     "Runs `bin/run` with the provided arguments and builds a debugging prompt from its output. If "
     "stdin is piped in, it debugs the piped run output instead.",
-    &execute_run, &render_help_run);
+    &execute_run, &render_help_run, &complete_run);
 
 } // namespace prompt::prompts

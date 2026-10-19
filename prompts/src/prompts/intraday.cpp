@@ -3,6 +3,7 @@
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
+#include "tse_data.hpp"
 #include <algorithm>
 #include <sstream>
 #include <string>
@@ -202,6 +203,6 @@ bool const registered = prompt::register_prompt(
     "fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite "
     "`فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the clipboard is "
     "searched for one.",
-    &execute_intraday, &render_help_intraday);
+    &execute_intraday, &render_help_intraday, &tse_data::complete_instrument);
 
 } // namespace prompt::prompts

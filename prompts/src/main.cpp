@@ -3,6 +3,7 @@
 #include "core/process.hpp"
 #include "core/sanitize.hpp"
 #include "sdk/chaining.hpp"
+#include "sdk/completion.hpp"
 #include "sdk/pipeline.hpp"
 #include "sdk/prompt_context.hpp"
 #include "sdk/prompt_registry.hpp"
@@ -59,6 +60,9 @@ Notes:
   - Ships a fixed set of built-in prompts; it does not scan for prompt files.
     (The bash reference under prompts-shell/ searches $XDG_CONFIG_DIRS/prompts
     and its own directory and runs .sh/.txt/.md prompts.)
+  - 'prompt <name> --complete <prefix> [args...]' prints shell-completion
+    candidates for the prompt (used by shell/completions.fish), one
+    value<TAB>description per line, without running it.
   - 'prompt list' lists available prompts with the first paragraph of each
     prompt's help as the description (--names for bare names only).
   - 'prompt list-prompts' prints the full help text of every available prompt.
@@ -67,6 +71,54 @@ Notes:
         }
         if (arg == "--version" || arg == "-v") {
             std::cout << "prompt " << PROMPT_VERSION << "\n";
+            return 0;
+        }
+    }
+
+    // Shell completion: `prompt <name> --complete <prefix> [prior args...]`
+    // (alias: `prompt --complete <name> [prefix] ...`). Answered here, before
+    // the clipboard is initialized and before stdin is read: completion must
+    // not consume the pipe, copy anything to the clipboard, or run the prompt.
+    // Flags come from each prompt's own help; positional/value candidates come
+    // from its optional complete_fn.
+    {
+        auto arg = [&](int i) { return std::string_view(argv[static_cast<std::size_t>(i)]); };
+        std::string_view complete_name;
+        std::string_view prefix;
+        std::vector<std::string_view> prior;
+        bool wants_complete = false;
+        if (argc > 1 && arg(1) == "--complete") {
+            wants_complete = true;
+            if (argc > 2) complete_name = arg(2);
+            if (argc > 3) prefix = arg(3);
+            for (int i = 4; i < argc; ++i) prior.push_back(arg(i));
+        } else if (argc > 2) {
+            for (int i = 2; i < argc; ++i) {
+                if (arg(i) != "--complete") continue;
+                wants_complete = true;
+                complete_name = arg(1);
+                if (i + 1 < argc) prefix = arg(i + 1);
+                for (int j = i + 2; j < argc; ++j) prior.push_back(arg(j));
+                break;
+            }
+        }
+        if (wants_complete) {
+            // `.stock`/`-stock` shorthands name the same prompt.
+            while (!complete_name.empty() && (complete_name.front() == '.' || complete_name.front() == '-')) {
+                complete_name.remove_prefix(1);
+            }
+            if (auto const* desc = prompt::find_prompt(complete_name); desc != nullptr) {
+                std::ostringstream out;
+                if (desc->render_help_fn != nullptr) {
+                    std::ostringstream help;
+                    desc->render_help_fn(help);
+                    prompt::completion::write_help_flags(out, prefix, help.str());
+                }
+                if (desc->complete_fn != nullptr) {
+                    desc->complete_fn(prompt::completion_request{.prefix = prefix, .prior_args = prior}, out);
+                }
+                std::cout << out.str();
+            }
             return 0;
         }
     }

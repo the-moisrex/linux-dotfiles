@@ -64,13 +64,14 @@ void assign_sort_files(std::filesystem::path const& dir) {
 }
 
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
-                     void (*render_help_fn)(std::ostream&)) noexcept {
+                     void (*render_help_fn)(std::ostream&), completion_fn complete_fn) noexcept {
     if (prompts_count >= prompts_storage.size()) return false;
     prompts_storage[prompts_count++] = prompt_descriptor{
         .name = name,
         .help_summary = help_summary,
         .execute_fn = execute_fn,
         .render_help_fn = render_help_fn,
+        .complete_fn = complete_fn,
         .sort_file = {},
     };
     return true;

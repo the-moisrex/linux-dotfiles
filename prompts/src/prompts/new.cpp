@@ -55,6 +55,7 @@ Requirements for the generated prompt:
 - Accept `--head N` and the value-less `--num`/`--numbered` with file_options_or_throw(ctx); pass the returned file_options to the embedding helpers (embed_file_block, or number_lines + trim_context_nl + infer_lang) so --num prefixes each embedded line with its line number; split the file arguments with collect_file_args(ctx) (or positional_args(ctx) when each token needs custom handling) and embed stdin with embed_stdin when ctx.stdin_consumed.
 - Render the help from the shared pieces: file_usage_help("<name>"[, tail, pipe, prefix]) for the usage lines and file_options_help("<what>"[, show_help]) for the --head/--num options, so they stay consistent with the other file prompts.
 - Locate repository tools with prompt::fs::bin_tool and run subprocesses with prompt::process::command / run_command (argv arrays, no shell quoting).
+- Optional shell completion: a prompt that knows its own operands can register a fifth argument, a `completion_fn` (`void complete_<name>(prompt::completion_request const&, std::ostream&)`), and print `value<TAB>description` candidates for `prompt <name> --complete <prefix> [args...]`. Flags are completed automatically from the help's Options block, so the callback only adds positional/flag-value candidates (see completion.hpp below).
 - Keep the prompt focused, minimal, and consistent with the prompts already in src/prompts/.
 - Do not invent SDK helpers that are not in the references embedded below.
 

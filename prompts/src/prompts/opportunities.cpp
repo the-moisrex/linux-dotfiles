@@ -1,5 +1,6 @@
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -371,12 +372,24 @@ static void execute_opportunities(prompt_context& ctx) {
 
 static void render_help_opportunities(std::ostream& os) { os << opportunities_help(); }
 
+// The categories opportunities.sh lists in its help, completed as the first
+// positional argument.
+static void complete_opportunities(completion_request const& req, std::ostream& os) {
+    if (!req.prior_args.empty()) return;
+    static constexpr std::array<std::string_view, 20> kCategories = {
+        "money", "tech", "cpp",        "open-source", "career",       "business", "invest",
+        "learn", "ai",   "remote",     "freelance",   "side-project", "content",  "security",
+        "cloud", "data", "automation", "health",      "creative",     "all",
+    };
+    prompt::completion::write_values(os, req.prefix, kCategories);
+}
+
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_prompt(
     "opportunities",
     "Find opportunities in a specific category such as money, tech, cpp, career, or business. Use "
     "the category `all` for a brief overview of every category.",
-    &execute_opportunities, &render_help_opportunities);
+    &execute_opportunities, &render_help_opportunities, &complete_opportunities);
 
 } // namespace prompt::prompts
