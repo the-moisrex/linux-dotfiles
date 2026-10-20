@@ -1,0 +1,1313 @@
+#!/usr/bin/env python3
+"""tse.codal — Codal.ir letters: announcements, financial statements, portfolio reports.
+
+search.codal.ir answers HTTP 429 until its DDoS captcha is solved, so this client
+runs the same flow the codal.ir web app uses:
+
+  POST https://search.codal.ir/api/ddos/v1/begin   {"clientId": "ABBS"}  -> CaptchaToken
+  GET  https://search.codal.ir/api/ddos/v1/Captcha/{token}               -> JPEG
+  POST https://search.codal.ir/api/ddos/v1/end     {CaptchaToken, Captchatext}
+  GET  https://search.codal.ir/api/search/v2/q?... header X-Captcha-Token: {token}
+
+OCR uses tesseract (English traineddata is enough: the captcha is uppercase Latin
+letters and digits); a token lasts about four minutes and is re-solved
+automatically. The cookie session matters: without it the search API silently
+returns zero rows instead of failing. Report pages on www.codal.ir need no
+captcha. Requires an Iranian IP.
+
+Codal's edge resets connections (ECONNRESET) and tarpits requests at random, so
+every request is retried with jittered backoff inside a wall-clock deadline
+(CODAL_RETRIES, CODAL_TIMEOUT, CODAL_DEADLINE). Successful results are cached
+under ${XDG_CACHE_HOME:-~/.cache}/tse/codal (`CODAL_CACHE_DIR` overrides it):
+a cache entry younger than CODAL_MAX_AGE (default 6h, or --max-age) is used
+directly, an older one is refetched but still serves as a fallback when the live
+fetch keeps failing. `--refresh` forces a live fetch, `--cache-only` never
+touches the network, and `tse.codal cache path|list|clear` inspects the cache.
+
+Symbols are resolved through `tse.resolve`, so a Persian ticker, finglish name,
+ISIN, insCode, URL or composite token all work. `snapshot --markdown` renders
+the prompt-ready dataset used by `prompt tse.codal`.
+
+Usage:
+  tse.codal search فولاد
+  tse.codal search فولاد --letter-type 6 --category 1 --limit 5
+  tse.codal statements فولاد
+  tse.codal snapshot فولاد --top 3 --fund
+  tse.codal snapshot فولاد --refresh
+  tse.codal snapshot فولاد --markdown
+  tse.codal cache list
+"""
+
+import argparse
+import hashlib
+import http.client
+import importlib.util
+import http.cookiejar
+import io
+import json
+import os
+import queue
+import random
+import re
+import shutil
+import ssl
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from importlib.machinery import SourceFileLoader
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+CODAL_SEARCH = "https://search.codal.ir/api/search/v2/q"
+CODAL_REPORT = "https://www.codal.ir"
+CAPTCHA_DDOS = "https://search.codal.ir/api/ddos/v1"
+CODAL_SPACING_SECONDS = 4.0
+CAPTCHA_CLIENT_ID = "ABBS"
+CAPTCHA_CYCLES = 3
+CAPTCHA_CANDIDATES = 6
+TOKEN_TTL_SECONDS = 180.0
+MAX_ANNOUNCEMENTS = 20
+BODY_LIMIT = 6_000_000
+DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_ATTEMPTS = 5
+DEFAULT_DEADLINE_SECONDS = 60.0
+RETRY_BACKOFF_SECONDS = 1.5
+RETRY_BACKOFF_MAX_SECONDS = 8.0
+RETRY_JITTER_SECONDS = 0.75
+HOST_COOLDOWN_SECONDS = 4.0
+RETRY_STATUS = frozenset({408, 425, 500, 502, 503, 504})
+CACHE_VERSION = 1
+DEFAULT_MAX_AGE_SECONDS = 6 * 3600.0
+CACHE_KIND_SEARCH = "search"
+CACHE_KIND_REPORT = "report"
+TRANSIENT_MARKERS = (
+    "Cannot reach",
+    "Connection ",
+    "timed out",
+    "reset by peer",
+    "HTTP 5",
+    "Rate limited",
+    "requires browser verification",
+    "Access blocked",
+    "Non-JSON response",
+)
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+OCR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+OCR_PSM_MODES = ("7", "8", "6")
+DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+VERIFICATION_MARKERS = ("تأیید کاربر", "تایید کاربر")
+BLOCK_MARKERS = ("دسترسی شما", "مسدود", "General Error Detected")
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+_tse_loader = SourceFileLoader("tse", os.path.join(HERE, "tse"))
+_tse_spec = importlib.util.spec_from_loader("tse", _tse_loader)
+tse = importlib.util.module_from_spec(_tse_spec)
+_tse_loader.exec_module(tse)
+sys.modules.setdefault("tse", tse)
+
+DataError = tse.DataError
+
+
+def normal(text):
+    return str(text or "").translate(DIGITS).replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ").strip()
+
+
+def pick(row, *names):
+    if not isinstance(row, dict):
+        return None
+    keys = {str(key).lower(): val for key, val in row.items()}
+    for name in names:
+        value = keys.get(name.lower())
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def marker_hit(text, markers):
+    if any(marker in text for marker in markers):
+        return True
+    fixed = text.encode("cp1252", errors="ignore").decode("utf-8", errors="ignore")
+    return any(marker in fixed for marker in markers)
+
+
+def verification_page(html):
+    if marker_hit(html, VERIFICATION_MARKERS):
+        return True
+    lowered = html.lower()
+    return "captcha" in lowered or "verify" in lowered
+
+
+def normalize_symbol(value):
+    text = str(value or "").strip()
+    match = re.search(r"codal\.ir/ReportList\.aspx\?[^#]*?\bSymbol=([^&#]+)", text, re.IGNORECASE)
+    if match:
+        return urllib.parse.unquote_plus(match.group(1)).strip()
+    return text
+
+
+def tehran_now():
+    try:
+        tz = ZoneInfo("Asia/Tehran")
+    except ZoneInfoNotFoundError:
+        tz = timezone(timedelta(hours=3, minutes=30))
+    return datetime.now(tz)
+
+
+def jalali_stamp(moment):
+    """Aware datetime -> Jalali 'YYYY/MM/DD HH:MM:SS' (mirrors bin/tse)."""
+    month_days = (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+    gm = moment.month
+    gy2 = moment.year + 1 if gm > 2 else moment.year
+    days = (
+        355666
+        + 365 * moment.year
+        + (gy2 + 3) // 4
+        - (gy2 + 99) // 100
+        + (gy2 + 399) // 400
+        + moment.day
+        + month_days[gm - 1]
+    )
+    jy = -1595 + 33 * (days // 12053)
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + days // 31
+        jd = 1 + days % 31
+    else:
+        jm = 7 + (days - 186) // 30
+        jd = 1 + (days - 186) % 30
+    return f"{jy}/{jm:02d}/{jd:02d} {moment:%H:%M:%S}"
+
+
+def env_number(name, default, cast=float):
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = cast(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def env_max_age():
+    raw = str(os.environ.get("CODAL_MAX_AGE") or "").strip()
+    if not raw:
+        return DEFAULT_MAX_AGE_SECONDS
+    try:
+        return parse_duration(raw)
+    except ValueError:
+        return DEFAULT_MAX_AGE_SECONDS
+
+
+def parse_duration(text):
+    """'90', '30m', '6h', '2d' -> seconds (0 = never fresh)."""
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*", str(text))
+    if not match:
+        raise ValueError(f"invalid duration: {text}")
+    scale = {"": 1.0, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}[match.group(2)]
+    return float(match.group(1)) * scale
+
+
+def human_age(seconds):
+    if seconds is None:
+        return None
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 90 * 60:
+        return f"{int(seconds / 60)}m"
+    if seconds < 48 * 3600:
+        return f"{int(seconds / 3600)}h"
+    return f"{int(seconds / 86400)}d"
+
+
+def slug(text):
+    return re.sub(r"[^\w-]+", "-", normal(text), flags=re.UNICODE).strip("-") or "x"
+
+
+def cache_root():
+    override = str(os.environ.get("CODAL_CACHE_DIR") or "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "tse", "codal")
+
+
+def cache_path(kind, key):
+    if kind == CACHE_KIND_SEARCH:
+        name = f"search-{slug(key['symbol'])}-lt{key['letter_type']}-cat{key['category']}.json"
+    else:
+        name = f"report-{slug(key['letter'])}.json"
+    return os.path.join(cache_root(), name)
+
+
+def cache_read(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            entry = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(entry, dict) or entry.get("version") != CACHE_VERSION:
+        return None
+    if not isinstance(entry.get("payload"), (dict, list)):
+        return None
+    return entry
+
+
+def cache_write(path, kind, key, payload):
+    entry = {
+        "version": CACHE_VERSION,
+        "kind": kind,
+        "key": key,
+        "fetched_at": jalali_stamp(tehran_now()),
+        "fetched_at_iso": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "payload": payload,
+    }
+    directory = os.path.dirname(path)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=directory, prefix=".tmp-", suffix=".json", delete=False
+        )
+        try:
+            with handle:
+                json.dump(entry, handle, ensure_ascii=False)
+            os.replace(handle.name, path)
+        except OSError:
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        # A cache that cannot be written must never break a successful fetch.
+        pass
+
+
+def cache_age(entry):
+    raw = entry.get("fetched_at_iso") if isinstance(entry, dict) else None
+    if not raw:
+        return None
+    try:
+        moment = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - moment).total_seconds())
+
+
+def transient_failure(text):
+    return any(marker in str(text or "") for marker in TRANSIENT_MARKERS)
+
+
+def cache_note(entry, *, stale, live_error=None):
+    age = cache_age(entry)
+    note = {
+        "cached": True,
+        "fetched_at": entry.get("fetched_at"),
+        "age": human_age(age),
+        "stale": bool(stale),
+    }
+    if live_error:
+        note["live_error"] = live_error
+    return note
+
+
+class CachePolicy:
+    """How a Codal artifact is served: fresh cache, live fetch, or cache-only."""
+
+    def __init__(self, max_age=DEFAULT_MAX_AGE_SECONDS, refresh=False, cache_only=False):
+        self.max_age = max_age
+        self.refresh = bool(refresh)
+        self.cache_only = bool(cache_only)
+
+
+def cached_fetch(policy, kind, key, fetch):
+    """Return (payload, note): cache when fresh, live when not, cache as fallback.
+
+    ``note`` is None for a live result and a cache descriptor (with the Jalali
+    fetch time, its age and a possible ``live_error``) when the cache was used.
+    """
+    policy = policy or CachePolicy()
+    path = cache_path(kind, key)
+    entry = None if policy.refresh else cache_read(path)
+    label = key.get("symbol") or key.get("letter") or "Codal data"
+    if entry is not None:
+        age = cache_age(entry)
+        fresh = age is not None and age <= policy.max_age
+        if fresh or policy.cache_only:
+            return entry["payload"], cache_note(entry, stale=policy.cache_only and not fresh)
+    if policy.cache_only:
+        if entry is not None:
+            return entry["payload"], cache_note(entry, stale=True)
+        raise DataError(f"No cached Codal data for {label} and --cache-only was given")
+    try:
+        payload = fetch()
+    except DataError as exc:
+        if entry is not None and not policy.refresh:
+            return entry["payload"], cache_note(entry, stale=True, live_error=str(exc))
+        raise
+    cache_write(path, kind, key, payload)
+    return payload, None
+
+
+def ocr_candidates(image):
+    if not image:
+        return []
+    prepared = []
+    scaled = _scaled_png(image)
+    if scaled:
+        prepared.append(scaled)
+        dark = _threshold_png(scaled, 150)
+        if dark:
+            prepared.append(dark)
+    else:
+        prepared.append(image)
+    candidates = []
+    for data in prepared:
+        for psm in OCR_PSM_MODES:
+            text = _tesseract(data, psm)
+            if text and text not in candidates:
+                candidates.append(text)
+            if len(candidates) >= CAPTCHA_CANDIDATES:
+                return candidates
+    return candidates
+
+
+def _scaled_png(image):
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return None
+    try:
+        page = Image.open(io.BytesIO(image)).convert("L")
+        page = ImageOps.autocontrast(page)
+        page = page.resize((page.width * 3, page.height * 3), Image.LANCZOS)
+    except Exception:
+        return None
+    buffer = io.BytesIO()
+    page.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _threshold_png(image, level):
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        page = Image.open(io.BytesIO(image)).convert("L").point(lambda v: 255 if v > level else 0)
+    except Exception:
+        return None
+    buffer = io.BytesIO()
+    page.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _tesseract(image, psm):
+    try:
+        proc = subprocess.run(
+            ["tesseract", "stdin", "stdout", "--psm", psm, "-c", f"tessedit_char_whitelist={OCR_WHITELIST}"],
+            input=image,
+            capture_output=True,
+            timeout=30,
+        )
+    except FileNotFoundError as exc:
+        raise DataError("Codal captcha OCR needs the 'tesseract' binary (pacman: tesseract tesseract-data-eng, apt: tesseract-ocr tesseract-ocr-eng)") from exc
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise DataError(f"tesseract OCR failed: {exc}") from exc
+    text = proc.stdout.decode("utf-8", errors="replace").strip().replace(" ", "")
+    if not text and proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        raise DataError(f"tesseract OCR failed: {detail[-1] if detail else f'exit {proc.returncode}'}")
+    return text
+
+
+class TransportError(Exception):
+    """A retryable transport failure (reset, timeout, truncated body, 5xx)."""
+
+    def __init__(self, cause):
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+def describe_transport(exc):
+    reason = getattr(exc, "reason", None)
+    text = str(reason if reason is not None else exc).strip()
+    return text or exc.__class__.__name__
+
+
+class CodalClient:
+    def __init__(self):
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+        self.pace_lock = threading.Lock()
+        self.token_lock = threading.Lock()
+        self.last_request = {}
+        self.token = None
+        self.token_at = 0.0
+        self.blocked_hosts = set()
+        self.timeout = env_number("CODAL_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)
+        self.attempts = env_number("CODAL_RETRIES", DEFAULT_ATTEMPTS, int)
+        self.deadline = env_number("CODAL_DEADLINE", DEFAULT_DEADLINE_SECONDS)
+
+    def reopen(self):
+        """Fresh sockets for the next attempt, keeping the cookie session."""
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+
+    def pace(self, host):
+        """Space every request to a host (captcha and search share one key)."""
+        with self.pace_lock:
+            last = self.last_request.get(host, 0.0)
+            wait = max(0.0, CODAL_SPACING_SECONDS - (time.monotonic() - last))
+            self.last_request[host] = time.monotonic() + wait
+        if wait:
+            time.sleep(wait)
+
+    def penalize(self, host, seconds=HOST_COOLDOWN_SECONDS):
+        with self.pace_lock:
+            self.last_request[host] = max(
+                self.last_request.get(host, 0.0), time.monotonic() + seconds
+            )
+
+    def _request(self, request, timeout):
+        try:
+            with self.opener.open(request, timeout=timeout) as response:
+                status, body = response.status, response.read(BODY_LIMIT + 1)
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read()
+            except (OSError, http.client.HTTPException):
+                body = b""
+            return exc.code, body
+        except (
+            urllib.error.URLError,
+            ConnectionError,
+            TimeoutError,
+            ssl.SSLError,
+            OSError,
+            http.client.HTTPException,
+        ) as exc:
+            raise TransportError(exc) from exc
+        if status in RETRY_STATUS:
+            raise TransportError(DataError(f"HTTP {status}"))
+        return status, body
+
+    def _retry(self, host, operation):
+        """Run a request until it succeeds or the attempt/deadline budget is spent."""
+        started = time.monotonic()
+        deadline = started + self.deadline
+        attempts = 0
+        last = None
+        while attempts < self.attempts:
+            attempts += 1
+            try:
+                return operation()
+            except TransportError as exc:
+                last = exc.cause
+                self.reopen()
+                self.penalize(host)
+                remaining = deadline - time.monotonic()
+                if attempts >= self.attempts or remaining <= 0:
+                    break
+                delay = min(
+                    RETRY_BACKOFF_MAX_SECONDS,
+                    RETRY_BACKOFF_SECONDS * (2 ** (attempts - 1)),
+                )
+                time.sleep(min(delay + random.uniform(0, RETRY_JITTER_SECONDS), remaining))
+        elapsed = time.monotonic() - started
+        detail = describe_transport(last) if last is not None else "unknown error"
+        raise DataError(
+            f"Cannot reach {host} after {attempts} attempt(s) in {elapsed:.0f}s "
+            f"({detail}); Codal resets connections intermittently, retry in a minute"
+        )
+
+    def invalidate_token(self):
+        with self.token_lock:
+            self.token = None
+
+    def token_age(self):
+        return time.monotonic() - self.token_at if self.token else None
+
+    def captcha_token(self, force=False):
+        with self.token_lock:
+            if not force and self.token and time.monotonic() - self.token_at < TOKEN_TTL_SECONDS:
+                return self.token
+            self.token = self.solve_captcha()
+            self.token_at = time.monotonic()
+            return self.token
+
+    def solve_captcha(self):
+        if shutil.which("tesseract") is None:
+            raise DataError("Codal captcha OCR needs the 'tesseract' binary (pacman: tesseract tesseract-data-eng, apt: tesseract-ocr tesseract-ocr-eng)")
+        for _ in range(CAPTCHA_CYCLES):
+            status, body = self.post(CAPTCHA_DDOS + "/begin", {"clientId": CAPTCHA_CLIENT_ID})
+            payload = None
+            if status == 200 and body:
+                try:
+                    payload = json.loads(body)
+                except json.JSONDecodeError:
+                    payload = None
+            token = payload.get("CaptchaToken") if isinstance(payload, dict) else None
+            if status != 200 or not token:
+                raise DataError(f"Codal captcha challenge unavailable (HTTP {status})")
+            status, image = self.fetch(CAPTCHA_DDOS + "/Captcha/" + token)
+            if status != 200 or not image:
+                raise DataError(f"Codal captcha image unavailable (HTTP {status})")
+            for text in ocr_candidates(image):
+                status, _ = self.post(CAPTCHA_DDOS + "/end", {"CaptchaToken": token, "Captchatext": text})
+                if status == 200:
+                    return token
+        raise DataError(f"Codal captcha OCR failed after {CAPTCHA_CYCLES} challenges; retry or check tesseract")
+
+    def fetch(self, url, *, accept="application/json"):
+        host = urllib.parse.urlsplit(url).hostname
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept, "Referer": CODAL_REPORT + "/"})
+        self.pace(host)
+        return self._retry(host, lambda: self._request(request, self.timeout))
+
+    def post(self, url, payload):
+        host = urllib.parse.urlsplit(url).hostname
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json", "Content-Type": "application/json", "Referer": CODAL_REPORT + "/"},
+        )
+        self.pace(host)
+        return self._retry(host, lambda: self._request(request, self.timeout))
+
+    def get(self, url, *, accept="application/json", search=False):
+        host = urllib.parse.urlsplit(url).hostname
+        if host in self.blocked_hosts:
+            raise DataError(f"{host} requires browser verification; try again later")
+        headers = {"User-Agent": USER_AGENT, "Accept": accept, "Referer": CODAL_REPORT + "/"}
+        if search:
+            headers["X-Captcha-Token"] = self.captcha_token()
+        verification_retried = False
+        rate_limit_retries = 0
+        while True:
+            self.pace(host)
+            request = urllib.request.Request(url, headers=headers)
+            status, body = self._retry(host, lambda: self._request(request, self.timeout))
+            if status == 429:
+                if search and rate_limit_retries < 1:
+                    rate_limit_retries += 1
+                    self.invalidate_token()
+                    headers["X-Captcha-Token"] = self.captcha_token(force=True)
+                    continue
+                detail = "even after solving its captcha" if search else "wait a few minutes and rerun"
+                raise DataError(f"Rate limited by {host} (HTTP 429); {detail}")
+            if status == 403:
+                raise DataError(f"Access denied by {host} (HTTP 403); check your Iranian IP and VPN")
+            if status >= 400:
+                raise DataError(f"{host}: HTTP {status}")
+            if len(body) > BODY_LIMIT:
+                raise DataError(f"Response too large: {url}")
+            text = body.decode("utf-8-sig", errors="replace")
+            if marker_hit(text, VERIFICATION_MARKERS):
+                if not verification_retried:
+                    verification_retried = True
+                    self.invalidate_token()
+                    time.sleep(12)
+                    if search:
+                        headers["X-Captcha-Token"] = self.captcha_token(force=True)
+                    continue
+                self.blocked_hosts.add(host)
+                raise DataError(f"{host} requires browser verification; try again later")
+            if marker_hit(text, BLOCK_MARKERS):
+                raise DataError(f"Access blocked by {host}; try an Iranian IP without a VPN")
+            return text
+
+    def json(self, url, *, search=False):
+        text = self.get(url, search=search)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise DataError(f"Non-JSON response from {urllib.parse.urlsplit(url).hostname} (possibly blocked)") from exc
+
+
+_CLIENT = None
+_CLIENT_LOCK = threading.Lock()
+
+
+def default_client():
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = CodalClient()
+        return _CLIENT
+
+
+def codal_search(client, symbol, letter_type, category, policy=None):
+    """Return (rows, cache_note); an empty result with a stale token is retried once."""
+    symbol = normalize_symbol(symbol)
+    params = {
+        "Symbol": symbol,
+        "Category": category,
+        "PublisherType": 1,
+        "LetterType": letter_type,
+        "Length": -1,
+        "Audited": "true",
+        "NotAudited": "true",
+        "IsNotAudited": "false",
+        "Mains": "true",
+        "Childs": "false",
+        "Consolidatable": "true",
+        "NotConsolidatable": "true",
+        "AuditorRef": -1,
+        "CompanyState": 0,
+        "CompanyType": -1,
+        "PageNumber": 1,
+        "TracingNo": -1,
+        "Publisher": "false",
+        "search": "true",
+    }
+    url = CODAL_SEARCH + "?" + urllib.parse.urlencode(params)
+
+    def query():
+        payload = client.json(url, search=True)
+        rows = pick(payload, "Letters")
+        if not isinstance(rows, list):
+            raise DataError("Unexpected Codal search result")
+        return [row for row in rows if isinstance(row, dict) and normal(pick(row, "Symbol")) == normal(symbol)]
+
+    def fetch():
+        rows = query()
+        if not rows and (client.token_age() is None or client.token_age() > 90):
+            # Without a live cookie session Codal answers zero rows instead of 429.
+            client.invalidate_token()
+            rows = query()
+        return rows
+
+    key = {"symbol": normal(symbol), "letter_type": letter_type, "category": category}
+    return cached_fetch(policy, CACHE_KIND_SEARCH, key, fetch)
+
+
+def codal_url(path, report=False):
+    if not isinstance(path, str) or not path:
+        return None
+    parts = urllib.parse.urlsplit(urllib.parse.urljoin(CODAL_REPORT + "/", path))
+    hosts = ("www.codal.ir", "codal.ir") if report else ("www.codal.ir", "codal.ir", "cdn.codal.ir", "excel.codal.ir")
+    if parts.scheme != "https" or parts.hostname not in hosts:
+        return None
+    return urllib.parse.urlunsplit(parts)
+
+
+def codal_meta(row):
+    return {
+        "title": pick(row, "Title"),
+        "letter_code": pick(row, "LetterCode"),
+        "company_name": pick(row, "CompanyName"),
+        "published_at": pick(row, "PublishDateTime", "SentDateTime"),
+        "sent_at": pick(row, "SentDateTime"),
+        "tracing_no": pick(row, "TracingNo"),
+        "is_estimate": pick(row, "IsEstimate"),
+        "url": codal_url(pick(row, "Url"), report=True),
+        "pdf_url": codal_url(pick(row, "PdfUrl")),
+        "excel_url": codal_url(pick(row, "ExcelUrl")),
+        "xbrl_url": codal_url(pick(row, "XbrlUrl")),
+        "tedan_url": codal_url(pick(row, "TedanUrl")),
+        "attachment_url": codal_url(pick(row, "AttachmentUrl")),
+    }
+
+
+def _number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) if isinstance(value, float) and value.is_integer() else value
+    text = normal(value).replace(",", "").replace("٬", "").replace(" ", "")
+    if text.startswith("(") and text.endswith(")"):
+        text = "-" + text[1:-1]
+    try:
+        return float(text) if "." in text else int(text)
+    except ValueError:
+        return None
+
+
+UNIT_NAMES = {
+    1: "rial",
+    1000: "thousand_rial",
+    1_000_000: "million_rial",
+    1_000_000_000: "billion_rial",
+    1_000_000_000_000: "trillion_rial",
+}
+
+
+def statement_row(rows, *labels):
+    if not rows:
+        return None
+    wanted = {normal(label).replace(" ", "") for label in labels}
+    for row in rows:
+        if normal(row.get("item")).replace(" ", "") in wanted:
+            return _number(row.get("current_period"))
+    return None
+
+
+def unit_factor(shares, capital):
+    if not shares or not capital or capital <= 0:
+        return None
+    factor = shares * 1000 / capital
+    for candidate in UNIT_NAMES:
+        if 0.9 <= factor / candidate <= 1.1:
+            return candidate
+    return None
+
+
+def derive_fundamentals(fundamentals, filings, closing):
+    """Derive ratios from the extracted statement rows (not as-reported values)."""
+    if not isinstance(fundamentals, dict) or not isinstance(filings, dict):
+        return
+    balance_rows = income_rows = None
+    period = None
+    for report in filings.get("statements") or []:
+        financials = report.get("financials") or {}
+        balance = financials.get("balance_sheet") or {}
+        income = financials.get("income_statement") or {}
+        if balance.get("rows"):
+            balance_rows = balance["rows"]
+        if income.get("rows"):
+            income_rows = income["rows"]
+        period = report.get("period") or period
+        if balance_rows or income_rows:
+            break
+    if not balance_rows and not income_rows:
+        return
+    derived = {
+        "source": "Codal extracted statement rows (derived, not as-reported ratios)"
+    }
+    equity = statement_row(
+        balance_rows, "جمع حقوق مالکانه", "جمع حقوق صاحبان سهام", "جمع کل حقوق مالکانه"
+    )
+    liabilities = statement_row(balance_rows, "جمع بدهی ها", "جمع کل بدهی ها")
+    capital = statement_row(balance_rows, "سرمایه")
+    if capital is None:
+        capital = statement_row(income_rows, "سرمایه")
+    revenue = statement_row(
+        income_rows,
+        "درآمدهای عملیاتی",
+        "جمع درآمدهای عملیاتی",
+        "فروش کالا",
+        "فروش کالا و خدمات",
+        "فروش کالاها و خدمات",
+    )
+    net_income = statement_row(
+        income_rows, "سود(زیان) خالص", "سود (زیان) خالص", "سودوزیان خالص", "سود خالص"
+    )
+    shares = fundamentals.get("share_count")
+    if equity and net_income:
+        derived["roe_pct"] = round(net_income / equity * 100, 2)
+    if net_income and revenue:
+        derived["net_margin_pct"] = round(net_income / revenue * 100, 2)
+    if liabilities and equity:
+        derived["debt_to_equity"] = round(liabilities / equity, 2)
+    factor = unit_factor(shares, capital)
+    if factor:
+        derived["unit_detection"] = UNIT_NAMES[factor]
+        if equity:
+            book_value = equity * factor / shares
+            derived["book_value_per_share_rial"] = round(book_value)
+            if closing and book_value > 0:
+                derived["pb"] = round(closing / book_value, 2)
+    else:
+        derived["unit_detection"] = "failed"
+    if period:
+        derived["period"] = period
+    fundamentals["derived_ratios"] = derived
+
+
+def sheet_rows(datasource, alias):
+    for sheet in datasource.get("sheets") or []:
+        if not isinstance(sheet, dict):
+            continue
+        for table in sheet.get("tables") or []:
+            if not isinstance(table, dict) or pick(table, "aliasName") != alias:
+                continue
+            grid = {}
+            for cell in table.get("cells") or []:
+                if not isinstance(cell, dict):
+                    continue
+                r = _number(pick(cell, "rowSequence"))
+                c = _number(pick(cell, "columnSequence"))
+                if isinstance(r, int) and isinstance(c, int):
+                    grid.setdefault(r, {})[c] = pick(cell, "value")
+            for header, cols in sorted(grid.items()):
+                label_cols = [c for c, text in cols.items() if normal(text) == "شرح"]
+                if not label_cols:
+                    continue
+                result = []
+                for rownum, cells in sorted(grid.items()):
+                    if rownum <= header:
+                        continue
+                    for col in label_cols:
+                        label = normal(cells.get(col))
+                        amount = _number(cells.get(col + 1))
+                        if label and amount is not None:
+                            result.append({"item": label, "current_period": amount})
+                if result:
+                    return {"table_title": pick(table, "title_Fa"), "rows": result[:60], "truncated": len(result) > 60}
+    return None
+
+
+def statement(client, metadata, policy=None):
+    """Return (report, cache_note); each letter's extraction is cached on its own."""
+    url = metadata["url"]
+    if not url or urllib.parse.urlsplit(url).path.lower() != "/reports/decision.aspx":
+        return {**metadata, "financials": None, "reason": "No supported machine-readable report URL"}, None
+
+    def fetch():
+        financials = {}
+        details = {}
+        failures = []
+        for sheet_id, alias, name in ((1, "IncomeStatement", "income_statement"), (0, "BalanceSheet", "balance_sheet")):
+            parts = urllib.parse.urlsplit(url)
+            query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+            query = [(key, val) for key, val in query if key.lower() != "sheetid"]
+            query.append(("SheetId", str(sheet_id)))
+            page = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), ""))
+            try:
+                html = client.get(page, accept="text/html")
+                match = re.search(r"\bvar\s+datasource\s*=\s*", html)
+                if not match:
+                    if verification_page(html):
+                        raise DataError("Report page requires browser verification; try again later")
+                    raise DataError("Report has no embedded financial datasource")
+                data, _ = json.JSONDecoder().raw_decode(html, match.end())
+                if not isinstance(data, dict):
+                    raise DataError("Unexpected financial datasource")
+                details = {key: pick(data, key) for key in ("period", "periodEndToDate", "yearEndToDate", "isAudited", "isConsolidated")}
+                financials[name] = sheet_rows(data, alias)
+                if financials[name] is None:
+                    failures.append(f"{name}: no recognized table rows")
+            except (DataError, json.JSONDecodeError) as exc:
+                failures.append(f"{name}: {exc}")
+                if "requires browser verification" in str(exc) or "Rate limited" in str(exc):
+                    break
+        reason = "; ".join(failures) if failures else None
+        if not financials and failures and all(transient_failure(item) for item in failures):
+            # Do not cache (or return) an outage as if it were a parsed report;
+            # cached_fetch falls back to the last good extraction instead.
+            raise DataError(reason)
+        return {
+            **metadata,
+            "period": details,
+            "financials": financials or None,
+            "reason": reason,
+        }
+
+    letter = metadata.get("tracing_no") or hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+    return cached_fetch(policy, CACHE_KIND_REPORT, {"letter": str(letter), "url": url}, fetch)
+
+
+def codal(symbol, errors, fund=False, policy=None):
+    client = default_client()
+    policy = policy or CachePolicy()
+    symbol = normalize_symbol(symbol)
+    rows_queue = queue.Queue(maxsize=1)
+
+    def search_worker():
+        found = {}
+        found_errors = {}
+        found_cache = {}
+        try:
+            try:
+                rows, note = codal_search(client, symbol, 6, 1, policy)
+                found["statement_rows"] = rows
+                if note:
+                    found_cache["financials"] = note
+            except DataError as exc:
+                found_errors["codal_financials"] = str(exc)
+        finally:
+            rows_queue.put(found.get("statement_rows"))
+        try:
+            rows, note = codal_search(client, symbol, -1, -1, policy)
+            found["announcements"] = [codal_meta(row) for row in rows[:MAX_ANNOUNCEMENTS]]
+            if note:
+                found_cache["announcements"] = note
+        except DataError as exc:
+            found_errors["codal_announcements"] = str(exc)
+        if fund:
+            try:
+                rows, note = codal_search(client, symbol, -1, 3, policy)
+                found["portfolio_reports"] = [codal_meta(row) for row in rows[:3]]
+                if note:
+                    found_cache["portfolio_reports"] = note
+            except DataError as exc:
+                found_errors["codal_portfolio"] = str(exc)
+        return found, found_errors, found_cache
+
+    def page_worker():
+        statements = []
+        found_errors = {}
+        found_cache = {}
+        rows = rows_queue.get()
+        if rows:
+            seen_reports = set()
+            seen_periods = set()
+            report_policy = policy
+            for row in rows[:6]:
+                metadata = codal_meta(row)
+                if not metadata["url"] or not metadata["title"]:
+                    continue
+                key = pick(row, "TracingNo")
+                if key in seen_reports:
+                    continue
+                seen_reports.add(key)
+                try:
+                    report, note = statement(client, metadata, report_policy)
+                except DataError as exc:
+                    if report_policy.cache_only:
+                        # Already known to be offline and this letter is not cached.
+                        continue
+                    # Keep the letter visible as an empty statement with the reason.
+                    statements.append({**metadata, "period": {}, "financials": None, "reason": str(exc)})
+                    found_errors["codal_financials"] = str(exc)
+                    break
+                if note:
+                    found_cache["financials"] = note
+                    if note.get("live_error"):
+                        # The network is down; serve the remaining letters from
+                        # the cache instead of retrying for every one of them.
+                        report_policy = CachePolicy(cache_only=True)
+                period = report.get("period") or {}
+                period_key = (period.get("periodEndToDate"), period.get("isConsolidated"))
+                if period_key[0] and period_key in seen_periods:
+                    continue
+                seen_periods.add(period_key)
+                statements.append(report)
+                if report.get("reason") and any(
+                    word in report["reason"]
+                    for word in ("requires browser verification", "Rate limited", "Cannot reach")
+                ):
+                    found_errors["codal_financials"] = report["reason"]
+                    break
+                if len(statements) >= 2:
+                    break
+        return {"statements": statements}, found_errors, found_cache
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        search_future = pool.submit(search_worker)
+        page_future = pool.submit(page_worker)
+        found, search_errors, search_cache = search_future.result()
+        page_found, page_errors, page_cache = page_future.result()
+    result = {
+        "announcements": found.get("announcements") or [],
+        "statements": page_found["statements"],
+        "portfolio_reports": found.get("portfolio_reports") or [],
+    }
+    cache = {}
+    for source in (search_cache, page_cache):
+        for name, note in source.items():
+            existing = cache.get(name)
+            if existing is None or (note.get("stale") and not existing.get("stale")):
+                # A stale artifact makes the whole answer stale; it wins the note.
+                cache[name] = note
+    if cache:
+        result["cache"] = cache
+    for key in ("codal_announcements", "codal_portfolio", "codal_financials"):
+        if key in search_errors:
+            errors[key] = search_errors[key]
+        if key in page_errors:
+            errors[key] = page_errors[key]
+    # A stale cache is only used because the live fetch failed; say both things.
+    for name, error_key in (
+        ("announcements", "codal_announcements"),
+        ("portfolio_reports", "codal_portfolio"),
+        ("financials", "codal_financials"),
+    ):
+        note = cache.get(name) or {}
+        if note.get("live_error") and error_key not in errors:
+            errors[error_key] = (
+                f"live fetch failed ({note['live_error']}); using cached data from "
+                f"{note.get('fetched_at') or 'an unknown time'}"
+            )
+    if not result["statements"] and "codal_financials" not in errors:
+        errors["codal_financials"] = "No matching Codal financial statements found"
+    elif result["statements"] and not any(report.get("financials") and any(report["financials"].values()) for report in result["statements"]):
+        errors.setdefault("codal_financials", result["statements"][0].get("reason") or "No financial statement rows extracted")
+    return result
+
+
+def trim_announcements(data, top):
+    out = {**data}
+    announcements = data.get("announcements")
+    if isinstance(announcements, list):
+        out["announcements"] = announcements[:top]
+    out.setdefault("portfolio_reports", [])
+    return out
+
+
+def codal_snapshot(symbol, top, errors, fund=False, policy=None):
+    result = codal(symbol, errors, fund=fund, policy=policy)
+    return {**trim_announcements(result, top), "retrieved_at": jalali_stamp(tehran_now())}
+
+
+def resolve_identifier(symbol):
+    """Resolve any tse identifier to (canonical symbol, instrument, identity, client).
+
+    `tse.resolve` handles Persian/finglish/fuzzy names, ISINs, insCodes, URLs and
+    composite tokens; if the resolver is unavailable the raw symbol is kept so a
+    plain Persian ticker still works.
+    """
+    fallback = normalize_symbol(symbol)
+    try:
+        client = tse.Client()
+        instrument = tse.resolve(client, symbol)
+    except Exception:
+        return fallback, {"symbol": fallback}, {}, None
+    code = instrument.get("ins_code")
+    ident = {}
+    if code:
+        try:
+            ident = tse.identity(client, code)
+        except tse.DataError:
+            ident = {}
+    canonical = ident.get("symbol") or instrument.get("symbol") or fallback
+    return canonical, instrument, ident, client
+
+
+def canonical_symbol(symbol, offline=False):
+    if offline:
+        return normalize_symbol(symbol)
+    canonical, _, _, _ = resolve_identifier(symbol)
+    return canonical or normalize_symbol(symbol)
+
+
+def snapshot_dataset(symbol, top, errors, fund=False, policy=None):
+    """Fetch a Codal snapshot and add ratios derivable from its statement rows."""
+    offline = bool(policy is not None and policy.cache_only)
+    if offline:
+        # --cache-only must never touch the network: skip tse.resolve/identity/quote
+        # and key the cached Codal artifacts by the plain symbol.
+        canonical = normalize_symbol(symbol)
+        instrument = {"symbol": canonical}
+        ident = {}
+        client = None
+    else:
+        canonical, instrument, ident, client = resolve_identifier(symbol)
+    if not canonical:
+        raise DataError("No symbol found for Codal search")
+    isin = ident.get("isin") or instrument.get("isin")
+    fund = fund or bool(
+        tse.detect_fund(isin, ident.get("industry"), ident.get("sub_industry"))
+    )
+    result = codal_snapshot(canonical, top, errors, fund=fund, policy=policy)
+    if (
+        not result["announcements"]
+        and not result["statements"]
+        and not result.get("portfolio_reports")
+        and errors
+    ):
+        raise DataError("No Codal data available: " + "; ".join(dict.fromkeys(errors.values())))
+    closing = None
+    share_count = ident.get("share_count")
+    code = instrument.get("ins_code")
+    if client is not None and code:
+        try:
+            current = tse.quote(client, code) or {}
+            closing = current.get("closing_rial")
+            if not share_count:
+                # GetInstrumentIdentity can report 0; GetInstrumentInfo carries
+                # the real share count used by the ratio unit detection.
+                info = tse.info(client, code, ident, current, errors)
+                share_count = info.get("share_count")
+        except Exception as exc:  # market metadata must not abort the Codal run
+            errors["quote"] = str(exc) or exc.__class__.__name__
+    fundamentals = {"share_count": share_count}
+    derive_fundamentals(fundamentals, result, closing)
+    if fundamentals.get("derived_ratios"):
+        result["derived_ratios"] = fundamentals["derived_ratios"]
+    instrument = {
+        **instrument,
+        "symbol": canonical,
+        "isin": isin,
+        "name": ident.get("name") or instrument.get("name"),
+    }
+    return result, instrument
+
+
+def render_markdown(result, instrument, errors):
+    now = tse.tehran_now()
+    return tse.markdown(
+        {
+            "fetched_at": tse.jalali_stamp(now),
+            "market_session_open": tse.market_session_open(now),
+            "instrument": instrument,
+            "codal": result,
+            "errors": errors,
+        }
+    )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="tse.codal",
+        description="Fetch Codal.ir announcements and financial statements (requires an Iranian IP).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  tse.codal search فولاد
+  tse.codal search foolad --letter-type 6 --category 1 --limit 5
+  tse.codal statements IRO1FOLD0001
+  tse.codal snapshot فولاد --top 3 --fund
+  tse.codal snapshot فولاد --refresh
+  tse.codal snapshot foolad --markdown
+  tse.codal cache list
+LetterType/Category: -1 = all, 6/1 = financial statements, -1/3 = fund portfolio reports.
+
+Cache: results are stored under ${XDG_CACHE_HOME:-~/.cache}/tse/codal and reused
+for CODAL_MAX_AGE (default 6h). An older entry is refetched, but still used when
+the live fetch keeps failing (then the output carries a "cache" note with its
+fetch date/time). --refresh forces a live fetch, --cache-only never goes online.
+Environment: CODAL_CACHE_DIR, CODAL_MAX_AGE, CODAL_RETRIES, CODAL_TIMEOUT,
+CODAL_DEADLINE (seconds).""",
+    )
+    sub = parser.add_subparsers(title="commands", metavar="COMMAND", dest="command", required=True)
+
+    search_cmd = sub.add_parser("search", help="List Codal letters for a symbol as JSON")
+    search_cmd.add_argument("symbol", metavar="SYMBOL", help="Persian/finglish symbol, ISIN, insCode, or codal.ir URL")
+    search_cmd.add_argument("--letter-type", type=int, default=-1, metavar="N", help="Codal letter type (-1 = all, 6 = financial statements)")
+    search_cmd.add_argument("--category", type=int, default=-1, metavar="N", help="Codal category (-1 = all, 1 = financial statements, 3 = fund portfolio)")
+    search_cmd.add_argument("--limit", type=int, default=MAX_ANNOUNCEMENTS, metavar="N", help=f"Maximum rows (default: {MAX_ANNOUNCEMENTS})")
+    search_cmd.add_argument("--raw", action="store_true", help="Print raw Codal rows instead of normalized entries")
+
+    statements_cmd = sub.add_parser("statements", help="Extract financial statement tables from the latest reports")
+    statements_cmd.add_argument("symbol", metavar="SYMBOL", help="Persian/finglish symbol, ISIN, insCode, or codal.ir URL")
+
+    snapshot_cmd = sub.add_parser("snapshot", help="Announcements plus statements and derived ratios")
+    snapshot_cmd.add_argument("symbol", metavar="SYMBOL", help="Persian/finglish symbol, ISIN, insCode, or codal.ir URL")
+    snapshot_cmd.add_argument("--top", type=int, default=5, metavar="N", help="Maximum recent announcements (default: 5)")
+    snapshot_cmd.add_argument("--fund", action="store_true", help="Also fetch monthly portfolio reports (funds/ETFs; auto-detected when omitted)")
+    snapshot_cmd.add_argument("--markdown", action="store_true", help="Print the prompt-ready Markdown dataset instead of JSON")
+
+    for command in (search_cmd, statements_cmd, snapshot_cmd):
+        command.add_argument("--refresh", action="store_true", help="Ignore the cache and fetch live data")
+        command.add_argument("--cache-only", action="store_true", help="Never touch the network; fail if nothing is cached")
+        command.add_argument("--max-age", type=duration_arg, default=None, metavar="DURATION", help="Reuse a cache entry younger than this (default: 6h, e.g. 30m, 12h, 2d; 0 = always live)")
+
+    cache_cmd = sub.add_parser("cache", help="Inspect or clear the result cache")
+    cache_cmd.add_argument("action", choices=("path", "list", "clear"), help="Print the cache directory, list entries, or delete them")
+
+    args = parser.parse_args(argv)
+    if getattr(args, "limit", 1) < 1:
+        parser.error("--limit must be positive")
+    if args.command == "snapshot" and not 1 <= args.top <= 20:
+        parser.error("--top must be between 1 and 20")
+    if args.command == "cache":
+        return cache_command(args.action)
+    if args.refresh and args.cache_only:
+        parser.error("--refresh and --cache-only are mutually exclusive")
+    max_age = args.max_age
+    if max_age is None:
+        max_age = env_max_age()
+    policy = CachePolicy(max_age=max_age, refresh=args.refresh, cache_only=args.cache_only)
+    errors = {}
+    try:
+        client = default_client()
+        if args.command == "search":
+            rows, note = codal_search(
+                client,
+                canonical_symbol(args.symbol, offline=args.cache_only),
+                args.letter_type,
+                args.category,
+                policy,
+            )
+            result = rows[: args.limit] if args.raw else [codal_meta(row) for row in rows[: args.limit]]
+            report_cache_note("search", note)
+        elif args.command == "statements":
+            data = codal(
+                canonical_symbol(args.symbol, offline=args.cache_only),
+                errors,
+                policy=policy,
+            )
+            result = data["statements"]
+            report_cache_note("financial statements", (data.get("cache") or {}).get("financials"))
+        else:
+            result, instrument = snapshot_dataset(
+                args.symbol, args.top, errors, fund=args.fund, policy=policy
+            )
+    except DataError as exc:
+        print(f"tse.codal: {exc}", file=sys.stderr)
+        return 1
+    if errors:
+        print("tse.codal: " + "; ".join(dict.fromkeys(errors.values())), file=sys.stderr)
+        if not result:
+            return 1
+    if args.command == "snapshot" and not args.markdown and errors:
+        result["errors"] = errors
+    if args.command == "snapshot" and args.markdown:
+        print(render_markdown(result, instrument, errors))
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def duration_arg(text):
+    try:
+        return parse_duration(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def report_cache_note(label, note):
+    if not note:
+        return
+    text = f"{label}: cached result from {note.get('fetched_at') or 'an unknown time'}"
+    if note.get("age"):
+        text += f" ({note['age']} ago)"
+    if note.get("stale"):
+        text += ", stale"
+    if note.get("live_error"):
+        text += f" — live fetch failed: {note['live_error']}"
+    print("tse.codal: " + text, file=sys.stderr)
+
+
+def cache_command(action):
+    root = cache_root()
+    if action == "path":
+        print(root)
+        return 0
+    if action == "clear":
+        if os.path.isdir(root):
+            shutil.rmtree(root, ignore_errors=True)
+            print(f"tse.codal: cleared {root}", file=sys.stderr)
+        else:
+            print(f"tse.codal: no cache at {root}", file=sys.stderr)
+        return 0
+    entries = []
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith(".json") or name.startswith(".tmp-"):
+            continue
+        entry = cache_read(os.path.join(root, name))
+        if entry is None:
+            continue
+        entries.append(
+            {
+                "file": os.path.join(root, name),
+                "kind": entry.get("kind"),
+                "key": entry.get("key"),
+                "fetched_at": entry.get("fetched_at"),
+                "age": human_age(cache_age(entry)),
+            }
+        )
+    print(json.dumps(entries, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

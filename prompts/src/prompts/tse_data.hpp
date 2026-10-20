@@ -40,9 +40,8 @@ struct config {
     std::string symbol;
     int days = 0;
     bool days_set = false;
-    int top = 5;
-    bool no_codal = false;
     bool unadjusted = false;
+    std::vector<std::string> skip;
     bool full = false;
     bool fetch_flags = false;
     bool cache_mode = false;
@@ -110,19 +109,15 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
             ++i; // value parsed by parse_head_option above
             continue;
         }
-        if (arg == "--days" || arg == "--top") {
+        if (arg == "--days") {
             cfg.fetch_flags = true;
             if (i + 1 >= ctx.args_count || !is_positive_int(ctx.args[i + 1])) {
                 cfg.failed = true;
-                cfg.error = std::format("{}{} requires a positive integer\n", pfx, arg);
+                cfg.error = std::format("{}--days requires a positive integer\n", pfx);
                 return cfg;
             }
-            if (arg == "--days") {
-                cfg.days = std::stoi(std::string(ctx.args[i + 1]));
-                cfg.days_set = true;
-            } else {
-                cfg.top = std::stoi(std::string(ctx.args[i + 1]));
-            }
+            cfg.days = std::stoi(std::string(ctx.args[i + 1]));
+            cfg.days_set = true;
             ++i;
             continue;
         }
@@ -131,9 +126,34 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
             cfg.full = true;
             continue;
         }
-        if (arg == "--no-codal") {
+        if (arg == "--without") {
             cfg.fetch_flags = true;
-            cfg.no_codal = true;
+            if (i + 1 >= ctx.args_count) {
+                cfg.failed = true;
+                cfg.error = std::format("{}--without requires a section name\n", pfx);
+                return cfg;
+            }
+            std::string_view names = ctx.args[++i];
+            std::size_t start = 0;
+            while (start <= names.size()) {
+                auto end = names.find(',', start);
+                std::string_view section =
+                    names.substr(start, end == std::string_view::npos ? names.size() - start : end - start);
+                while (!section.empty() && (section.front() == ' ' || section.front() == '\t'))
+                    section.remove_prefix(1);
+                while (!section.empty() && (section.back() == ' ' || section.back() == '\t')) section.remove_suffix(1);
+                if (!section.empty()) {
+                    if (section != "book" && section != "statistics" && section != "breadth") {
+                        cfg.failed = true;
+                        cfg.error = std::format(
+                            "{}unknown --without section: {} (choose from book, statistics, breadth)\n", pfx, section);
+                        return cfg;
+                    }
+                    if (std::ranges::find(cfg.skip, section) == cfg.skip.end()) cfg.skip.emplace_back(section);
+                }
+                if (end == std::string_view::npos) break;
+                start = end + 1;
+            }
             continue;
         }
         if (arg == "--unadjusted") {
@@ -183,8 +203,7 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
     }
     if (!file_inputs.empty() && cfg.fetch_flags) {
         cfg.failed = true;
-        cfg.error =
-            pfx + "--days/--full/--top/--no-codal/--unadjusted need a live fetch; snapshot files are used as-is\n";
+        cfg.error = pfx + "--days/--full/--without/--unadjusted need a live fetch; snapshot files are used as-is\n";
         return cfg;
     }
     if (ident_inputs.size() > 1) {
@@ -272,14 +291,17 @@ inline std::string render_snapshot(std::filesystem::path const& path, snapshot_i
 // exits 1; the script runs under `set -e`, so the prompt aborts printing
 // nothing.
 inline std::string fetch_live(config const& cfg, std::string const& tse_tool) {
-    std::vector<std::string> fetch_args = {"all", cfg.symbol, "--top", std::to_string(cfg.top), "--markdown"};
+    std::vector<std::string> fetch_args = {"all", cfg.symbol, "--markdown"};
     if (cfg.days_set) {
         fetch_args.emplace_back("--days");
         fetch_args.push_back(std::to_string(cfg.days));
     } else {
         fetch_args.emplace_back("--full");
     }
-    if (cfg.no_codal) fetch_args.emplace_back("--no-codal");
+    for (auto const& name : cfg.skip) {
+        fetch_args.emplace_back("--without");
+        fetch_args.push_back(name);
+    }
     if (cfg.unadjusted) fetch_args.emplace_back("--unadjusted");
     std::vector<std::string> tool_argv = {"python3", tse_tool};
     for (auto const& a : fetch_args) tool_argv.push_back(a);

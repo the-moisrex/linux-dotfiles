@@ -7,6 +7,7 @@ import http.client
 import importlib.util
 import io
 import json
+import math
 import os
 import re
 import socket
@@ -24,10 +25,6 @@ from importlib.machinery import SourceFileLoader
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-_codal_loader = SourceFileLoader("codal", os.path.join(HERE, "codal"))
-_codal_spec = importlib.util.spec_from_loader("codal", _codal_loader)
-codal = importlib.util.module_from_spec(_codal_spec)
-_codal_loader.exec_module(codal)
 
 
 TSETMC = "https://cdn.tsetmc.com/api"
@@ -39,6 +36,13 @@ WORLD_BANK = (
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 ISIN_RE = re.compile(r"IR[A-Z0-9]{10}")
+MAX_BYTES = 64 * 1024 * 1024
+BOOK_LEVELS = 5
+BOOK_AUCTION_SECONDS = 9 * 3600  # 09:00:00 — the opening auction's end
+BOOK_CLOSE_SECONDS = 12 * 3600 + 30 * 60  # 12:30:00 — post-close churn is dropped
+BOOK_COVER_SLACK_SECONDS = 15 * 60  # a stream may stop this far short of the close
+BREADTH_HISTORY_SESSIONS = 5
+TECHNICAL_PERIODS = (("1w", 5), ("1m", 21), ("3m", 63), ("6m", 126), ("1y", 250))
 INDEX_COMPONENTS = (
     ("46348559193224090", "فولاد"),
     ("7745894403636165", "شپنا"),
@@ -117,7 +121,8 @@ def fetch_market_watch(client, with_book=False):
     return list(merged.values())
 
 
-DataError = codal.DataError
+class DataError(Exception):
+    pass
 
 
 def normal(text):
@@ -391,6 +396,24 @@ class Client:
         store = getattr(self._local, "conns", None)
         if store is not None and store.get((scheme, host, port)) is conn:
             store.pop((scheme, host, port), None)
+
+    def drop(self, url):
+        """Close the cached connection for a URL's host, forcing a fresh socket.
+
+        The TSETMC CDN resolves to several edges, and they can briefly disagree
+        about a just-published day (one serves a partial body). A caller that
+        received a suspiciously incomplete response retries on a new connection,
+        which may land on a complete edge.
+        """
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname
+        if not host:
+            return
+        scheme = parts.scheme or "https"
+        port = parts.port or (443 if scheme == "https" else 80)
+        conn = getattr(self._local, "conns", {}).get((scheme, host, port))
+        if conn is not None:
+            self._discard(scheme, host, port, conn)
 
     def _open(self, url, accept, max_bytes=6_000_000):
         """Return (status, body); follows redirects; raises URLError on transport failure.
@@ -720,6 +743,154 @@ def book(client, code):
     ]
 
 
+def clock_seconds(hhmmss):
+    """TSETMC ``HHMMSS`` integer -> seconds since midnight."""
+    return (hhmmss // 10000) * 3600 + (hhmmss // 100 % 100) * 60 + hhmmss % 100
+
+
+def clock_text(hhmmss):
+    """TSETMC ``HHMMSS`` integer -> ``HH:MM:SS``."""
+    return f"{hhmmss // 10000:02d}:{hhmmss // 100 % 100:02d}:{hhmmss % 100:02d}"
+
+
+def clock_label(seconds):
+    """Seconds since midnight -> ``HH:MM:SS``."""
+    return f"{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}"
+
+
+def book_level(row):
+    """One ``BestLimits`` stream row -> a normalized level update, or None."""
+    level = value(row, "number", "n")
+    if level is None or not 1 <= level <= BOOK_LEVELS:
+        return None
+    stamp = value(row, "hEven")
+    if stamp is None:
+        return None
+    return {
+        "level": int(level),
+        "hhmmss": int(stamp),
+        "bid_rial": price(pick(row, "pMeDem")),
+        "bid_shares": value(row, "qTitMeDem"),
+        "bid_orders": value(row, "zOrdMeDem"),
+        "ask_rial": price(pick(row, "pMeOf")),
+        "ask_shares": value(row, "qTitMeOf"),
+        "ask_orders": value(row, "zOrdMeOf"),
+    }
+
+
+def book_stream(client, code, greg, attempts=4):
+    """One session's 5-level book updates, ascending; empty when unpublished.
+
+    TSETMC publishes the stream after the close and keeps roughly two months
+    of history. Updates after 12:30 are dropped: the exchange keeps replacing
+    levels individually after the close, so a later "book" mixes stale levels.
+    CDN edges can disagree while a date is still being published — one may
+    serve a stream that stops at the opening auction — so a stream that does
+    not reach the close is retried on a fresh connection and the longest one
+    is kept.
+    """
+    url = f"{TSETMC}/BestLimits/{code}/{greg}"
+    best = []
+    for attempt in range(attempts):
+        try:
+            payload = client.json(url, max_bytes=MAX_BYTES)
+        except DataError:
+            payload = None
+        rows = payload.get("bestLimitsHistory") if isinstance(payload, dict) else None
+        updates = []
+        for row in rows or ():
+            update = book_level(row) if isinstance(row, dict) else None
+            if update and clock_seconds(update["hhmmss"]) <= BOOK_CLOSE_SECONDS:
+                updates.append(update)
+        if updates:
+            updates.sort(key=lambda update: (update["hhmmss"], update["level"]))
+            if len(updates) > len(best):
+                best = updates
+            if (
+                clock_seconds(updates[-1]["hhmmss"]) + BOOK_COVER_SLACK_SECONDS
+                >= BOOK_CLOSE_SECONDS
+            ):
+                return updates
+        elif attempt >= 1:
+            # No stream at all means the date is not published (yet), not a
+            # truncated edge: one retry is enough for a transient empty body.
+            break
+        if attempt < attempts - 1:
+            client.drop(url)
+            time.sleep(0.5 * (attempt + 1))
+    if best:
+        best.sort(key=lambda update: (update["hhmmss"], update["level"]))
+    return best
+
+
+def book_snapshot(updates, seconds):
+    """The book at a clock second: the last update received per level."""
+    state = {}
+    for update in updates:
+        if clock_seconds(update["hhmmss"]) <= seconds:
+            state[update["level"]] = update
+    if not state:
+        return None
+    ordered = [state[level] for level in sorted(state)]
+    best = ordered[0]
+    bid_depth = sum(item["bid_shares"] or 0 for item in ordered)
+    ask_depth = sum(item["ask_shares"] or 0 for item in ordered)
+    total = bid_depth + ask_depth
+    bid_rial, ask_rial = best["bid_rial"], best["ask_rial"]
+    return {
+        "time": clock_label(seconds),
+        "bid_rial": bid_rial,
+        "bid_shares": best["bid_shares"],
+        "bid_orders": best["bid_orders"],
+        "ask_rial": ask_rial,
+        "ask_shares": best["ask_shares"],
+        "ask_orders": best["ask_orders"],
+        "spread_rial": ask_rial - bid_rial
+        if ask_rial is not None and bid_rial is not None
+        else None,
+        "bid_depth_shares": bid_depth,
+        "ask_depth_shares": ask_depth,
+        "depth_imbalance_pct": round((bid_depth - ask_depth) / total * 100, 1)
+        if total
+        else None,
+    }
+
+
+def last_session_book(client, code, greg, jalali):
+    """The last published session's opening-auction and close books.
+
+    A stream that does not span the session is still being published; the
+    snapshot it cannot support is omitted and the coverage is reported rather
+    than labelling an early state with the close's time.
+    """
+    updates = book_stream(client, code, greg)
+    if not updates:
+        return None
+    start = clock_seconds(updates[0]["hhmmss"])
+    end = clock_seconds(updates[-1]["hhmmss"])
+    result = {
+        "date": jalali,
+        "stream": f"{clock_text(updates[0]['hhmmss'])}–{clock_text(updates[-1]['hhmmss'])}",
+    }
+    if start <= BOOK_AUCTION_SECONDS:
+        auction = book_snapshot(updates, BOOK_AUCTION_SECONDS)
+        if auction:
+            result["auction"] = auction
+    if end + BOOK_COVER_SLACK_SECONDS >= BOOK_CLOSE_SECONDS:
+        close = book_snapshot(updates, BOOK_CLOSE_SECONDS)
+        if close:
+            result["close"] = close
+    if "auction" not in result and "close" not in result:
+        return None
+    if end + BOOK_COVER_SLACK_SECONDS < BOOK_CLOSE_SECONDS:
+        result["note"] = (
+            "the level stream stops at "
+            f"{clock_text(updates[-1]['hhmmss'])}; the exchange is still"
+            " publishing this date, so there is no close snapshot yet"
+        )
+    return result
+
+
 def flow(client, code):
     row = client.api(f"ClientType/GetClientType/{code}/1/0", "clientType")
     if isinstance(row, list):
@@ -736,6 +907,14 @@ def flow(client, code):
         "legal_net_shares": buy_n - sell_n
         if buy_n is not None and sell_n is not None
         else None,
+        # The live endpoint publishes volumes and trader counts only: the rial
+        # values exist only in ClientType/GetClientTypeHistory (the completed
+        # session row), so they stay unknown here rather than being guessed.
+        "individual_buy_value_rial": None,
+        "individual_sell_value_rial": None,
+        "legal_buy_value_rial": None,
+        "legal_sell_value_rial": None,
+        "legal_net_value_rial": None,
         "individual_buyers": value(row, "buy_CountI"),
         "individual_sellers": value(row, "sell_CountI"),
         "legal_buyers": value(row, "buy_CountN"),
@@ -743,25 +922,63 @@ def flow(client, code):
     }
 
 
-CLIENT_TYPE_HISTORY_FIELDS = (
+CLIENT_TYPE_VOLUME_FIELDS = (
     "individual_buy_shares",
     "individual_sell_shares",
     "legal_buy_shares",
     "legal_sell_shares",
     "legal_net_shares",
-    "individual_buyers",
-    "individual_sellers",
-    "legal_buyers",
-    "legal_sellers",
 )
+
+CLIENT_TYPE_VALUE_FIELDS = (
+    "individual_buy_value_rial",
+    "individual_sell_value_rial",
+    "legal_buy_value_rial",
+    "legal_sell_value_rial",
+    "legal_net_value_rial",
+)
+
+CLIENT_TYPE_HISTORY_FIELDS = (
+    CLIENT_TYPE_VOLUME_FIELDS
+    + CLIENT_TYPE_VALUE_FIELDS
+    + (
+        "individual_buyers",
+        "individual_sellers",
+        "legal_buyers",
+        "legal_sellers",
+    )
+)
+
+
+def attach_session_values(flow_row, hist_rows):
+    """Copy a completed session's rial values onto its live flow snapshot.
+
+    The live client-type endpoint publishes volumes and trader counts only.
+    When it is showing the same session as the newest history row — the four
+    volumes and the derived net match exactly — the history row's rial values
+    can be borrowed. A live, partial session has no values yet and must stay
+    unknown rather than be estimated from shares x VWAP.
+    """
+    if not flow_row or not hist_rows:
+        return flow_row
+    last = hist_rows[-1]
+    if all(
+        flow_row.get(field) is not None and flow_row.get(field) == last.get(field)
+        for field in CLIENT_TYPE_VOLUME_FIELDS
+    ):
+        for field in CLIENT_TYPE_VALUE_FIELDS:
+            if flow_row.get(field) is None:
+                flow_row[field] = last.get(field)
+    return flow_row
 
 
 def client_type_history(client, code):
     """Daily حقیقی/حقوقی breakdown keyed by date.
 
     Backs the /History/<insCode>/<date> page: one record per session day with
-    the buy/sell volume and the number of buyers/sellers split by individual
-    (I) and legal (N) traders. The live GetClientType endpoint spells the
+    the buy/sell volume and rial value plus the number of buyers/sellers split
+    by individual (I) and legal (N) traders. The buy and sell values each sum
+    to the session's traded value. The live GetClientType endpoint spells the
     counts `buy_CountI`/`buy_CountN`; this one spells them `buy_I_Count`/
     `buy_N_Count`. The series starts 2018-11-26, non-trading days have no
     record, and a few isolated trading days are missing upstream too, so the
@@ -781,6 +998,10 @@ def client_type_history(client, code):
         sell_i = value(row, "sell_I_Volume")
         buy_n = value(row, "buy_N_Volume")
         sell_n = value(row, "sell_N_Volume")
+        buy_i_value = value(row, "buy_I_Value")
+        sell_i_value = value(row, "sell_I_Value")
+        buy_n_value = value(row, "buy_N_Value")
+        sell_n_value = value(row, "sell_N_Value")
         result[date] = {
             "individual_buy_shares": buy_i,
             "individual_sell_shares": sell_i,
@@ -788,6 +1009,13 @@ def client_type_history(client, code):
             "legal_sell_shares": sell_n,
             "legal_net_shares": buy_n - sell_n
             if buy_n is not None and sell_n is not None
+            else None,
+            "individual_buy_value_rial": buy_i_value,
+            "individual_sell_value_rial": sell_i_value,
+            "legal_buy_value_rial": buy_n_value,
+            "legal_sell_value_rial": sell_n_value,
+            "legal_net_value_rial": buy_n_value - sell_n_value
+            if buy_n_value is not None and sell_n_value is not None
             else None,
             "individual_buyers": value(row, "buy_I_Count"),
             "individual_sellers": value(row, "sell_I_Count"),
@@ -968,6 +1196,143 @@ def history(client, code, days, adjusted=True, errors=None, with_client_type=Tru
     }
 
 
+def technicals(history_rows):
+    """Derived technical read over the daily rows (adjusted prices when present).
+
+    Computed from the price table the caller already fetched: returns over the
+    standard lookbacks, realised volatility, ATR(14), moving averages and the
+    distance from them, RSI(14), the 52-week position, the worst drawdown and
+    the median overnight gap. A value that cannot be computed stays None
+    instead of being guessed.
+    """
+    if not history_rows:
+        return None
+
+    def adjusted_or(row, adjusted, raw):
+        amount = row.get(adjusted)
+        return row.get(raw) if amount is None else amount
+
+    def closing(row):
+        return adjusted_or(row, "adj_closing_rial", "closing_rial")
+
+    def opening(row):
+        return adjusted_or(row, "adj_first_rial", "first_rial")
+
+    def high(row):
+        return adjusted_or(row, "adj_high_rial", "high_rial")
+
+    def low(row):
+        return adjusted_or(row, "adj_low_rial", "low_rial")
+
+    rows = [row for row in history_rows if closing(row) is not None]
+    if len(rows) < 2:
+        return None
+    closes = [closing(row) for row in rows]
+    last = closes[-1]
+    result = {
+        "as_of": rows[-1].get("date"),
+        "sessions": len(rows),
+        "closing_rial": last,
+    }
+
+    for label, window in TECHNICAL_PERIODS:
+        result[f"change_{label}_pct"] = (
+            round((last / closes[-1 - window] - 1) * 100, 2)
+            if len(closes) > window
+            else None
+        )
+
+    def volatility(window):
+        if len(closes) <= window:
+            return None
+        returns = [
+            math.log(closes[index] / closes[index - 1])
+            for index in range(len(closes) - window, len(closes))
+        ]
+        if len(returns) < 2:
+            return None
+        return round(statistics.stdev(returns) * math.sqrt(252) * 100, 1)
+
+    result["volatility_20d_pct"] = volatility(20)
+    result["volatility_60d_pct"] = volatility(60)
+
+    true_ranges = []
+    for index in range(max(1, len(closes) - 14), len(closes)):
+        day_high, day_low = high(rows[index]), low(rows[index])
+        if day_high is None or day_low is None:
+            continue
+        previous = closes[index - 1]
+        true_ranges.append(
+            max(day_high - day_low, abs(day_high - previous), abs(day_low - previous))
+        )
+    atr = sum(true_ranges) / len(true_ranges) if len(true_ranges) == 14 else None
+    result["atr_14_rial"] = round(atr, 2) if atr is not None else None
+    result["atr_14_pct"] = (
+        round(atr / last * 100, 2) if atr is not None and last else None
+    )
+
+    for window in (20, 50, 200):
+        average = sum(closes[-window:]) / window if len(closes) >= window else None
+        result[f"ma_{window}_rial"] = round(average, 2) if average is not None else None
+        result[f"price_vs_ma_{window}_pct"] = (
+            round((last / average - 1) * 100, 2) if average else None
+        )
+
+    rsi = None
+    if len(closes) > 14:
+        gains = losses = 0.0
+        for index in range(len(closes) - 14, len(closes)):
+            delta = closes[index] - closes[index - 1]
+            gains += delta if delta > 0 else 0.0
+            losses += -delta if delta < 0 else 0.0
+        if gains or losses:
+            rsi = 100.0 if not losses else 100 - 100 / (1 + gains / losses)
+    result["rsi_14"] = round(rsi, 1) if rsi is not None else None
+
+    year_rows = rows[-250:]
+    year_high = max(
+        (value for value in map(high, year_rows) if value is not None), default=None
+    )
+    year_low = min(
+        (value for value in map(low, year_rows) if value is not None), default=None
+    )
+    # The 52-week fields mean a full year of sessions; a shorter fetch leaves
+    # them unknown rather than mislabelling a partial window.
+    complete_year = len(rows) >= 250
+    result["high_52w_rial"] = year_high if complete_year else None
+    result["low_52w_rial"] = year_low if complete_year else None
+    result["range_52w_position_pct"] = (
+        round((last - year_low) / (year_high - year_low) * 100, 1)
+        if complete_year
+        and year_high is not None
+        and year_low is not None
+        and year_high > year_low
+        else None
+    )
+
+    def drawdown(window):
+        values = closes[-window:]
+        peak = values[0]
+        worst = 0.0
+        for value in values:
+            peak = max(peak, value)
+            worst = min(worst, value / peak - 1)
+        return round(worst * 100, 2)
+
+    result["max_drawdown_1y_pct"] = drawdown(250) if len(closes) >= 250 else None
+    result["max_drawdown_3y_pct"] = drawdown(750) if len(closes) >= 750 else None
+
+    gaps = []
+    for index in range(max(1, len(rows) - 60), len(rows)):
+        first, previous = opening(rows[index]), closes[index - 1]
+        if first is not None and previous:
+            gaps.append((first / previous - 1) * 100)
+    result["median_gap_60d_pct"] = (
+        round(statistics.median(gaps), 2) if len(gaps) == 60 else None
+    )
+    return result
+
+
 def detect_fund(isin, industry, sub_industry, units=None):
     label = normal(industry) + " " + normal(sub_industry)
     if not isinstance(isin, str) and not units and "صندوق" not in label:
@@ -1003,7 +1368,6 @@ def info(client, code, ident, current, errors):
         "nav_as_of": None,
         "nav_as_of_time": None,
         "nav_premium_pct": None,
-        "derived_ratios": None,
     }
     try:
         row = client.api(f"Instrument/GetInstrumentInfo/{code}", "instrumentInfo")
@@ -1128,96 +1492,6 @@ def market_session_open(now):
         12,
         30,
     )
-
-
-UNIT_NAMES = {
-    1: "rial",
-    1000: "thousand_rial",
-    1_000_000: "million_rial",
-    1_000_000_000: "billion_rial",
-    1_000_000_000_000: "trillion_rial",
-}
-
-
-def statement_row(rows, *labels):
-    if not rows:
-        return None
-    wanted = {normal(label).replace(" ", "") for label in labels}
-    for row in rows:
-        if normal(row.get("item")).replace(" ", "") in wanted:
-            return number(row.get("current_period"))
-    return None
-
-
-def unit_factor(shares, capital):
-    if not shares or not capital or capital <= 0:
-        return None
-    factor = shares * 1000 / capital
-    for candidate in UNIT_NAMES:
-        if 0.9 <= factor / candidate <= 1.1:
-            return candidate
-    return None
-
-
-def derive_fundamentals(fundamentals, filings, closing):
-    if not isinstance(fundamentals, dict) or not isinstance(filings, dict):
-        return
-    balance_rows = income_rows = None
-    period = None
-    for report in filings.get("statements") or []:
-        financials = report.get("financials") or {}
-        balance = financials.get("balance_sheet") or {}
-        income = financials.get("income_statement") or {}
-        if balance.get("rows"):
-            balance_rows = balance["rows"]
-        if income.get("rows"):
-            income_rows = income["rows"]
-        period = report.get("period") or period
-        if balance_rows or income_rows:
-            break
-    if not balance_rows and not income_rows:
-        return
-    derived = {
-        "source": "Codal extracted statement rows (derived, not as-reported ratios)"
-    }
-    equity = statement_row(
-        balance_rows, "جمع حقوق مالکانه", "جمع حقوق صاحبان سهام", "جمع کل حقوق مالکانه"
-    )
-    liabilities = statement_row(balance_rows, "جمع بدهی ها", "جمع کل بدهی ها")
-    capital = statement_row(balance_rows, "سرمایه")
-    if capital is None:
-        capital = statement_row(income_rows, "سرمایه")
-    revenue = statement_row(
-        income_rows,
-        "درآمدهای عملیاتی",
-        "جمع درآمدهای عملیاتی",
-        "فروش کالا",
-        "فروش کالا و خدمات",
-        "فروش کالاها و خدمات",
-    )
-    net_income = statement_row(
-        income_rows, "سود(زیان) خالص", "سود (زیان) خالص", "سودوزیان خالص", "سود خالص"
-    )
-    shares = fundamentals.get("share_count")
-    if equity and net_income:
-        derived["roe_pct"] = round(net_income / equity * 100, 2)
-    if net_income and revenue:
-        derived["net_margin_pct"] = round(net_income / revenue * 100, 2)
-    if liabilities and equity:
-        derived["debt_to_equity"] = round(liabilities / equity, 2)
-    factor = unit_factor(shares, capital)
-    if factor:
-        derived["unit_detection"] = UNIT_NAMES[factor]
-        if equity:
-            book_value = equity * factor / shares
-            derived["book_value_per_share_rial"] = round(book_value)
-            if closing and book_value > 0:
-                derived["pb"] = round(closing / book_value, 2)
-    else:
-        derived["unit_detection"] = "failed"
-    if period:
-        derived["period"] = period
-    fundamentals["derived_ratios"] = derived
 
 
 def plain(text):
@@ -1367,17 +1641,24 @@ STATISTIC_FIELDS = {
 }
 
 
-def instrument_statistics(client, code):
+def instrument_statistics(client, code, attempts=3):
     """Selected per-instrument statistics, or None when the exchange has none.
 
-    Stocks carry the 88-row set; funds and ETFs return an empty list, so this
-    stays None rather than raising.
+    Most instruments (stocks, funds and ETFs alike) carry an 80–88-row set. A
+    single CDN edge can momentarily return an empty list, so an empty answer is
+    retried on a fresh connection before the instrument is declared stat-less.
     """
-    rows = client.api(
-        f"MarketData/GetInstrumentStatistic/{code}", "instrumentStatistic"
-    )
-    if not isinstance(rows, list):
-        raise DataError("Unexpected instrument statistics result")
+    url = f"{TSETMC}/MarketData/GetInstrumentStatistic/{code}"
+    rows = []
+    for attempt in range(attempts):
+        rows = unwrap(client.json(url), "instrumentStatistic")
+        if not isinstance(rows, list):
+            raise DataError("Unexpected instrument statistics result")
+        if rows:
+            break
+        if attempt < attempts - 1:
+            client.drop(url)
+            time.sleep(0.5 * (attempt + 1))
     fields = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -1506,6 +1787,37 @@ def market_breadth(client, code=None):
     return market_breadth_proxy(client)
 
 
+def market_breadth_history(client, code, newest=None, sessions=BREADTH_HISTORY_SESSIONS):
+    """Breadth for the sessions before ``newest``, newest first.
+
+    One whole-market request per session (~175 KB), run concurrently; holidays
+    and unpublished dates simply return nothing and are skipped.
+    """
+    if sessions < 1:
+        return []
+    now = tehran_now()
+    candidates = [
+        (now - timedelta(days=offset)).strftime("%Y%m%d")
+        for offset in range(1, sessions + 8)
+    ]
+    found = []
+    seen = {newest["date"]} if newest else set()
+    with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as pool:
+        futures = [
+            pool.submit(market_breadth_day, client, greg, code) for greg in candidates
+        ]
+        for future in futures:
+            try:
+                day = future.result()
+            except DataError:
+                day = None
+            if day and day["date"] not in seen:
+                seen.add(day["date"])
+                found.append(day)
+    found.sort(key=lambda day: day["date"], reverse=True)
+    return found[:sessions]
+
+
 def market_breadth_proxy(client):
     # Fifteen per-symbol quotes on the shared leaf pool (warm keep-alive
     # connections) beat the single bulk market-watch request for this scope: the
@@ -1595,7 +1907,27 @@ def indexes(client):
     ]
 
 
-def collect(client, symbol, days, top, with_codal, adjusted=False, skip=frozenset()):
+def last_completed_session(history_data, now):
+    """The newest daily session whose order-book stream may already exist."""
+    if not isinstance(history_data, dict):
+        return None
+    rows = [row for row in history_data.get("unadjusted") or () if row.get("date")]
+    if not rows:
+        return None
+    newest = rows[-1]["date"]
+    if market_session_open(now) and newest == trade_date(now.strftime("%Y%m%d")):
+        if len(rows) < 2:
+            return None
+        newest = rows[-2]["date"]
+    try:
+        year, month, day = (int(part) for part in newest.split("/"))
+        gy, gm, gd = jalali_to_gregorian(year, month, day)
+    except (ValueError, AttributeError):
+        return None
+    return f"{gy:04d}{gm:02d}{gd:02d}", newest
+
+
+def collect(client, symbol, days, adjusted=False, skip=frozenset()):
     instrument = resolve(client, symbol)
     code = instrument["ins_code"]
     now = tehran_now()
@@ -1609,10 +1941,11 @@ def collect(client, symbol, days, top, with_codal, adjusted=False, skip=frozense
         "client_type": None,
         "indexes": None,
         "statistics": None,
+        "technicals": None,
+        "last_book": None,
         "market_context": None,
         "history": None,
         "fundamentals": None,
-        "codal": None,
         "errors": errors,
     }
     ident = {
@@ -1622,7 +1955,6 @@ def collect(client, symbol, days, top, with_codal, adjusted=False, skip=frozense
         "board": None,
         "share_count": None,
     }
-    codal_errors = {}
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="tse") as pool:
         futures = {
             "identity": pool.submit(identity, client, code),
@@ -1654,25 +1986,6 @@ def collect(client, symbol, days, top, with_codal, adjusted=False, skip=frozense
         output["quote"] = take("quote")
         if "statistics" in futures:
             output["statistics"] = take("statistics")
-        codal_future = None
-        if with_codal:
-            if instrument["symbol"]:
-                fund = bool(
-                    detect_fund(
-                        ident.get("isin"),
-                        ident.get("industry"),
-                        ident.get("sub_industry"),
-                    )
-                )
-                codal_future = pool.submit(
-                    codal.codal_snapshot,
-                    instrument["symbol"],
-                    top,
-                    codal_errors,
-                    fund=fund,
-                )
-            else:
-                errors["codal"] = "No symbol found for Codal search"
         # Fundamentals run in the pool too, overlapping the slower history fetch
         # instead of blocking the collector on the main thread.
         futures["fundamentals"] = pool.submit(
@@ -1680,27 +1993,82 @@ def collect(client, symbol, days, top, with_codal, adjusted=False, skip=frozense
         )
         for key in ("order_book", "client_type", "indexes", "history"):
             output[key] = take(key)
+        # The live flow snapshot carries volumes and counts only; when it is
+        # already showing a completed session, borrow that session's rial values
+        # from the history table instead of leaving them unknown.
+        output["client_type"] = attach_session_values(
+            output["client_type"],
+            ((output["history"] or {}).get("unadjusted") or []),
+        )
+        history_data = output["history"]
+        if history_data is not None:
+            rows = (
+                history_data.get("adjusted") or history_data.get("unadjusted")
+                if isinstance(history_data, dict)
+                else history_data
+            )
+            output["technicals"] = technicals(rows)
+        if "book" not in skip:
+            session = last_completed_session(history_data, now)
+            if session:
+                futures["last_book"] = pool.submit(
+                    last_session_book, client, code, session[0], session[1]
+                )
         context = {
             key: take(key)
             for key in ("currencies", "economy", "breadth")
             if key in futures
         }
+        breadth = context.get("breadth")
+        if breadth:
+            futures["breadth_history"] = pool.submit(
+                market_breadth_history, client, code, breadth
+            )
+            trend = take("breadth_history")
+            if trend:
+                context["breadth_history"] = trend
+        if "last_book" in futures:
+            output["last_book"] = take("last_book")
         output["market_context"] = {
             key: value for key, value in context.items() if value is not None
         } or None
         output["fundamentals"] = take("fundamentals")
-        if codal_future is not None:
-            output["codal"] = codal_future.result()
-            errors.update(codal_errors)
-            if output["codal"] and output["fundamentals"]:
-                derive_fundamentals(
-                    output["fundamentals"],
-                    output["codal"],
-                    (output["quote"] or {}).get("closing_rial"),
-                )
     if output["quote"] is None and not output["history"]:
         raise DataError("No price data available: " + "; ".join(errors.values()))
     return output
+
+
+CODAL_CACHE_LABELS = {
+    "announcements": "announcements",
+    "financials": "financial statements",
+    "portfolio_reports": "portfolio reports",
+}
+
+
+def codal_cache_lines(cache):
+    """One line per Codal artifact that came from the on-disk cache (legacy snapshots)."""
+    if not isinstance(cache, dict):
+        return []
+    items = []
+    for name, note in cache.items():
+        if not isinstance(note, dict):
+            continue
+        label = CODAL_CACHE_LABELS.get(name, name)
+        text = f"- {label}: cached, fetched at {note.get('fetched_at') or 'an unknown time'}"
+        if note.get("age"):
+            text += f" ({note['age']} ago)"
+        if note.get("stale"):
+            text += ", stale"
+        if note.get("live_error"):
+            text += f"; live fetch failed: {note['live_error']}"
+        items.append(text)
+    if not items:
+        return []
+    return [
+        "",
+        "Cached Codal data (`tse.codal snapshot --refresh` refetches):",
+        *items,
+    ]
 
 
 def markdown(data):
@@ -1715,26 +2083,30 @@ def markdown(data):
         ("Symbol / نماد", "instrument"),
         ("Live quote / قیمت و وضعیت", "quote"),
         ("Order book / صف خرید و فروش", "order_book"),
+        ("Last session book / دفتر سفارش آخرین روز", "last_book"),
         ("Money flow / حقیقی و حقوقی", "client_type"),
         ("Market benchmarks / شاخص‌های بازار", "indexes"),
         ("Market context / دلار، اقتصاد و عمق بازار", "market_context"),
         ("Statistics / آمار معاملات", "statistics"),
+        ("Technicals / تحلیل تکنیکال", "technicals"),
         ("Fundamentals / اطلاعات بنیادی", "fundamentals"),
         ("Codal / اطلاعیه‌ها و صورت‌های مالی", "codal"),
     )
     for heading, key in sections:
-        if data[key] is None:
+        value = data.get(key)
+        if value is None:
             continue
+        lines.extend(("", f"## {heading}"))
+        if key == "codal" and isinstance(value, dict):
+            lines.extend(codal_cache_lines(value.get("cache")))
         lines.extend(
             (
-                "",
-                f"## {heading}",
                 "```json",
-                json.dumps(data[key], ensure_ascii=False, separators=(",", ":")),
+                json.dumps(value, ensure_ascii=False, separators=(",", ":")),
                 "```",
             )
         )
-    if data["history"] is not None:
+    if data.get("history") is not None:
         hist = data["history"]
         if isinstance(hist, dict) and "unadjusted" in hist:
             a_rows = hist.get("adjusted", [])
@@ -1926,19 +2298,20 @@ def render_snapshot_command(command, path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch public Tehran Stock Exchange and Codal data (requires an Iranian IP).",
+        description="Fetch public Tehran Stock Exchange data (requires an Iranian IP). Codal filings are a separate tool: tse.codal.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   tse search فولاد
   tse quote فولاد --json
   tse info اهرم
   tse history فولاد --days 30
-  tse codal فولاد --top 3
   tse all فولاد --markdown
   tse all فولاد --days 90 --markdown
   tse all IRT1DARA0001 --markdown
   tse all https://d.easytrader.ir/easy-chart/IRT1DARA0001 --markdown
+  tse snapshot stocks/14050717_فولاد_IRO1FOLD0009.stock
   prompt .tse فولاد .tse.analyze
+Codal filings are opt-in: `tse.codal snapshot فولاد --markdown` or `prompt tse.codal فولاد`.
 History options: --full (all records) is the default; --days N overrides it.""",
     )
     sub = parser.add_subparsers(
@@ -1948,10 +2321,9 @@ History options: --full (all records) is the default; --days N overrides it.""",
         "search": "Search symbols and company names; output matching instruments as JSON",
         "quote": "Show the latest price, trading activity, and instrument state",
         "book": "Show the five best bid and ask levels (صف خرید/فروش)",
-        "flow": "Show individual/legal buyer and seller activity (حقیقی/حقوقی)",
-        "history": "Show daily price history, trading volume, individual/legal (حقیقی/حقوقی) buy and sell volume and trader counts per day (raw plus split/dividend-adjusted columns)",
+        "flow": "Show individual/legal buyer and seller activity (حقیقی/حقوقی) — share volume, rial value and trader counts when the session is closed",
+        "history": "Show daily price history, trading volume, individual/legal (حقیقی/حقوقی) buy and sell volume, rial value and trader counts per day (raw plus split/dividend-adjusted columns)",
         "info": "Show industry, EPS, P/E, share count, market cap, price ranges, and fund NAV",
-        "codal": "Show recent Codal announcements and extracted financial statements",
         "all": "Collect all available data as JSON or Markdown for an AI prompt",
         "snapshot": "Print the cached-snapshot header (fetched time, staleness, note, instrument line) for a .stock file",
         "markdown": "Render a .stock snapshot file (written by tse.snapshot) as Markdown for an AI prompt",
@@ -1999,26 +2371,13 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 action="store_true",
                 help="Show only unadjusted prices (default includes split/dividend-adjusted)",
             )
-        if name in ("codal", "all"):
-            command.add_argument(
-                "--top",
-                type=int,
-                default=5,
-                metavar="N",
-                help="Maximum recent Codal announcements (1–20; default: 5)",
-            )
         if name == "all":
-            command.add_argument(
-                "--no-codal",
-                action="store_true",
-                help="Skip Codal announcements and financial statements",
-            )
             command.add_argument(
                 "--without",
                 action="append",
                 metavar="NAME",
                 help=(
-                    "Skip a section: codal, statistics, breadth"
+                    "Skip a section: book, statistics, breadth"
                     " (repeatable, comma-separated)"
                 ),
             )
@@ -2030,8 +2389,6 @@ History options: --full (all records) is the default; --days N overrides it.""",
     args = parser.parse_args()
     if hasattr(args, "days") and args.days is not None and not 1 <= args.days <= 365:
         parser.error("--days must be between 1 and 365")
-    if hasattr(args, "top") and not 1 <= args.top <= 20:
-        parser.error("--top must be between 1 and 20")
     skip = set()
     if args.command == "all":
         for item in getattr(args, "without", None) or []:
@@ -2039,12 +2396,12 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 name = name.strip().lower()
                 if name:
                     skip.add(name)
-        unknown = skip - {"codal", "statistics", "breadth"}
+        unknown = skip - {"book", "statistics", "breadth"}
         if unknown:
             parser.error(
                 "unknown --without name(s): "
                 + ", ".join(sorted(unknown))
-                + " (choose from codal, statistics, breadth)"
+                + " (choose from book, statistics, breadth)"
             )
     if args.command in ("snapshot", "markdown"):
         return render_snapshot_command(args.command, args.path)
@@ -2058,8 +2415,6 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 client,
                 args.symbol,
                 history_days,
-                args.top,
-                not args.no_codal and "codal" not in skip,
                 not getattr(args, "unadjusted", False),
                 frozenset(skip),
             )
@@ -2072,6 +2427,18 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 result = book(client, code)
             elif args.command == "flow":
                 result = flow(client, code)
+                # The live endpoint never carries rial values; a completed
+                # session's history row does, so borrow them when the snapshot
+                # is not a still-trading, partial day (no extra fetch then).
+                if not market_session_open(tehran_now()):
+                    try:
+                        rows_by_date = client_type_history(client, code)
+                    except DataError:
+                        rows_by_date = {}
+                    if rows_by_date:
+                        result = attach_session_values(
+                            result, [rows_by_date[max(rows_by_date)]]
+                        )
             elif args.command == "history":
                 history_errors = {}
                 result = history(
@@ -2098,32 +2465,6 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 result = info(client, code, ident, current, errors)
                 if errors:
                     result["errors"] = errors
-            else:
-                errors = {}
-                ident = {}
-                try:
-                    ident = identity(client, code)
-                except DataError as exc:
-                    if not instrument["symbol"]:
-                        raise
-                    errors["identity"] = str(exc)
-                symbol = instrument["symbol"] or ident.get("symbol")
-                if not symbol:
-                    raise DataError("No symbol found for Codal search")
-                isin = ident.get("isin") or instrument.get("isin")
-                fund = isinstance(isin, str) and isin.startswith("IRT")
-                result = codal.codal_snapshot(symbol, args.top, errors, fund=fund)
-                if errors:
-                    result["errors"] = errors
-                if (
-                    not result["announcements"]
-                    and not result["statements"]
-                    and not result.get("portfolio_reports")
-                    and errors
-                ):
-                    raise DataError(
-                        "No Codal data available: " + "; ".join(errors.values())
-                    )
     except DataError as exc:
         print(f"tse: {exc}", file=sys.stderr)
         return 1
@@ -2144,7 +2485,6 @@ History options: --full (all records) is the default; --days N overrides it.""",
             "market_context": None,
             "history": result if args.command == "history" else None,
             "fundamentals": result if args.command == "info" else None,
-            "codal": result if args.command == "codal" else None,
             "errors": result.get("errors", {}) if isinstance(result, dict) else {},
         }
         print(markdown(summary))

@@ -12,8 +12,9 @@ Consecutive bars with identical OHLC are collapsed — automatically, only once 
 run grows past ``--collapse-threshold`` rows (a trailing ``bars`` column records
 how many bars each row merged) — and the bar interval is chosen automatically to
 keep the output within ``--max-rows``, the finest interval that still fits, so
-the least data is lost. The daily حقیقی/حقوقی (individual/legal) breakdown is
-attached per day; TSETMC does not publish that per bar.
+the least data is lost. The daily حقیقی/حقوقی (individual/legal) breakdown —
+share volume, rial value and trader counts — is attached per day; TSETMC does
+not publish that per bar.
 
 Every bar carries its own volume-weighted average price (``vwap_rial``, computed
 from the tape) and every completed session its official daily row — قیمت پایانی,
@@ -21,6 +22,12 @@ last trade, first/low/high, trade/volume/value totals — so the tape can be rea
 against TSETMC's own numbers. قیمت پایانی is the day's VWAP capped by حجم مبنا,
 not a closing-auction print: TSETMC publishes no auction detail, no per-minute
 حقیقی/حقوقی and no per-instrument NAV history.
+
+The same tape yields each session's structure: the high/low with their times,
+the close's position inside the day's range (CLV), the share of volume at or
+above the tape VWAP, the 5/15/30-minute opening ranges, the market-profile
+value area (POC/VAH/VAL) and the largest prints by rial value. Today's static
+price limits are printed too, so a locked session (صف) is recognizable.
 
 ``--depth`` adds the order book to every bar and ``--depth-ladder`` prints the
 whole 5-level ladder. TSETMC publishes five levels and no more, and the per-day
@@ -72,6 +79,7 @@ TICK_COLUMNS = ("time", "price_rial", "volume_shares", "trade_no", "canceled")
 PROFILE_COLUMNS = ("price_rial", "volume_shares", "trades", "first_time", "last_time")
 DEPTH_LEVELS = 5
 DEPTH_CUTOFF = 123000  # 12:30:00; later book updates are post-close churn
+DEPTH_COVER_SLACK_MINUTES = 15  # how far a stream may stop short of the close
 DEPTH_COLUMNS = (
     "bid_rial",
     "bid_shares",
@@ -98,8 +106,11 @@ FLOW_COLUMNS = (
     "buy_initiated_shares",
     "sell_initiated_shares",
     "net_shares",
+    "cum_net_shares",
     "buy_pct",
 )
+SESSION_OPEN_RANGES = (5, 15, 30)  # minutes from the session's first trade
+VALUE_AREA_SHARE = 0.70  # the classic 70% value area around the POC
 # The extra sources a run can carry, their default, and what they cost. `auto`
 # settles once the sessions are known: the index only exists live, and breadth
 # costs ~175 KB per session so it is dropped past a handful of them.
@@ -538,23 +549,32 @@ def ladder_rows(rows, updates, interval=1, last_minute=None):
 # --- aggregation ----------------------------------------------------------
 
 
-def ticks_to_bars(rows, include_canceled):
-    """Raw trades -> 1-minute OHLCV bars."""
+def tick_samples(rows, include_canceled):
+    """Deduplicated trades as ``(seconds, trade_no, price_rial, shares)``.
+
+    One normalised, time-ordered pass over the tape feeds every consumer (bars,
+    the price profile, flow classification and the session summary) instead of
+    each re-deduplicating and re-sorting the raw rows.
+    """
     samples = []
     for row in dedup_ticks(rows, include_canceled):
         raw = tse.normal(tse.pick(row, "hEven"))
         if not re.fullmatch(r"\d{1,6}", raw or ""):
             continue
-        secs = int(raw)
         samples.append(
             (
-                secs,
+                int(raw),
                 tse.value(row, "nTran") or 0,
                 tse.price(tse.pick(row, "pTran")),
                 tse.value(row, "qTitTran") or 0,
             )
         )
     samples.sort(key=lambda sample: (sample[0], sample[1]))
+    return samples
+
+
+def samples_to_bars(samples):
+    """Trade samples -> 1-minute OHLCV bars."""
     bars = {}
     for secs, _trade_no, price, volume in samples:
         minute = minute_of(secs)
@@ -690,70 +710,211 @@ def choose_interval(day_bars, max_rows, collapse):
     return INTERVAL_LADDER[-1]
 
 
-def profile_rows(rows, include_canceled):
-    """Raw trades -> a price-level volume profile."""
+def profile_rows(samples):
+    """Trade samples -> a price-level volume profile."""
     agg = {}
-    for row in dedup_ticks(rows, include_canceled):
-        price = tse.price(tse.pick(row, "pTran"))
-        raw = tse.normal(tse.pick(row, "hEven"))
-        if price is None or not re.fullmatch(r"\d{1,6}", raw or ""):
+    for secs, _trade_no, price, volume in samples:
+        if price is None:
             continue
-        secs = int(raw)
         record = agg.get(price)
         if record is None:
             agg[price] = {
                 "price": price,
-                "volume": tse.value(row, "qTitTran") or 0,
+                "volume": volume,
                 "trades": 1,
                 "first": secs,
                 "last": secs,
             }
             continue
-        record["volume"] += tse.value(row, "qTitTran") or 0
+        record["volume"] += volume
         record["trades"] += 1
         record["first"] = min(record["first"], secs)
         record["last"] = max(record["last"], secs)
     return [agg[price] for price in sorted(agg)]
 
 
+def value_area(levels, share=VALUE_AREA_SHARE):
+    """The point of control and the narrowest band around it holding ``share``.
+
+    ``levels`` maps price -> traded shares. Starting at the POC, the band grows
+    outward one price level at a time, always absorbing the heavier neighbour,
+    until it covers the requested share of the volume — the standard market
+    profile value area.
+    """
+    if not levels:
+        return None
+    prices = sorted(levels)
+    total = sum(levels.values())
+    if not total:
+        return None
+    poc = max(prices, key=lambda price: levels[price])
+    low = high = prices.index(poc)
+    covered = levels[poc]
+    target = total * share
+    while covered < target and (low > 0 or high < len(prices) - 1):
+        below = levels[prices[low - 1]] if low > 0 else -1
+        above = levels[prices[high + 1]] if high < len(prices) - 1 else -1
+        if above >= below:
+            high += 1
+            covered += levels[prices[high]]
+        else:
+            low -= 1
+            covered += levels[prices[low]]
+    return {
+        "poc_rial": poc,
+        "val_rial": prices[low],
+        "vah_rial": prices[high],
+        "levels": high - low + 1,
+        "share_pct": round(covered / total * 100, 1),
+    }
+
+
+def session_summary(samples):
+    """The price structure of one session, from its trade samples.
+
+    Everything here is measured on the tape itself: the high/low and when they
+    happened, the close's position inside the day's range (CLV), how much volume
+    traded at or above the tape VWAP, the opening ranges, the market-profile
+    value area and the largest prints. The gap against the previous close is
+    added at render time, once the official row (or the live quote) is known.
+    """
+    if not samples:
+        return None
+    priced = [sample for sample in samples if sample[2] is not None]
+    if not priced:
+        return None
+    first_secs = samples[0][0]
+    high = low = None
+    high_secs = low_secs = None
+    last = None
+    volume = 0
+    turnover = 0
+    levels = {}
+    largest = []
+    for secs, _trade_no, price, shares in samples:
+        if price is not None:
+            if high is None or price > high:
+                high, high_secs = price, secs
+            if low is None or price < low:
+                low, low_secs = price, secs
+            last = price
+            levels[price] = levels.get(price, 0) + shares
+            largest.append((price * shares, secs, price, shares))
+        volume += shares
+        turnover += (price or 0) * shares
+    vwap = round(turnover / volume) if volume else None
+    above = (
+        sum(
+            shares
+            for _secs, _no, price, shares in samples
+            if price is not None and price >= vwap
+        )
+        if vwap is not None
+        else 0
+    )
+    summary = {
+        "first_rial": priced[0][2],
+        "high_rial": high,
+        "high_time": fmt_minute(minute_of(high_secs)) if high_secs is not None else None,
+        "low_rial": low,
+        "low_time": fmt_minute(minute_of(low_secs)) if low_secs is not None else None,
+        "last_rial": last,
+        "close_location_pct": round((last - low) / (high - low) * 100, 1)
+        if last is not None and high > low
+        else None,
+        "vwap_rial": vwap,
+        "above_vwap_pct": round(above / volume * 100, 1)
+        if vwap is not None and volume
+        else None,
+        "volume_shares": volume,
+        "value_rial": turnover,
+        "trades": len(samples),
+        "opening_range": {},
+        "value_area": value_area(levels),
+        "largest_prints": [],
+    }
+    for window in SESSION_OPEN_RANGES:
+        end = first_secs + window * 60
+        prices = [
+            price
+            for secs, _no, price, _shares in samples
+            if secs <= end and price is not None
+        ]
+        if prices:
+            summary["opening_range"][f"{window}m"] = {
+                "high_rial": max(prices),
+                "low_rial": min(prices),
+            }
+    top = sorted(largest, reverse=True)[:3]
+    top.sort(key=lambda item: item[1])
+    summary["largest_prints"] = [
+        {
+            "time": fmt_minute(minute_of(secs)),
+            "price_rial": price,
+            "volume_shares": shares,
+            "value_rial": price * shares,
+        }
+        for _value, secs, price, shares in top
+    ]
+    return summary
+
+
 # --- day loading ----------------------------------------------------------
 
 
 def book_covers_session(day, updates):
-    """True when the level stream begins before the session's first bar.
+    """True when the level stream spans the session it will be replayed against.
 
-    A published day's stream opens with the pre-open book, roughly 08:45. The
-    exchange (or a lagging CDN replica) can serve a partial stream that starts
-    after trading began while it is still publishing the date; replaying that
-    would describe a book that never existed, so it is refused.
+    A published day's stream opens with the pre-open book (~08:45) and runs to
+    the close. The exchange (or a lagging CDN replica) can serve a partial
+    stream — while it is still publishing the date — that starts after trading
+    began or stops early; replaying that would describe a book that never
+    existed, and label an early state with the close's time.
     """
     minutes = [bar["minute"] for bar in day.get("bars") or ()]
     if not minutes or not updates:
         return True
-    return updates[0]["hhmmss"] <= minute_hhmmss(min(minutes))
+    started = minute_of(updates[0]["hhmmss"]) <= min(minutes)
+    finished = (
+        minute_of(updates[-1]["hhmmss"]) + DEPTH_COVER_SLACK_MINUTES >= max(minutes)
+    )
+    return started and finished
 
 
-def attach_day_depth(client, code, greg, day):
-    """Fetch a completed session's book stream; never fails the day."""
-    try:
-        updates = fetch_book_stream(client, code, greg)
-    except tse.DataError as exc:
-        day["depth_note"] = f"order book unavailable: {exc}"
-        return
-    if not updates:
-        day["depth_note"] = (
-            "order book not published for this date (it appears after the close,"
-            " and only for roughly the last two months)"
-        )
-        return
-    if not book_covers_session(day, updates):
-        day["depth_note"] = (
-            "the level stream starts at"
-            f" {fmt_minute(minute_of(updates[0]['hhmmss']))}, after trading began"
-            " (the exchange is still publishing this date); rerun later"
-        )
-        return
-    day["depth_updates"] = updates
+def attach_day_depth(client, code, greg, day, attempts=3):
+    """Fetch a completed session's book stream; never fails the day.
+
+    The CDN can serve the day's stream before the exchange has finished
+    publishing it, so a stream that does not cover the session is refetched a
+    few times before being given up on — a truncated stream would otherwise be
+    replayed as if it were the whole day (and mislabel an early state as the
+    close).
+    """
+    for attempt in range(attempts):
+        try:
+            updates = fetch_book_stream(client, code, greg)
+        except tse.DataError as exc:
+            day["depth_note"] = f"order book unavailable: {exc}"
+            return
+        if not updates:
+            day["depth_note"] = (
+                "order book not published for this date (it appears after the"
+                " close, and only for roughly the last two months)"
+            )
+            return
+        if book_covers_session(day, updates):
+            day["depth_updates"] = updates
+            return
+        if attempt < attempts - 1:
+            # Another CDN edge may already have the whole day.
+            client.drop(f"{API}/BestLimits/{code}/{greg}")
+            time.sleep(0.5 * (attempt + 1))
+    day["depth_note"] = (
+        "the level stream only spans"
+        f" {fmt_minute(minute_of(updates[0]['hhmmss']))}–"
+        f"{fmt_minute(minute_of(updates[-1]['hhmmss']))}, not the whole session"
+        " (the exchange is still publishing this date); rerun later"
+    )
 
 
 def attach_live_depth(client, code, day):
@@ -830,14 +991,20 @@ def day_from_rows(jalali, source, rows, mode, include_canceled):
     """One session's raw tape rows -> the artifact for the requested output mode."""
     if mode == "ticks":
         return {"date": jalali, "source": source, "ticks": rows}
+    samples = tick_samples(rows, include_canceled)
     if mode == "profile":
         return {
             "date": jalali,
             "source": source,
-            "profile": profile_rows(rows, include_canceled),
+            "profile": profile_rows(samples),
         }
-    bars = ticks_to_bars(rows, include_canceled)
-    return {"date": jalali, "source": source, "bars": bars, "native_interval": 1}
+    return {
+        "date": jalali,
+        "source": source,
+        "bars": samples_to_bars(samples),
+        "native_interval": 1,
+        "session": session_summary(samples),
+    }
 
 
 def tape_check(entry, rows):
@@ -1015,6 +1182,14 @@ def live_client_type(client, code):
         "legal_net_shares": buy_n - sell_n
         if buy_n is not None and sell_n is not None
         else None,
+        # The live endpoint publishes volumes and trader counts only; the rial
+        # values arrive with the completed session's history row, so they stay
+        # unknown here instead of being estimated from shares x VWAP.
+        "individual_buy_value_rial": None,
+        "individual_sell_value_rial": None,
+        "legal_buy_value_rial": None,
+        "legal_sell_value_rial": None,
+        "legal_net_value_rial": None,
         "individual_buyers": tse.value(row, "buy_CountI"),
         "individual_sellers": tse.value(row, "sell_CountI"),
         "legal_buyers": tse.value(row, "buy_CountN"),
@@ -1126,20 +1301,7 @@ def trade_sides(rows, updates):
     publishes no aggressor flag, so this is an estimate and whatever cannot be
     classified is counted separately instead of guessed.
     """
-    samples = []
-    for row in dedup_ticks(rows, include_canceled=False):
-        raw = tse.normal(tse.pick(row, "hEven"))
-        if not re.fullmatch(r"\d{1,6}", raw or ""):
-            continue
-        samples.append(
-            (
-                int(raw),
-                tse.value(row, "nTran") or 0,
-                tse.price(tse.pick(row, "pTran")),
-                tse.value(row, "qTitTran") or 0,
-            )
-        )
-    samples.sort(key=lambda sample: (sample[0], sample[1]))
+    samples = tick_samples(rows, False)
     buckets = {}
     state = {}
     cursor = 0
@@ -1167,6 +1329,7 @@ def trade_sides(rows, updates):
 def attach_flow(rows, buckets, interval=1, last_minute=None):
     """Add the flow columns, summing each bucket over the row's whole span."""
     span = max(0, interval - 1)
+    cumulative = 0
     for row in rows:
         start = minute_of(text_hhmmss(row["from"]))
         end = minute_of(text_hhmmss(row["to"])) + span
@@ -1180,9 +1343,12 @@ def attach_flow(rows, buckets, interval=1, last_minute=None):
                 sell += bucket["sell"]
                 unknown += bucket["unknown"]
         total = buy + sell + unknown
+        net = buy - sell
+        cumulative += net
         row["buy_initiated_shares"] = buy
         row["sell_initiated_shares"] = sell
-        row["net_shares"] = buy - sell
+        row["net_shares"] = net
+        row["cum_net_shares"] = cumulative
         row["buy_pct"] = round(buy / total * 100, 1) if total else None
 
 
@@ -1221,6 +1387,114 @@ def flow_line(totals):
             f"{totals['unclassified_shares'] / total * 100:.1f}% unclassified"
         )
     return "Flow (estimated): " + " · ".join(pieces)
+
+
+def session_line(summary, official=None, live_quote=None):
+    """One line for the tape's own session structure."""
+    if not summary:
+        return None
+    pieces = []
+    first = summary.get("first_rial")
+    if first is not None:
+        pieces.append(f"first {first:,}")
+    high = summary.get("high_rial")
+    if high is not None:
+        stamp = f" @ {summary['high_time']}" if summary.get("high_time") else ""
+        pieces.append(f"high {high:,}{stamp}")
+    low = summary.get("low_rial")
+    if low is not None:
+        stamp = f" @ {summary['low_time']}" if summary.get("low_time") else ""
+        pieces.append(f"low {low:,}{stamp}")
+    last = summary.get("last_rial")
+    if last is not None:
+        text = f"last {last:,}"
+        location = summary.get("close_location_pct")
+        if location is not None:
+            text += f" (CLV {location:.0f}%)"
+        pieces.append(text)
+    vwap = summary.get("vwap_rial")
+    if vwap is not None:
+        text = f"VWAP {vwap:,}"
+        share = summary.get("above_vwap_pct")
+        if share is not None:
+            text += f" ({share:.0f}% of volume at/above)"
+        pieces.append(text)
+    yesterday = (official or {}).get("yesterday") or (live_quote or {}).get("yesterday")
+    if first is not None and yesterday:
+        pieces.append(f"gap {(first / yesterday - 1) * 100:+.1f}% vs {yesterday:,}")
+    return "Session: " + " · ".join(pieces) if pieces else None
+
+
+def structure_line(summary):
+    """Opening ranges and the market-profile value area, one line."""
+    if not summary:
+        return None
+    pieces = []
+    ranges = summary.get("opening_range") or {}
+    for window in ("5m", "15m", "30m"):
+        band = ranges.get(window)
+        if band:
+            pieces.append(f"{window} {band['low_rial']:,}–{band['high_rial']:,}")
+    area = summary.get("value_area")
+    if area:
+        pieces.append(
+            f"POC {area['poc_rial']:,}"
+            f" · 70% band {area['val_rial']:,}–{area['vah_rial']:,}"
+            f" ({area['levels']} levels, {area['share_pct']:.0f}% of volume)"
+        )
+    if not pieces:
+        return None
+    return "Structure: " + " · ".join(pieces)
+
+
+def prints_line(summary):
+    """The session's largest prints by rial value."""
+    prints = (summary or {}).get("largest_prints") or []
+    if not prints:
+        return None
+    pieces = [
+        f"{item['time']} {item['price_rial']:,} × {item['volume_shares']:,}"
+        f" ({format_rial(item['value_rial'])} rial)"
+        for item in prints
+    ]
+    return "Largest prints: " + " · ".join(pieces)
+
+
+def price_limits(client, code):
+    """Today's static daily price limits (rial), or None when unpublished."""
+    row = client.api(f"Instrument/GetInstrumentInfo/{code}", "instrumentInfo")
+    if not isinstance(row, dict):
+        return None
+    band = tse.pick(row, "staticThreshold")
+    if not isinstance(band, dict):
+        return None
+    low = tse.price(tse.pick(band, "psGelStaMin"))
+    high = tse.price(tse.pick(band, "psGelStaMax"))
+    if low is None or high is None:
+        return None
+    return {"low_rial": low, "high_rial": high}
+
+
+def limit_distance_line(quote, limits):
+    """How far the live price sits from today's limit, for lock/صف detection."""
+    if not quote or not limits or quote.get("last_price") is None:
+        return None
+    last = quote["last_price"]
+    low, high = limits.get("low_rial"), limits.get("high_rial")
+    pieces = []
+    if high:
+        if last >= high:
+            pieces.append("at the high limit")
+        else:
+            pieces.append(f"{(high - last) / high * 100:.1f}% below the high limit")
+    if low:
+        if last <= low:
+            pieces.append("at the low limit")
+        else:
+            pieces.append(f"{(last - low) / low * 100:.1f}% above the low limit")
+    if not pieces:
+        return None
+    return f"Limits: last {last:,} is " + " and ".join(pieces)
 
 
 def stats_line(stats, session=None):
@@ -1294,24 +1568,37 @@ def index_line(overview):
 
 
 def breadth_line(breadth):
-    """One compact line for a published session's whole-market breadth."""
+    """One compact line for a session's market breadth.
+
+    The exchange's own rows for a published session are preferred; the small
+    large-cap proxy is the fallback for a day they are not published for, and
+    it carries neither a median nor the symbol's percentile, so the line names
+    the scope it actually covers.
+    """
     if not breadth:
         return None
     pieces = [
-        f"{breadth['advancers']:,} up / {breadth['decliners']:,} down /"
-        f" {breadth['unchanged']:,} flat",
-        f"median {breadth['median_change_pct']:+.2f}%",
+        f"{breadth.get('advancers') or 0:,} up /"
+        f" {breadth.get('decliners') or 0:,} down /"
+        f" {breadth.get('unchanged') or 0:,} flat"
     ]
+    median = breadth.get("median_change_pct")
+    if median is not None:
+        pieces.append(f"median {median:+.2f}%")
     own = breadth.get("instrument_change_pct")
     if own is not None:
         text = f"this stock {own:+.2f}%"
         percentile = breadth.get("instrument_percentile")
         if percentile is not None:
-            text += (
-                f" (above {percentile:.0f}% of {breadth['instruments']:,} quoted)"
-            )
+            text += f" (above {percentile:.0f}% of {breadth['instruments']:,} quoted)"
         pieces.append(text)
-    return f"Breadth ({breadth['date']}): " + " · ".join(pieces)
+    if breadth.get("tracked"):
+        pieces.append(
+            f"tracked index components only ({breadth['tracked']} symbols,"
+            " not the whole market)"
+        )
+    label = breadth.get("date") or "large-cap proxy"
+    return f"Breadth ({label}): " + " · ".join(pieces)
 
 
 def book_entries(day, updates, last_minute):
@@ -1388,6 +1675,12 @@ def render_markdown(result):
         lines.append(result["interval_note"])
     if result.get("live_note"):
         lines.append(result["live_note"])
+    limits = result.get("limits")
+    if limits:
+        lines.append(
+            f"Price limits (today): {limits['low_rial']:,}–{limits['high_rial']:,}"
+            " (static daily band; not historical)"
+        )
     line = stats_line(result.get("statistics"), result.get("latest_session"))
     if line:
         lines.append(line)
@@ -1395,10 +1688,13 @@ def render_markdown(result):
     if line:
         lines.append(line)
     skipped = (result.get("extras") or {}).get("skipped") or {}
-    if skipped:
+    informative = {
+        name: reason for name, reason in skipped.items() if reason != "off"
+    }
+    if informative:
         lines.append(
             "Skipped extras: "
-            + "; ".join(f"{name} ({reason})" for name, reason in skipped.items())
+            + "; ".join(f"{name} ({reason})" for name, reason in informative.items())
         )
     instrument = result["instrument"]
     label = instrument.get("symbol") or instrument.get("name") or instrument["ins_code"]
@@ -1414,6 +1710,17 @@ def render_markdown(result):
         official = day.get("official")
         if official:
             line = official_line(official, day.get("tape_vwap"))
+            if line:
+                lines.append(line)
+        for line in (
+            session_line(
+                day.get("session"),
+                official=official,
+                live_quote=day.get("live_quote"),
+            ),
+            structure_line(day.get("session")),
+            prints_line(day.get("session")),
+        ):
             if line:
                 lines.append(line)
         for entry in day.get("book") or ():
@@ -1454,6 +1761,9 @@ def render_markdown(result):
                     f" ({quote['lag_minutes']}m behind)"
                 )
             lines.append(text)
+            line = limit_distance_line(quote, limits)
+            if line:
+                lines.append(line)
         buffer = io.StringIO()
         writer = csv.DictWriter(
             buffer, fieldnames=day["columns"], lineterminator="\n", extrasaction="ignore"
@@ -1529,7 +1839,7 @@ def resolve_extras(args, parser):
                 chosen = {key: False for key in EXTRA_NAMES}
             else:
                 chosen[name] = False
-    if args.depth or args.depth_ladder or args.flow:
+    if args.depth or args.depth_ladder:
         chosen["book"] = True
     if args.flow:
         chosen["flow"] = True
@@ -1600,12 +1910,28 @@ the last trade, first/range, change vs the previous close, and the trade,
 volume and value totals. TSETMC publishes no per-minute حقیقی/حقوقی, no
 closing-auction detail and no per-instrument NAV history.
 
+Each session also carries its own `Session:` line (high/low with times, the
+close's location in the range, the share of volume at or above the tape VWAP,
+the gap vs the previous close), a `Structure:` line (5/15/30-minute opening
+ranges and the market-profile value area: POC and the 70% band) and its
+largest prints by rial value. Today's static price limits are printed in the
+header, so a locked session (صف) is recognizable.
+
 --depth adds the order book to every bar (best bid/ask with their sizes, the
 spread, the 5-level bid/ask depth and the imbalance), sampled at the bar's end;
 --depth-ladder prints the whole ladder at each row boundary with running
 cumulative depth. TSETMC publishes 5 levels and no more, and the per-day stream
 only after the close (about two months of history), so the live session shows
-just its current snapshot.""",
+just its current snapshot.
+
+Each run also carries context extras, on by default and individually switchable
+with --with NAME, --without NAME (or all) and --only NAME; --extras lists them:
+book (opening-auction and close order-book summaries with order counts), orders,
+opening, stats (3-month averages and the latest session beside them), index
+(the live market overview), breadth (whole-market advancers/decliners per
+session, up to five sessions) and flow (buy/sell-initiated volume and the
+running cumulative net; off by default, and --flow also adds its columns). A
+source that cannot answer is skipped with a reason instead of an empty section.""",
     )
     parser.add_argument(
         "symbol",
@@ -1678,7 +2004,7 @@ just its current snapshot.""",
         help=(
             "Add buy/sell-initiated volume columns and a Flow line: each trade"
             " classified against the best bid/ask at its moment (an estimate;"
-            " needs the order book)"
+            " needs the order book). The cumulative net is carried along"
         ),
     )
     parser.add_argument(
@@ -1781,7 +2107,7 @@ just its current snapshot.""",
         return 0
     if not args.symbol:
         parser.error("SYMBOL is required")
-    depth = extras["book"]
+    depth = (extras["book"] or extras["flow"]) if mode == "bars" else False
     collapse_mode = args.collapse_mode
     if args.no_collapse:
         if collapse_mode == "on":
@@ -1812,6 +2138,11 @@ just its current snapshot.""",
             raise tse.DataError("no sessions selected")
 
         errors = {}
+        try:
+            limits = price_limits(client, code)
+        except tse.DataError as exc:
+            limits = None
+            errors["price_limits"] = str(exc)
         try:
             flow = tse.client_type_history(client, code)
         except tse.DataError as exc:
@@ -1932,11 +2263,7 @@ just its current snapshot.""",
             except tse.DataError as exc:
                 errors["statistics"] = str(exc)
             if statistics is None:
-                skip_reason = (
-                    "the exchange publishes none for this instrument"
-                    " (funds and ETFs carry no statistics)"
-                )
-                notes["stats"] = skip_reason
+                notes["stats"] = "the exchange returned none for this instrument"
 
         overview = None
         if extras["index"]:
@@ -2110,6 +2437,7 @@ just its current snapshot.""",
                     "native_interval": day.get("native_interval"),
                     "official": day.get("official"),
                     "tape_vwap": session_vwap(day["bars"]) if mode == "bars" else None,
+                    "session": day.get("session"),
                     "book": book,
                     "client_type": client_type,
                     "breadth": breadth.get(day["date"]),
@@ -2192,6 +2520,7 @@ just its current snapshot.""",
             "statistics": statistics,
             "market": overview,
             "latest_session": latest_session,
+            "limits": limits,
             "extras": {"used": used, "skipped": skipped},
             "days": rendered,
             "errors": errors,

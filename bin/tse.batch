@@ -45,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
   tse-batch symbols.txt
   tse-batch symbols.txt -j 8
   tse-batch symbols.txt --days 90 --outdir /data/tse
-  tse-batch symbols.txt --json --no-codal
+  tse-batch symbols.txt --json
   tse-batch symbols.txt --tse /path/to/tse --timeout 120
 
 Input file format (one instrument per line):
@@ -91,18 +91,6 @@ Example usage:
         default=None,
         metavar="N",
         help="Pass --days N to tse (limit history length; default is full history)",
-    )
-    p.add_argument(
-        "--top",
-        type=int,
-        default=5,
-        metavar="N",
-        help="Maximum Codal announcements to fetch (default: 5)",
-    )
-    p.add_argument(
-        "--no-codal",
-        action="store_true",
-        help="Skip Codal announcements and financial statements",
     )
     p.add_argument(
         "--json",
@@ -175,8 +163,6 @@ def run_one(
     out_dir: Path,
     *,
     days: int | None,
-    top: int,
-    no_codal: bool,
     as_json: bool,
     unadjusted: bool,
     timeout: int,
@@ -192,9 +178,6 @@ def run_one(
         cmd.extend(["--days", str(days)])
     else:
         cmd.append("--full")
-    cmd.extend(["--top", str(top)])
-    if no_codal:
-        cmd.append("--no-codal")
     if unadjusted:
         cmd.append("--unadjusted")
     if as_json:
@@ -295,8 +278,6 @@ def main(argv: list[str] | None = None) -> int:
                 sym,
                 out_dir,
                 days=args.days,
-                top=args.top,
-                no_codal=args.no_codal,
                 as_json=args.json,
                 unadjusted=args.unadjusted,
                 timeout=args.timeout,

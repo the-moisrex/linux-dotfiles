@@ -35,6 +35,10 @@ whole tree must stay clang-format clean.
   `bool const registered = prompt::register_prompt("<name>", "<summary>", &execute_<name>, &render_help_<name>);`.
   CMake globs `src/prompts/*.cpp`, so no other file changes; registration runs at
   static-init time, which is why `prompt_lib` must stay an OBJECT library.
+  A data prompt and its data-free lens may share one file when they belong
+  together (`tse_intraday.cpp` registers `tse.intraday` and
+  `tse.intraday.analysis`); give each its own `bool const` registration
+  variable.
 - `<summary>` is the first help paragraph verbatim; it is what `prompt list`
   prints. The help's first line must be `Usage: prompt <name>`.
 - The name is passed explicitly because dotted/dashed names (`git.diff`,
