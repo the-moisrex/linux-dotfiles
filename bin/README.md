@@ -488,7 +488,9 @@ its site's transport:
   transcript on the chat id, so a follow-up sends only the new message. Its 15-minute
   `localStorage` access token is renewed from the refresh token before a turn, uploads
   go to `/apiv2-files/file/upload` with the ids in the body's `refs`, and `--system` is
-  folded into the first message because the site rejects a `system` role.
+  folded into the first message because the site rejects a `system` role. A cut-short
+  answer (the site stores it as `MESSAGE_STATUS_TRUNCATED`, its Continue button) is
+  finished through the Connect `ContinueChat` stream and appended, so the text is whole.
 
 ```bash
 ai.chatgpt "explain this stack trace"           # prompt as an argument

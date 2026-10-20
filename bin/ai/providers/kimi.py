@@ -23,6 +23,17 @@ use it.
 
 The site rejects a ``system`` role message, so ``--system`` is prepended to the
 first user message instead.
+
+A long answer is sometimes cut short and stored with
+``status == MESSAGE_STATUS_TRUNCATED`` — the web UI's ``Continue`` button.  The
+SSE stream does not say so, so once ``done`` arrives the assistant message is
+looked up through the Connect API (``POST /apiv2/kimi.gateway.chat.v1.ChatService/
+ListMessages``) and, when it is truncated, ``ContinueChat`` is asked for the
+rest.  That call is a Connect server-stream (``application/connect+json``:
+one flag byte, a 4-byte big-endian length and a JSON patch per frame) whose
+``{"op":"append","mask":"block.text.content"}`` patches carry the continuation.
+The continuation is a new child message, so the loop repeats on its id until
+the status is no longer truncated.
 """
 
 from __future__ import annotations
@@ -41,11 +52,20 @@ CHAT_PATH = "/api/chat"
 STREAM_PATH = "/api/chat/{chat}/completion/stream"
 UPLOAD_PATH = "/apiv2-files/file/upload"
 REFRESH_PATH = "/api/auth/token/refresh"
+CONNECT_BASE = "/apiv2/kimi.gateway.chat.v1.ChatService"
+LIST_MESSAGES_PATH = CONNECT_BASE + "/ListMessages"
+CONTINUE_PATH = CONNECT_BASE + "/ContinueChat"
 ACCESS_KEYS = ("access_token", "accessToken")
 REFRESH_KEYS = ("refresh_token", "refreshToken")
 
 #: Renew the access token this many seconds before it expires.
 REFRESH_MARGIN = 60
+
+#: The status the site stores on an answer it cut short (the Continue button).
+TRUNCATED_STATUS = "MESSAGE_STATUS_TRUNCATED"
+
+#: Each continuation is a new stream, so this only bounds a pathological chain.
+MAX_CONTINUATIONS = 8
 
 #: The site titles a new chat from this much of the first prompt.
 TITLE_LIMIT = 60
@@ -126,6 +146,29 @@ class Kimi(Provider):
             raise net.StreamError(f"upload failed: {data}")
         return record["id"]
 
+    def _connect_headers(self, headers, content_type="application/json"):
+        request_headers = dict(headers)
+        request_headers["Accept"] = content_type
+        request_headers["Content-Type"] = content_type
+        request_headers["Connect-Protocol-Version"] = "1"
+        return request_headers
+
+    def _message_status(self, headers, chat_id, message_id):
+        """The stored status of one message (``""`` when it cannot be read)."""
+        data = net.request_json(self.origin + LIST_MESSAGES_PATH, method="POST",
+                                headers=self._connect_headers(headers),
+                                json_body={"chatId": chat_id}, timeout=60)
+        for message in (data or {}).get("messages") or []:
+            if isinstance(message, dict) and message.get("id") == message_id:
+                return message.get("status") or ""
+        return ""
+
+    @staticmethod
+    def _connect_frame(payload):
+        """One Connect streaming frame around a JSON payload."""
+        data = json.dumps(payload).encode()
+        return b"\x00" + len(data).to_bytes(4, "big") + data
+
 
 class _Conversation(Conversation):
     """A Kimi chat: the server keeps the transcript, keyed by the chat id."""
@@ -167,6 +210,7 @@ class _Conversation(Conversation):
             body["model"] = self.model
 
         answer = []
+        message_id = ""
         try:
             if not self.conversation_id:
                 self.conversation_id = self.provider._create_chat(headers, prompt)
@@ -190,25 +234,107 @@ class _Conversation(Conversation):
                         if text:
                             answer.append(text)
                             yield ev.text(text)
+                    elif event == "resp":
+                        message_id = obj.get("id") or message_id
                     elif event == "error":
                         error = obj.get("error") or {}
                         message = (error.get("message") if isinstance(error, dict)
                                    else None) or "Kimi returned an error"
                         yield ev.error(message)
                         return
-                    elif event == "done":
-                        self.turns += 1
-                        self._record("user", prompt)
-                        self._record("assistant", "".join(answer))
-                        yield ev.done()
-                        return
         except net.StreamError as exc:
             yield ev.error(str(exc))
             return
+
+        # The site stores a cut-short answer as MESSAGE_STATUS_TRUNCATED and
+        # shows a "Continue" button; the SSE stream itself never says so, so
+        # the message has to be looked up.  ContinueChat answers with a new
+        # child message, hence the loop on the latest id.
+        continuations = 0
+        while (continuations < MAX_CONTINUATIONS and message_id
+               and self._status(headers, message_id) == TRUNCATED_STATUS):
+            continuations += 1
+            yield ev.tool_call(name="continue", status="auto",
+                               args=f"message {message_id}")
+            try:
+                message_id, status = yield from self._continue(
+                    headers, message_id, answer)
+            except net.StreamError as exc:
+                yield ev.error(str(exc))
+                break
+            if status != TRUNCATED_STATUS:
+                break
+
         self.turns += 1
         self._record("user", prompt)
         self._record("assistant", "".join(answer))
         yield ev.done()
+
+    def _status(self, headers, message_id):
+        """The site's status for one message, or ``""`` when unavailable."""
+        try:
+            return self.provider._message_status(
+                headers, self.conversation_id, message_id)
+        except net.StreamError:
+            return ""
+
+    def _continue(self, headers, message_id, answer):
+        """Stream the rest of a truncated answer; return (id, final status).
+
+        Yields the continuation's text events.  The response is Connect
+        server-streaming, so each frame is a length-prefixed JSON patch rather
+        than an SSE line; ``block.text.content`` patches carry the text.
+        """
+        request_headers = self.provider._connect_headers(
+            headers, "application/connect+json")
+        body = self.provider._connect_frame(
+            {"chatId": self.conversation_id, "messageId": message_id})
+        buffer = b""
+        texts = {}
+        new_id = message_id
+        status = ""
+        for chunk in net.stream_chunks(self.provider.origin + CONTINUE_PATH,
+                                       headers=request_headers, data=body,
+                                       timeout=self.timeout, debug=self.debug):
+            buffer += chunk
+            while len(buffer) >= 5:
+                flag = buffer[0]
+                length = int.from_bytes(buffer[1:5], "big")
+                if len(buffer) < 5 + length:
+                    break
+                payload = buffer[5:5 + length]
+                buffer = buffer[5 + length:]
+                if flag == 2:
+                    return new_id, status
+                if flag != 0:
+                    continue
+                try:
+                    patch = json.loads(payload)
+                except ValueError:
+                    continue
+                if not isinstance(patch, dict):
+                    continue
+                message = patch.get("message") or {}
+                if message.get("id"):
+                    new_id = message["id"]
+                if message.get("status"):
+                    status = message["status"]
+                block = patch.get("block") or {}
+                text = ((block.get("text") or {}).get("content"))
+                if not isinstance(text, str) or not text:
+                    continue
+                block_id = block.get("id") or ""
+                previous = texts.get(block_id, "")
+                if patch.get("op") == "append":
+                    texts[block_id] = previous + text
+                    answer.append(text)
+                    yield ev.text(text)
+                elif text.startswith(previous) and len(text) > len(previous):
+                    delta = text[len(previous):]
+                    texts[block_id] = text
+                    answer.append(delta)
+                    yield ev.text(delta)
+        return new_id, status
 
     def _ensure_token(self):
         """Renew an expiring access token (best effort; keep the old one)."""

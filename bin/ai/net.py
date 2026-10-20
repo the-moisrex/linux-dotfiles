@@ -1,4 +1,4 @@
-"""HTTP transport for the providers: streaming lines and JSON requests.
+"""HTTP transport for the providers: streaming lines/chunks and JSON requests.
 
 Prefers ``curl_cffi`` (a real browser TLS/HTTP-2 fingerprint, which matters for
 sites behind Cloudflare) and falls back to ``httpx``.  Standard proxy
@@ -89,6 +89,40 @@ def stream_lines(url, method="POST", headers=None, json_body=None, data=None,
             if debug:
                 print(f"[net] {line}", file=sys.stderr)
             yield line
+
+
+def stream_chunks(url, method="POST", headers=None, json_body=None, data=None,
+                  impersonate=DEFAULT_IMPERSONATE, timeout=600, debug=False):
+    """Yield raw response chunks (bytes) from a streaming request.
+
+    Some APIs (Connect server-streaming) frame payloads as binary
+    length-prefixed messages instead of lines, so callers need the bytes
+    before splitting them.
+    """
+    kind, module = _clients()
+    if kind is None:
+        raise StreamError("no HTTP client available (need curl_cffi or httpx)")
+    kwargs = _request_kwargs(kind, dict(headers or {}), json_body, data,
+                             impersonate, timeout, stream=True)
+    if kind == "curl_cffi":
+        response = module.request(method, url, **kwargs)
+        if response.status_code >= 400:
+            raise StreamError(_http_error(response.status_code, response.content))
+        for chunk in response.iter_content(chunk_size=8192):
+            if not chunk:
+                continue
+            if debug:
+                print(f"[net] {len(chunk)} bytes", file=sys.stderr)
+            yield chunk
+        return
+    with module.stream(method, url, **kwargs) as response:
+        if response.status_code >= 400:
+            response.read()
+            raise StreamError(_http_error(response.status_code, response.content))
+        for chunk in response.iter_bytes():
+            if debug:
+                print(f"[net] {len(chunk)} bytes", file=sys.stderr)
+            yield chunk
 
 
 def request_json(url, method="GET", headers=None, json_body=None, data=None,
