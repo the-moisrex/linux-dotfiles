@@ -17,6 +17,13 @@ protocol were captured with ``bin/browser.record https://chat.deepseek.com``.
 ``--file`` uploads through ``POST /api/v0/file/upload_file`` (multipart ``file``,
 behind its own ``X-DS-PoW-Response`` header) and references the returned
 ``file-<uuid>`` in the completion body's ``ref_file_ids``.
+
+A long answer (or a long reasoning run) is sometimes cut short: the stream ends
+without ``response/status`` reaching ``FINISHED`` and its ``close`` event names
+a ``click_behavior`` other than ``none`` — the web UI's ``Continue`` button.
+Rather than stopping there, ``send`` posts ``/api/v0/chat/continue`` with the
+assistant ``message_id`` (its own proof-of-work) and appends the continuation,
+dropping the repeated snapshot prefix so the answer is emitted once.
 """
 
 from __future__ import annotations
@@ -33,9 +40,15 @@ from ..pow import PowError, deepseek_response, solve_deepseek
 from . import Conversation, Provider
 
 COMPLETION_PATH = "/api/v0/chat/completion"
+CONTINUE_PATH = "/api/v0/chat/continue"
 UPLOAD_PATH = "/api/v0/file/upload_file"
 FILES_PATH = "/api/v0/file/fetch_files"
 CLIENT_VERSION = "2.5.0"
+
+#: The site cuts a long answer (or a slow reasoning run) short, leaving the
+#: message unfinished; the web UI then offers a ``Continue`` button.  Each
+#: click is one more stream, so this only bounds a pathological chain.
+MAX_CONTINUATIONS = 8
 
 #: ``status`` values that mean the file can be referenced, and dead ends.
 FILE_READY = ("SUCCESS",)
@@ -232,27 +245,49 @@ class _Conversation(Conversation):
         }
         parser = _Parser()
         answer = []
+        thinking = []
         try:
-            lines = net.stream_lines(self.provider.origin + COMPLETION_PATH,
-                                     headers=headers, json_body=body,
-                                     timeout=self.timeout, debug=self.debug)
-            for line in lines:
-                for payload in net.sse_payloads([line]):
-                    try:
-                        obj = json.loads(payload)
-                    except ValueError:
-                        if payload:
-                            yield ev.raw(payload)
-                        continue
-                    for event in parser.feed(obj):
-                        if event.kind == ev.TEXT:
-                            answer.append(event.text)
-                        yield event
-                if self.debug and line and not line.startswith(("data:", "event:")):
-                    yield ev.raw(line)
+            yield from self._consume(
+                self.provider.origin + COMPLETION_PATH, headers, body,
+                parser, answer, thinking)
         except net.StreamError as exc:
             yield ev.error(str(exc))
             return
+
+        # The site truncates an answer that ran long (or whose reasoning did)
+        # and stops without finishing the message; the web UI then shows a
+        # "Continue" button.  Ask for the rest, appending to the same answer.
+        continuations = 0
+        while (continuations < MAX_CONTINUATIONS and self._incomplete(parser)
+               and isinstance(parser.message_id, int)):
+            continuations += 1
+            yield ev.tool_call(name="continue", status="auto",
+                               args=f"message {parser.message_id}")
+            headers = dict(self.headers)
+            headers["Authorization"] = "Bearer " + self.token
+            try:
+                pow_header = self.provider._pow(headers, CONTINUE_PATH)
+                if pow_header:
+                    headers["x-ds-pow-response"] = pow_header
+            except (net.StreamError, PowError) as exc:
+                yield ev.error(str(exc))
+                break
+            body = {
+                "chat_session_id": self.conversation_id,
+                "message_id": parser.message_id,
+            }
+            previous_id = parser.message_id
+            parser = _Parser(skip_response=len("".join(answer)),
+                             skip_thinking=len("".join(thinking)))
+            try:
+                yield from self._consume(
+                    self.provider.origin + CONTINUE_PATH, headers, body,
+                    parser, answer, thinking)
+            except net.StreamError as exc:
+                yield ev.error(str(exc))
+                break
+            if not isinstance(parser.message_id, int):
+                parser.message_id = previous_id
         self.turns += 1
         if isinstance(parser.message_id, int):
             self.parent_message_id = parser.message_id
@@ -261,17 +296,53 @@ class _Conversation(Conversation):
         self._record("assistant", "".join(answer))
         yield ev.done()
 
+    def _consume(self, url, headers, body, parser, answer, thinking):
+        """Stream one response through *parser*, filling *answer*/*thinking*."""
+        for line in net.stream_lines(url, headers=headers, json_body=body,
+                                     timeout=self.timeout, debug=self.debug):
+            for payload in net.sse_payloads([line]):
+                try:
+                    obj = json.loads(payload)
+                except ValueError:
+                    if payload:
+                        yield ev.raw(payload)
+                    continue
+                for event in parser.feed(obj):
+                    if event.kind == ev.TEXT:
+                        answer.append(event.text)
+                    elif event.kind == ev.THINKING:
+                        thinking.append(event.text)
+                    yield event
+            if self.debug and line and not line.startswith(("data:", "event:")):
+                yield ev.raw(line)
+
+    @staticmethod
+    def _incomplete(parser):
+        """True when the site closed the stream before the message finished."""
+        behavior = (parser.close or {}).get("click_behavior")
+        if behavior and behavior != "none":
+            return True
+        return bool(parser.status and parser.status != "FINISHED")
+
 
 class _Parser:
     """Turn DeepSeek's fragment-patch frames into deltas."""
 
-    def __init__(self):
+    def __init__(self, skip_response=0, skip_thinking=0):
         self.fragments = []
         self.usage = None
         self.message_id = None
+        self.status = None
+        self.close = None
+        # A continuation's first snapshot repeats the fragments already shown;
+        # these counts drop that prefix so nothing is emitted twice.
+        self.skip = {"RESPONSE": skip_response, "THINK": skip_thinking}
 
     def feed(self, obj):
         if not isinstance(obj, dict):
+            return []
+        if "click_behavior" in obj:
+            self.close = obj
             return []
         value = obj.get("v")
         if isinstance(value, dict) and isinstance(value.get("response"), dict):
@@ -284,6 +355,10 @@ class _Parser:
                 return self._content(value)
             return []
         op = obj.get("o") or "APPEND"
+        if path in ("response/status", "quasi_status"):
+            if isinstance(value, str):
+                self.status = value
+            return []
         if op == "BATCH" and isinstance(value, list):
             out = []
             for sub in value:
@@ -309,8 +384,15 @@ class _Parser:
         for fragment in response.get("fragments") or []:
             if not isinstance(fragment, dict):
                 continue
-            self.fragments.append(fragment.get("type") or "RESPONSE")
-            out += self._content(fragment.get("content") or "")
+            kind = fragment.get("type") or "RESPONSE"
+            content = fragment.get("content") or ""
+            skip = self.skip.get(kind) or 0
+            if skip:
+                drop = min(skip, len(content))
+                content = content[drop:]
+                self.skip[kind] = skip - drop
+            self.fragments.append(kind)
+            out += self._content(content)
         if isinstance(response.get("accumulated_token_usage"), int):
             self.usage = response["accumulated_token_usage"]
         return out
