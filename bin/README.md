@@ -455,9 +455,9 @@ The pod's web UI service is managed with `pods/stack start agents`
   what `oc` runs for project-mode containers, same recorded rules as the agents
   entrypoint
 
-### `ai.chatgpt` / `ai.grok` / `ai.dseek` / `ai.gap`
+### `ai.chatgpt` / `ai.grok` / `ai.dseek` / `ai.gap` / `ai.kimi`
 
-Ask ChatGPT, Grok, DeepSeek or GapGPT from the shell by replaying each site's own web
+Ask ChatGPT, Grok, DeepSeek, GapGPT or Kimi from the shell by replaying each site's own web
 API with the session already in your browser — **no API key, no official API, and no
 browser at run time**. Each command reads a prompt from its arguments or stdin,
 streams the answer (reasoning and tool calls included) and renders Markdown on a TTY.
@@ -465,7 +465,7 @@ It can also keep the conversation going: `-c`/`--continue` reopens your last
 conversation with that provider and `-i`/`--interactive` keeps it open for more turns.
 `-f`/`--file` uploads a local file and attaches it to the first message (repeatable).
 
-The four are thin wrappers over one shared engine (`bin/ai/`); each provider adapts
+The five are thin wrappers over one shared engine (`bin/ai/`); each provider adapts
 its site's transport:
 
 - **ChatGPT** replays `/backend-api/f/conversation`, passing the sentinel gate
@@ -483,6 +483,12 @@ its site's transport:
   turns and falls back to `GET /api/v1/get_chat/token/<id>` if the socket goes quiet.
   Its `--model` takes the site's own ids (`A-GAP`, `A-GPT4O`, `A-GEMINI-3-PRO`, …) or
   friendly labels (`gap`, `gpt-4o`, `sonnet`, `deepseek-r1`, …).
+- **Kimi** (www.kimi.ai) creates a chat with `POST /api/chat` and reads the
+  `completion/stream` SSE events (`cmpl` carries the text); the server threads the
+  transcript on the chat id, so a follow-up sends only the new message. Its 15-minute
+  `localStorage` access token is renewed from the refresh token before a turn, uploads
+  go to `/apiv2-files/file/upload` with the ids in the body's `refs`, and `--system` is
+  folded into the first message because the site rejects a `system` role.
 
 ```bash
 ai.chatgpt "explain this stack trace"           # prompt as an argument
@@ -496,6 +502,7 @@ ai.chatgpt -c "and what about now?"              # continue the last conversatio
 ai.chatgpt -c -i                                 # resume it, then keep chatting
 ai.dseek --new "start over"                      # ignore the saved conversation
 ai.gap -m gpt-4o "compare mTLS and JWT"          # GapGPT, by friendly model label
+ai.kimi "summarise this article"                 # Kimi, same engine
 ai.chatgpt -f report.pdf "summarise this"        # upload + attach a file
 ai.grok -f a.png -f b.txt "what do these show?"  # …more than one
 ```
