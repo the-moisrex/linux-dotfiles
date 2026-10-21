@@ -129,6 +129,70 @@ void test_tse_chain_identifier() {
     check(!id, "tse chain: a .stock snapshot is not borrowed as a symbol");
 }
 
+void test_ai_sinks_registered() {
+    for (std::string_view name : {"ai.chatgpt", "ai.dseek", "ai.gap", "ai.grok", "ai.kimi"}) {
+        auto const* desc = find_prompt(name);
+        std::string msg = "ai sink registered: " + std::string(name);
+        check(desc != nullptr, msg.c_str());
+        if (desc != nullptr) {
+            check(desc->role == chain_role::sink, "ai sink role");
+            check(desc->policy == sink_policy::chain, "ai sink default policy");
+        }
+    }
+}
+
+prompt_descriptor synthetic_prompt(std::string_view name, chain_role role, sink_policy policy) {
+    prompt_descriptor desc{};
+    desc.name = name;
+    desc.role = role;
+    desc.policy = policy;
+    return desc;
+}
+
+chain_result synthetic_chain(std::initializer_list<std::string_view> names) {
+    chain_result chain;
+    for (auto name : names) {
+        if (chain.count >= chain.invocations.size()) break;
+        chain.invocations[chain.count].name = name;
+        ++chain.count;
+    }
+    return chain;
+}
+
+void test_plan_chain() {
+    std::array prompts = {
+        synthetic_prompt("fix", chain_role::normal, sink_policy::chain),
+        synthetic_prompt("ai.dseek", chain_role::sink, sink_policy::chain),
+        synthetic_prompt("ai.grok", chain_role::sink, sink_policy::chain),
+        synthetic_prompt("ai.kimi", chain_role::sink, sink_policy::fanout),
+        synthetic_prompt("only", chain_role::sink, sink_policy::exclusive),
+    };
+
+    auto plan = plan_chain(synthetic_chain({"fix", "ai.dseek", "ai.grok", "fix"}), prompts);
+    check(plan.error.empty(), "plan: chained sinks accepted");
+    check(plan.runs.size() == 3, "plan: normal, sink, normal");
+    check(plan.runs.size() == 3 && !plan.runs[0].sink, "plan: first run is normal");
+    check(plan.runs.size() == 3 && plan.runs[1].sink && plan.runs[1].policy == sink_policy::chain,
+          "plan: contiguous chain sinks form one run");
+    check(plan.runs.size() == 3 && plan.runs[1].begin == 1 && plan.runs[1].end == 3,
+          "plan: chain sink run spans both invocations");
+
+    plan = plan_chain(synthetic_chain({"fix", "ai.dseek", "ai.kimi"}), prompts);
+    check(!plan.error.empty(), "plan: mixing chain and fanout in one run is rejected");
+
+    plan = plan_chain(synthetic_chain({"fix", "only", "ai.dseek"}), prompts);
+    check(!plan.error.empty(), "plan: exclusive sink rejects a second sink");
+
+    plan = plan_chain(synthetic_chain({"fix", "only"}), prompts);
+    check(plan.error.empty(), "plan: a lone exclusive sink is accepted");
+    check(plan.runs.size() == 2 && plan.runs[1].policy == sink_policy::exclusive,
+          "plan: lone exclusive policy preserved");
+
+    plan = plan_chain(synthetic_chain({"fix", "ai.kimi", "ai.kimi"}), prompts);
+    check(plan.error.empty(), "plan: fanout run accepted");
+    check(plan.runs.size() == 2 && plan.runs[1].policy == sink_policy::fanout, "plan: fanout policy preserved");
+}
+
 } // namespace
 
 int main() {
@@ -140,6 +204,8 @@ int main() {
     test_unknown_defaults_to_auto();
     test_tse_chain_identifier();
     test_all_prompts_registered();
+    test_ai_sinks_registered();
+    test_plan_chain();
 
     if (failures == 0) {
         std::printf("all chaining tests passed\n");

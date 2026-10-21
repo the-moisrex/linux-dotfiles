@@ -45,6 +45,8 @@ set(PROMPT_ASSETS
     embed_hpp|src/sdk/embed.hpp
     args_hpp|src/sdk/args.hpp
     completion_hpp|src/sdk/completion.hpp
+    sink_types_hpp|src/sdk/sink_types.hpp
+    sink_hpp|src/sdk/sink.hpp
     process_hpp|src/core/process.hpp
     fs_hpp|src/core/fs.hpp
     example_fix_cpp|src/prompts/fix.cpp
@@ -85,6 +87,7 @@ add_library(prompt_lib OBJECT
     src/sdk/pipeline.cpp
     src/sdk/embed.cpp
     src/sdk/args.cpp
+    src/sdk/sink.cpp
     ${PROMPT_SRCS}
 )
 target_sources(prompt_lib PRIVATE ${PROMPT_ASSET_HPP})

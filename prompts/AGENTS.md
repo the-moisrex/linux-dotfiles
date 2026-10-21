@@ -43,6 +43,9 @@ whole tree must stay clang-format clean.
   prints. The help's first line must be `Usage: prompt <name>`.
 - The name is passed explicitly because dotted/dashed names (`git.diff`,
   `tse.find`, `clang-tidy`) cannot be derived from the identifier.
+- A **sink** uses `prompt::register_sink(...)` instead (see "Sinks" below). It
+  needs only its executor, help renderer and `sink_policy`; the dispatcher owns
+  the shared flags and the barrier ordering.
 
 ## Prompt contract
 
@@ -59,6 +62,45 @@ whole tree must stay clang-format clean.
   only segment running) and emits their results in argv order. `ctx.chain`
   carries every invocation (`name`, `args`) plus `ctx.chain_index`, which is how
   the `tse` prompts borrow a sibling's symbol.
+
+## Sinks
+
+A sink is a chain barrier, not an ordinary prompt. Register it with
+`prompt::register_sink("<name>", "<summary>", &execute_<name>, &render_help_<name>, nullptr, policy)`
+(`sink_policy::chain` by default; `fanout`/`exclusive` are descriptor-level
+choices). Adding a sink does not touch the AI code or the dispatcher: the
+descriptor role makes `main.cpp` batch everything before it, hand the sink the
+accumulated `ctx.chain_context`, and let its answer become the context later
+segments see.
+
+- **Shared flags are dispatcher-owned** (`sdk/sink_types.hpp` + `sink.hpp`):
+  `--on-error abort|continue|skip` (default abort), `--with-context`,
+  `--show-context` and `--head N`. `parse_sink_args` removes them once in
+  `main.cpp`; the sink implementation only sees its own arguments.
+- **Reading the barrier:** `wait_for_prompts(ctx)` returns
+  `ctx.chain_context`. `ctx.chain_stderr` carries the barrier's stderr and is
+  deliberately not part of the AI context. `ctx.sink` holds the parsed flags
+  (`head_lines` has already been applied to `ctx.chain_context` by the
+  dispatcher — do not trim it again; `trim_context_lines` is the shared helper
+  behind it, applied before the redaction legend is prepended).
+- **Streaming:** use `write_stdout(ctx, chunk)` and `write_stderr(ctx, chunk)`.
+  They append to `ctx.out`/`ctx.stderr_buffer` and, when the dispatcher enabled
+  streaming, call `ctx.stdout_writer`/`ctx.stderr_writer` immediately.
+  `run_sink_tool(ctx, argv, stdin, timeout)` wires both to
+  `process::command`'s `on_stdout`/`on_stderr` tee callbacks.
+- **Help:** call `render_sink_help(out)` for the shared `Options:` block; the
+  prompt's own help follows it. Completion derives every flag from that block.
+- **Failure:** throw `prompt_error` like any prompt. The dispatcher catches it,
+  applies the sink's `--on-error` policy, and keeps a failed source batch tainted
+  so each later sink can decide again. Fan-out sinks are captured and emitted in
+  argv order (no interleaved live streams); chained sinks stream as they run.
+- `ai.*` (`src/prompts/ai.cpp`) is the reference family: five registrations,
+  one shared executor, `--print-prompt` passed through to `bin/ai`, and
+  `--stdin-only` so positional prompt text cannot silently replace the chain.
+
+Tests: `tests/test_sink.cpp` (flag parsing, streaming/tee, timeout) and the
+`plan_chain`/`ai.*` registration cases in `tests/test_chaining.cpp`; the
+`ai_help`/`ai_print_prompt` ctest smokes exercise an offline sink chain.
 
 ## SDK helpers (`src/sdk/`)
 
@@ -86,10 +128,16 @@ Use these instead of re-open-coding the same loops:
 - `prompt_context.hpp`: the struct is a plain data bag; the dispatcher-injected
   services are free functions taking the context — `clear_output(ctx)`,
   `clipboard_content(ctx)`, `clipboard_identifier(ctx)`, `select_files(ctx)`,
-  `resolve_input_file(ctx, wanted)`.
+  `resolve_input_file(ctx, wanted)`. Sink fields (`chain_context`,
+  `chain_stderr`, `sink`, stream writers/flags) live here too.
+- `sink.hpp` / `sink_types.hpp`: `register_sink` support — `parse_sink_args`,
+  `render_sink_help`, `wait_for_prompts`, `write_stdout`, `write_stderr` and
+  `run_sink_tool` (see "Sinks").
 - `src/core/process.hpp`: `process::command` / `run_command(argv, stdin, env,
-  timeout)` — fork/exec, no shell, no quoting. `src/core/fs.hpp::bin_tool`
-  locates sibling `bin/` tools (exe dir → git root → cwd → `$PATH`).
+  timeout)` — fork/exec, no shell, no quoting. `on_stdout`/`on_stderr` tee each
+  chunk while still accumulating it, and the poll loop enforces the timeout
+  while reading. `src/core/fs.hpp::bin_tool` locates sibling `bin/` tools (exe
+  dir → git root → cwd → `$PATH`).
 
 ## Shell completion (`--complete`)
 

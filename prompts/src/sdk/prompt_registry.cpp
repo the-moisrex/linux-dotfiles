@@ -11,7 +11,7 @@
 namespace prompt {
 
 namespace {
-// Every prompt is native (76 today).
+// Every prompt is native.
 std::array<prompt_descriptor, 128> prompts_storage{};
 std::size_t prompts_count = 0;
 } // namespace
@@ -64,7 +64,8 @@ void assign_sort_files(std::filesystem::path const& dir) {
 }
 
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
-                     void (*render_help_fn)(std::ostream&), completion_fn complete_fn) noexcept {
+                     void (*render_help_fn)(std::ostream&), completion_fn complete_fn, chain_role role,
+                     sink_policy policy) noexcept {
     if (prompts_count >= prompts_storage.size()) return false;
     prompts_storage[prompts_count++] = prompt_descriptor{
         .name = name,
@@ -73,8 +74,15 @@ bool register_prompt(std::string_view name, std::string_view help_summary, void 
         .render_help_fn = render_help_fn,
         .complete_fn = complete_fn,
         .sort_file = {},
+        .role = role,
+        .policy = policy,
     };
     return true;
+}
+
+bool register_sink(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
+                   void (*render_help_fn)(std::ostream&), completion_fn complete_fn, sink_policy policy) noexcept {
+    return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, policy);
 }
 
 void init_prompt_registry() {

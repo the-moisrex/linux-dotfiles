@@ -102,6 +102,10 @@ def build_parser(provider):
                    help="match the session host exactly")
     p.add_argument("--print-session", action="store_true",
                    help="show which session would be used and exit")
+    p.add_argument("--print-prompt", action="store_true",
+                   help="print the prompt that would be sent and exit")
+    p.add_argument("--stdin-only", action="store_true",
+                   help=argparse.SUPPRESS)
     p.add_argument("--list", action="store_true",
                    help="list the available providers and exit")
     return p
@@ -312,6 +316,20 @@ def main(provider_name, argv=None):
     if args.list:
         for name, prov in providers.items():
             print(f"{name:<10} {prov.label:<10} {', '.join(prov.models)}")
+        return 0
+
+    if args.stdin_only and args.prompt:
+        print(f"ai.{provider_name}: positional prompt text is not supported in a "
+              f"chain; put instructions in `.note \"...\"` before the sink or "
+              f"use --system", file=sys.stderr)
+        return 2
+
+    if args.print_prompt:
+        prompt = read_prompt(args.prompt)
+        if not prompt:
+            build_parser(provider).print_usage(sys.stderr)
+            return 2
+        print(prompt)
         return 0
 
     if args.interactive:

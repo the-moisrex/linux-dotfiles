@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <optional>
 #include <span>
@@ -57,6 +58,14 @@ class command {
     command& inherit_stderr();   // stderr_mode::inherit (default)
     command& discard_stderr();   // stderr_mode::discard (`2>/dev/null`)
 
+    // Tee callbacks: the matching stream is piped, each chunk is passed to the
+    // callback as it arrives, and the complete text is still accumulated in
+    // command_result. Used by sinks to stream to the terminal without losing
+    // the answer they need for the next sink.
+    using chunk_callback = std::function<void(std::string_view)>;
+    command& on_stdout(chunk_callback callback);
+    command& on_stderr(chunk_callback callback);
+
     command_result run();
 
   private:
@@ -65,6 +74,8 @@ class command {
     std::vector<std::string> env_;
     std::chrono::milliseconds timeout_{0};
     stderr_mode stderr_mode_{stderr_mode::inherit};
+    chunk_callback stdout_callback_;
+    chunk_callback stderr_callback_;
 };
 
 // Runs a bash script snippet (`/bin/bash -c <script>`), with "extras..." passed

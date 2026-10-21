@@ -3,6 +3,7 @@
 #include "completion.hpp"
 #include "errors.hpp"
 #include "prompt_context.hpp"
+#include "sink_types.hpp"
 #include <filesystem>
 #include <ostream>
 #include <span>
@@ -26,6 +27,10 @@ struct prompt_descriptor {
     // keeps the same key (prompt files lived in <repo>/prompts/) purely so
     // the ordering matches the bash dispatcher; it never opens the file.
     std::string_view sort_file;
+    // Sinks run at a barrier and receive the chain text accumulated before
+    // them. Their common flags live in sdk/sink.hpp; the dispatcher owns them.
+    chain_role role = chain_role::normal;
+    sink_policy policy = sink_policy::chain;
 };
 
 std::span<prompt_descriptor const> get_all_prompts();
@@ -54,7 +59,16 @@ std::vector<std::string_view> list_prompt_names();
 // later by assign_sort_files(). Returns false when the registry is full (a
 // dropped registration would silently shadow a prompt).
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
-                     void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr) noexcept;
+                     void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
+                     chain_role role = chain_role::normal, sink_policy policy = sink_policy::chain) noexcept;
+
+// Register a sink: the same registry entry with role=sink. Sink flags
+// (--on-error/--with-context/--show-context/--head) are handled by the
+// dispatcher through sdk/sink.hpp, so adding a sink only needs its own
+// executor, help renderer, and policy.
+bool register_sink(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
+                   void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
+                   sink_policy policy = sink_policy::chain) noexcept;
 
 // Fills in the sort_file keys; callers must do this after main starts (it
 // needs the filesystem). Registration itself happens before main.

@@ -7,7 +7,10 @@ namespace prompt {
 void clear_output(prompt_context& ctx) {
     ctx.out.clear();
     ctx.err.clear();
+    ctx.stderr_buffer.clear();
     ctx.no_clipboard = false;
+    ctx.stdout_streamed = false;
+    ctx.stderr_streamed = false;
 }
 
 std::string clipboard_content(prompt_context const& ctx) {

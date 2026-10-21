@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sink_types.hpp"
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -40,6 +41,23 @@ struct prompt_context {
     std::vector<chain_segment> chain;
     std::size_t chain_index = 0;
 
+    // Sink/chain text accumulated before this segment. The dispatcher fills
+    // this in; wait_for_prompts(ctx) exposes it to prompt code. chain_stderr
+    // is the same barrier for streams that were kept out of the AI context.
+    std::string_view chain_context;
+    std::string_view chain_stderr;
+    // Parsed common sink flags (only meaningful for sinks).
+    sink_options sink;
+
+    // Streaming services. A prompt appends to its own output with
+    // write_stdout()/write_stderr(); these writers decide whether the chunk is
+    // also flushed to the real terminal now. Parallel/captured segments leave
+    // stream_* false, so the dispatcher can emit their output in chain order.
+    void (*stdout_writer)(std::string_view) = nullptr;
+    void (*stderr_writer)(std::string_view) = nullptr;
+    bool stream_stdout = false;
+    bool stream_stderr = false;
+
     std::string (*clipboard_content_fn)() = nullptr;
     std::optional<std::string> (*clipboard_identifier_fn)() = nullptr;
     std::vector<std::filesystem::path> (*select_files_fn)() = nullptr;
@@ -54,6 +72,11 @@ struct prompt_context {
     std::string out;
     std::string err;
     bool no_clipboard = false;
+    // stderr written through write_stderr(): kept separate from `err`, which
+    // is the success-path text the dispatcher prints itself.
+    std::string stderr_buffer;
+    bool stdout_streamed = false;
+    bool stderr_streamed = false;
 };
 
 // The dispatcher-injected services and the sub-dispatch reset, as free

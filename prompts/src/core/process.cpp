@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <future>
 #include <memory>
+#include <poll.h>
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
@@ -28,19 +29,57 @@ struct child_io {
     stderr_mode err_mode = stderr_mode::inherit;
 };
 
-// Blocks reading `fd` until EOF; returns when the writer closes or on error.
-std::string drain(int fd) {
-    std::string data;
-    std::array<char, 8192> buf;
+struct pump_entry {
+    int fd = -1;
+    bool open = true;
+    std::string* data = nullptr;
+    command::chunk_callback const* callback = nullptr;
+};
+
+// Reads every stream until EOF, invoking the tee callback as chunks arrive.
+// The poll loop also enforces `timeout` (0 = wait forever); the caller kills
+// and reaps the child when timed_out is set.
+bool pump_streams(std::vector<pump_entry>& entries, std::chrono::milliseconds timeout) {
+    std::vector<pollfd> fds;
+    fds.reserve(entries.size());
+    for (auto const& entry : entries) fds.push_back(pollfd{.fd = entry.fd, .events = POLLIN, .revents = 0});
+
+    auto const deadline = std::chrono::steady_clock::now() + timeout;
     for (;;) {
-        auto n = ::read(fd, buf.data(), buf.size());
-        if (n > 0) {
-            data.append(buf.data(), static_cast<std::size_t>(n));
-        } else if (n == 0 || errno != EINTR) {
-            break;
+        bool any_open = false;
+        for (auto const& entry : entries) any_open = any_open || entry.open;
+        if (!any_open) return false;
+
+        int wait_ms = -1;
+        if (timeout.count() > 0) {
+            auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now())
+                    .count();
+            if (remaining <= 0) return true;
+            wait_ms = remaining > 2'147'483'647LL ? 2'147'483'647 : static_cast<int>(remaining);
+        }
+
+        int const ready = ::poll(fds.data(), fds.size(), wait_ms);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        if (ready == 0) return true;
+
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            auto& entry = entries[i];
+            if (!entry.open || fds[i].revents == 0) continue;
+            std::array<char, 8192> buffer{};
+            auto const n = ::read(entry.fd, buffer.data(), buffer.size());
+            if (n > 0) {
+                entry.data->append(buffer.data(), static_cast<std::size_t>(n));
+                if (*entry.callback) (*entry.callback)(std::string_view(buffer.data(), static_cast<std::size_t>(n)));
+            } else if (n == 0 || errno != EINTR) {
+                entry.open = false;
+                fds[i].fd = -1; // poll ignores negative descriptors
+            }
         }
     }
-    return data;
 }
 
 } // namespace
@@ -100,6 +139,16 @@ command& command::inherit_stderr() {
     return *this;
 }
 
+command& command::on_stdout(chunk_callback callback) {
+    stdout_callback_ = std::move(callback);
+    return *this;
+}
+
+command& command::on_stderr(chunk_callback callback) {
+    stderr_callback_ = std::move(callback);
+    return *this;
+}
+
 command_result command::run() {
     command_result result;
     if (argv_.empty()) {
@@ -116,7 +165,7 @@ command_result command::run() {
         result.stderr_data = "pipe failed";
         return result;
     }
-    bool capture_err = stderr_mode_ == stderr_mode::capture;
+    bool capture_err = stderr_mode_ == stderr_mode::capture || static_cast<bool>(stderr_callback_);
     if (capture_err && ::pipe(err_pipe.data()) != 0) {
         result.exit_code = -1;
         result.stderr_data = "pipe failed";
@@ -204,38 +253,34 @@ command_result command::run() {
             in_pipe[1] = -1;
         });
     }
-    result.stdout_data = drain(out_pipe[0]);
-    if (capture_err) result.stderr_data = drain(err_pipe[0]);
+    std::vector<pump_entry> streams;
+    streams.push_back(
+        pump_entry{.fd = out_pipe[0], .open = true, .data = &result.stdout_data, .callback = &stdout_callback_});
+    if (capture_err) {
+        streams.push_back(
+            pump_entry{.fd = err_pipe[0], .open = true, .data = &result.stderr_data, .callback = &stderr_callback_});
+    }
+    result.timed_out = pump_streams(streams, timeout_);
     ::close(out_pipe[0]);
     if (capture_err) ::close(err_pipe[0]);
+    // Kill before joining the stdin writer: on a timeout the writer may still
+    // be blocked writing to a child that stopped reading.
+    if (result.timed_out) ::kill(pid, SIGKILL);
     if (writer.joinable()) writer.join();
 
-    // Timeout: SIGKILL after `timeout_` (0 = wait forever).
     int status = 0;
-    if (timeout_.count() > 0) {
-        // waitpid with WNOHANG in a poll loop
-        auto deadline = std::chrono::steady_clock::now() + timeout_;
-        for (;;) {
-            pid_t r = ::waitpid(pid, &status, WNOHANG);
-            if (r == pid) break;
-            if (r < 0) {
-                status = -1;
-                break;
-            }
-            if (std::chrono::steady_clock::now() >= deadline) {
-                ::kill(pid, SIGKILL);
-                ::waitpid(pid, &status, 0);
-                result.timed_out = true;
-                status = -1;
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
+    if (result.timed_out) {
+        ::waitpid(pid, &status, 0);
+        status = -1;
     } else {
         if (::waitpid(pid, &status, 0) < 0) status = -1;
     }
 
-    if (status > 0) result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    if (result.timed_out) {
+        result.exit_code = -1;
+    } else if (status > 0) {
+        result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    }
     return result;
 }
 

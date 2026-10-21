@@ -18,6 +18,20 @@ target_link_libraries(test_sanitize PRIVATE prompt_lib)
 target_include_directories(test_sanitize PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME sanitize COMMAND test_sanitize)
 
+add_executable(test_sink test_sink.cpp)
+target_link_libraries(test_sink PRIVATE prompt_lib)
+target_include_directories(test_sink PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME sink COMMAND test_sink)
+
+add_test(NAME ai_help COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
+set_tests_properties(ai_help PROPERTIES PASS_REGULAR_EXPRESSION "--with-context")
+
+add_test(NAME ai_print_prompt COMMAND $<TARGET_FILE:prompt> .note hello .ai.dseek --print-prompt)
+set_tests_properties(ai_print_prompt PROPERTIES PASS_REGULAR_EXPRESSION "hello")
+
+add_test(NAME ai_head COMMAND $<TARGET_FILE:prompt> .note one .note two .ai.dseek --print-prompt --head 1)
+set_tests_properties(ai_head PROPERTIES PASS_REGULAR_EXPRESSION "one" FAIL_REGULAR_EXPRESSION "two")
+
 add_executable(test_embed test_embed.cpp)
 target_link_libraries(test_embed PRIVATE prompt_lib)
 target_include_directories(test_embed PRIVATE ${CMAKE_SOURCE_DIR}/src)
