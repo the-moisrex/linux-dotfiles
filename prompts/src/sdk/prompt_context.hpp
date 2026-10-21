@@ -11,6 +11,13 @@
 
 namespace prompt {
 
+// One invocation in the chain, exposed to every prompt so related prompts can
+// read their siblings' arguments (e.g. `tse.codal` borrowing `tse`'s symbol).
+struct chain_segment {
+    std::string_view name;
+    std::vector<std::string_view> args;
+};
+
 struct prompt_context {
     // Name of the prompt being executed (set by the dispatcher; used by
     // legacy scripts for $PROMPT_NAME and sub-dispatch in auto).
@@ -25,6 +32,13 @@ struct prompt_context {
     std::filesystem::path git_root;
     // Path of the running executable (for locating repo bin/ utilities).
     std::filesystem::path exe_path;
+
+    // Every prompt invocation in this chain, in command-line order, plus this
+    // prompt's index in it. Prompts may consult neighbouring segments for
+    // defaults (see `tse_data::chain_identifier`); the dispatcher only fills
+    // these in and never reads them back.
+    std::vector<chain_segment> chain;
+    std::size_t chain_index = 0;
 
     std::string (*clipboard_content_fn)() = nullptr;
     std::optional<std::string> (*clipboard_identifier_fn)() = nullptr;

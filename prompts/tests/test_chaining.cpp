@@ -1,3 +1,4 @@
+#include "../src/prompts/tse_data.hpp"
 #include "../src/sdk/chaining.hpp"
 #include "../src/sdk/prompt_registry.hpp"
 #include <array>
@@ -84,6 +85,50 @@ void test_all_prompts_registered() {
     check(chain.count == 1 && chain.invocations[0].name == "explain", "dotted name resolves to explain, not auto");
 }
 
+void test_tse_chain_identifier() {
+    // The `tse` family may give the symbol once: `.tse foolad .tse.codal`
+    // (and the reverse order) both resolve to foolad.
+    prompt_context ctx;
+    ctx.chain = {
+        {.name = "tse", .args = {"foolad"}},
+        {.name = "tse.codal", .args = {}},
+    };
+    ctx.chain_index = 1;
+    auto id = prompts::tse_data::chain_identifier(ctx);
+    check(id && *id == "foolad", "tse chain: later prompt borrows the preceding symbol");
+
+    ctx.chain_index = 0;
+    id = prompts::tse_data::chain_identifier(ctx);
+    check(!id, "tse chain: the prompt with its own symbol does not need a fallback");
+
+    ctx.chain = {
+        {.name = "tse.codal", .args = {}},
+        {.name = "tse.intraday", .args = {"khodro"}},
+    };
+    ctx.chain_index = 0;
+    id = prompts::tse_data::chain_identifier(ctx);
+    check(id && *id == "khodro", "tse chain: an earlier prompt borrows from a later one");
+
+    // The nearest preceding symbol wins, and flags/values are skipped.
+    ctx.chain = {
+        {.name = "tse", .args = {"foolad"}},
+        {.name = "tse.codal", .args = {"--top", "3", "khodro"}},
+        {.name = "tse.intraday", .args = {"--days", "5"}},
+    };
+    ctx.chain_index = 2;
+    id = prompts::tse_data::chain_identifier(ctx);
+    check(id && *id == "khodro", "tse chain: nearest preceding symbol wins and flag values are skipped");
+
+    // A `.stock` snapshot is not an instrument identifier for the other prompts.
+    ctx.chain = {
+        {.name = "tse", .args = {"stocks/14050717_فولاد_IRO1FOLD0009.stock"}},
+        {.name = "tse.codal", .args = {}},
+    };
+    ctx.chain_index = 1;
+    id = prompts::tse_data::chain_identifier(ctx);
+    check(!id, "tse chain: a .stock snapshot is not borrowed as a symbol");
+}
+
 } // namespace
 
 int main() {
@@ -93,6 +138,7 @@ int main() {
     test_prompt_with_args();
     test_chain_two_prompts();
     test_unknown_defaults_to_auto();
+    test_tse_chain_identifier();
     test_all_prompts_registered();
 
     if (failures == 0) {

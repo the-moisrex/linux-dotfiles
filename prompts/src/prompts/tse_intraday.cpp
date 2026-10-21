@@ -87,10 +87,13 @@ tse_intraday_prompt_config parse_tse_intraday_args(prompt_context const& ctx) {
     }
 
     if (config.symbol.empty()) {
-        if (auto id = clipboard_identifier(ctx)) config.symbol = *id;
+        if (auto id = tse_data::chain_identifier(ctx)) config.symbol = *id;
+        if (config.symbol.empty()) {
+            if (auto id = clipboard_identifier(ctx)) config.symbol = *id;
+        }
         if (config.symbol.empty()) {
             config.failed = true;
-            config.error = pfx + "no symbol given and no identifier found in the clipboard\n";
+            config.error = pfx + "no symbol given and no identifier found in the chain or clipboard\n";
             config.error += help_text(render_help_tse_intraday);
             return config;
         }
@@ -132,7 +135,7 @@ static void execute_tse_intraday(prompt_context& ctx) {
 static void render_help_tse_intraday(std::ostream& os) {
     os << R"EOF(Usage: prompt tse.intraday [<symbol|finglish|ISIN|insCode|URL>] [--days N | --date DATE | --from DATE --to DATE] [--interval auto|M] [--depth] [--no-live] [--head N]
 
-Fetch per-minute OHLCV bars for an Iranian بورس instrument with `tse.intraday` — rebuilt from the per-trade tape and aggregated locally (the live session falling back to TSETMC's native 2-minute bars), with each bar's VWAP, the official daily row, each session's high/low times, opening ranges, value area (POC/VAH/VAL) and largest prints, the daily حقیقی/حقوقی breakdown, the order-book summaries, market breadth and instrument statistics, today's static price limits and, with --depth, five-level order-book depth — as Markdown, with no analysis instructions attached (append `.tse.intraday.analysis` for the same-day trade verdict). Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the clipboard is searched for one.
+Fetch per-minute OHLCV bars for an Iranian بورس instrument with `tse.intraday` — rebuilt from the per-trade tape and aggregated locally (the live session falling back to TSETMC's native 2-minute bars), with each bar's VWAP, the official daily row, each session's high/low times, opening ranges, value area (POC/VAH/VAL) and largest prints, the daily حقیقی/حقوقی breakdown, the order-book summaries, market breadth and instrument statistics, today's static price limits and, with --depth, five-level order-book depth — as Markdown, with no analysis instructions attached (append `.tse.intraday.analysis` for the same-day trade verdict). Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the other `.tse*` data prompts in the chain are searched, then the clipboard.
 
 An Iranian IP is required for the public data sources. Prices are in rial, volume in shares, dates Jalali.
 
@@ -145,6 +148,7 @@ Examples:
   prompt tse.intraday فولاد --days 5
   prompt tse.intraday فولاد --interval 5
   prompt tse.intraday فولاد --depth
+  prompt .tse foolad .tse.intraday .tse.intraday.analysis
   prompt .tse.intraday فولاد .tse.intraday.analysis
 
 Options:
@@ -229,7 +233,8 @@ bool const registered = prompt::register_prompt(
     "Markdown, with no analysis instructions attached (append `.tse.intraday.analysis` for the same-day trade "
     "verdict). Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN "
     "(e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` "
-    "token — all resolved through `tse.resolve`; with no argument the clipboard is searched for one.",
+    "token — all resolved through `tse.resolve`; with no argument the other `.tse*` data prompts in the chain are "
+    "searched, then the clipboard.",
     &execute_tse_intraday, &render_help_tse_intraday, &tse_data::complete_instrument);
 
 bool const registered_analysis = prompt::register_prompt(

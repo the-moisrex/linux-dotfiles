@@ -13,6 +13,7 @@
 #include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -20,6 +21,7 @@
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unistd.h>
 #include <vector>
 
@@ -55,6 +57,71 @@ struct config {
 inline bool is_positive_int(std::string_view s) {
     if (s.empty()) return false;
     return std::ranges::all_of(s, [](char c) { return c >= '0' && c <= '9'; });
+}
+
+// Prompts that take the same instrument identifier. A chain such as
+// `prompt .tse foolad .tse.codal .tse.intraday` may give the symbol once; the
+// other prompts borrow it before falling back to the clipboard.
+inline bool tse_symbol_prompt(std::string_view name) {
+    return name == "tse" || name == "tse.codal" || name == "tse.intraday";
+}
+
+inline bool flag_takes_value(std::string_view arg) {
+    return arg == "--days" || arg == "--without" || arg == "--head" || arg == "--top" || arg == "--date" ||
+           arg == "--from" || arg == "--to" || arg == "--interval";
+}
+
+inline bool looks_like_identifier(std::string_view token) {
+    if (token.empty() || token.starts_with('-')) return false;
+    std::filesystem::path path{std::string(token)};
+    std::error_code ec;
+    if (path.extension() == ".stock" || std::filesystem::is_regular_file(path, ec)) return false;
+
+    bool has_letter = false;
+    bool all_digits = true;
+    for (char raw : token) {
+        auto const c = static_cast<unsigned char>(raw);
+        // Bytes >= 0x80 cover Persian/Arabic letters: names are accepted even
+        // though std::isalpha is locale-dependent.
+        if (c >= 0x80U || std::isalpha(c) != 0) has_letter = true;
+        if (c < '0' || c > '9') all_digits = false;
+    }
+    return has_letter || (all_digits && token.size() >= 15) || token.contains("://");
+}
+
+inline std::optional<std::string> identifier_in_args(std::vector<std::string_view> const& args) {
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        std::string_view arg = args[i];
+        if (arg == "--") continue;
+        if (arg.starts_with('-')) {
+            if (flag_takes_value(arg)) ++i;
+            continue;
+        }
+        if (looks_like_identifier(arg)) return std::string(arg);
+    }
+    return std::nullopt;
+}
+
+// Nearest preceding `tse`-family prompt with an identifier, then the nearest
+// following one. Reading neighbours makes `.tse foolad .tse.codal
+// .tse.intraday` and `.tse.codal foolad .tse.intraday` equivalent.
+inline std::optional<std::string> chain_identifier(prompt_context const& ctx) {
+    for (std::size_t distance = 1; distance < ctx.chain.size(); ++distance) {
+        if (ctx.chain_index >= distance) {
+            auto const& segment = ctx.chain[ctx.chain_index - distance];
+            if (tse_symbol_prompt(segment.name)) {
+                if (auto id = identifier_in_args(segment.args)) return id;
+            }
+        }
+        std::size_t const forward = ctx.chain_index + distance;
+        if (forward < ctx.chain.size()) {
+            auto const& segment = ctx.chain[forward];
+            if (tse_symbol_prompt(segment.name)) {
+                if (auto id = identifier_in_args(segment.args)) return id;
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 inline std::string rstrip_newlines(std::string_view text) {
@@ -171,10 +238,13 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
     }
 
     if (cfg.inputs.empty()) {
-        if (auto id = clipboard_identifier(ctx)) cfg.inputs.push_back(*id);
+        if (auto id = chain_identifier(ctx)) cfg.inputs.push_back(*id);
+        if (cfg.inputs.empty()) {
+            if (auto id = clipboard_identifier(ctx)) cfg.inputs.push_back(*id);
+        }
         if (cfg.inputs.empty()) {
             cfg.failed = true;
-            cfg.error = pfx + "no symbol given and no identifier found in the clipboard\n";
+            cfg.error = pfx + "no symbol given and no identifier found in the chain or clipboard\n";
             cfg.error += help_text(help_fn);
             return cfg;
         }

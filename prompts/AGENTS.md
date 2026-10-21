@@ -54,7 +54,11 @@ whole tree must stay clang-format clean.
   prompt's partial stdout is still accumulated and the chain continues.
 - Chained prompts share the **original** piped stdin. A prompt that reads stdin
   (`read_stdin` / `embed_stdin`) spends the pipe for later prompts by setting
-  `ctx.stdin_consumed`.
+  `ctx.stdin_consumed`. With no piped stdin the dispatcher runs independent
+  segments in parallel (forked children; prompts must not assume they are the
+  only segment running) and emits their results in argv order. `ctx.chain`
+  carries every invocation (`name`, `args`) plus `ctx.chain_index`, which is how
+  the `tse` prompts borrow a sibling's symbol.
 
 ## SDK helpers (`src/sdk/`)
 

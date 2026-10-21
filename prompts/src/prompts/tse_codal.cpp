@@ -87,10 +87,13 @@ tse_codal_prompt_config parse_tse_codal_args(prompt_context const& ctx) {
     }
 
     if (config.symbol.empty()) {
-        if (auto id = clipboard_identifier(ctx)) config.symbol = *id;
+        if (auto id = tse_data::chain_identifier(ctx)) config.symbol = *id;
+        if (config.symbol.empty()) {
+            if (auto id = clipboard_identifier(ctx)) config.symbol = *id;
+        }
         if (config.symbol.empty()) {
             config.failed = true;
-            config.error = pfx + "no symbol given and no identifier found in the clipboard\n";
+            config.error = pfx + "no symbol given and no identifier found in the chain or clipboard\n";
             config.error += help_text(render_help_tse_codal);
             return config;
         }
@@ -135,7 +138,7 @@ static void execute_tse_codal(prompt_context& ctx) {
 static void render_help_tse_codal(std::ostream& os) {
     os << R"EOF(Usage: prompt tse.codal [<symbol|finglish|ISIN|insCode|URL>] [--top N] [--fund] [--refresh] [--head N]
 
-Fetch the raw Codal.ir dataset for an Iranian بورس instrument — recent announcements, extracted income-statement and balance-sheet rows, monthly portfolio reports for funds, and ratios derived from those statement rows — as Markdown, with no analysis instructions attached. Codal is opt-in: `prompt tse` fetches market data only, so chain `.tse.codal` when the filings matter (repeat the symbol; chained prompts do not share arguments) and then `.tse.analyze` for the institutional analysis. Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the clipboard is searched for one.
+Fetch the raw Codal.ir dataset for an Iranian بورس instrument — recent announcements, extracted income-statement and balance-sheet rows, monthly portfolio reports for funds, and ratios derived from those statement rows — as Markdown, with no analysis instructions attached. Codal is opt-in: `prompt tse` fetches market data only, so chain `.tse.codal` when the filings matter (it borrows a neighbouring `.tse`/`.tse.intraday` symbol unless given its own) and then `.tse.analyze` for the institutional analysis. Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the other `.tse*` data prompts in the chain are searched, then the clipboard.
 
 An Iranian IP is required. Codal results are cached for six hours; `--refresh` forces a live fetch.
 
@@ -144,7 +147,7 @@ Examples:
   prompt tse.codal foolad
   prompt tse.codal IRT1DARA0001
   prompt tse.codal فولاد --top 10
-  prompt .tse فولاد .tse.codal فولاد .tse.analyze
+  prompt .tse فولاد .tse.codal .tse.analyze
   prompt .tse.codal فولاد --refresh
 
 Options:
@@ -165,11 +168,12 @@ bool const registered = prompt::register_prompt(
     "tse.codal",
     "Fetch the raw Codal.ir dataset for an Iranian بورس instrument — recent announcements, extracted statement "
     "rows, monthly fund portfolio reports and derived ratios — as Markdown, with no analysis instructions attached. "
-    "Codal is opt-in: chain `.tse.codal` after `tse` (repeat the symbol), then `.tse.analyze` for the institutional "
+    "Codal is opt-in: chain `.tse.codal` after `tse` (it borrows `tse`'s symbol), then `.tse.analyze` for the "
+    "institutional "
     "analysis. Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an "
     "ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite "
-    "`فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the clipboard is searched "
-    "for one.",
+    "`فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the other `.tse*` data "
+    "prompts in the chain are searched, then the clipboard.",
     &execute_tse_codal, &render_help_tse_codal, &tse_data::complete_instrument);
 
 } // namespace prompt::prompts

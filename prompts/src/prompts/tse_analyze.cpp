@@ -52,7 +52,7 @@ Examples:
   prompt .tse فولاد .tse.analyze
   prompt tse فولاد .tse.analyze
   prompt .tse foolad --days 30 .tse.analyze
-  prompt .tse فولاد .tse.codal فولاد .tse.analyze
+  prompt .tse فولاد .tse.codal .tse.analyze
   prompt .tse stocks/14050717_فولاد_IRO1FOLD0009.stock .tse.analyze
   prompt .tse فولاد .tse.analyze .tse.rigor
 

@@ -9,18 +9,179 @@
 #include "sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <regex>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
 // The prompts shell out to the repository's tools (bin/tse, jq, …) — there is
 // no in-process interpreter here, so no ASan suppressions are needed.
+
+namespace {
+
+// A prompt's result, detached from its context so chain segments can be
+// executed in any order (or in separate processes) and emitted in argv order.
+struct segment_result {
+    std::string output;
+    std::string error;
+    bool no_clipboard = false;
+    bool stdin_consumed = false;
+    bool redacted = false;
+    bool failed = false;
+    int exit_code = 0;
+};
+
+// Parallel segments run in forked children (not threads): `process::command`
+// forks, and forking from a multi-threaded parent is not safe. The child sends
+// this header + stdout + stderr through a pipe.
+struct segment_wire {
+    std::uint64_t output_size = 0;
+    std::uint64_t error_size = 0;
+    std::int32_t exit_code = 0;
+    std::uint32_t flags = 0;
+};
+static_assert(sizeof(segment_wire) == 24);
+
+constexpr std::uint32_t wire_no_clipboard = 1U << 0U;
+constexpr std::uint32_t wire_stdin_consumed = 1U << 1U;
+constexpr std::uint32_t wire_redacted = 1U << 2U;
+constexpr std::uint32_t wire_failed = 1U << 3U;
+
+bool write_all(int fd, std::string_view data) {
+    std::size_t offset = 0;
+    while (offset < data.size()) {
+        auto n = ::write(fd, data.data() + offset, data.size() - offset);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        if (n == 0) return false;
+        offset += static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
+std::string read_all(int fd) {
+    std::string data;
+    std::array<char, 8192> buffer{};
+    for (;;) {
+        auto n = ::read(fd, buffer.data(), buffer.size());
+        if (n > 0) {
+            data.append(buffer.data(), static_cast<std::size_t>(n));
+        } else if (n == 0 || errno != EINTR) {
+            break;
+        }
+    }
+    return data;
+}
+
+void write_segment(int fd, segment_result const& result) {
+    segment_wire wire{
+        .output_size = result.output.size(),
+        .error_size = result.error.size(),
+        .exit_code = result.exit_code,
+        .flags = (result.no_clipboard ? wire_no_clipboard : 0U) | (result.stdin_consumed ? wire_stdin_consumed : 0U) |
+                 (result.redacted ? wire_redacted : 0U) | (result.failed ? wire_failed : 0U),
+    };
+    if (!write_all(fd, std::string_view(reinterpret_cast<char const*>(&wire), sizeof wire))) return;
+    if (!write_all(fd, result.output)) return;
+    write_all(fd, result.error);
+}
+
+std::optional<segment_result> read_segment(std::string_view blob) {
+    if (blob.size() < sizeof(segment_wire)) return std::nullopt;
+    segment_wire wire{};
+    std::memcpy(&wire, blob.data(), sizeof wire);
+    std::size_t const header = sizeof(segment_wire);
+    if (wire.output_size > blob.size() - header) return std::nullopt;
+    std::size_t const remaining = blob.size() - header - static_cast<std::size_t>(wire.output_size);
+    if (wire.error_size > remaining) return std::nullopt;
+
+    segment_result result;
+    result.output.assign(blob.data() + header, static_cast<std::size_t>(wire.output_size));
+    result.error.assign(blob.data() + header + static_cast<std::size_t>(wire.output_size),
+                        static_cast<std::size_t>(wire.error_size));
+    result.exit_code = wire.exit_code;
+    result.no_clipboard = (wire.flags & wire_no_clipboard) != 0;
+    result.stdin_consumed = (wire.flags & wire_stdin_consumed) != 0;
+    result.redacted = (wire.flags & wire_redacted) != 0;
+    result.failed = (wire.flags & wire_failed) != 0;
+    return result;
+}
+
+segment_result failure_result(std::string message) {
+    segment_result result;
+    result.error = std::move(message);
+    result.failed = true;
+    result.exit_code = 1;
+    return result;
+}
+
+bool invocation_wants_help(prompt::prompt_invocation const& inv) {
+    for (std::size_t j = 0; j < inv.args_count; ++j) {
+        if (inv.args[j] == "--help" || inv.args[j] == "-h") return true;
+    }
+    return false;
+}
+
+segment_result render_help_result(prompt::prompt_descriptor const& desc) {
+    segment_result result;
+    std::ostringstream help;
+    if (desc.render_help_fn != nullptr) desc.render_help_fn(help);
+    auto clean = prompt::sanitize::sanitize(help.str());
+    result.output = std::move(clean.text);
+    result.redacted = clean.redacted;
+    return result;
+}
+
+prompt::prompt_context invocation_context(prompt::prompt_context const& base, prompt::prompt_invocation const& inv,
+                                          std::size_t index) {
+    auto ctx = base;
+    ctx.name = inv.name;
+    for (std::size_t j = 0; j < inv.args_count && j < ctx.args.size(); ++j) {
+        ctx.args[j] = inv.args[j];
+    }
+    ctx.args_count = std::min(inv.args_count, ctx.args.size());
+    ctx.chain_index = index;
+    return ctx;
+}
+
+segment_result run_prompt(prompt::prompt_context& ctx, prompt::prompt_descriptor const& desc) {
+    segment_result result;
+    try {
+        prompt::clear_output(ctx);
+        desc.execute_fn(ctx);
+        auto clean = prompt::sanitize::sanitize(ctx.out);
+        result.output = std::move(clean.text);
+        result.redacted = clean.redacted;
+        result.no_clipboard = ctx.no_clipboard;
+        result.stdin_consumed = ctx.stdin_consumed;
+        result.error = std::move(ctx.err);
+    } catch (prompt::prompt_error const& err) {
+        auto clean = prompt::sanitize::sanitize(err.partial_output());
+        result.output = std::move(clean.text);
+        result.redacted = clean.redacted;
+        result.no_clipboard = err.no_clipboard();
+        result.stdin_consumed = err.stdin_consumed();
+        result.error = err.what();
+        result.failed = true;
+        result.exit_code = err.exit_code();
+    }
+    return result;
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     // Every prompt registers itself before main (see sdk/prompt_registry.hpp);
@@ -243,88 +404,109 @@ Notes:
         chain.count = 1;
     }
 
-    // Pipeline for output accumulation
+    // Expose the whole chain to the prompts, so related prompts can borrow a
+    // sibling's arguments (e.g. `.tse foolad .tse.codal .tse.intraday`).
+    base_ctx.chain.clear();
+    base_ctx.chain.reserve(chain.count);
+    std::vector<prompt::prompt_descriptor const*> descriptors(chain.count, nullptr);
+    for (std::size_t i = 0; i < chain.count; ++i) {
+        auto const& inv = chain.invocations[i];
+        prompt::chain_segment segment;
+        segment.name = inv.name;
+        for (std::size_t j = 0; j < inv.args_count; ++j) segment.args.push_back(inv.args[j]);
+        base_ctx.chain.push_back(std::move(segment));
+
+        descriptors[i] = prompt::find_prompt(inv.name);
+        if (descriptors[i] == nullptr) {
+            std::cerr << "prompt: prompt '" << inv.name << "' not found\n";
+            return 3;
+        }
+    }
+
+    std::vector<segment_result> results(chain.count);
+
+    // Piped stdin is shared with a spend-once rule: a prompt that reads it
+    // spends the pipe for the prompts after it. Running in parallel would let
+    // every segment see the same pipe, so keep that case sequential. Without
+    // piped stdin the segments are independent and run in parallel.
+    bool const parallel = chain.count > 1 && !base_ctx.stdin_consumed;
+    if (parallel) {
+        std::vector<int> read_fds(chain.count, -1);
+        std::vector<pid_t> children(chain.count, -1);
+
+        // Fork every segment before reading anything: a prompt must never
+        // fork from a multi-threaded parent, and forking up front keeps each
+        // child single-threaded for the `process::command` calls it makes.
+        for (std::size_t i = 0; i < chain.count; ++i) {
+            auto const& inv = chain.invocations[i];
+            if (invocation_wants_help(inv)) {
+                results[i] = render_help_result(*descriptors[i]);
+                continue;
+            }
+
+            std::array<int, 2> fds{};
+            if (::pipe2(fds.data(), O_CLOEXEC) != 0) {
+                results[i] = failure_result("prompt: pipe failed: " + std::string(std::strerror(errno)) + "\n");
+                continue;
+            }
+            pid_t const pid = ::fork();
+            if (pid == 0) {
+                ::close(fds[0]);
+                auto ctx = invocation_context(base_ctx, inv, i);
+                auto result = run_prompt(ctx, *descriptors[i]);
+                write_segment(fds[1], result);
+                ::close(fds[1]);
+                ::_exit(0);
+            }
+            if (pid < 0) {
+                ::close(fds[0]);
+                ::close(fds[1]);
+                results[i] = failure_result("prompt: fork failed: " + std::string(std::strerror(errno)) + "\n");
+                continue;
+            }
+            ::close(fds[1]);
+            read_fds[i] = fds[0];
+            children[i] = pid;
+        }
+
+        for (std::size_t i = 0; i < chain.count; ++i) {
+            if (read_fds[i] < 0) continue;
+            std::string blob = read_all(read_fds[i]);
+            ::close(read_fds[i]);
+            int status = 0;
+            ::waitpid(children[i], &status, 0);
+            if (auto decoded = read_segment(blob)) {
+                results[i] = std::move(*decoded);
+            } else {
+                results[i] = failure_result("prompt " + std::string(chain.invocations[i].name) +
+                                            ": parallel child produced no result\n");
+            }
+        }
+    } else {
+        for (std::size_t i = 0; i < chain.count; ++i) {
+            auto const& inv = chain.invocations[i];
+            if (invocation_wants_help(inv)) {
+                results[i] = render_help_result(*descriptors[i]);
+                continue;
+            }
+            auto ctx = invocation_context(base_ctx, inv, i);
+            results[i] = run_prompt(ctx, *descriptors[i]);
+            if (results[i].stdin_consumed) base_ctx.stdin_content.clear();
+        }
+    }
+
+    // Pipeline for output accumulation, in command-line order regardless of
+    // which parallel segment finished first.
     prompt::pipeline pipeline;
     int exit_code = 0;
     // Whether clean_privacy rewrote anything in any segment; if so the
     // dispatcher prepends the redaction legend once, before the whole output.
     bool redacted = false;
-
-    // Execute each prompt in chain
-    for (std::size_t i = 0; i < chain.count; ++i) {
-        auto const& inv = chain.invocations[i];
-        const auto* desc = prompt::find_prompt(inv.name);
-        if (desc == nullptr) {
-            std::cerr << "prompt: prompt '" << inv.name << "' not found\n";
-            return 3;
-        }
-
-        // Per-prompt help: prompt <name> --help / -h. The bash dispatcher
-        // just runs the script with --help and keeps accumulating: the
-        // help text flows through the chain like any other stdout (and the
-        // chain continues with the remaining prompts).
-        bool wants_help = false;
-        for (std::size_t j = 0; j < inv.args_count; ++j) {
-            if (inv.args[j] == "--help" || inv.args[j] == "-h") {
-                wants_help = true;
-                break;
-            }
-        }
-        if (wants_help) {
-            std::ostringstream help_os;
-            if (desc->render_help_fn != nullptr) {
-                desc->render_help_fn(help_os);
-            }
-            auto help = prompt::sanitize::sanitize(help_os.str());
-            redacted = redacted || help.redacted;
-            pipeline.add_output(help.text, false);
-            continue;
-        }
-
-        // Build context for this prompt
-        auto ctx = base_ctx;
-        ctx.name = inv.name;
-        // Copy invocation args into context (handle size mismatch)
-        for (std::size_t j = 0; j < inv.args_count && j < ctx.args.size(); ++j) {
-            ctx.args[j] = inv.args[j];
-        }
-        ctx.args_count = inv.args_count;
-
-        // Execute prompt. Prompts fill the output fields on the context
-        // (ctx.out / ctx.err / ctx.no_clipboard) and report failure by
-        // throwing (usage_error / soft_error / prompt_error) with the exact
-        // stdout/stderr they would have printed; the throwing prompt's
-        // partial stdout is still accumulated (bash captures output before
-        // checking status) and the chain keeps running with the remaining
-        // prompts.
-        try {
-            clear_output(ctx);
-            desc->execute_fn(ctx);
-            auto clean = prompt::sanitize::sanitize(ctx.out);
-            redacted = redacted || clean.redacted;
-            pipeline.add_output(clean.text, ctx.no_clipboard);
-            if (!ctx.err.empty()) {
-                std::cerr << ctx.err;
-            }
-            if (ctx.stdin_consumed) {
-                base_ctx.stdin_content.clear();
-            }
-        } catch (prompt::prompt_error const& err) {
-            const std::string& partial = err.partial_output();
-            auto clean = prompt::sanitize::sanitize(partial);
-            redacted = redacted || clean.redacted;
-            pipeline.add_output(clean.text, err.no_clipboard());
-            std::string message = err.what();
-            if (!message.empty()) {
-                std::cerr << message;
-            }
-            if (exit_code == 0) {
-                exit_code = err.exit_code();
-            }
-            if (err.stdin_consumed()) {
-                base_ctx.stdin_content.clear();
-            }
-        }
+    for (auto const& result : results) {
+        redacted = redacted || result.redacted;
+        pipeline.add_output(result.output, result.no_clipboard);
+        if (!result.error.empty()) std::cerr << result.error;
+        if (result.failed && exit_code == 0) exit_code = result.exit_code;
     }
 
     // Finalize and output
