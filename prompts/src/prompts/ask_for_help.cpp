@@ -58,7 +58,8 @@ static void execute_ask_for_help(prompt_context& ctx) {
     std::string out;
 
     out += "# Available context-gathering prompts\n\nUse these with the shorthand syntax to compose your command:\n  "
-           ".note \"text\"        Add a note or context description\n  .cli \"command\"      Run a shell command and "
+           ".note \"text\"        Add a note or context description\n  .length 200         Ask for an answer of about "
+           "200 words (short, long, email, ...)\n  .cli \"command\"      Run a shell command and "
            "embed its output\n  .files file1 file2  Embed file contents as fenced code blocks\n  .agents             "
            "Embed agent instruction files (AGENTS.md, etc.)\n  .git-dirty          Show uncommitted changes in the "
            "repo\n  .repo               Show the repository file structure\n  .clipboard          Embed clipboard "
@@ -91,6 +92,8 @@ static void execute_ask_for_help(prompt_context& ctx) {
            "- Add .files for any source files, configs, or logs relevant to the problem.\n"
            "- Add .cli for commands that reproduce the error or show relevant state\n"
            "  (e.g., .cli \"make 2>&1\", .cli \"git diff\", .cli \"ls -la src/\").\n"
+           "- Add .length when the answer should be shorter or longer than usual\n"
+           "  (e.g., .length short, .length 200, .length \"=5 sentences\").\n"
            "- Use .git-dirty if uncommitted changes are relevant.\n"
            "- Use .agents if the project has AGENTS.md or similar context files.\n"
            "- Use .repo if the AI needs to understand the project structure.\n"

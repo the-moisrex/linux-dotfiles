@@ -46,3 +46,17 @@ set_tests_properties(complete_values PROPERTIES PASS_REGULAR_EXPRESSION "mermaid
 # fetches nothing and needs no bin/ tool, so it can run without the network.
 add_test(NAME tse_analyze_instructions COMMAND $<TARGET_FILE:prompt> tse.analyze)
 set_tests_properties(tse_analyze_instructions PROPERTIES PASS_REGULAR_EXPRESSION "institutional analyst")
+
+# End-to-end smoke: `length` turns a target into an answer-length instruction,
+# standalone and chained, with the exact/approximate and unit spellings.
+add_test(NAME length_exact COMMAND $<TARGET_FILE:prompt> .length =200)
+set_tests_properties(length_exact PROPERTIES PASS_REGULAR_EXPRESSION "exactly 200 words")
+
+add_test(NAME length_units COMMAND $<TARGET_FILE:prompt> length 10 lines)
+set_tests_properties(length_units PROPERTIES PASS_REGULAR_EXPRESSION "about 10 lines")
+
+add_test(NAME length_preset_chain COMMAND $<TARGET_FILE:prompt> .note hello .length short)
+set_tests_properties(length_preset_chain PROPERTIES PASS_REGULAR_EXPRESSION "Keep your answer short")
+
+add_test(NAME length_usage COMMAND $<TARGET_FILE:prompt> length)
+set_tests_properties(length_usage PROPERTIES WILL_FAIL TRUE)
