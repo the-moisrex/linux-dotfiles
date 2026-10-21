@@ -37,6 +37,18 @@ enum class length_preset : std::uint8_t {
     sms,
     email,
     letter,
+    blog,
+    article,
+    report,
+    essay,
+    abstract,
+    outline,
+    notes,
+    caption,
+    bio,
+    commit,
+    changelog,
+    thread,
     tldr,
 };
 
@@ -124,26 +136,33 @@ constexpr auto kPresetAliases = std::to_array<std::pair<std::string_view, length
     {"email", length_preset::email},
     {"e-mail", length_preset::email},
     {"letter", length_preset::letter},
+    {"blog", length_preset::blog},
+    {"blog-post", length_preset::blog},
+    {"blogpost", length_preset::blog},
+    {"article", length_preset::article},
+    {"report", length_preset::report},
+    {"essay", length_preset::essay},
+    {"abstract", length_preset::abstract},
+    {"outline", length_preset::outline},
+    {"notes", length_preset::notes},
+    {"caption", length_preset::caption},
+    {"bio", length_preset::bio},
+    {"biography", length_preset::bio},
+    {"commit", length_preset::commit},
+    {"commit-message", length_preset::commit},
+    {"changelog", length_preset::changelog},
+    {"changelog-entry", length_preset::changelog},
+    {"thread", length_preset::thread},
+    {"twitter-thread", length_preset::thread},
     {"tldr", length_preset::tldr},
     {"tl-dr", length_preset::tldr},
     {"tl;dr", length_preset::tldr},
 });
 
 constexpr auto kPresetNames = std::to_array<std::string_view>({
-    "tiny",
-    "short",
-    "medium",
-    "long",
-    "one-liner",
-    "sentence",
-    "paragraph",
-    "bullets",
-    "title",
-    "tweet",
-    "sms",
-    "email",
-    "letter",
-    "tldr",
+    "abstract", "article", "bio",  "blog",   "bullets", "caption",   "changelog", "commit",    "email",
+    "essay",    "letter",  "long", "medium", "notes",   "one-liner", "outline",   "paragraph", "report",
+    "sentence", "short",   "sms",  "thread", "tiny",    "title",     "tldr",      "tweet",
 });
 
 std::optional<length_unit> unit_from_word(std::string_view word) {
@@ -275,6 +294,36 @@ std::string_view preset_instruction(length_preset preset) {
     case length_preset::letter:
         return "Answer as a short letter: a salutation, a compact body of about 3 to 5 short paragraphs, and a "
                "closing.";
+    case length_preset::blog:
+        return "Answer as a short blog post of roughly 500 to 800 words: a title, a short introduction, a few headed "
+               "sections, and a takeaway.";
+    case length_preset::article:
+        return "Answer as an article of roughly 800 to 1200 words: a title, an introduction, a few headed sections, "
+               "and "
+               "a conclusion.";
+    case length_preset::report:
+        return "Answer as a structured report of roughly 800 to 1200 words: a short summary, headed sections, and a "
+               "conclusion.";
+    case length_preset::essay:
+        return "Answer as a short essay of roughly 500 to 800 words: an introduction, a developed argument, and a "
+               "conclusion.";
+    case length_preset::abstract:
+        return "Answer with a single-paragraph abstract of roughly 150 to 250 words.";
+    case length_preset::outline:
+        return "Answer as a short outline: headed sections with brief bullet points, no prose paragraphs.";
+    case length_preset::notes:
+        return "Answer as concise notes: short bullet points grouped under a few headings.";
+    case length_preset::caption:
+        return "Keep your answer to a one- or two-sentence caption.";
+    case length_preset::bio:
+        return "Keep your answer to a short bio of two or three sentences.";
+    case length_preset::commit:
+        return "Answer with a Conventional Commits message: a short imperative subject line, plus a short "
+               "bullet-point body only if it adds information.";
+    case length_preset::changelog:
+        return "Answer with a changelog entry: one short summary line and a bullet list of the changes.";
+    case length_preset::thread:
+        return "Answer as a short social thread of three to five numbered posts, each under 280 characters.";
     case length_preset::tldr:
         return "Answer with a one- or two-sentence TL;DR.";
     case length_preset::none:
@@ -313,8 +362,6 @@ void complete_length(completion_request const& request, std::ostream& os) {
 }
 
 } // namespace
-
-static void render_help_length(std::ostream& os);
 
 static void execute_length(prompt_context& ctx) {
     // Any argument may hold a whole phrase ("200 words", "a letter"), so every
@@ -450,7 +497,12 @@ static void execute_length(prompt_context& ctx) {
         throw usage_error{"prompt length: unknown argument: " + std::string(token) + "\n"};
     }
 
-    if (!have_target) throw usage_error{"prompt length: no target given\n" + help_text(render_help_length)};
+    if (!have_target && requested_mode.has_value()) {
+        throw usage_error{"prompt length: no target given; --exact/--max/--min need a number\n"};
+    }
+    // No target: a balanced answer is the default (`medium`, about one or two
+    // paragraphs), so a bare `.length` still emits a useful instruction.
+    if (!have_target) spec.preset = length_preset::medium;
     if (spec.preset != length_preset::none && requested_mode.has_value()) {
         throw usage_error{"prompt length: presets are approximate; give a number for an exact or bounded target\n"};
     }
@@ -471,15 +523,18 @@ static void render_help_length(std::ostream& os) {
 Set the answer length (or shape) the AI should target, roughly or exactly.
 
 TARGET is a number with an optional unit -- 200, 200 words, 10 lines,
-500 chars, 3 paragraphs -- or a preset: tiny, short, medium, long,
-one-liner, sentence, paragraph, bullets, title, tweet, sms, email,
-letter, tldr. Words is the default unit; compact suffixes (200w, 10l,
-3p, 500c, 300t), unit flags (--words 200, --lines 10), thousands ("2k")
-and number words ("a paragraph", "a few sentences") work too.
+500 chars, 3 paragraphs -- or a preset. Length presets: tiny, short,
+medium, long. Shape presets: one-liner, sentence, paragraph, bullets,
+title, tweet, sms, email, letter, blog, article, report, essay, abstract,
+outline, notes, caption, bio, commit, changelog, thread, tldr. Words is the
+default unit; compact suffixes (200w, 10l, 3p, 500c, 300t), unit flags
+(--words 200, --lines 10), thousands ("2k") and number words ("a paragraph",
+"a few sentences") work too.
 
-The target is approximate by default ("about 200 words"). Prefix the number
-with '=' or pass --exact for a hard target ("exactly 200 words"); --max only
-caps the answer and --min only extends it. Presets are always approximate.
+With no TARGET, `medium` (about one or two paragraphs) is used. Targets are
+approximate by default ("about 200 words"); prefix the number with '=' or
+pass --exact for a hard target ("exactly 200 words"); --max only caps the
+answer and --min only extends it. Presets are always approximate.
 
 Options:
   --exact, -e         Hard target ('=200' is the short form)
@@ -498,6 +553,7 @@ Examples:
   prompt .fix src/main.cpp .length 200
   prompt .tse فولاد .tse.analyze .length long
   prompt .note "summarise this" .files report.md .length =5 sentences
+  prompt .note "explain the design" .files a.cpp .length blog
 )EOF";
 }
 

@@ -58,5 +58,11 @@ set_tests_properties(length_units PROPERTIES PASS_REGULAR_EXPRESSION "about 10 l
 add_test(NAME length_preset_chain COMMAND $<TARGET_FILE:prompt> .note hello .length short)
 set_tests_properties(length_preset_chain PROPERTIES PASS_REGULAR_EXPRESSION "Keep your answer short")
 
-add_test(NAME length_usage COMMAND $<TARGET_FILE:prompt> length)
-set_tests_properties(length_usage PROPERTIES WILL_FAIL TRUE)
+add_test(NAME length_default COMMAND $<TARGET_FILE:prompt> length)
+set_tests_properties(length_default PROPERTIES PASS_REGULAR_EXPRESSION "one or two paragraphs")
+
+add_test(NAME length_shape COMMAND $<TARGET_FILE:prompt> .length blog)
+set_tests_properties(length_shape PROPERTIES PASS_REGULAR_EXPRESSION "blog post")
+
+add_test(NAME length_conflict COMMAND $<TARGET_FILE:prompt> length --max --min 5)
+set_tests_properties(length_conflict PROPERTIES WILL_FAIL TRUE)

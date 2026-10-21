@@ -59,7 +59,7 @@ static void execute_ask_for_help(prompt_context& ctx) {
 
     out += "# Available context-gathering prompts\n\nUse these with the shorthand syntax to compose your command:\n  "
            ".note \"text\"        Add a note or context description\n  .length 200         Ask for an answer of about "
-           "200 words (short, long, email, ...)\n  .cli \"command\"      Run a shell command and "
+           "200 words (short, email, blog, ...)\n  .cli \"command\"      Run a shell command and "
            "embed its output\n  .files file1 file2  Embed file contents as fenced code blocks\n  .agents             "
            "Embed agent instruction files (AGENTS.md, etc.)\n  .git-dirty          Show uncommitted changes in the "
            "repo\n  .repo               Show the repository file structure\n  .clipboard          Embed clipboard "
