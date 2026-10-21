@@ -61,6 +61,10 @@ class Provider:
     session_target = ""    # what browser.session is asked for
     default_model = ""
     models = ()
+    #: Prompts larger than this many UTF-8 bytes are uploaded as a text file
+    #: by default (see :mod:`ai.promptfile`).  The sites cap a single message
+    #: by *tokens*, so the byte budget is conservative enough for CJK too.
+    inline_limit = 64 * 1024
 
     def open_conversation(self, match, model, system="", debug=False,
                           timeout=600, conversation_id=None, history=None,

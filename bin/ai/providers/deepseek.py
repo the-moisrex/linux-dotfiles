@@ -62,6 +62,9 @@ class DeepSeek(Provider):
     session_target = "chat.deepseek.com"
     default_model = "deepseek_reasoner"
     models = ("deepseek_reasoner", "deepseek_chat")
+    #: At least 600 KB of ASCII was accepted inline (the site's own context
+    #: window is the limit), so only genuinely huge prompts need a file.
+    inline_limit = 256 * 1024
 
     def open_conversation(self, match, model, system="", debug=False, timeout=600,
                           conversation_id=None, history=None, resume=None):
@@ -226,7 +229,9 @@ class _Conversation(Conversation):
                 return
             status = record.get("status")
             if status and status not in FILE_READY:
-                yield ev.error(f"{attachment.name}: upload failed ({status})")
+                yield ev.error(
+                    f"{attachment.name}: the site could not read the file "
+                    f"({status}); split it into smaller files or shorten the prompt")
                 return
             ref_ids.append(record["id"])
             yield ev.tool_call(name="upload", status="done", args=attachment.name)

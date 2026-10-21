@@ -71,6 +71,17 @@ MAX_CONTINUATIONS = 8
 TITLE_LIMIT = 60
 
 
+def _limit_message(message):
+    """Translate the site's conversation-length error into a remedy."""
+    if not isinstance(message, str):
+        message = str(message)
+    if "超过" in message and ("万字" in message or "对话" in message):
+        return ("Kimi: this conversation has reached the site's "
+                "200,000-character limit; start a new chat (--new) or split "
+                "the prompt.")
+    return message
+
+
 def _expires_at(token):
     """The ``exp`` claim of a JWT, or 0 when it cannot be read."""
     try:
@@ -90,6 +101,10 @@ class Kimi(Provider):
     session_target = "www.kimi.ai"
     default_model = "kimi"
     models = ("kimi",)
+    #: 1 MB of ASCII was accepted inline; 2 MB hit the site's conversation
+    #: limit.  The conversation cap is cumulative, so the byte budget is only
+    #: about keeping a single message comfortable.
+    inline_limit = 256 * 1024
 
     def open_conversation(self, match, model, system="", debug=False, timeout=600,
                           conversation_id=None, history=None, resume=None):
@@ -238,9 +253,13 @@ class _Conversation(Conversation):
                         message_id = obj.get("id") or message_id
                     elif event == "error":
                         error = obj.get("error") or {}
-                        message = (error.get("message") if isinstance(error, dict)
-                                   else None) or "Kimi returned an error"
-                        yield ev.error(message)
+                        if isinstance(error, dict):
+                            message = error.get("message") or "Kimi returned an error"
+                        elif isinstance(error, str):
+                            message = error
+                        else:
+                            message = "Kimi returned an error"
+                        yield ev.error(_limit_message(message))
                         return
         except net.StreamError as exc:
             yield ev.error(str(exc))

@@ -103,6 +103,10 @@ class Gap(Provider):
               "A-GPT-4.1", "A-O1", "A-O4-MINI", "A-GEMINI-3-PRO", "A-CLAUDE",
               "A-SONNET-4.6", "A-OPUS-4.5", "A-DEEPSEEK-PRO", "A-DEEPSEEK-R1",
               "A-GROK-4", "A-KIMI-K3")
+    #: ``A-GAP`` accepted 150 KB of ASCII but refused 200 KB, and 30 KB of CJK
+    #: was accepted while 60 KB hit ``token_limit``.  The routed model's token
+    #: window is the real limit; 24 KiB stays clear of it.
+    inline_limit = 24 * 1024
 
     @classmethod
     def chosen_model(cls, requested):
@@ -174,8 +178,9 @@ class Gap(Provider):
             "free_sub_upgrade": "this model needs a paid plan",
             "sub_upgrade": "this model needs a higher plan",
             "invalid_request": "the model name was not accepted; see --model",
-            "token_limit": "the prompt is longer than the model's context window "
-                           "(shorten or split it)",
+            "token_limit": "the prompt is longer than the model's context window; "
+                           "re-run with --prompt-file to upload it as a text file, "
+                           "lower --prompt-limit, or shorten/split the prompt",
             "cancelled": "the request was cancelled",
         }
         message = f"GapGPT refused the message ({status})"

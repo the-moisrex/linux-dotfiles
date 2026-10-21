@@ -57,6 +57,10 @@ class ChatGPT(Provider):
     session_target = "chatgpt.com"
     default_model = "auto"
     models = ("auto", "gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini")
+    #: The conversation endpoint rejects a single message at ~30k tokens
+    #: (HTTP 413, empty body): 60 KB of CJK was accepted, 90 KB refused.
+    #: 48 KiB keeps a margin for denser prompts.
+    inline_limit = 48 * 1024
 
     def open_conversation(self, match, model, system="", debug=False, timeout=600,
                           conversation_id=None, history=None, resume=None):

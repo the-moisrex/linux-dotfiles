@@ -464,6 +464,12 @@ streams the answer (reasoning and tool calls included) and renders Markdown on a
 It can also keep the conversation going: `-c`/`--continue` reopens your last
 conversation with that provider and `-i`/`--interactive` keeps it open for more turns.
 `-f`/`--file` uploads a local file and attaches it to the first message (repeatable).
+A prompt above the provider's inline budget (ChatGPT 48 KiB, GapGPT 24 KiB,
+Grok 64 KiB, DeepSeek/Kimi 256 KiB, in UTF-8 bytes) is written to a temporary
+`.txt` and uploaded through that same path, with a short pointer message instead
+of the full request; `--no-prompt-file` keeps it inline, `--prompt-file` forces
+the file, and `--prompt-limit BYTES` overrides the budget. That is what keeps a
+large `prompt .verify | ai.chatgpt` pipe from hitting the site's 413.
 
 The five are thin wrappers over one shared engine (`bin/ai/`); each provider adapts
 its site's transport:
@@ -507,6 +513,9 @@ ai.gap -m gpt-4o "compare mTLS and JWT"          # GapGPT, by friendly model lab
 ai.kimi "summarise this article"                 # Kimi, same engine
 ai.chatgpt -f report.pdf "summarise this"        # upload + attach a file
 ai.grok -f a.png -f b.txt "what do these show?"  # …more than one
+prompt .verify | ai.chatgpt                      # oversized prompt -> text file
+cat big.diff | ai.chatgpt --no-prompt-file       # force inline (site's limit)
+ai.chatgpt --prompt-file "small but as a file"   # force the file path
 ```
 
 Sessions load through `browser.session` (the browser must have been logged in once);
@@ -522,9 +531,18 @@ and `--timeout` bounds a turn.
 `--file` uploads through each site's own endpoint (ChatGPT's
 `/backend-api/files` create → pre-signed blob `PUT` → mark uploaded; Grok's
 `/rest/app-chat/upload-file` base64 JSON; DeepSeek's `/api/v0/file/upload_file`
-multipart behind its own proof-of-work; GapGPT's `/api/v1/upload_file` multipart)
-and references the returned id in that turn's payload. Each uploaded file is
-announced as a `tool_call` event named `upload` (display-only, like the rest).
+multipart behind its own proof-of-work; GapGPT's `/api/v1/upload_file` multipart;
+Kimi's `/apiv2-files/file/upload` multipart) and references the returned id in
+that turn's payload. The automatic oversized-prompt file uses the same endpoint,
+so the model receives an ordinary text attachment. Each uploaded file is
+announced as a `tool_call` event named `upload` (display-only, like the rest);
+the switch to a prompt file is also reported on stderr (or as that `upload`
+event with `--json`).
+
+When a site still reports its own limit (`HTTP 413`, `token_limit`, a context
+window message), the error is annotated with the prompt size and the remedy:
+drop `--no-prompt-file`, lower `--prompt-limit`, or trim the prompt. Prompt
+files are temporary and deleted once the turn has uploaded them.
 
 `-i` needs a terminal on stdin (and rejects `--json`); it reads one prompt per line,
 with `:q` to quit and `:new` to start a fresh conversation. Every run remembers its

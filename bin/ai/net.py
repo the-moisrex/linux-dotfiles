@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 import uuid
+from http import HTTPStatus
 
 DEFAULT_IMPERSONATE = "firefox"
 
@@ -214,10 +215,18 @@ def encode_multipart(fields, boundary=None):
 
 def _http_error(status, body):
     try:
-        text = body.decode("utf-8", "replace")
+        text = body.decode("utf-8", "replace").strip() if body else ""
     except Exception:
-        text = str(body)
-    return f"HTTP {status}: {text[:300]}"
+        text = str(body).strip() if body else ""
+    if text:
+        return f"HTTP {status}: {text[:300]}"
+    if status == 413:
+        return "HTTP 413: request body too large"
+    try:
+        reason = HTTPStatus(status).phrase
+    except ValueError:
+        reason = ""
+    return f"HTTP {status}: {reason}" if reason else f"HTTP {status}"
 
 
 def sse_payloads(lines):

@@ -11,6 +11,10 @@ Two flags turn the one-shot call into a chat:
 * ``-c`` / ``--continue`` reopens the last conversation with that provider
   (``--new`` starts a fresh one instead).  The conversation is remembered
   between runs under ``$XDG_STATE_HOME/ai/<provider>.json`` (see :mod:`ai.state`).
+
+A prompt too large for one message is uploaded as a text file by default (see
+:mod:`ai.promptfile`); ``--prompt-file`` forces that path and
+``--no-prompt-file`` disables it.
 """
 
 from __future__ import annotations
@@ -23,6 +27,8 @@ import signal
 import subprocess
 import sys
 
+from . import events as ev
+from . import promptfile
 from . import session as session_mod
 from . import state
 from .events import ERROR, DONE, TEXT
@@ -59,6 +65,14 @@ def build_parser(provider):
     p.add_argument("-f", "--file", action="append", default=[], metavar="PATH",
                    help="upload and attach a local file to the first message "
                         "(repeatable)")
+    p.add_argument("--prompt-file", action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help="upload a prompt as a text file: automatic when it is too "
+                        "large for one message (the default); --no-prompt-file "
+                        "always sends it inline")
+    p.add_argument("--prompt-limit", type=int, default=None, metavar="BYTES",
+                   help="override the provider's automatic prompt-file threshold "
+                        f"(default: {promptfile.human_size(provider.inline_limit)})")
     p.add_argument("-m", "--model", default=None,
                    help=f"model (default: {provider.default_model}; one of {models})")
     p.add_argument("-s", "--system", default=None, help="system / custom instructions")
@@ -140,24 +154,57 @@ def make_renderer(args):
                     color=not args.no_color, debug=args.debug)
 
 
-def run_turn(conversation, prompt, args, renderer):
+def run_turn(conversation, prompt, args, renderer, provider):
     """Stream one turn; return ``(status, answer)``."""
     status = 0
     parts = []
     # --file attaches to the first message only; the site keeps it in context.
-    files = args.file if not conversation.turns else None
-    for event in conversation.send(prompt, files=files):
-        if args.json:
-            emit_json(event)
-        else:
-            renderer.handle(event)
-            renderer.write_debug(event)
-        if event.kind == TEXT:
-            parts.append(event.text)
-        if event.kind == ERROR:
-            status = 1
-        elif event.kind == DONE:
-            break
+    files = list(args.file) if not conversation.turns else []
+    mode = args.prompt_file
+    attach = promptfile.should_attach(prompt, provider, mode, args.prompt_limit)
+    temp = None
+    message = prompt
+    if attach:
+        count = promptfile.size(prompt)
+        try:
+            temp = promptfile.write(prompt)
+        except OSError as exc:
+            problem = ev.error(f"could not write the prompt file: {exc}")
+            if args.json:
+                emit_json(problem)
+            else:
+                renderer.handle(problem)
+            return 1, ""
+        message = promptfile.reference(temp, count)
+        files.append(temp)
+        if not args.json:
+            if mode is True:
+                detail = f"{promptfile.human_size(count)}, forced by --prompt-file"
+            else:
+                budget = promptfile.limit_for(provider, args.prompt_limit)
+                detail = (f"{promptfile.human_size(count)}, above the "
+                          f"{promptfile.human_size(budget)} inline budget")
+            print(f"[ai] prompt {detail}; uploading it as "
+                  f"{os.path.basename(temp)}", file=sys.stderr)
+    try:
+        for event in conversation.send(message, files=files or None):
+            if event.kind == ERROR:
+                event = ev.error(promptfile.annotate_error(
+                    event.text, provider, prompt, used_file=attach,
+                    disabled=(mode is False), limit=args.prompt_limit))
+            if args.json:
+                emit_json(event)
+            else:
+                renderer.handle(event)
+                renderer.write_debug(event)
+            if event.kind == TEXT:
+                parts.append(event.text)
+            if event.kind == ERROR:
+                status = 1
+            elif event.kind == DONE:
+                break
+    finally:
+        promptfile.remove(temp)
     return status, "".join(parts)
 
 
@@ -174,10 +221,10 @@ def _open(instance, match, model, args, resume):
         resume=(resume or {}).get("resume"))
 
 
-def run_once(conversation, prompt, args, provider_name, model):
+def run_once(conversation, prompt, args, provider_name, model, provider):
     renderer = make_renderer(args)
     try:
-        status, answer = run_turn(conversation, prompt, args, renderer)
+        status, answer = run_turn(conversation, prompt, args, renderer, provider)
     except KeyboardInterrupt:
         if not args.json:
             renderer.finish()
@@ -193,7 +240,7 @@ def run_once(conversation, prompt, args, provider_name, model):
     return status
 
 
-def run_repl(conversation, instance, match, model, args, provider_name):
+def run_repl(conversation, instance, match, model, args, provider_name, provider):
     """Prompt in a loop, one turn at a time, keeping the conversation open."""
     where = f"ai.{provider_name}: {model}"
     if conversation.history:
@@ -228,7 +275,8 @@ def run_repl(conversation, instance, match, model, args, provider_name):
 
         renderer = make_renderer(args)
         try:
-            turn_status, answer = run_turn(conversation, text, args, renderer)
+            turn_status, answer = run_turn(conversation, text, args, renderer,
+                                           provider)
         except KeyboardInterrupt:
             if not args.json:
                 renderer.finish()
@@ -324,10 +372,11 @@ def main(provider_name, argv=None):
     conversation = _open(instance, match, model, args, resume)
 
     if args.interactive:
-        return run_repl(conversation, instance, match, model, args, provider_name)
+        return run_repl(conversation, instance, match, model, args, provider_name,
+                        provider)
 
     prompt = read_prompt(args.prompt)
     if not prompt:
         build_parser(provider).print_usage(sys.stderr)
         return 2
-    return run_once(conversation, prompt, args, provider_name, model)
+    return run_once(conversation, prompt, args, provider_name, model, provider)

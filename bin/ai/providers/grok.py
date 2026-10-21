@@ -90,6 +90,9 @@ class Grok(Provider):
     session_target = "grok.com"
     default_model = "fast"
     models = ("fast", "expert", "grok-4", "grok-3", "grok-3-mini", "grok-3-thinking")
+    #: The upload endpoint answered "not available in this region" from the
+    #: machine this was measured on, so keep the shared conservative budget.
+    inline_limit = 64 * 1024
 
     def open_conversation(self, match, model, system="", debug=False, timeout=600,
                           conversation_id=None, history=None, resume=None):
