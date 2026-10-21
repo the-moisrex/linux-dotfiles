@@ -26,11 +26,26 @@ add_test(NAME sink COMMAND test_sink)
 add_test(NAME ai_help COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
 set_tests_properties(ai_help PROPERTIES PASS_REGULAR_EXPRESSION "--with-context")
 
+add_test(NAME ai_help_tty COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
+set_tests_properties(ai_help_tty PROPERTIES PASS_REGULAR_EXPRESSION "--tty")
+
 add_test(NAME ai_print_prompt COMMAND $<TARGET_FILE:prompt> .note hello .ai.dseek --print-prompt)
 set_tests_properties(ai_print_prompt PROPERTIES PASS_REGULAR_EXPRESSION "hello")
 
 add_test(NAME ai_head COMMAND $<TARGET_FILE:prompt> .note one .note two .ai.dseek --print-prompt --head 1)
 set_tests_properties(ai_head PROPERTIES PASS_REGULAR_EXPRESSION "one" FAIL_REGULAR_EXPRESSION "two")
+
+# End-to-end `.ai.*` sinks: stub providers prove --tty/--width/--height are
+# forwarded on a terminal, the styled stream stays display-only and the chain
+# gets the plain --context-file answer.
+add_test(NAME ai_sink_roundtrip
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_sink.sh $<TARGET_FILE:prompt>)
+
+# End-to-end `.save`: explicit/directory/derived targets, passthrough into a
+# sink, --head, no-clobber, sanitized names and the empty-context guard.
+add_test(NAME save_roundtrip
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_save.sh
+            $<TARGET_FILE:prompt> ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/numbered.txt)
 
 add_executable(test_embed test_embed.cpp)
 target_link_libraries(test_embed PRIVATE prompt_lib)

@@ -33,12 +33,14 @@ import uuid
 
 from .. import events as ev
 from .. import files as files_mod
+from .. import history
 from .. import net
 from .. import sentinel
 from .. import session as session_mod
 from . import Conversation, Provider
 
 BASE = "https://chatgpt.com"
+CONVERSATIONS_PATH = "/backend-api/conversations"
 FILES_PATH = "/backend-api/files"
 POLL_INTERVAL = 0.5
 ROOT_MESSAGE = "client-created-root"
@@ -104,6 +106,77 @@ class ChatGPT(Provider):
         if account:
             headers["chatgpt-account-id"] = account
             headers["ChatGPT-Account-ID"] = account
+
+    # -- history (used by ai.save) ----------------------------------------
+
+    def history_headers(self, match):
+        """Authenticated REST headers, resolved once per sync."""
+        cached = getattr(self, "_history_headers", None)
+        if cached is not None and getattr(self, "_history_match", None) is match:
+            return dict(cached)
+        headers = self._headers(match)
+        self._authorize(headers)
+        self._history_headers = headers
+        self._history_match = match
+        return dict(headers)
+
+    def iter_chat_summaries(self, match, limit=None):
+        """Walk ``/backend-api/conversations`` newest-first."""
+        headers = self.history_headers(match)
+        offset = 0
+        count = 0
+        while True:
+            url = (f"{self.origin}{CONVERSATIONS_PATH}"
+                   f"?offset={offset}&limit=100&order=updated")
+            data = net.request_json(url, headers=headers, timeout=120) or {}
+            items = data.get("items") or []
+            if not items:
+                return
+            for item in items:
+                identifier = item.get("id") or ""
+                if not identifier:
+                    continue
+                yield history.ChatSummary(
+                    provider=self.name,
+                    remote_id=identifier,
+                    title=item.get("title") or "",
+                    created=history.iso_from_epoch(item.get("create_time")),
+                    updated=history.iso_from_epoch(item.get("update_time")),
+                    url=f"{self.origin}/c/{identifier}",
+                )
+                count += 1
+                if limit and count >= limit:
+                    return
+            offset += len(items)
+            total = data.get("total") or 0
+            if total and offset >= total:
+                return
+
+    def fetch_chat(self, match, remote_id):
+        """Fetch one conversation and walk its active branch."""
+        headers = self.history_headers(match)
+        data = net.request_json(
+            f"{self.origin}/backend-api/conversation/{remote_id}",
+            headers=headers, timeout=180) or {}
+        chat = history.Chat(
+            provider=self.name,
+            remote_id=remote_id,
+            title=data.get("title") or "",
+            created=history.iso_from_epoch(data.get("create_time")),
+            updated=history.iso_from_epoch(data.get("update_time")),
+            model=data.get("default_model_slug") or "",
+            url=f"{self.origin}/c/{remote_id}",
+        )
+        for message in _active_messages(data):
+            chat.messages.extend(_history_messages(message))
+            model = (message.get("metadata") or {}).get("model_slug")
+            if model and (message.get("author") or {}).get("role") == "assistant":
+                chat.model = chat.model or model
+        if not chat.created and chat.messages:
+            chat.created = chat.messages[0].created
+        if not chat.updated:
+            chat.updated = history.newest(m.created for m in chat.messages)
+        return chat
 
     def _bootstrap(self, headers):
         """Return ``(script_source, data_build)`` from the app shell."""
@@ -491,6 +564,79 @@ def _is_finished(message):
     metadata = message.get("metadata") or {}
     return (message.get("status") == "finished_successfully"
             or bool(metadata.get("finish_details")))
+
+
+def _active_messages(conversation):
+    """The messages on the conversation's current branch, oldest first."""
+    mapping = (conversation or {}).get("mapping") or {}
+    if not isinstance(mapping, dict):
+        return []
+    current = (conversation or {}).get("current_node")
+    if current and current in mapping:
+        chain = []
+        seen = set()
+        while current and current in mapping and current not in seen:
+            seen.add(current)
+            node = mapping[current]
+            message = node.get("message") if isinstance(node, dict) else None
+            if isinstance(message, dict):
+                chain.append(message)
+            current = node.get("parent") if isinstance(node, dict) else None
+        chain.reverse()
+        return chain
+    ordered = []
+    for node in mapping.values():
+        message = node.get("message") if isinstance(node, dict) else None
+        if isinstance(message, dict):
+            ordered.append(message)
+    ordered.sort(key=lambda m: m.get("create_time") or 0)
+    return ordered
+
+
+def _history_messages(message):
+    """Normalise one ChatGPT message into zero or more history messages."""
+    role = (message.get("author") or {}).get("role") or ""
+    content = message.get("content") or {}
+    ctype = content.get("content_type") or ""
+    text = "".join(_part_text(part) for part in content.get("parts") or []).strip()
+    created = history.iso_from_epoch(message.get("create_time"))
+    message_id = str(message.get("id") or "")
+    parent_id = str(message.get("parent") or "")
+    out = []
+
+    def add(kind, body, name=""):
+        if body:
+            out.append(history.Message(
+                role=role, text=body, kind=kind, created=created,
+                message_id=message_id, parent_id=parent_id, name=name))
+
+    if role == "user":
+        add(history.TEXT, text)
+    elif role == "assistant":
+        if ctype in ("text", "multimodal_text"):
+            add(history.TEXT, text)
+        elif ctype in ("thoughts", "reasoning_recap"):
+            thoughts = content.get("thoughts") or []
+            thinking = "\n".join(
+                str(item.get("content") or "")
+                for item in thoughts if isinstance(item, dict)).strip()
+            add(history.THINKING, thinking or text)
+        elif ctype == "code":
+            add(history.TOOL_CALL, content.get("text") or "", "code")
+        elif ctype == "execution_output":
+            add(history.TOOL_CALL, content.get("text") or "", "execution_output")
+        elif ctype == "tether_browsing_display":
+            add(history.TOOL_CALL, text, "search")
+        elif ctype in ("model_editable_context", "user_editable_context"):
+            if text:
+                out.append(history.Message(
+                    role=history.SYSTEM, text=text, created=created,
+                    message_id=message_id, parent_id=parent_id))
+    elif role == "tool":
+        add(history.TOOL_CALL, text, message.get("recipient") or "tool")
+    elif role == "system":
+        add(history.TEXT, text)
+    return out
 
 
 class _MessageStream:

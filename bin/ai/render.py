@@ -7,6 +7,13 @@ Two behaviours, chosen automatically:
 * **piped / no ``rich``** — the visible text streams to stdout untouched and the
   reasoning goes to stderr, so ``ai.grok … > answer.md`` stays clean.
 
+``force_tty=True`` (``--tty``) treats both streams as terminals even though a
+pipe is on the other end. That is what ``prompt``'s ``.ai.*`` sinks need: they
+capture the output and forward the bytes to the real terminal, so the child
+would otherwise never render Markdown or colour anything. ``width``/``height``
+(``--width``/``--height``) pin the layout to that terminal, which the child
+cannot measure itself.
+
 Tool calls are announced (display only), and token usage is reported at the end.
 """
 
@@ -33,13 +40,16 @@ _RESET = "\x1b[0m"
 
 
 class Renderer:
-    def __init__(self, show_thinking=True, raw=False, color=True, debug=False):
+    def __init__(self, show_thinking=True, raw=False, color=True, debug=False,
+                 force_tty=False, width=None, height=None):
         self.show_thinking = show_thinking
         self.raw = raw
         self.debug = debug
         self.out = sys.stdout
         self.err = sys.stderr
-        self.tty = self.out.isatty()
+        self.force_tty = force_tty
+        self.tty = force_tty or self.out.isatty()
+        self.err_tty = force_tty or self.err.isatty()
         self.color = color and self.tty and not os.environ.get("NO_COLOR")
         self.interactive = self.tty and not raw
         self.text_parts = []
@@ -52,7 +62,10 @@ class Renderer:
         self._console = None
         self._rich = _RICH and self.interactive
         if self._rich:
-            self._console = Console(file=self.out, highlight=False)
+            self._console = Console(file=self.out, highlight=False,
+                                    force_terminal=True,
+                                    color_system="auto" if self.color else None,
+                                    width=width, height=height)
 
     # -- event intake ------------------------------------------------------
 
@@ -96,7 +109,7 @@ class Renderer:
             return
         if not self.show_thinking:
             return
-        style = self.color and self.err.isatty()
+        style = self.color and self.err_tty
         prefix = "💭 " if (style and not self.thinking_parts[:-1]) else ""
         if style:
             self._write_err(_DIM + prefix + chunk + _RESET)
@@ -113,7 +126,7 @@ class Renderer:
         if self._rich:
             self._refresh(force=True)
         else:
-            style = self.color and self.err.isatty()
+            style = self.color and self.err_tty
             self._write_err((_DIM + note + _RESET + "\n") if style else (note + "\n"))
 
     def _write_err(self, text):
@@ -180,7 +193,7 @@ class Renderer:
         parts = ", ".join(f"{k}={v}" for k, v in self.usage.items() if v is not None)
         if parts:
             self._write_err((_DIM + f"[usage] {parts}" + _RESET + "\n")
-                            if (self.color and self.err.isatty()) else f"[usage] {parts}\n")
+                            if (self.color and self.err_tty) else f"[usage] {parts}\n")
 
     def write_debug(self, event):
         if self.debug and event.kind == ev.RAW and event.text:

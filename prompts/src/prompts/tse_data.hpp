@@ -54,6 +54,21 @@ struct config {
     std::string error;
 };
 
+// A basename hint for a later `.save` sink. Live data is named after the
+// requested identifier; cached snapshots keep their existing stem.
+inline std::string save_stem(config const& cfg) {
+    if (cfg.cache_mode && !cfg.snapshot_files.empty()) {
+        return cfg.snapshot_files.front().stem().string();
+    }
+    if (cfg.symbol.empty()) return {};
+    return "tse-" + cfg.symbol;
+}
+
+inline std::string save_stem(std::string_view symbol) {
+    if (symbol.empty()) return {};
+    return "tse-" + std::string(symbol);
+}
+
 inline bool is_positive_int(std::string_view s) {
     if (s.empty()) return false;
     return std::ranges::all_of(s, [](char c) { return c >= '0' && c <= '9'; });

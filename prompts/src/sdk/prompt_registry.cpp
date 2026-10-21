@@ -65,7 +65,7 @@ void assign_sort_files(std::filesystem::path const& dir) {
 
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn, chain_role role,
-                     sink_policy policy) noexcept {
+                     sink_policy policy, bool stream_output) noexcept {
     if (prompts_count >= prompts_storage.size()) return false;
     prompts_storage[prompts_count++] = prompt_descriptor{
         .name = name,
@@ -76,13 +76,16 @@ bool register_prompt(std::string_view name, std::string_view help_summary, void 
         .sort_file = {},
         .role = role,
         .policy = policy,
+        .stream_output = stream_output,
     };
     return true;
 }
 
 bool register_sink(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
-                   void (*render_help_fn)(std::ostream&), completion_fn complete_fn, sink_policy policy) noexcept {
-    return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, policy);
+                   void (*render_help_fn)(std::ostream&), completion_fn complete_fn, sink_policy policy,
+                   bool stream_output) noexcept {
+    return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, policy,
+                           stream_output);
 }
 
 void init_prompt_registry() {

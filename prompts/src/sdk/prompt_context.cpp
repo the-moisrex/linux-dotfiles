@@ -8,6 +8,7 @@ void clear_output(prompt_context& ctx) {
     ctx.out.clear();
     ctx.err.clear();
     ctx.stderr_buffer.clear();
+    ctx.save_hint.clear();
     ctx.no_clipboard = false;
     ctx.stdout_streamed = false;
     ctx.stderr_streamed = false;

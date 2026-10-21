@@ -31,9 +31,11 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from urllib.parse import urlencode
 
 from .. import events as ev
 from .. import files as files_mod
+from .. import history
 from .. import net
 from .. import session as session_mod
 from ..pow import PowError, deepseek_response, solve_deepseek
@@ -43,6 +45,8 @@ COMPLETION_PATH = "/api/v0/chat/completion"
 CONTINUE_PATH = "/api/v0/chat/continue"
 UPLOAD_PATH = "/api/v0/file/upload_file"
 FILES_PATH = "/api/v0/file/fetch_files"
+SESSIONS_PATH = "/api/v0/chat_session/fetch_page"
+HISTORY_PATH = "/api/v0/chat/history_messages"
 CLIENT_VERSION = "2.5.0"
 
 #: The site cuts a long answer (or a slow reasoning run) short, leaving the
@@ -168,6 +172,148 @@ class DeepSeek(Provider):
         if isinstance(biz, dict) and "biz_data" in biz:
             biz = biz["biz_data"]
         return biz
+
+    # -- history (used by ai.save) ----------------------------------------
+
+    def history_headers(self, match):
+        """REST headers with the ``userToken`` bearer, resolved once."""
+        cached = getattr(self, "_history_headers", None)
+        if cached is not None and getattr(self, "_history_match", None) is match:
+            return dict(cached)
+        headers = self._headers(match)
+        token = self._token(match)
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        self._history_headers = headers
+        self._history_match = match
+        return dict(headers)
+
+    def iter_chat_summaries(self, match, limit=None):
+        """Walk the sidebar with its keyset cursor (pinned/updated_at/id)."""
+        headers = self.history_headers(match)
+        cursor = None
+        seen = set()
+        count = 0
+        while True:
+            params = {"count": 50}
+            if cursor:
+                params.update({
+                    "lte_cursor.pinned": "true" if cursor["pinned"] else "false",
+                    "lte_cursor.updated_at": cursor["updated_at"],
+                    "lte_cursor.id": cursor["id"],
+                })
+            url = f"{self.origin}{SESSIONS_PATH}?{urlencode(params)}"
+            data = net.request_json(url, headers=headers, timeout=120)
+            biz = self._biz(data) or {}
+            sessions = biz.get("chat_sessions") or []
+            new = [item for item in sessions if item.get("id") not in seen]
+            if not new:
+                return
+            for item in new:
+                seen.add(item.get("id"))
+                updated = history.iso_from_epoch(item.get("updated_at"))
+                yield history.ChatSummary(
+                    provider=self.name,
+                    remote_id=item.get("id") or "",
+                    title=item.get("title") or "",
+                    created=updated,
+                    updated=updated,
+                    model=item.get("model_type") or "",
+                    url=f"{self.origin}/a/chat/s/{item.get('id')}",
+                )
+                count += 1
+                if limit and count >= limit:
+                    return
+            last = sessions[-1]
+            cursor = {
+                "pinned": bool(last.get("pinned")),
+                "updated_at": last.get("updated_at"),
+                "id": last.get("id"),
+            }
+            if not biz.get("has_more"):
+                return
+
+    def fetch_chat(self, match, remote_id):
+        """Fetch one session's full message set and normalise the fragments."""
+        headers = self.history_headers(match)
+        data = net.request_json(
+            f"{self.origin}{HISTORY_PATH}?chat_session_id={remote_id}",
+            headers=headers, timeout=180)
+        biz = self._biz(data) or {}
+        session = biz.get("chat_session") or {}
+        raw = biz.get("chat_messages") or []
+        chat = history.Chat(
+            provider=self.name,
+            remote_id=remote_id,
+            title=session.get("title") or "",
+            created=history.iso_from_epoch(session.get("inserted_at")),
+            updated=history.iso_from_epoch(session.get("updated_at")),
+            model=session.get("model_type") or "",
+            url=f"{self.origin}/a/chat/s/{remote_id}",
+        )
+        for message in _active_messages(raw, session.get("current_message_id")):
+            chat.messages.extend(_history_messages(message))
+        if not chat.created and chat.messages:
+            chat.created = chat.messages[0].created
+        if not chat.updated:
+            chat.updated = history.newest(m.created for m in chat.messages)
+        return chat
+
+
+def _active_messages(messages, current_id=None):
+    """The branch ending at *current_id* (or every message, in order)."""
+    if current_id is not None:
+        by_id = {message.get("message_id"): message for message in messages
+                 if isinstance(message, dict)}
+        chain = []
+        seen = set()
+        cursor = current_id
+        while cursor in by_id and cursor not in seen:
+            seen.add(cursor)
+            message = by_id[cursor]
+            chain.append(message)
+            cursor = message.get("parent_id")
+        if chain:
+            chain.reverse()
+            return chain
+    return sorted(messages, key=lambda m: m.get("message_id") or 0)
+
+
+def _history_messages(message):
+    """Normalise one DeepSeek message (with its fragments) into messages."""
+    role = (message.get("role") or "").lower()
+    created = history.iso_from_epoch(message.get("inserted_at"))
+    message_id = str(message.get("message_id") or "")
+    parent_id = str(message.get("parent_id") or "")
+    out = []
+    for fragment in message.get("fragments") or []:
+        text = (fragment.get("content") or "").strip()
+        if not text:
+            continue
+        ftype = (fragment.get("type") or "").upper()
+        if ftype == "THINK":
+            kind = history.THINKING
+        elif ftype == "REQUEST":
+            kind = history.TEXT
+        else:
+            kind = history.TEXT
+        out.append(history.Message(
+            role=history.USER if role == "user" else history.ASSISTANT,
+            text=text, kind=kind, created=created,
+            message_id=message_id, parent_id=parent_id))
+    thinking = (message.get("thinking_content") or "").strip()
+    if thinking:
+        out.append(history.Message(
+            role=history.ASSISTANT, text=thinking, kind=history.THINKING,
+            created=created, message_id=message_id, parent_id=parent_id))
+    for item in message.get("files") or []:
+        name = item.get("file_name") or item.get("name") or ""
+        if name:
+            out.append(history.Message(
+                role=history.USER if role == "user" else history.ASSISTANT,
+                text=name, kind=history.ATTACHMENT, created=created,
+                message_id=message_id, parent_id=parent_id))
+    return out
 
 
 def _find_file(node, file_id):

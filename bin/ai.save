@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""ai.save — a local, git-backed Markdown store for AI conversations.
+
+Syncs ChatGPT, DeepSeek, Grok, GapGPT and Kimi chats through the browser session
+already signed in (``browser.session``), stores one Markdown file per chat under
+``topics/<topic>/<YYYY-MM>/`` and regenerates ``months/<YYYY-MM>/<topic>``
+symlinks.  ``last`` answers "what was the newest saved message?" without an
+index; ``add``/``reply`` save prompts and responses from files or stdin.
+
+Run ``ai.save --help`` or ``ai.save <command> --help`` for the command list.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from ai.save.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

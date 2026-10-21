@@ -1,15 +1,22 @@
 #include "../core/fs.hpp"
 #include "../core/process.hpp"
+#include "../sdk/embed.hpp"
 #include "../sdk/errors.hpp"
 #include "../sdk/prompt_context.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include "../sdk/sink.hpp"
+#include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
+
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 namespace {
 
@@ -19,6 +26,69 @@ struct ai_provider {
     std::string_view name;
     std::string_view label;
 };
+
+// The provider writes to a pipe when it runs as a sink, so its stdout is
+// display-only: rich Markdown frames (or --json events) must never reach the
+// clipboard or the next prompt. `bin/ai --context-file` carries the plain
+// answer out of band; the file is removed on every path, success or failure.
+class answer_file {
+  public:
+    answer_file() : path_(make_path()) {}
+    ~answer_file() { remove(); }
+    answer_file(answer_file const&) = delete;
+    answer_file& operator=(answer_file const&) = delete;
+
+    [[nodiscard]] std::filesystem::path const& path() const { return path_; }
+
+    // The answer written so far, or `nullopt` when the tool never created the
+    // file (a pre-flight failure, --print-prompt, …). Followed by a best-effort
+    // unlink so no answer is left behind.
+    [[nodiscard]] std::optional<std::string> take() {
+        std::error_code ec;
+        bool const present = std::filesystem::is_regular_file(path_, ec);
+        std::string text = present ? read_file(path_) : std::string{};
+        remove();
+        if (!present) return std::nullopt;
+        return text;
+    }
+
+  private:
+    static std::filesystem::path make_path() {
+        static std::atomic<unsigned> counter{0};
+        std::error_code ec;
+        auto dir = std::filesystem::temp_directory_path(ec);
+        if (ec) dir = std::filesystem::current_path(ec);
+        std::string const name = "prompt-ai-" + std::to_string(static_cast<long long>(::getpid())) + "-" +
+                                 std::to_string(counter.fetch_add(1, std::memory_order_relaxed)) + ".txt";
+        return dir / name;
+    }
+
+    void remove() {
+        std::error_code ec;
+        std::filesystem::remove(path_, ec);
+    }
+
+    std::filesystem::path path_;
+};
+
+// The child's stdout/stderr are pipes, so a renderer cannot measure the
+// terminal prompt forwards to. Pass the size read from the real one.
+void add_terminal_size(std::vector<std::string>& argv) {
+    winsize size{};
+    if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0) return;
+    if (size.ws_col != 0) argv.emplace_back("--width=" + std::to_string(size.ws_col));
+    if (size.ws_row != 0) argv.emplace_back("--height=" + std::to_string(size.ws_row));
+}
+
+// --print-prompt, --print-session and --list answer on stdout without an
+// assistant turn, so there is no plain answer to read back.
+bool inspect_only(prompt_context const& ctx) {
+    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+        std::string_view const arg = ctx.args[i];
+        if (arg == "--print-prompt" || arg == "--print-session" || arg == "--list") return true;
+    }
+    return false;
+}
 
 void execute_ai(prompt_context& ctx, std::string_view provider) {
     std::string_view const context = wait_for_prompts(ctx);
@@ -30,11 +100,19 @@ void execute_ai(prompt_context& ctx, std::string_view provider) {
     }
 
     std::vector<std::string> argv;
-    argv.reserve(ctx.args_count + 2);
+    argv.reserve(ctx.args_count + 4);
     argv.push_back(tool.string());
     // The chain context is stdin. This flag makes bin/ai reject positional
     // prompt text instead of silently ignoring the context.
     argv.emplace_back("--stdin-only");
+    // We forward the bytes to the real terminal, so render for one.
+    if (::isatty(STDOUT_FILENO) != 0) {
+        argv.emplace_back("--tty");
+        add_terminal_size(argv);
+    }
+    bool const chainable = !inspect_only(ctx);
+    answer_file answer;
+    if (chainable) argv.emplace_back("--context-file=" + answer.path().string());
     for (std::size_t i = 0; i < ctx.args_count; ++i) {
         std::string_view const arg = ctx.args[i];
         if (arg == "-i" || arg == "--interactive") {
@@ -46,6 +124,13 @@ void execute_ai(prompt_context& ctx, std::string_view provider) {
 
     auto const result = run_sink_tool(ctx, std::move(argv), std::string(context), std::chrono::milliseconds{0});
     ctx.stdin_consumed = ctx.stdin_consumed || !context.empty();
+
+    if (chainable) {
+        // The styled stream already reached the terminal; the chain context and
+        // the clipboard take the plain answer instead. An empty answer still
+        // replaces the (styled) stream, so no frames leak onward.
+        if (auto plain = answer.take()) ctx.out = std::move(*plain);
+    }
 
     if (result.exit_code != 0 || result.timed_out) {
         int code = 1;
@@ -86,6 +171,7 @@ void render_help_ai(std::ostream& out, ai_provider const& provider) {
         << "  --no-thinking               Hide the model's reasoning\n"
         << "  --json                      Emit one JSON event per line\n"
         << "  --raw                       Print only the answer text\n"
+        << "  --tty                       Render as if stdout/stderr were terminals (pipe-friendly)\n"
         << "  --copy                      Copy the answer to the clipboard\n"
         << "  --timeout SECONDS           Request timeout (default: 600)\n"
         << "  --print-prompt              Print the prompt that would be sent and exit\n"

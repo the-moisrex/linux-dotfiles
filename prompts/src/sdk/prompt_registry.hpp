@@ -31,6 +31,10 @@ struct prompt_descriptor {
     // them. Their common flags live in sdk/sink.hpp; the dispatcher owns them.
     chain_role role = chain_role::normal;
     sink_policy policy = sink_policy::chain;
+    // A silent/passthrough sink (`.save`) never writes stdout and does not
+    // spend the stdin pipe: the dispatcher must not open a streamed-output
+    // separator for it and must keep piped stdin in the accumulated context.
+    bool stream_output = true;
 };
 
 std::span<prompt_descriptor const> get_all_prompts();
@@ -60,15 +64,18 @@ std::vector<std::string_view> list_prompt_names();
 // dropped registration would silently shadow a prompt).
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
-                     chain_role role = chain_role::normal, sink_policy policy = sink_policy::chain) noexcept;
+                     chain_role role = chain_role::normal, sink_policy policy = sink_policy::chain,
+                     bool stream_output = true) noexcept;
 
 // Register a sink: the same registry entry with role=sink. Sink flags
 // (--on-error/--with-context/--show-context/--head) are handled by the
 // dispatcher through sdk/sink.hpp, so adding a sink only needs its own
-// executor, help renderer, and policy.
+// executor, help renderer, and policy. `stream_output=false` marks a silent
+// passthrough sink such as `.save`, whose empty stdout must not open an output
+// separator and which must leave piped stdin for later segments.
 bool register_sink(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
                    void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
-                   sink_policy policy = sink_policy::chain) noexcept;
+                   sink_policy policy = sink_policy::chain, bool stream_output = true) noexcept;
 
 // Fills in the sort_file keys; callers must do this after main starts (it
 // needs the filesystem). Registration itself happens before main.

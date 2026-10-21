@@ -41,6 +41,7 @@ import uuid
 
 from .. import events as ev
 from .. import files as files_mod
+from .. import history
 from .. import net
 from .. import session as session_mod
 from . import Conversation, Provider
@@ -49,6 +50,8 @@ WS_PATH = "/ws/salam"
 EVENT_VERSION = 98
 CHAT_PATH = "/api/v1/get_chat/token/{token}"
 UPLOAD_PATH = "/api/v1/upload_file"
+PROJECTS_PATH = "/api/v1/projects"
+CHAT_LIST_PATH = "/api/v1/chat_list?limit=40&offset=0"
 
 HEARTBEAT = 12.0        # send a heartbeat after this many idle seconds
 RECV_TIMEOUT = 2.0      # socket read slice, so we can heartbeat/poll
@@ -170,6 +173,128 @@ class Gap(Provider):
             "is_temporary": False,
             "messenger_browser_session": str(uuid.uuid4()),
         }
+
+    # -- history (used by ai.save) ----------------------------------------
+
+    def history_headers(self, match):
+        """REST headers for the history endpoints (cookie token as bearer)."""
+        cached = getattr(self, "_history_headers", None)
+        if cached is not None and getattr(self, "_history_match", None) is match:
+            return dict(cached)
+        headers = session_mod.build_headers(match, {
+            "Accept": "application/json, text/plain, */*",
+            "Referer": self.origin + "/",
+        })
+        token = session_mod.cookie_value(match, "accessToken")
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        self._history_headers = headers
+        self._history_match = match
+        return dict(headers)
+
+    def _summary(self, item, projects):
+        token = item.get("token") or ""
+        return history.ChatSummary(
+            provider=self.name,
+            remote_id=token,
+            title=item.get("title") or "",
+            created=item.get("created_at") or "",
+            updated=(item.get("last_message_created_at")
+                     or item.get("created_at") or ""),
+            model=item.get("model") or "",
+            project=projects.get(item.get("project_token")) or "",
+            url=f"{self.origin}/chat/{token}",
+        )
+
+    def iter_chat_summaries(self, match, limit=None):
+        """Yield every chat in the sidebar (projects first, then the rest)."""
+        headers = self.history_headers(match)
+        projects = {}
+        data = net.request_json(self.origin + PROJECTS_PATH, headers=headers,
+                                timeout=60)
+        for project in (data or {}).get("results") or []:
+            token = project.get("token")
+            if token:
+                projects[token] = project.get("name") or ""
+
+        seen = set()
+        count = 0
+        for token, name in projects.items():
+            data = net.request_json(f"{self.origin}/api/v1/projects/{token}",
+                                    headers=headers, timeout=60)
+            for item in (data or {}).get("chats") or []:
+                chat_token = item.get("token")
+                if not chat_token or chat_token in seen:
+                    continue
+                seen.add(chat_token)
+                summary = self._summary(item, {**projects, token: name})
+                summary.project = summary.project or name
+                yield summary
+                count += 1
+                if limit and count >= limit:
+                    return
+
+        url = self.origin + CHAT_LIST_PATH
+        while url:
+            data = net.request_json(url, headers=headers, timeout=60)
+            results = (data or {}).get("results") or []
+            if not results:
+                break
+            for item in results:
+                chat_token = item.get("token")
+                if not chat_token or chat_token in seen:
+                    continue
+                seen.add(chat_token)
+                yield self._summary(item, projects)
+                count += 1
+                if limit and count >= limit:
+                    return
+            url = (data or {}).get("next") or ""
+
+    def fetch_chat(self, match, remote_id):
+        """Fetch one chat and normalise its user/assistant turns."""
+        headers = self.history_headers(match)
+        data = net.request_json(
+            self.origin + CHAT_PATH.format(token=remote_id), headers=headers,
+            timeout=120) or {}
+        created = data.get("created_at") or ""
+        chat = history.Chat(
+            provider=self.name,
+            remote_id=remote_id,
+            title=data.get("title") or "",
+            created=created,
+            updated=(data.get("last_message_created_at") or created),
+            model=data.get("model") or "",
+            url=f"{self.origin}/chat/{remote_id}",
+        )
+        for item in data.get("messages") or []:
+            moment = item.get("created_at") or created
+            text = item.get("text") or ""
+            if text:
+                chat.messages.append(history.Message(
+                    role=history.USER, text=text, created=moment,
+                    message_id=item.get("token") or "",
+                    meta={"files": item.get("file_names") or []}))
+            for response in item.get("response") or []:
+                content = response.get("content") or ""
+                if not content:
+                    continue
+                rtype = response.get("type") or ""
+                if rtype in ("loading", "text-loading", "after-message-ad",
+                             "file_retrieval_status"):
+                    continue
+                if rtype == "reasoning":
+                    kind, role, name = history.THINKING, history.ASSISTANT, ""
+                elif rtype in ("agentic", "canvas"):
+                    kind, role, name = history.TOOL_CALL, history.ASSISTANT, rtype
+                elif rtype.startswith("generated-image"):
+                    kind, role, name = history.ATTACHMENT, history.ASSISTANT, rtype
+                else:
+                    kind, role, name = history.TEXT, history.ASSISTANT, ""
+                chat.messages.append(history.Message(
+                    role=role, text=content, kind=kind, created=moment,
+                    message_id=response.get("block_id") or "", name=name))
+        return chat
 
     @staticmethod
     def _status_error(status, data):

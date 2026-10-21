@@ -132,6 +132,7 @@ static void execute_tse_codal(prompt_context& ctx) {
         throw soft_error{std::string{}};
     }
 
+    ctx.save_hint = tse_data::save_stem(config.symbol);
     ctx.out = trim_context(fetch.stdout_data, config.head_lines);
 }
 

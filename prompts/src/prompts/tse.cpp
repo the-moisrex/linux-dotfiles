@@ -23,6 +23,7 @@ static void execute_tse(prompt_context& ctx) {
     if (!errors.empty()) {
         ctx.err = std::move(errors);
     }
+    ctx.save_hint = tse_data::save_stem(config);
     ctx.out = std::move(output);
 }
 

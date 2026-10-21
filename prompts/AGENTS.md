@@ -66,12 +66,12 @@ whole tree must stay clang-format clean.
 ## Sinks
 
 A sink is a chain barrier, not an ordinary prompt. Register it with
-`prompt::register_sink("<name>", "<summary>", &execute_<name>, &render_help_<name>, nullptr, policy)`
+`prompt::register_sink("<name>", "<summary>", &execute_<name>, &render_help_<name>, nullptr, policy, stream_output)`
 (`sink_policy::chain` by default; `fanout`/`exclusive` are descriptor-level
-choices). Adding a sink does not touch the AI code or the dispatcher: the
-descriptor role makes `main.cpp` batch everything before it, hand the sink the
-accumulated `ctx.chain_context`, and let its answer become the context later
-segments see.
+choices; `stream_output=false` marks a silent sink). Adding a sink does not
+touch the AI code or the dispatcher: the descriptor role makes `main.cpp` batch
+everything before it, hand the sink the accumulated `ctx.chain_context`, and let
+its answer become the context later segments see.
 
 - **Shared flags are dispatcher-owned** (`sdk/sink_types.hpp` + `sink.hpp`):
   `--on-error abort|continue|skip` (default abort), `--with-context`,
@@ -88,19 +88,43 @@ segments see.
   streaming, call `ctx.stdout_writer`/`ctx.stderr_writer` immediately.
   `run_sink_tool(ctx, argv, stdin, timeout)` wires both to
   `process::command`'s `on_stdout`/`on_stderr` tee callbacks.
+- **Terminal rendering:** a tool-backed sink's stdout is a pipe, so a tool that
+  checks `isatty()` would drop its colour/Markdown. Pass its force-terminal flag
+  (as `ai.*` does with `bin/ai --tty`) when `isatty(STDOUT_FILENO)`, keep the
+  styled bytes display-only, and take the chain context from a plain side
+  channel — `ai.*` reads `bin/ai --context-file` back into `ctx.out`, so rich
+  frames never reach the clipboard or the next prompt. Forward the terminal size
+  too (`bin/ai --width`/`--height`, from `TIOCGWINSZ`): the child cannot measure
+  a terminal it is not attached to.
 - **Help:** call `render_sink_help(out)` for the shared `Options:` block; the
   prompt's own help follows it. Completion derives every flag from that block.
 - **Failure:** throw `prompt_error` like any prompt. The dispatcher catches it,
   applies the sink's `--on-error` policy, and keeps a failed source batch tainted
   so each later sink can decide again. Fan-out sinks are captured and emitted in
   argv order (no interleaved live streams); chained sinks stream as they run.
+- **Passthrough and save hints:** a successful sink that emits no stdout is a
+  no-op for the chain: it leaves the accumulated context and any failure taint
+  unchanged. Register such a silent sink with `stream_output=false` so the
+  dispatcher does not open an output separator for it; piped stdin is kept in
+  the accumulated context instead of being spent by that sink. A prompt that
+  knows a good filename sets `ctx.save_hint` (a basename stem); `main.cpp`
+  carries the nearest successful hint through parallel children to later sinks
+  as `ctx.chain_save_hint`. `.save` (`src/prompts/save.cpp`) is the reference
+  passthrough sink: it writes the same context an AI sink receives, refuses to
+  overwrite unless `--force`, sanitizes the hint and appends `.md` to derived
+  names. `tse`, `tse.codal`, `tse.intraday` and `files` provide hints; a
+  prompt with no preferred name simply leaves `save_hint` empty.
 - `ai.*` (`src/prompts/ai.cpp`) is the reference family: five registrations,
   one shared executor, `--print-prompt` passed through to `bin/ai`, and
   `--stdin-only` so positional prompt text cannot silently replace the chain.
 
-Tests: `tests/test_sink.cpp` (flag parsing, streaming/tee, timeout) and the
-`plan_chain`/`ai.*` registration cases in `tests/test_chaining.cpp`; the
-`ai_help`/`ai_print_prompt` ctest smokes exercise an offline sink chain.
+Tests: `tests/test_sink.cpp` (flag parsing, streaming/tee, timeout), the
+`plan_chain`/`ai.*`/`save` registration cases in `tests/test_chaining.cpp`,
+`tests/test_ai_sink.sh` (end-to-end `--tty`/`--width`/`--height` and
+`--context-file` plumbing through stub providers), and `tests/test_save.sh`
+(end-to-end save targets, passthrough, `--head`, no-clobber and sanitized
+names); the `ai_help`/`ai_print_prompt` ctest smokes exercise an offline sink
+chain.
 
 ## SDK helpers (`src/sdk/`)
 
@@ -129,7 +153,9 @@ Use these instead of re-open-coding the same loops:
   services are free functions taking the context — `clear_output(ctx)`,
   `clipboard_content(ctx)`, `clipboard_identifier(ctx)`, `select_files(ctx)`,
   `resolve_input_file(ctx, wanted)`. Sink fields (`chain_context`,
-  `chain_stderr`, `sink`, stream writers/flags) live here too.
+  `chain_stderr`, `chain_save_hint`, `sink`, stream writers/flags) live here
+  too; `save_hint` is a prompt's optional output-side filename stem, cleared by
+  `clear_output`.
 - `sink.hpp` / `sink_types.hpp`: `register_sink` support — `parse_sink_args`,
   `render_sink_help`, `wait_for_prompts`, `write_stdout`, `write_stderr` and
   `run_sink_tool` (see "Sinks").

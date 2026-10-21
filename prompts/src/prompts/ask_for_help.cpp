@@ -63,7 +63,8 @@ static void execute_ask_for_help(prompt_context& ctx) {
            "embed its output\n  .files file1 file2  Embed file contents as fenced code blocks\n  .agents             "
            "Embed agent instruction files (AGENTS.md, etc.)\n  .git-dirty          Show uncommitted changes in the "
            "repo\n  .repo               Show the repository file structure\n  .clipboard          Embed clipboard "
-           "content\n\nExample command:\n  prompt .note \"WIP: fixing parser bug\" .files parser.h parser.cpp .cli "
+           "content\n  .save [file]        Save the accumulated context to a file\n\nExample command:\n  prompt .note "
+           "\"WIP: fixing parser bug\" .files parser.h parser.cpp .cli "
            "\"make test 2>&1\"\n\n# Other available prompts\n\nBesides the shorthand above, every prompt below can "
            "also be chained into\nthe command (prefix it with '.', e.g. '.man ls') to add more context:\n\n";
     out += build_prompt_list();

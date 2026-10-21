@@ -44,11 +44,13 @@ import time
 
 from .. import events as ev
 from .. import files as files_mod
+from .. import history
 from .. import net
 from .. import session as session_mod
 from . import Conversation, Provider
 
 CHAT_PATH = "/api/chat"
+CHAT_LIST_PATH = "/api/chat/list"
 STREAM_PATH = "/api/chat/{chat}/completion/stream"
 UPLOAD_PATH = "/apiv2-files/file/upload"
 REFRESH_PATH = "/api/auth/token/refresh"
@@ -167,6 +169,121 @@ class Kimi(Provider):
         request_headers["Content-Type"] = content_type
         request_headers["Connect-Protocol-Version"] = "1"
         return request_headers
+
+    # -- history (used by ai.save) ----------------------------------------
+
+    def history_headers(self, match):
+        """Headers with a freshly refreshed access token (cached per sync)."""
+        cached = getattr(self, "_history_headers", None)
+        if cached is not None and getattr(self, "_history_match", None) is match:
+            return dict(cached)
+        token = self._refresh(match) or self._token(match)
+        headers = self._headers(match, token)
+        self._history_headers = headers
+        self._history_match = match
+        return dict(headers)
+
+    def _history_post(self, match, path, body, timeout=120):
+        """POST to the Connect/JSON API, refreshing an expired token once."""
+        try:
+            return net.request_json(self.origin + path, method="POST",
+                                    headers=self._connect_headers(
+                                        self.history_headers(match)),
+                                    json_body=body, timeout=timeout)
+        except net.StreamError as exc:
+            if "401" not in str(exc) and "auth.token" not in str(exc):
+                raise
+            token = self._refresh(match) or self._token(match)
+            headers = self._headers(match, token)
+            self._history_headers = headers
+            self._history_match = match
+            return net.request_json(self.origin + path, method="POST",
+                                    headers=self._connect_headers(headers),
+                                    json_body=body, timeout=timeout)
+
+    def iter_chat_summaries(self, match, limit=None):
+        """Walk ``POST /api/chat/list`` (page/size) newest-first."""
+        page = 1
+        count = 0
+        while True:
+            data = self._history_post(match, CHAT_LIST_PATH,
+                                      {"page": page, "size": 50}) or {}
+            items = data.get("items") or []
+            if not items:
+                return
+            for item in items:
+                identifier = item.get("id") or ""
+                if not identifier:
+                    continue
+                yield history.ChatSummary(
+                    provider=self.name,
+                    remote_id=identifier,
+                    title=item.get("name") or "",
+                    created=item.get("created_at") or "",
+                    updated=item.get("updated_at") or item.get("created_at") or "",
+                    model=self.default_model,
+                    url=f"{self.origin}/chat/{identifier}",
+                )
+                count += 1
+                if limit and count >= limit:
+                    return
+            total = data.get("total") or 0
+            if total and page * 50 >= total:
+                return
+            page += 1
+
+    def fetch_chat(self, match, remote_id):
+        """Fetch one chat's messages (Connect ``ListMessages``, paged)."""
+        body = {"chatId": remote_id}
+        raw = []
+        seen_tokens = set()
+        while True:
+            data = self._history_post(match, LIST_MESSAGES_PATH, body) or {}
+            messages = data.get("messages") or []
+            raw.extend(messages)
+            token = data.get("nextPageToken") or ""
+            if not token or token in seen_tokens or not messages:
+                break
+            seen_tokens.add(token)
+            body = {"chatId": remote_id, "pageToken": token}
+        raw.reverse()
+        raw.sort(key=lambda item: item.get("createTime") or "")
+        chat = history.Chat(
+            provider=self.name,
+            remote_id=remote_id,
+            model=self.default_model,
+            url=f"{self.origin}/chat/{remote_id}",
+        )
+        for message in raw:
+            role = (message.get("role") or "").lower()
+            role = history.USER if role == "user" else history.ASSISTANT
+            created = message.get("createTime") or ""
+            message_id = message.get("id") or ""
+            parent_id = message.get("parentId") or ""
+            for block in message.get("blocks") or []:
+                text = ((block.get("text") or {}).get("content") or "").strip()
+                if text:
+                    chat.messages.append(history.Message(
+                        role=role, text=text, created=created,
+                        message_id=message_id, parent_id=parent_id))
+                thinking = ((block.get("thinking") or {}).get("content")
+                            or "").strip()
+                if thinking:
+                    chat.messages.append(history.Message(
+                        role=history.ASSISTANT, text=thinking,
+                        kind=history.THINKING, created=created,
+                        message_id=message_id, parent_id=parent_id))
+                name = (((block.get("file") or {}).get("meta") or {})
+                        .get("name") or "")
+                if name:
+                    chat.messages.append(history.Message(
+                        role=role, text=name, kind=history.ATTACHMENT,
+                        created=created, message_id=message_id,
+                        parent_id=parent_id))
+        if chat.messages:
+            chat.created = chat.messages[0].created
+            chat.updated = history.newest(m.created for m in chat.messages)
+        return chat
 
     def _message_status(self, headers, chat_id, message_id):
         """The stored status of one message (``""`` when it cannot be read)."""

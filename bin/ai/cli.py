@@ -15,6 +15,11 @@ Two flags turn the one-shot call into a chat:
 A prompt too large for one message is uploaded as a text file by default (see
 :mod:`ai.promptfile`); ``--prompt-file`` forces that path and
 ``--no-prompt-file`` disables it.
+
+``--tty`` renders as if stdout/stderr were terminals even when they are pipes
+(``prompt``'s ``.ai.*`` sinks forward the bytes to the real terminal), and the
+hidden ``--context-file PATH`` writes the plain answer there while it streams, so
+a sink can chain the text without the styled/JSON bytes.
 """
 
 from __future__ import annotations
@@ -55,6 +60,21 @@ def read_prompt(parts):
     return text
 
 
+def open_context_file(path):
+    """Open the plain-answer side channel (``--context-file``), if requested.
+
+    ``prompt``'s sinks get styled/JSON bytes on stdout and need the bare answer
+    for the next link of the chain and for the clipboard. A fresh file per turn
+    also keeps a REPL's file down to the last answer.
+    """
+    if not path:
+        return None
+    try:
+        return open(path, "w", encoding="utf-8", buffering=1)
+    except OSError:
+        return None
+
+
 def build_parser(provider):
     models = ", ".join(provider.models)
     p = argparse.ArgumentParser(
@@ -88,6 +108,8 @@ def build_parser(provider):
                    help="hide the model's reasoning")
     p.add_argument("--json", action="store_true", help="emit one JSON event per line")
     p.add_argument("--raw", action="store_true", help="print only the answer text")
+    p.add_argument("--tty", action="store_true",
+                   help="render as if stdout/stderr were terminals, even through a pipe")
     p.add_argument("--copy", action="store_true", help="copy the answer to the clipboard")
     p.add_argument("--no-color", action="store_true", help="disable colours")
     p.add_argument("--debug", action="store_true", help="print raw stream lines to stderr")
@@ -105,6 +127,12 @@ def build_parser(provider):
     p.add_argument("--print-prompt", action="store_true",
                    help="print the prompt that would be sent and exit")
     p.add_argument("--stdin-only", action="store_true",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--context-file", default=None, metavar="PATH",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--width", type=int, default=None, metavar="COLS",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--height", type=int, default=None, metavar="ROWS",
                    help=argparse.SUPPRESS)
     p.add_argument("--list", action="store_true",
                    help="list the available providers and exit")
@@ -153,9 +181,11 @@ def copy_answer(text):
 
 
 def make_renderer(args):
-    thinking = args.thinking if args.thinking is not None else sys.stderr.isatty()
+    thinking = (args.thinking if args.thinking is not None
+                else (sys.stderr.isatty() or args.tty))
     return Renderer(show_thinking=thinking, raw=args.raw,
-                    color=not args.no_color, debug=args.debug)
+                    color=not args.no_color, debug=args.debug,
+                    force_tty=args.tty, width=args.width, height=args.height)
 
 
 def run_turn(conversation, prompt, args, renderer, provider):
@@ -190,6 +220,7 @@ def run_turn(conversation, prompt, args, renderer, provider):
                           f"{promptfile.human_size(budget)} inline budget")
             print(f"[ai] prompt {detail}; uploading it as "
                   f"{os.path.basename(temp)}", file=sys.stderr)
+    context = open_context_file(args.context_file)
     try:
         for event in conversation.send(message, files=files or None):
             if event.kind == ERROR:
@@ -203,11 +234,16 @@ def run_turn(conversation, prompt, args, renderer, provider):
                 renderer.write_debug(event)
             if event.kind == TEXT:
                 parts.append(event.text)
+                if context is not None:
+                    context.write(event.text)
+                    context.flush()
             if event.kind == ERROR:
                 status = 1
             elif event.kind == DONE:
                 break
     finally:
+        if context is not None:
+            context.close()
         promptfile.remove(temp)
     return status, "".join(parts)
 

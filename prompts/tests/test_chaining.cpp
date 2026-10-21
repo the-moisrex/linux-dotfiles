@@ -137,8 +137,31 @@ void test_ai_sinks_registered() {
         if (desc != nullptr) {
             check(desc->role == chain_role::sink, "ai sink role");
             check(desc->policy == sink_policy::chain, "ai sink default policy");
+            check(desc->stream_output, "ai sink streams its answer");
         }
     }
+}
+
+void test_save_sink_registered() {
+    auto const* desc = find_prompt("save");
+    check(desc != nullptr, "save sink registered");
+    if (desc != nullptr) {
+        check(desc->role == chain_role::sink, "save sink role");
+        check(desc->policy == sink_policy::chain, "save sink default policy");
+        check(!desc->stream_output, "save sink is silent");
+    }
+}
+
+void test_tse_save_stem() {
+    prompts::tse_data::config cfg;
+    cfg.symbol = "khodro";
+    check(prompts::tse_data::save_stem(cfg) == "tse-khodro", "tse save stem uses the symbol");
+    check(prompts::tse_data::save_stem("فولاد") == "tse-فولاد", "tse save stem keeps Persian symbols");
+
+    cfg.cache_mode = true;
+    cfg.snapshot_files.emplace_back("stocks/14050717_فولاد_IRO1FOLD0009.stock");
+    check(prompts::tse_data::save_stem(cfg) == "14050717_فولاد_IRO1FOLD0009",
+          "tse snapshot save stem uses the snapshot name");
 }
 
 prompt_descriptor synthetic_prompt(std::string_view name, chain_role role, sink_policy policy) {
@@ -205,6 +228,8 @@ int main() {
     test_tse_chain_identifier();
     test_all_prompts_registered();
     test_ai_sinks_registered();
+    test_save_sink_registered();
+    test_tse_save_stem();
     test_plan_chain();
 
     if (failures == 0) {

@@ -44,6 +44,7 @@ static void execute_files(prompt_context& ctx) {
         auto content = read_file(file);
 
         if (!content.empty()) {
+            if (ctx.save_hint.empty()) ctx.save_hint = file.stem().string();
             if (opts.head_lines) {
                 output += std::format("File {} (first {} lines)\n\n", rel.string(), std::to_string(*opts.head_lines));
             } else {

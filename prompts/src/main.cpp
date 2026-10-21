@@ -38,6 +38,7 @@ struct segment_result {
     std::string output;
     std::string error;
     std::string stderr_buffer;
+    std::string save_hint;
     bool no_clipboard = false;
     bool stdin_consumed = false;
     bool redacted = false;
@@ -49,14 +50,15 @@ struct segment_result {
 
 // Parallel segments run in forked children (not threads): `process::command`
 // forks, and forking from a multi-threaded parent is not safe. The child sends
-// this header + stdout + stderr through a pipe.
+// this header + stdout + stderr + save hint through a pipe.
 struct segment_wire {
     std::uint64_t output_size = 0;
     std::uint64_t error_size = 0;
+    std::uint64_t hint_size = 0;
     std::int32_t exit_code = 0;
     std::uint32_t flags = 0;
 };
-static_assert(sizeof(segment_wire) == 24);
+static_assert(sizeof(segment_wire) == 32);
 
 constexpr std::uint32_t wire_no_clipboard = 1U << 0U;
 constexpr std::uint32_t wire_stdin_consumed = 1U << 1U;
@@ -97,6 +99,7 @@ void write_segment(int fd, segment_result const& result) {
     segment_wire wire{
         .output_size = result.output.size(),
         .error_size = result.error.size(),
+        .hint_size = result.save_hint.size(),
         .exit_code = result.exit_code,
         .flags = (result.no_clipboard ? wire_no_clipboard : 0U) | (result.stdin_consumed ? wire_stdin_consumed : 0U) |
                  (result.redacted ? wire_redacted : 0U) | (result.failed ? wire_failed : 0U) |
@@ -105,7 +108,8 @@ void write_segment(int fd, segment_result const& result) {
     };
     if (!write_all(fd, std::string_view(reinterpret_cast<char const*>(&wire), sizeof wire))) return;
     if (!write_all(fd, result.output)) return;
-    write_all(fd, result.error);
+    if (!write_all(fd, result.error)) return;
+    write_all(fd, result.save_hint);
 }
 
 std::optional<segment_result> read_segment(std::string_view blob) {
@@ -114,13 +118,15 @@ std::optional<segment_result> read_segment(std::string_view blob) {
     std::memcpy(&wire, blob.data(), sizeof wire);
     std::size_t const header = sizeof(segment_wire);
     if (wire.output_size > blob.size() - header) return std::nullopt;
-    std::size_t const remaining = blob.size() - header - static_cast<std::size_t>(wire.output_size);
-    if (wire.error_size > remaining) return std::nullopt;
+    std::size_t const after_output = header + static_cast<std::size_t>(wire.output_size);
+    if (wire.error_size > blob.size() - after_output) return std::nullopt;
+    std::size_t const after_error = after_output + static_cast<std::size_t>(wire.error_size);
+    if (wire.hint_size > blob.size() - after_error) return std::nullopt;
 
     segment_result result;
     result.output.assign(blob.data() + header, static_cast<std::size_t>(wire.output_size));
-    result.error.assign(blob.data() + header + static_cast<std::size_t>(wire.output_size),
-                        static_cast<std::size_t>(wire.error_size));
+    result.error.assign(blob.data() + after_output, static_cast<std::size_t>(wire.error_size));
+    result.save_hint.assign(blob.data() + after_error, static_cast<std::size_t>(wire.hint_size));
     result.exit_code = wire.exit_code;
     result.no_clipboard = (wire.flags & wire_no_clipboard) != 0;
     result.stdin_consumed = (wire.flags & wire_stdin_consumed) != 0;
@@ -277,6 +283,7 @@ segment_result run_prompt(prompt::prompt_context& ctx, prompt::prompt_descriptor
         result.no_clipboard = ctx.no_clipboard;
         result.stdin_consumed = ctx.stdin_consumed;
         result.error = std::move(ctx.err);
+        result.save_hint = std::move(ctx.save_hint);
         result.stderr_buffer = std::move(ctx.stderr_buffer);
         result.stdout_streamed = ctx.stdout_streamed;
         result.stderr_streamed = ctx.stderr_streamed;
@@ -701,6 +708,7 @@ Notes:
     // owns the barrier, so sink children never try to synchronise with siblings.
     std::string accumulated;
     std::string accumulated_stderr;
+    std::string save_hint;
     bool stdin_pending = base_ctx.stdin_consumed;
     bool context_redacted = false;
     bool incomplete = false;
@@ -720,6 +728,7 @@ Notes:
         }
         base_ctx.chain_context = batch_context;
         base_ctx.chain_stderr = accumulated_stderr;
+        base_ctx.chain_save_hint = save_hint;
 
         std::vector<segment_result> batch(run.end - run.begin);
         bool const parallel = batch.size() > 1 && !stdin_pending;
@@ -790,6 +799,7 @@ Notes:
         bool const emit_sources = show_context || run_index + 1 == plan.runs.size();
         for (auto& result : batch) {
             report_result(result);
+            if (!result.failed && !result.save_hint.empty()) save_hint = result.save_hint;
             if (result.failed) {
                 incomplete = true;
                 if (exit_code == 0) exit_code = result.exit_code;
@@ -807,7 +817,12 @@ Notes:
     auto current_input = [&](std::size_t i) {
         std::string input = accumulated;
         if (stdin_pending) {
-            input = prepend_block(base_ctx.stdin_content, input);
+            std::string with_stdin = prepend_block(base_ctx.stdin_content, input);
+            // A silent sink is a passthrough tap: it must not spend the pipe.
+            // Keep the stdin in the accumulated context so a later sink still
+            // receives it (the sink sees its own --head/legend-trimmed copy).
+            if (!descriptors[i]->stream_output) accumulated = with_stdin;
+            input = std::move(with_stdin);
             stdin_pending = false;
             base_ctx.stdin_content.clear();
             base_ctx.stdin_consumed = true;
@@ -828,6 +843,7 @@ Notes:
         auto const& parsed = *sink_args[i];
         base_ctx.chain_context = input;
         base_ctx.chain_stderr = accumulated_stderr;
+        base_ctx.chain_save_hint = save_hint;
         base_ctx.sink = parsed.options;
         base_ctx.stream_stdout = stream;
         base_ctx.stream_stderr = stream;
@@ -849,10 +865,11 @@ Notes:
 
     auto update_from_sink = [&](std::size_t i, segment_result const& result) {
         auto const& opts = sink_args[i]->options;
+        bool const has_output = !trim_block(result.output).empty();
         if (result.failed) {
             if (opts.failure == prompt::sink_failure::abort) return true;
             if (opts.failure == prompt::sink_failure::skip) return false;
-            if (!result.output.empty()) {
+            if (has_output) {
                 if (opts.with_context) {
                     append_block(accumulated, result.output);
                     context_redacted = context_redacted || result.redacted;
@@ -865,6 +882,10 @@ Notes:
             incomplete = true;
             return false;
         }
+        // A silent sink (`.save`) is a tap: it observes the context without
+        // producing an answer. Keep both the context and any existing failure
+        // taint so later sinks still apply their own --on-error policy.
+        if (!has_output) return false;
         if (opts.with_context) {
             append_block(accumulated, result.output);
             context_redacted = context_redacted || result.redacted;
@@ -924,7 +945,7 @@ Notes:
                     any_failure = true;
                     if (opts.failure == prompt::sink_failure::abort) fanout_abort = true;
                     if (opts.failure == prompt::sink_failure::skip) continue;
-                } else {
+                } else if (!trim_block(result.output).empty()) {
                     any_answer = true;
                 }
                 append_block(accumulated, result.output);
@@ -945,8 +966,9 @@ Notes:
                 if (opts.failure == prompt::sink_failure::skip) continue;
             }
             std::string const input = current_input(i);
-            emitter.begin_stream();
-            auto result = run_sink(i, input, true);
+            bool const stream = descriptors[i]->stream_output;
+            if (stream) emitter.begin_stream();
+            auto result = run_sink(i, input, stream);
             report_result(result);
             emit_sink(result);
             if (result.failed && exit_code == 0) exit_code = result.exit_code;

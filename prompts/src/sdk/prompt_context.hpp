@@ -46,6 +46,10 @@ struct prompt_context {
     // is the same barrier for streams that were kept out of the AI context.
     std::string_view chain_context;
     std::string_view chain_stderr;
+    // Basename hint contributed by the nearest successful prompt before this
+    // sink, if it supplied one (for example `tse-khodro`). A sink may use it
+    // to choose a default output filename.
+    std::string_view chain_save_hint;
     // Parsed common sink flags (only meaningful for sinks).
     sink_options sink;
 
@@ -72,6 +76,10 @@ struct prompt_context {
     std::string out;
     std::string err;
     bool no_clipboard = false;
+    // Optional basename stem a prompt offers to a later `.save` sink. It is a
+    // hint only: the sink sanitizes it, adds an extension and resolves the
+    // directory. Empty means the prompt has no preferred name.
+    std::string save_hint;
     // stderr written through write_stderr(): kept separate from `err`, which
     // is the success-path text the dispatcher prints itself.
     std::string stderr_buffer;

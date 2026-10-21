@@ -36,12 +36,14 @@ import uuid
 
 from .. import events as ev
 from .. import files as files_mod
+from .. import history
 from .. import net
 from .. import session as session_mod
 from . import Conversation, Provider
 
 WS_URL = "wss://grok.com/ws/mgw/?uid={uid}"
 UPLOAD_PATH = "/rest/app-chat/upload-file"
+CONVERSATIONS_PATH = "/rest/app-chat/conversations"
 
 #: How many transcript entries to replay when a conversation is resumed from a
 #: new process (the socket cannot be reattached).
@@ -127,6 +129,104 @@ class Grok(Provider):
         return file_id
 
     # ----------------------------------------------------------------- socket
+
+    # -- history (used by ai.save) ----------------------------------------
+
+    def history_headers(self, match):
+        """REST headers for the conversation list (cookie authenticated)."""
+        cached = getattr(self, "_history_headers", None)
+        if cached is not None and getattr(self, "_history_match", None) is match:
+            return dict(cached)
+        headers = self._headers(match)
+        self._history_headers = headers
+        self._history_match = match
+        return dict(headers)
+
+    def iter_chat_summaries(self, match, limit=None):
+        """Walk ``/rest/app-chat/conversations`` page by page."""
+        headers = self.history_headers(match)
+        token = ""
+        count = 0
+        while True:
+            url = f"{self.origin}{CONVERSATIONS_PATH}?pageSize=50"
+            if token:
+                url += f"&pageToken={token}"
+            data = net.request_json(url, headers=headers, timeout=120) or {}
+            conversations = data.get("conversations") or []
+            if not conversations:
+                return
+            for item in conversations:
+                identifier = item.get("conversationId") or ""
+                if not identifier:
+                    continue
+                yield history.ChatSummary(
+                    provider=self.name,
+                    remote_id=identifier,
+                    title=item.get("title") or "",
+                    created=item.get("createTime") or "",
+                    updated=item.get("modifyTime") or item.get("createTime") or "",
+                    url=f"{self.origin}/c/{identifier}",
+                )
+                count += 1
+                if limit and count >= limit:
+                    return
+            token = data.get("nextPageToken") or ""
+            if not token:
+                return
+
+    def fetch_chat(self, match, remote_id):
+        """Fetch one conversation's responses (oldest first)."""
+        headers = self.history_headers(match)
+        data = net.request_json(
+            f"{self.origin}{CONVERSATIONS_PATH}/{remote_id}/responses?pageSize=200",
+            headers=headers, timeout=180) or {}
+        responses = sorted(data.get("responses") or [],
+                           key=lambda item: item.get("createTime") or "")
+        chat = history.Chat(
+            provider=self.name,
+            remote_id=remote_id,
+            url=f"{self.origin}/c/{remote_id}",
+        )
+        for response in responses:
+            if response.get("isControl"):
+                continue
+            sender = response.get("sender") or ""
+            created = response.get("createTime") or ""
+            message_id = response.get("responseId") or ""
+            parent_id = response.get("parentResponseId") or ""
+            model = response.get("model") or ""
+            if sender == "human":
+                text = response.get("message") or ""
+                if text:
+                    chat.messages.append(history.Message(
+                        role=history.USER, text=text, created=created,
+                        message_id=message_id, parent_id=parent_id))
+            elif sender == "assistant":
+                text = response.get("message") or ""
+                if text:
+                    chat.messages.append(history.Message(
+                        role=history.ASSISTANT, text=text, created=created,
+                        message_id=message_id, parent_id=parent_id))
+                for step in response.get("steps") or []:
+                    header = " ".join(step.get("text") or []).strip()
+                    if header:
+                        chat.messages.append(history.Message(
+                            role=history.ASSISTANT, text=header,
+                            kind=history.THINKING, created=created,
+                            message_id=message_id, parent_id=parent_id))
+                for item in response.get("fileAttachmentsMetadata") or []:
+                    name = (item.get("fileName") or item.get("file_name")
+                            or item.get("name") or "")
+                    if name:
+                        chat.messages.append(history.Message(
+                            role=history.ASSISTANT, text=name,
+                            kind=history.ATTACHMENT, created=created,
+                            message_id=message_id, parent_id=parent_id))
+                chat.model = chat.model or model
+        if chat.messages:
+            chat.created = chat.messages[0].created
+            chat.updated = history.newest(m.created for m in chat.messages)
+        return chat
 
     def _connect(self, websocket, match, timeout):
         headers = []
