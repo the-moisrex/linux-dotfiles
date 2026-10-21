@@ -35,6 +35,11 @@ struct prompt_descriptor {
     // spend the stdin pipe: the dispatcher must not open a streamed-output
     // separator for it and must keep piped stdin in the accumulated context.
     bool stream_output = true;
+    // Optional validation/early-setup hook. The dispatcher runs it after chain
+    // and sink parsing but before any prompt executes, so a sink such as
+    // `.save` can create and check its destination directory without doing the
+    // expensive work first. It throws prompt_error on failure.
+    void (*preflight_fn)(prompt_context&) = nullptr;
 };
 
 std::span<prompt_descriptor const> get_all_prompts();
@@ -65,7 +70,7 @@ std::vector<std::string_view> list_prompt_names();
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
                      chain_role role = chain_role::normal, sink_policy policy = sink_policy::chain,
-                     bool stream_output = true) noexcept;
+                     bool stream_output = true, void (*preflight_fn)(prompt_context&) = nullptr) noexcept;
 
 // Register a sink: the same registry entry with role=sink. Sink flags
 // (--on-error/--with-context/--show-context/--head) are handled by the
@@ -73,9 +78,11 @@ bool register_prompt(std::string_view name, std::string_view help_summary, void 
 // executor, help renderer, and policy. `stream_output=false` marks a silent
 // passthrough sink such as `.save`, whose empty stdout must not open an output
 // separator and which must leave piped stdin for later segments.
+// `preflight_fn` is run by the dispatcher before any prompt executes.
 bool register_sink(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
                    void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
-                   sink_policy policy = sink_policy::chain, bool stream_output = true) noexcept;
+                   sink_policy policy = sink_policy::chain, bool stream_output = true,
+                   void (*preflight_fn)(prompt_context&) = nullptr) noexcept;
 
 // Fills in the sort_file keys; callers must do this after main starts (it
 // needs the filesystem). Registration itself happens before main.

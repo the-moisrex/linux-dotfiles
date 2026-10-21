@@ -16,6 +16,49 @@ fail() {
 grep -qx 'hello' "$tmp/explicit.md" || fail "explicit file content"
 grep -q 'prompt save: wrote' "$tmp/explicit.err" || fail "save status on stderr"
 
+# --file forces an exact file name even without an extension.
+"$prompt" .note exact .save --file "$tmp/plain" >/dev/null 2>&1
+grep -qx 'exact' "$tmp/plain" || fail "--file did not write the exact name"
+
+# --dir forces a directory target, creating it when needed.
+"$prompt" .note dir .save --dir "$tmp/forced" >/dev/null 2>&1
+[ -d "$tmp/forced" ] || fail "--dir did not create a directory"
+grep -rqx 'dir' "$tmp/forced" || fail "--dir content"
+
+# A target with no extension is a directory, created automatically.
+"$prompt" .note auto .save "$tmp/auto-dir" >/dev/null 2>&1
+[ -d "$tmp/auto-dir" ] || fail "auto target was not created as a directory"
+grep -rqx 'auto' "$tmp/auto-dir" || fail "auto directory content"
+
+# Missing parent directories of an exact file target are created too.
+"$prompt" .note nested .save "$tmp/a/b/c.md" >/dev/null 2>&1
+[ -f "$tmp/a/b/c.md" ] || fail "missing parent directories were not created"
+grep -qx 'nested' "$tmp/a/b/c.md" || fail "nested file content"
+
+# The destination is created during preflight, before the sink executes.
+"$prompt" .save "$tmp/early" --allow-empty >/dev/null 2>&1
+[ -d "$tmp/early" ] || fail "preflight did not create the destination directory"
+
+# Preflight rejects a non-directory path component before any prompt runs.
+printf 'not a directory\n' >"$tmp/notdir"
+if "$prompt" .cli "touch $tmp/marker" .save "$tmp/notdir/" >"$tmp/notdir.out" 2>"$tmp/notdir.err"; then
+    fail "non-directory target was accepted"
+fi
+grep -q 'not a directory' "$tmp/notdir.err" || fail "non-directory error was unclear"
+[ ! -e "$tmp/marker" ] || fail "preflight ran after the preceding prompt"
+
+# Preflight checks write permission before running prompts.
+if [ "$(id -u)" -ne 0 ]; then
+    mkdir "$tmp/readonly"
+    chmod 500 "$tmp/readonly"
+    if "$prompt" .note x .save --dir "$tmp/readonly" >/dev/null 2>"$tmp/readonly.err"; then
+        chmod 700 "$tmp/readonly"
+        fail "read-only target was accepted"
+    fi
+    chmod 700 "$tmp/readonly"
+    grep -q 'cannot write' "$tmp/readonly.err" || fail "read-only error was unclear"
+fi
+
 # `--` ends option parsing, so a target may start with a dash.
 "$prompt" .note dash .save -- "$tmp/-dash.md" >/dev/null 2>&1
 [ -f "$tmp/-dash.md" ] || fail "-- did not allow a dash-prefixed target"
@@ -70,6 +113,8 @@ printf 'safe\n' >"$tmp/bad name!.txt"
 
 # Help documents the sink-specific flags and completion finds them.
 "$prompt" .save --help | grep -q -- '--allow-empty' || fail "help omits --allow-empty"
+"$prompt" .save --help | grep -q -- '--dir' || fail "help omits --dir"
 "$prompt" save --complete -- | grep -q -- '--force' || fail "completion omits --force"
+"$prompt" save --complete -- | grep -q -- '--file' || fail "completion omits --file"
 
 echo "all save tests passed"

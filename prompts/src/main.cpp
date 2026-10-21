@@ -597,6 +597,29 @@ Notes:
         }
     }
 
+    // Descriptor preflights run after chain/sink parsing but before any prompt
+    // executes. A sink such as `.save` uses this to create and check its
+    // destination directory without doing the expensive work first.
+    for (std::size_t i = 0; i < chain.count; ++i) {
+        auto const& inv = chain.invocations[i];
+        if (descriptors[i]->preflight_fn == nullptr || invocation_wants_help(inv)) continue;
+
+        auto ctx = invocation_context(base_ctx, inv, i);
+        if (descriptors[i]->role == prompt::chain_role::sink && sink_args[i]) {
+            auto const& rest = sink_args[i]->rest;
+            ctx = invocation_context(base_ctx, inv, i, std::span<std::string_view const>(rest.data(), rest.size()));
+            ctx.sink = sink_args[i]->options;
+        }
+
+        try {
+            descriptors[i]->preflight_fn(ctx);
+        } catch (prompt::prompt_error const& err) {
+            if (!err.partial_output().empty()) std::cout << err.partial_output();
+            std::cerr << err.what();
+            return err.exit_code();
+        }
+    }
+
     if (!has_sink) {
         std::vector<segment_result> results(chain.count);
 

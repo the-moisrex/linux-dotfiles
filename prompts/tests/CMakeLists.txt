@@ -41,8 +41,9 @@ set_tests_properties(ai_head PROPERTIES PASS_REGULAR_EXPRESSION "one" FAIL_REGUL
 add_test(NAME ai_sink_roundtrip
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_sink.sh $<TARGET_FILE:prompt>)
 
-# End-to-end `.save`: explicit/directory/derived targets, passthrough into a
-# sink, --head, no-clobber, sanitized names and the empty-context guard.
+# End-to-end `.save`: explicit/directory/derived targets, --dir/--file,
+# preflight fail-fast, passthrough into a sink, --head, no-clobber, sanitized
+# names and the empty-context guard.
 add_test(NAME save_roundtrip
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_save.sh
             $<TARGET_FILE:prompt> ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/numbered.txt)

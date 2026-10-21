@@ -149,6 +149,7 @@ void test_save_sink_registered() {
         check(desc->role == chain_role::sink, "save sink role");
         check(desc->policy == sink_policy::chain, "save sink default policy");
         check(!desc->stream_output, "save sink is silent");
+        check(desc->preflight_fn != nullptr, "save sink has a preflight");
     }
 }
 
