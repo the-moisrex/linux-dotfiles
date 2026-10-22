@@ -48,6 +48,11 @@ add_test(NAME save_roundtrip
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_save.sh
             $<TARGET_FILE:prompt> ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/numbered.txt)
 
+# End-to-end `.clear`/`.flush`: a context reset between sections, piped stdin,
+# hint/taint reset, `.flush` == `.save .clear`, no-clobber and preflight.
+add_test(NAME clear_roundtrip
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_clear.sh $<TARGET_FILE:prompt>)
+
 add_executable(test_embed test_embed.cpp)
 target_link_libraries(test_embed PRIVATE prompt_lib)
 target_include_directories(test_embed PRIVATE ${CMAKE_SOURCE_DIR}/src)

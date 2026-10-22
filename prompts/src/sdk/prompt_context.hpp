@@ -76,6 +76,12 @@ struct prompt_context {
     std::string out;
     std::string err;
     bool no_clipboard = false;
+    // Ask the dispatcher to discard the accumulated chain state after this
+    // sink succeeds (`.clear`, and `.flush` once its file is written). The
+    // dispatcher owns that state, so the sink declares the intent here instead
+    // of mutating accumulated text it only receives a view of. A failing sink
+    // never clears.
+    bool clear_context = false;
     // Optional basename stem a prompt offers to a later `.save` sink. It is a
     // hint only: the sink sanitizes it, adds an extension and resolves the
     // directory. Empty means the prompt has no preferred name.

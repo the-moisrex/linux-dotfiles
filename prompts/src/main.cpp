@@ -40,6 +40,7 @@ struct segment_result {
     std::string stderr_buffer;
     std::string save_hint;
     bool no_clipboard = false;
+    bool clear_context = false;
     bool stdin_consumed = false;
     bool redacted = false;
     bool failed = false;
@@ -66,6 +67,7 @@ constexpr std::uint32_t wire_redacted = 1U << 2U;
 constexpr std::uint32_t wire_failed = 1U << 3U;
 constexpr std::uint32_t wire_stdout_streamed = 1U << 4U;
 constexpr std::uint32_t wire_stderr_streamed = 1U << 5U;
+constexpr std::uint32_t wire_clear_context = 1U << 6U;
 
 bool write_all(int fd, std::string_view data) {
     std::size_t offset = 0;
@@ -104,7 +106,8 @@ void write_segment(int fd, segment_result const& result) {
         .flags = (result.no_clipboard ? wire_no_clipboard : 0U) | (result.stdin_consumed ? wire_stdin_consumed : 0U) |
                  (result.redacted ? wire_redacted : 0U) | (result.failed ? wire_failed : 0U) |
                  (result.stdout_streamed ? wire_stdout_streamed : 0U) |
-                 (result.stderr_streamed ? wire_stderr_streamed : 0U),
+                 (result.stderr_streamed ? wire_stderr_streamed : 0U) |
+                 (result.clear_context ? wire_clear_context : 0U),
     };
     if (!write_all(fd, std::string_view(reinterpret_cast<char const*>(&wire), sizeof wire))) return;
     if (!write_all(fd, result.output)) return;
@@ -129,6 +132,7 @@ std::optional<segment_result> read_segment(std::string_view blob) {
     result.save_hint.assign(blob.data() + after_error, static_cast<std::size_t>(wire.hint_size));
     result.exit_code = wire.exit_code;
     result.no_clipboard = (wire.flags & wire_no_clipboard) != 0;
+    result.clear_context = (wire.flags & wire_clear_context) != 0;
     result.stdin_consumed = (wire.flags & wire_stdin_consumed) != 0;
     result.redacted = (wire.flags & wire_redacted) != 0;
     result.failed = (wire.flags & wire_failed) != 0;
@@ -281,6 +285,7 @@ segment_result run_prompt(prompt::prompt_context& ctx, prompt::prompt_descriptor
         result.output = std::move(clean.text);
         result.redacted = clean.redacted;
         result.no_clipboard = ctx.no_clipboard;
+        result.clear_context = ctx.clear_context;
         result.stdin_consumed = ctx.stdin_consumed;
         result.error = std::move(ctx.err);
         result.save_hint = std::move(ctx.save_hint);
@@ -292,6 +297,7 @@ segment_result run_prompt(prompt::prompt_context& ctx, prompt::prompt_descriptor
         result.output = std::move(clean.text);
         result.redacted = clean.redacted;
         result.no_clipboard = err.no_clipboard();
+        result.clear_context = ctx.clear_context;
         result.stdin_consumed = err.stdin_consumed();
         result.error = err.what();
         result.stderr_buffer = std::move(ctx.stderr_buffer);
@@ -903,6 +909,19 @@ Notes:
                 }
             }
             incomplete = true;
+            return false;
+        }
+        // A sink can ask for a fresh context (`.clear`, and `.flush` once its
+        // file is written): drop everything a later section would inherit — the
+        // accumulated text, filename hint, redaction flag, barrier stderr and
+        // source-batch taint. Already emitted output, the clipboard and the
+        // exit status are unaffected.
+        if (result.clear_context) {
+            accumulated.clear();
+            accumulated_stderr.clear();
+            save_hint.clear();
+            context_redacted = false;
+            incomplete = false;
             return false;
         }
         // A silent sink (`.save`) is a tap: it observes the context without

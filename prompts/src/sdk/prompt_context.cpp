@@ -10,6 +10,7 @@ void clear_output(prompt_context& ctx) {
     ctx.stderr_buffer.clear();
     ctx.save_hint.clear();
     ctx.no_clipboard = false;
+    ctx.clear_context = false;
     ctx.stdout_streamed = false;
     ctx.stderr_streamed = false;
 }

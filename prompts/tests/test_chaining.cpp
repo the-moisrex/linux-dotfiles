@@ -153,6 +153,26 @@ void test_save_sink_registered() {
     }
 }
 
+void test_clear_sinks_registered() {
+    auto const* clear = find_prompt("clear");
+    check(clear != nullptr, "clear sink registered");
+    if (clear != nullptr) {
+        check(clear->role == chain_role::sink, "clear sink role");
+        check(clear->policy == sink_policy::chain, "clear sink default policy");
+        check(!clear->stream_output, "clear sink is silent");
+        check(clear->preflight_fn == nullptr, "clear sink needs no preflight");
+    }
+
+    auto const* flush = find_prompt("flush");
+    check(flush != nullptr, "flush sink registered");
+    if (flush != nullptr) {
+        check(flush->role == chain_role::sink, "flush sink role");
+        check(flush->policy == sink_policy::chain, "flush sink default policy");
+        check(!flush->stream_output, "flush sink is silent");
+        check(flush->preflight_fn != nullptr, "flush sink shares save's preflight");
+    }
+}
+
 void test_tse_save_stem() {
     prompts::tse_data::config cfg;
     cfg.symbol = "khodro";
@@ -230,6 +250,7 @@ int main() {
     test_all_prompts_registered();
     test_ai_sinks_registered();
     test_save_sink_registered();
+    test_clear_sinks_registered();
     test_tse_save_stem();
     test_plan_chain();
 

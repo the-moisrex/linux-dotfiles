@@ -11,6 +11,7 @@
 #include <ctime>
 #include <fcntl.h>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iomanip>
 #include <optional>
@@ -24,10 +25,25 @@
 namespace prompt::prompts {
 
 static void render_help_save(std::ostream& os);
+static void render_help_flush(std::ostream& os);
 
 namespace {
 
 enum class target_kind : std::uint8_t { auto_detect, directory, file };
+
+// `.flush` is `.save` followed by `.clear`: the same parsing, preflight and
+// write path, with a different command name in messages and a context reset
+// after a successful write.
+struct command_info {
+    std::string_view name;
+    void (*render_help)(std::ostream&);
+    bool clear_after = false;
+};
+
+command_info const kSave{.name = "save", .render_help = &render_help_save};
+command_info const kFlush{.name = "flush", .render_help = &render_help_flush, .clear_after = true};
+
+std::string prefix(command_info const& cmd) { return std::format("prompt {}: ", cmd.name); }
 
 struct save_config {
     std::optional<std::filesystem::path> target;
@@ -116,24 +132,24 @@ std::filesystem::path first_non_directory(std::filesystem::path path) {
     return {};
 }
 
-void ensure_directory(std::filesystem::path const& directory) {
+void ensure_directory(std::filesystem::path const& directory, command_info const& cmd) {
     std::error_code ec;
     std::filesystem::create_directories(directory, ec);
     if (ec) {
         auto const offender = first_non_directory(directory);
         if (!offender.empty()) {
-            throw soft_error{"prompt save: " + offender.string() + " exists but is not a directory\n"};
+            throw soft_error{std::format("{}{} exists but is not a directory\n", prefix(cmd), offender.string())};
         }
-        throw soft_error{"prompt save: cannot create " + directory.string() + ": " + ec.message() + "\n"};
+        throw soft_error{std::format("{}cannot create {}: {}\n", prefix(cmd), directory.string(), ec.message())};
     }
     if (!std::filesystem::is_directory(directory, ec)) {
-        throw soft_error{"prompt save: " + directory.string() + " is not a directory\n"};
+        throw soft_error{std::format("{}{} is not a directory\n", prefix(cmd), directory.string())};
     }
 }
 
 // Creating and removing a probe catches read-only mounts and ACLs, which
 // access(W_OK) would miss. The probe is never the saved file.
-void check_writable_directory(std::filesystem::path const& directory) {
+void check_writable_directory(std::filesystem::path const& directory, command_info const& cmd) {
     static std::atomic<unsigned int> counter{0};
 
     std::filesystem::path probe;
@@ -145,7 +161,8 @@ void check_writable_directory(std::filesystem::path const& directory) {
         if (fd >= 0 || errno != EEXIST) break;
     }
     if (fd < 0) {
-        throw soft_error{"prompt save: cannot write in " + directory.string() + ": " + std::strerror(errno) + "\n"};
+        throw soft_error{
+            std::format("{}cannot write in {}: {}\n", prefix(cmd), directory.string(), std::strerror(errno))};
     }
 
     char const byte = '\n';
@@ -155,17 +172,18 @@ void check_writable_directory(std::filesystem::path const& directory) {
     std::error_code ignored;
     std::filesystem::remove(probe, ignored);
     if (written != 1) {
-        throw soft_error{"prompt save: cannot write in " + directory.string() + ": " + std::strerror(write_error) +
-                         "\n"};
+        throw soft_error{
+            std::format("{}cannot write in {}: {}\n", prefix(cmd), directory.string(), std::strerror(write_error))};
     }
 }
 
-save_config parse_args(prompt_context const& ctx) {
+save_config parse_args(prompt_context const& ctx, command_info const& cmd) {
     save_config cfg;
     bool options = true;
+    auto help = [&] { return help_text(cmd.render_help); };
     auto set_kind = [&](target_kind kind) {
         if (cfg.kind != target_kind::auto_detect && cfg.kind != kind) {
-            throw usage_error{"prompt save: --dir and --file cannot be combined\n" + help_text(render_help_save)};
+            throw usage_error{std::format("{}--dir and --file cannot be combined\n{}", prefix(cmd), help())};
         }
         cfg.kind = kind;
     };
@@ -193,61 +211,64 @@ save_config parse_args(prompt_context const& ctx) {
             continue;
         }
         if (options && arg.starts_with('-')) {
-            throw usage_error{"prompt save: unknown option: " + std::string(arg) + "\n" + help_text(render_help_save)};
+            throw usage_error{std::format("{}unknown option: {}\n{}", prefix(cmd), arg, help())};
         }
         if (cfg.target) {
-            throw usage_error{"prompt save: provide at most one file or directory\n" + help_text(render_help_save)};
+            throw usage_error{std::format("{}provide at most one file or directory\n{}", prefix(cmd), help())};
         }
         if (arg.empty()) {
-            throw usage_error{"prompt save: the target path is empty\n"};
+            throw usage_error{std::format("{}the target path is empty\n", prefix(cmd))};
         }
         cfg.target = std::filesystem::path{std::string(arg)};
     }
 
     if (cfg.kind == target_kind::file && cfg.target && cfg.target->string().ends_with('/')) {
-        throw usage_error{"prompt save: --file needs a file name, not a directory path\n" +
-                          help_text(render_help_save)};
+        throw usage_error{std::format("{}--file needs a file name, not a directory path\n{}", prefix(cmd), help())};
     }
     return cfg;
 }
 
-void preflight_save(prompt_context& ctx) {
-    save_config const cfg = parse_args(ctx);
+void preflight_impl(prompt_context& ctx, command_info const& cmd) {
+    save_config const cfg = parse_args(ctx, cmd);
     target_plan const plan = plan_target(cfg);
 
-    ensure_directory(plan.directory);
+    ensure_directory(plan.directory, cmd);
     if (plan.file) {
         std::error_code ec;
         if (std::filesystem::is_directory(*plan.file, ec)) {
-            throw soft_error{"prompt save: " + plan.file->string() +
-                             " is a directory (pass --dir to save inside it)\n"};
+            throw soft_error{
+                std::format("{}{} is a directory (pass --dir to save inside it)\n", prefix(cmd), plan.file->string())};
         }
         if (!cfg.force && std::filesystem::exists(*plan.file, ec)) {
-            throw soft_error{"prompt save: " + plan.file->string() + " already exists (pass --force to overwrite)\n"};
+            throw soft_error{
+                std::format("{}{} already exists (pass --force to overwrite)\n", prefix(cmd), plan.file->string())};
         }
     }
-    check_writable_directory(plan.directory);
+    check_writable_directory(plan.directory, cmd);
 }
 
-} // namespace
+void preflight_save(prompt_context& ctx) { preflight_impl(ctx, kSave); }
+void preflight_flush(prompt_context& ctx) { preflight_impl(ctx, kFlush); }
 
-static void execute_save(prompt_context& ctx) {
-    save_config const cfg = parse_args(ctx);
+void run_save(prompt_context& ctx, command_info const& cmd) {
+    save_config const cfg = parse_args(ctx, cmd);
     std::string const content(wait_for_prompts(ctx));
     if (content.empty() && !cfg.allow_empty) {
-        throw soft_error{"prompt save: no context to save (pass --allow-empty to write an empty file)\n"};
+        throw soft_error{
+            std::format("{}no context to save (pass --allow-empty to write an empty file)\n", prefix(cmd))};
     }
 
     target_plan const plan = plan_target(cfg);
-    ensure_directory(plan.directory);
+    ensure_directory(plan.directory, cmd);
 
     std::filesystem::path const target = plan.file ? *plan.file : plan.directory / derived_name(ctx);
     std::error_code ec;
     if (std::filesystem::is_directory(target, ec)) {
-        throw soft_error{"prompt save: " + target.string() + " is a directory\n"};
+        throw soft_error{std::format("{}{} is a directory\n", prefix(cmd), target.string())};
     }
     if (!cfg.force && std::filesystem::exists(target, ec)) {
-        throw soft_error{"prompt save: " + target.string() + " already exists (pass --force to overwrite)\n"};
+        throw soft_error{
+            std::format("{}{} already exists (pass --force to overwrite)\n", prefix(cmd), target.string())};
     }
 
     std::filesystem::path temp = target;
@@ -259,29 +280,55 @@ static void execute_save(prompt_context& ctx) {
 
     std::ofstream file(temp, std::ios::binary | std::ios::trunc);
     if (!file) {
-        throw soft_error{"prompt save: cannot write " + temp.string() + "\n"};
+        throw soft_error{std::format("{}cannot write {}\n", prefix(cmd), temp.string())};
     }
     file.write(content.data(), static_cast<std::streamsize>(content.size()));
     if (!content.empty() && content.back() != '\n') file.put('\n');
     file.close();
     if (!file) {
         std::filesystem::remove(temp, ec);
-        throw soft_error{"prompt save: failed while writing " + target.string() + "\n"};
+        throw soft_error{std::format("{}failed while writing {}\n", prefix(cmd), target.string())};
     }
 
     if (!cfg.force && std::filesystem::exists(target, ec)) {
         std::filesystem::remove(temp, ec);
-        throw soft_error{"prompt save: " + target.string() + " already exists (pass --force to overwrite)\n"};
+        throw soft_error{
+            std::format("{}{} already exists (pass --force to overwrite)\n", prefix(cmd), target.string())};
     }
     std::filesystem::rename(temp, target, ec);
     if (ec) {
         std::error_code ignored;
         std::filesystem::remove(temp, ignored);
-        throw soft_error{"prompt save: cannot write " + target.string() + ": " + ec.message() + "\n"};
+        throw soft_error{std::format("{}cannot write {}: {}\n", prefix(cmd), target.string(), ec.message())};
     }
 
     ctx.no_clipboard = true;
-    ctx.err = "prompt save: wrote " + target.string() + "\n";
+    ctx.err = std::format("{}wrote {}\n", prefix(cmd), target.string());
+    // `.flush` is `.save` + `.clear`: only a completed write discards the
+    // context (a failed save throws above and leaves it intact).
+    ctx.clear_context = cmd.clear_after;
+}
+
+} // namespace
+
+static void execute_save(prompt_context& ctx) { run_save(ctx, kSave); }
+static void execute_flush(prompt_context& ctx) { run_save(ctx, kFlush); }
+
+static void render_save_options(std::ostream& os) {
+    render_sink_help(os);
+    os << "\nSave options:\n"
+          "  --force         Overwrite an existing file (default: refuse)\n"
+          "  --allow-empty   Write an empty file when the chain context is empty\n"
+          "  --dir, --directory\n"
+          "                  Treat the target as a directory and create it\n"
+          "  --file          Treat the target as the exact file name\n"
+          "  -h, --help      Show this help message\n"
+          "\nNotes:\n"
+          "  - The filename hint is only a basename; directories and unsafe characters\n"
+          "    are sanitized.\n"
+          "  - --with-context has no effect because this sink produces no answer.\n"
+          "  - The saved text is the same sanitized context an AI sink would receive,\n"
+          "    including --head trimming and the redaction legend when applicable.\n";
 }
 
 static void render_help_save(std::ostream& os) {
@@ -310,21 +357,32 @@ Examples:
   prompt .note "review this" .files a.cpp .save report.md
   prompt .note "review this" .files a.cpp .save --file notes
   prompt .note "review this" .files a.cpp .save .ai.grok
+
+See also: `.flush` saves and then clears, and `.clear` only clears.
+
 )EOF";
-    render_sink_help(os);
-    os << "\nSave options:\n"
-          "  --force         Overwrite an existing file (default: refuse)\n"
-          "  --allow-empty   Write an empty file when the chain context is empty\n"
-          "  --dir, --directory\n"
-          "                  Treat the target as a directory and create it\n"
-          "  --file          Treat the target as the exact file name\n"
-          "  -h, --help      Show this help message\n"
-          "\nNotes:\n"
-          "  - The filename hint is only a basename; directories and unsafe characters\n"
-          "    are sanitized.\n"
-          "  - --with-context has no effect because this sink produces no answer.\n"
-          "  - The saved text is the same sanitized context an AI sink would receive,\n"
-          "    including --head trimming and the redaction legend when applicable.\n";
+    render_save_options(os);
+}
+
+static void render_help_flush(std::ostream& os) {
+    os << R"EOF(Usage: prompt <other prompts...> .flush [FILE|DIR] [--force] [--allow-empty] [--dir|--file]
+
+Save the accumulated chain context to a file, then clear it so later prompts and
+sinks start a new, independent section. This is exactly `.save [FILE|DIR]
+[options] .clear`: the file is written and the output so far is kept, while the
+context later segments see starts empty.
+
+The context is cleared only after the write succeeds; a refused or failed save
+leaves it intact. The target rules, filename hint and preflight are `.save`'s: an
+existing directory, a trailing `/` or an extensionless target is created as a
+directory, a name with an extension is the exact file (`--dir`/`--file` override).
+
+Examples:
+  prompt .tse khodro .flush
+  prompt .tse khodro .ai.grok .flush khodro.md .tse foolad .ai.grok .flush foolad.md
+  prompt .note "review this" .files a.cpp .flush review.md .note "now fix it" .files a.cpp
+)EOF";
+    render_save_options(os);
 }
 
 // This file is the prompt: it implements it and registers it at static-init time
@@ -332,5 +390,13 @@ Examples:
 bool const registered = prompt::register_sink(
     "save", "Save the accumulated chain context to a file, then pass the context through unchanged to later sinks.",
     &execute_save, &render_help_save, nullptr, prompt::sink_policy::chain, false, &preflight_save);
+
+// `.flush` shares this file because it is the same write path plus the
+// context reset declared through prompt_context::clear_context.
+bool const registered_flush = prompt::register_sink(
+    "flush",
+    "Save the accumulated chain context to a file, then clear it so later prompts and sinks start a new, "
+    "independent section.",
+    &execute_flush, &render_help_flush, nullptr, prompt::sink_policy::chain, false, &preflight_flush);
 
 } // namespace prompt::prompts

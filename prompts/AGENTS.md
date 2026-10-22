@@ -102,18 +102,27 @@ its answer become the context later segments see.
   applies the sink's `--on-error` policy, and keeps a failed source batch tainted
   so each later sink can decide again. Fan-out sinks are captured and emitted in
   argv order (no interleaved live streams); chained sinks stream as they run.
-- **Passthrough and save hints:** a successful sink that emits no stdout is a
-  no-op for the chain: it leaves the accumulated context and any failure taint
-  unchanged. Register such a silent sink with `stream_output=false` so the
-  dispatcher does not open an output separator for it; piped stdin is kept in
-  the accumulated context instead of being spent by that sink. A prompt that
-  knows a good filename sets `ctx.save_hint` (a basename stem); `main.cpp`
+- **Passthrough, clearing and save hints:** a successful sink that emits no
+  stdout is a no-op for the chain: it leaves the accumulated context and any
+  failure taint unchanged. Register such a silent sink with `stream_output=false`
+  so the dispatcher does not open an output separator for it; piped stdin is
+  kept in the accumulated context instead of being spent by that sink. A sink
+  that must reset the context sets the output flag `ctx.clear_context` (like
+  `ctx.no_clipboard`): once that sink succeeds, the dispatcher drops the
+  accumulated text, the filename hint, the redaction flag, the barrier stderr
+  and the source-batch taint, while emitted output, the clipboard and the exit
+  status stay untouched. `.clear` (`src/prompts/clear.cpp`) does only that;
+  `.flush` (`src/prompts/save.cpp`) does it after a completed write, so a failed
+  save keeps the context. A prompt that knows a good filename sets
+  `ctx.save_hint` (a basename stem); `main.cpp`
   carries the nearest successful hint through parallel children to later sinks
   as `ctx.chain_save_hint`. `.save` (`src/prompts/save.cpp`) is the reference
   passthrough sink: it writes the same context an AI sink receives, refuses to
   overwrite unless `--force`, sanitizes the hint and appends `.md` to derived
   names. `tse`, `tse.codal`, `tse.intraday` and `files` provide hints; a
-  prompt with no preferred name simply leaves `save_hint` empty.
+  prompt with no preferred name simply leaves `save_hint` empty. `.flush`
+  shares `.save`'s parser, preflight and writer, with its own command name in
+  messages.
 - `ai.*` (`src/prompts/ai.cpp`) is the reference family: five registrations,
   one shared executor, `--print-prompt` passed through to `bin/ai`, and
   `--stdin-only` so positional prompt text cannot silently replace the chain.
@@ -121,10 +130,11 @@ its answer become the context later segments see.
 Tests: `tests/test_sink.cpp` (flag parsing, streaming/tee, timeout), the
 `plan_chain`/`ai.*`/`save` registration cases in `tests/test_chaining.cpp`,
 `tests/test_ai_sink.sh` (end-to-end `--tty`/`--width`/`--height` and
-`--context-file` plumbing through stub providers), and `tests/test_save.sh`
+`--context-file` plumbing through stub providers), `tests/test_save.sh`
 (end-to-end save targets, passthrough, `--head`, no-clobber and sanitized
-names); the `ai_help`/`ai_print_prompt` ctest smokes exercise an offline sink
-chain.
+names), and `tests/test_clear.sh` (context reset between sections, piped stdin,
+hint and failure-taint reset, `.flush` == `.save` + `.clear`, preflight); the
+`ai_help`/`ai_print_prompt` ctest smokes exercise an offline sink chain.
 
 ## SDK helpers (`src/sdk/`)
 
