@@ -154,7 +154,7 @@ def _session_summary(match):
     }
 
 
-def emit_json(event):
+def emit_json(event, fields=None):
     obj = {"kind": event.kind}
     if event.text:
         obj["text"] = event.text
@@ -166,6 +166,8 @@ def emit_json(event):
         obj["args"] = event.args
     if event.data:
         obj["data"] = event.data
+    if fields:
+        obj.update(fields)
     print(json.dumps(obj, ensure_ascii=False), flush=True)
 
 
@@ -188,8 +190,12 @@ def make_renderer(args):
                     force_tty=args.tty, width=args.width, height=args.height)
 
 
-def run_turn(conversation, prompt, args, renderer, provider):
-    """Stream one turn; return ``(status, answer)``."""
+def run_turn(conversation, prompt, args, renderer, provider, fields=None):
+    """Stream one turn; return ``(status, answer)``.
+
+    *fields* is merged into every ``--json`` event, which is how ``ai.debate``
+    tags events with their provider and round without changing the event model.
+    """
     status = 0
     parts = []
     # --file attaches to the first message only; the site keeps it in context.
@@ -205,7 +211,7 @@ def run_turn(conversation, prompt, args, renderer, provider):
         except OSError as exc:
             problem = ev.error(f"could not write the prompt file: {exc}")
             if args.json:
-                emit_json(problem)
+                emit_json(problem, fields)
             else:
                 renderer.handle(problem)
             return 1, ""
@@ -228,7 +234,7 @@ def run_turn(conversation, prompt, args, renderer, provider):
                     event.text, provider, prompt, used_file=attach,
                     disabled=(mode is False), limit=args.prompt_limit))
             if args.json:
-                emit_json(event)
+                emit_json(event, fields)
             else:
                 renderer.handle(event)
                 renderer.write_debug(event)

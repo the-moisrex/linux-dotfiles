@@ -520,12 +520,51 @@ cat big.diff | ai.chatgpt --no-prompt-file       # force inline (site's limit)
 ai.chatgpt --prompt-file "small but as a file"   # force the file path
 ```
 
-The same five are native `prompt` **sinks**, so they can sit anywhere in a
-prompt chain: everything before the sink is sent as context and the answer
-becomes the context for what follows. They render exactly like a direct run —
-prompt passes `--tty` when its own stdout is a terminal — while the chain text
-and clipboard come from a hidden plain-text side channel, so no ANSI/Markdown
-frames leak into either.
+### `ai.debate`
+
+Ask two or more AIs the same question and let them check each other. The first
+provider answers; its answer goes to the next provider as `Another AI said: …`
+together with a verification request; each participant keeps its **own**
+conversation, so later turns only carry the other AI's latest answer. That is
+the two-tab "paste one answer into the other" loop, automated.
+
+```bash
+ai.debate grok dseek "is this migration safe?"       # two AIs, two rounds
+cat design.md | ai.debate grok dseek                 # question on stdin
+ai.debate grok dseek kimi --rounds 3 "review this"   # three AIs, round-robin
+ai.debate grok dseek --until-agree "is it correct?"  # stop when both say AGREE
+ai.debate chatgpt kimi --instruction "find the bug" "…"
+ai.debate grok dseek --context all --copy "…"        # transcript on the clipboard
+ai.debate grok dseek -m grok=expert -m dseek=deepseek_reasoner "…"
+ai.debate grok dseek -c "now check the rollback plan"  # continue that panel
+ai.debate grok dseek --new "fresh take on the same"    # forget saved chats
+ai.debate grok dseek --print-prompt "…"              # offline dry run
+```
+
+The leading positionals are providers (`chatgpt`, `grok`, `deepseek`/`dseek`,
+`gap`, `kimi`), the rest is the question. `--rounds N` (default 2) counts full
+passes through the panel, so two providers and two rounds make four calls.
+`--until-agree` appends a `VERDICT: AGREE|DISAGREE` request and stops after a
+pass in which everyone still agrees (the answer must contain the line; a
+missing verdict keeps the relay going until `--rounds`). `--instruction` / `--no-instruction`
+override the verification request; `--context last|all` (or `--transcript`)
+picks the last answer (default) or the labelled transcript for the sink context
+and `--copy`. Sessions are loaded for every provider up front; a failed or empty
+turn stops the relay and leaves the last complete answer in the context.
+
+Every debate starts fresh chats. `-c/--continue` instead reopens each
+participant's chat from the last debate between the same providers (stored under
+`$XDG_STATE_HOME/ai/debate-<providers>.json`, keyed order-independently), so the
+new question is a follow-up in those threads; `--new` forgets that state and
+starts clean. The panel is saved after every successful turn, and a provider with
+no saved chat simply starts one.
+
+The same five providers (plus `.ai.debate`) are native `prompt` **sinks**, so
+they can sit anywhere in a prompt chain: everything before the sink is sent as
+context and the answer becomes the context for what follows. They render exactly
+like a direct run — prompt passes `--tty` when its own stdout is a terminal —
+while the chain text and clipboard come from a hidden plain-text side channel,
+so no ANSI/Markdown frames leak into either.
 
 ```bash
 prompt .note "review this" .files src/main.cpp .ai.dseek
@@ -533,6 +572,10 @@ prompt .note "list the risks" .files a.cpp .ai.dseek .note "rank them" .ai.grok
 prompt .note "compare" .files old.cpp new.cpp .ai.dseek --with-context .note "summarise" .ai.kimi
 prompt .note "review this" .files a.cpp .save review.md .ai.dseek
 prompt .note "review this" .files a.cpp .ai.dseek --print-prompt   # offline dry run
+prompt .note "is this migration safe?" .files db/schema.sql .ai.debate grok dseek
+prompt .note "audit this" .files app.py .ai.debate grok dseek --rounds 3 --until-agree
+prompt .note "now check the rollback" .ai.debate grok dseek -c   # continue those chats
+prompt .note "compare" .files old.py new.py .ai.debate grok dseek --context all .save debate.md
 ```
 
 Sink flags are shared by every sink and handled by the dispatcher:

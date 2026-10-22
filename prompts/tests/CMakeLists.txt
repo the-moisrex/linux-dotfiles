@@ -26,6 +26,33 @@ add_test(NAME sink COMMAND test_sink)
 add_test(NAME ai_help COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
 set_tests_properties(ai_help PROPERTIES PASS_REGULAR_EXPRESSION "--with-context")
 
+add_test(NAME ai_debate_help COMMAND $<TARGET_FILE:prompt> .ai.debate --help)
+set_tests_properties(ai_debate_help PROPERTIES PASS_REGULAR_EXPRESSION "--rounds")
+
+add_test(NAME ai_debate_help_state COMMAND $<TARGET_FILE:prompt> .ai.debate --help)
+set_tests_properties(ai_debate_help_state PROPERTIES PASS_REGULAR_EXPRESSION "--continue")
+
+add_test(NAME ai_debate_print_prompt
+    COMMAND $<TARGET_FILE:prompt> .note hello .ai.debate grok dseek --print-prompt)
+set_tests_properties(ai_debate_print_prompt PROPERTIES PASS_REGULAR_EXPRESSION "Another AI said")
+
+# The completion callback offers the provider names, and PROVIDER= after
+# -m/--model.
+add_test(NAME ai_debate_complete
+    COMMAND $<TARGET_FILE:prompt> .ai.debate --complete gro)
+set_tests_properties(ai_debate_complete PROPERTIES PASS_REGULAR_EXPRESSION "grok")
+
+add_test(NAME ai_debate_complete_model
+    COMMAND $<TARGET_FILE:prompt> .ai.debate --complete "" -m)
+set_tests_properties(ai_debate_complete_model PROPERTIES PASS_REGULAR_EXPRESSION "deepseek=")
+
+# The relay loop itself, with fake conversations (no network, no browser).
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME ai_debate_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_debate.py)
+endif()
+
 add_test(NAME ai_help_tty COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
 set_tests_properties(ai_help_tty PROPERTIES PASS_REGULAR_EXPRESSION "--tty")
 
@@ -40,6 +67,11 @@ set_tests_properties(ai_head PROPERTIES PASS_REGULAR_EXPRESSION "one" FAIL_REGUL
 # gets the plain --context-file answer.
 add_test(NAME ai_sink_roundtrip
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_sink.sh $<TARGET_FILE:prompt>)
+
+# End-to-end `.ai.debate`: the same side-channel plumbing as `.ai.*`, plus the
+# forwarded provider names, the debate flags and stdin.
+add_test(NAME ai_debate_sink
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_debate_sink.sh $<TARGET_FILE:prompt>)
 
 # End-to-end `.save`: explicit/directory/derived targets, --dir/--file,
 # preflight fail-fast, passthrough into a sink, --head, no-clobber, sanitized

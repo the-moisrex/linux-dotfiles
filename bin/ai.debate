@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""ai.debate — let two or more AIs verify each other's answers, round after round.
+
+Opens one signed-in conversation per provider and relays each answer to the
+next AI as "Another AI said: …" until the rounds run out or every AI agrees.
+Replays the sites' own chat APIs — no API key. See ``ai.debate --help``.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from ai.debate import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

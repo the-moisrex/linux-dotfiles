@@ -126,18 +126,30 @@ its answer become the context later segments see.
   prompt with no preferred name simply leaves `save_hint` empty. `.flush`
   shares `.save`'s parser, preflight and writer, with its own command name in
   messages.
-- `ai.*` (`src/prompts/ai.cpp`) is the reference family: five registrations,
-  one shared executor, `--print-prompt` passed through to `bin/ai`, and
-  `--stdin-only` so positional prompt text cannot silently replace the chain.
+- `ai.*` (`src/prompts/ai.cpp`) is the reference family: five provider
+  registrations plus the `ai.debate` relay, one shared executor,
+  `--print-prompt` passed through to `bin/ai`, and `--stdin-only` so positional
+  prompt text cannot silently replace the chain. `.ai.debate` is a thin wrapper
+  over `bin/ai.debate` (the five providers passed as leading arguments); the
+  relay loop, framing and context-file writing live in `bin/ai/debate.py`,
+  which reuses `bin/ai/cli.py`'s turn/renderer/context helpers. `-c`/`--new`
+  are forwarded too; the panel state is stored by `bin/ai/state.py` under
+  `$XDG_STATE_HOME/ai/debate-<providers>.json`. Its completion
+  callback (`complete_ai_debate`) offers the provider names, and `PROVIDER=`
+  after `-m`/`--model`.
 
 Tests: `tests/test_sink.cpp` (flag parsing, streaming/tee, timeout), the
 `plan_chain`/`ai.*`/`save` registration cases in `tests/test_chaining.cpp`,
 `tests/test_ai_sink.sh` (end-to-end `--tty`/`--width`/`--height` and
-`--context-file` plumbing through stub providers), `tests/test_save.sh`
-(end-to-end save targets, passthrough, `--head`, no-clobber and sanitized
-names), and `tests/test_clear.sh` (context reset between sections, piped stdin,
-hint and failure-taint reset, `.flush` == `.save` + `.clear`, preflight); the
-`ai_help`/`ai_print_prompt` ctest smokes exercise an offline sink chain.
+`--context-file` plumbing through stub providers), `tests/test_ai_debate_sink.sh`
+(the same plumbing for `.ai.debate`, plus provider/flag forwarding),
+`tests/test_save.sh` (end-to-end save targets, passthrough, `--head`,
+no-clobber and sanitized names), and `tests/test_clear.sh` (context reset between
+sections, piped stdin, hint and failure-taint reset, `.flush` == `.save` +
+`.clear`, preflight); `tests/test_ai_debate.py` exercises the relay
+loop offline (turn order, framing, `--rounds`/`--until-agree`, context
+selection, failure), and the `ai_help`/`ai_print_prompt`/`ai_debate_help`/
+`ai_debate_print_prompt` ctest smokes exercise an offline sink chain.
 
 ## SDK helpers (`src/sdk/`)
 
