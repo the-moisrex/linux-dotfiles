@@ -106,6 +106,23 @@ fi
 "$prompt" .save "$tmp/empty.md" --allow-empty >/dev/null 2>&1
 [ ! -s "$tmp/empty.md" ] || fail "--allow-empty did not write an empty file"
 
+# A failed source batch must not make `.save` disappear: the dispatcher names
+# the sink it did not run and no file is written. `--days 0` is rejected by the
+# tool before it hits the network, so this stays offline and fast.
+if "$prompt" .tse khodro --days 0 .save "$tmp/skipped.md" >"$tmp/skipped.out" 2>"$tmp/skipped.err"; then
+    fail "a failing source batch was reported as success"
+fi
+grep -q 'prompt: .save not run: an earlier prompt failed' "$tmp/skipped.err" || fail "skipped save was not reported"
+[ ! -e "$tmp/skipped.md" ] || fail "a skipped save still wrote a file"
+
+# The same source batch with --on-error continue reaches `.save`; the empty
+# (failed) context is still refused loudly by the save itself.
+if "$prompt" .tse khodro --days 0 .save "$tmp/continued.md" --on-error continue >/dev/null 2>"$tmp/continued.err"; then
+    fail "an empty continued context was saved"
+fi
+grep -q 'prompt save: no context to save' "$tmp/continued.err" || fail "empty context error was not reported"
+[ ! -e "$tmp/continued.md" ] || fail "an empty context wrote a file"
+
 # Hints are sanitized to a safe basename.
 printf 'safe\n' >"$tmp/bad name!.txt"
 "$prompt" .files "$tmp/bad name!.txt" .save "$tmp" >/dev/null 2>&1

@@ -14,6 +14,7 @@
 #include "../sdk/prompt_registry.hpp"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -371,10 +372,41 @@ inline std::string render_snapshot(std::filesystem::path const& path, snapshot_i
     return output;
 }
 
+// A live fetch is a long sequence of HTTP requests (history, breadth, order
+// books, corrections), so it legitimately takes minutes on a slow link. The
+// tools bound every individual request themselves; this cap is only a backstop
+// against a wedged process. The old `run_command` default of 30 s killed full
+// fetches mid-flight.
+inline constexpr std::chrono::milliseconds kToolTimeout = std::chrono::minutes(10);
+
+// Run a `bin/tse*` tool and turn every failure into a message the user can act
+// on: the timeout that used to be silent, a non-zero exit (the tool's own
+// `tse: <message>` is inherited and appears above), or a successful run that
+// produced no dataset — which would otherwise reach `.save`/an AI sink as an
+// empty context.
+inline prompt::process::command_result run_tool(std::string const& name, std::string const& tool_label,
+                                                std::vector<std::string> const& argv,
+                                                std::chrono::milliseconds timeout = kToolTimeout) {
+    auto result = prompt::process::command{argv}.timeout(timeout).run();
+    if (result.timed_out) {
+        throw soft_error{std::format("prompt {}: {} timed out after {}s (the fetch was killed; retry with a "
+                                     "narrower request)\n",
+                                     name, tool_label,
+                                     std::chrono::duration_cast<std::chrono::seconds>(timeout).count())};
+    }
+    if (result.exit_code != 0) {
+        throw soft_error{std::format("prompt {}: {} exited with status {}\n", name, tool_label, result.exit_code)};
+    }
+    if (result.stdout_data.empty()) {
+        throw soft_error{std::format("prompt {}: {} returned no data\n", name, tool_label)};
+    }
+    return result;
+}
+
 // `python3 bin/tse all <symbol> ... --markdown`. The tool prints
 // `tse: <message>` on stderr (inherited, exactly like bash's `$(...)`) and
 // exits 1; the script runs under `set -e`, so the prompt aborts printing
-// nothing.
+// nothing. `run_tool` makes every failure loud.
 inline std::string fetch_live(config const& cfg, std::string const& tse_tool) {
     std::vector<std::string> fetch_args = {"all", cfg.symbol, "--markdown"};
     if (cfg.days_set) {
@@ -390,10 +422,7 @@ inline std::string fetch_live(config const& cfg, std::string const& tse_tool) {
     if (cfg.unadjusted) fetch_args.emplace_back("--unadjusted");
     std::vector<std::string> tool_argv = {"python3", tse_tool};
     for (auto const& a : fetch_args) tool_argv.push_back(a);
-    auto fetch = prompt::process::run_command(tool_argv);
-    if (fetch.exit_code != 0) {
-        throw soft_error{std::string{}};
-    }
+    auto fetch = run_tool(cfg.name, "bin/tse", tool_argv);
     return fetch.stdout_data;
 }
 

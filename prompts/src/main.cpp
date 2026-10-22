@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <print>
 #include <regex>
 #include <span>
 #include <sstream>
@@ -224,19 +225,19 @@ class output_emitter {
     void emit(std::string_view output, bool no_clipboard, bool redacted) {
         output = trim_trailing_newlines(output);
         if (output.empty()) return;
-        if (!first_stdout_) std::cout << '\n';
+        if (!first_stdout_) std::print(std::cout, "\n");
         first_stdout_ = false;
         if (redacted && !stdout_legend_) {
-            std::cout << prompt::sanitize::kRedactionLegend << '\n';
+            std::println(std::cout, "{}", prompt::sanitize::kRedactionLegend);
             stdout_legend_ = true;
         }
-        std::cout << output << '\n';
+        std::println(std::cout, "{}", output);
         std::cout.flush();
         add_clipboard(output, no_clipboard, redacted);
     }
 
     void streamed(std::string_view output, bool no_clipboard, bool redacted) {
-        if (!output.empty() && output.back() != '\n') std::cout << '\n';
+        if (!output.empty() && output.back() != '\n') std::print(std::cout, "\n");
         std::cout.flush();
         output = trim_trailing_newlines(output);
         if (output.empty()) return;
@@ -248,7 +249,7 @@ class output_emitter {
     // separated from the previous segment like a captured result would be.
     void begin_stream() const {
         if (!first_stdout_) {
-            std::cout << '\n';
+            std::print(std::cout, "\n");
             std::cout.flush();
         }
     }
@@ -311,6 +312,9 @@ segment_result run_prompt(prompt::prompt_context& ctx, prompt::prompt_descriptor
 
 } // namespace
 
+// std::print/println may throw std::format_error or ios_base::failure; the
+// format strings are literals and main has no recovery path.
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main(int argc, char** argv) {
     // Every prompt registers itself before main (see sdk/prompt_registry.hpp);
     // this only fills in the sort keys list/list-prompts order by.
@@ -323,7 +327,7 @@ int main(int argc, char** argv) {
             // Mirrors the bash dispatcher's usage(); the Notes differ because
             // the native dispatcher ships a fixed prompt set instead of
             // scanning for prompt files.
-            std::cout << R"(Usage:
+            std::print(std::cout, "{}", R"(Usage:
   prompt --help
   prompt list
   prompt list-prompts
@@ -359,11 +363,11 @@ Notes:
   - 'prompt list' lists available prompts with the first paragraph of each
     prompt's help as the description (--names for bare names only).
   - 'prompt list-prompts' prints the full help text of every available prompt.
-)";
+)");
             return 0;
         }
         if (arg == "--version" || arg == "-v") {
-            std::cout << "prompt " << PROMPT_VERSION << "\n";
+            std::println(std::cout, "prompt {}", PROMPT_VERSION);
             return 0;
         }
     }
@@ -410,7 +414,7 @@ Notes:
                 if (desc->complete_fn != nullptr) {
                     desc->complete_fn(prompt::completion_request{.prefix = prefix, .prior_args = prior}, out);
                 }
-                std::cout << out.str();
+                std::print(std::cout, "{}", out.str());
             }
             return 0;
         }
@@ -561,7 +565,7 @@ Notes:
 
         descriptors[i] = prompt::find_prompt(inv.name);
         if (descriptors[i] == nullptr) {
-            std::cerr << "prompt: prompt '" << inv.name << "' not found\n";
+            std::println(std::cerr, "prompt: prompt '{}' not found", inv.name);
             return 3;
         }
     }
@@ -578,7 +582,7 @@ Notes:
         has_sink = true;
         auto parsed = prompt::parse_sink_args(std::span<std::string_view const>(inv.args.data(), inv.args_count));
         if (!parsed.error.empty()) {
-            std::cerr << "prompt " << inv.name << ": " << parsed.error;
+            std::print(std::cerr, "prompt {}: {}", inv.name, parsed.error);
             return 2;
         }
         show_context = show_context || parsed.options.show_context;
@@ -588,7 +592,7 @@ Notes:
 
     auto const plan = prompt::plan_chain(chain, prompt::get_all_prompts());
     if (!plan.error.empty()) {
-        std::cerr << "prompt: " << plan.error << "\n";
+        std::println(std::cerr, "prompt: {}", plan.error);
         return 2;
     }
 
@@ -597,7 +601,7 @@ Notes:
     for (std::size_t i = 0; i < chain.count; ++i) {
         if (descriptors[i]->role == prompt::chain_role::sink && invocation_wants_help(chain.invocations[i])) {
             auto result = render_help_result(*descriptors[i]);
-            std::cout << result.output;
+            std::print(std::cout, "{}", result.output);
             if (!result.output.empty()) prompt::clipboard::copy(result.output);
             return 0;
         }
@@ -620,8 +624,8 @@ Notes:
         try {
             descriptors[i]->preflight_fn(ctx);
         } catch (prompt::prompt_error const& err) {
-            if (!err.partial_output().empty()) std::cout << err.partial_output();
-            std::cerr << err.what();
+            if (!err.partial_output().empty()) std::print(std::cout, "{}", err.partial_output());
+            std::print(std::cerr, "{}", err.what());
             return err.exit_code();
         }
     }
@@ -709,7 +713,7 @@ Notes:
         for (auto const& result : results) {
             redacted = redacted || result.redacted;
             pipeline.add_output(result.output, result.no_clipboard);
-            if (!result.error.empty()) std::cerr << result.error;
+            if (!result.error.empty()) std::print(std::cerr, "{}", result.error);
             if (result.failed && exit_code == 0) exit_code = result.exit_code;
         }
 
@@ -718,7 +722,7 @@ Notes:
         if (redacted && !final_output.empty()) {
             final_output = std::string(prompt::sanitize::kRedactionLegend) + "\n" + final_output;
         }
-        std::cout << final_output;
+        std::print(std::cout, "{}", final_output);
 
         // Copy to clipboard (respecting per-prompt no-clipboard opt-outs)
         auto clip = pipeline.for_clipboard();
@@ -745,8 +749,8 @@ Notes:
     output_emitter emitter;
 
     auto report_result = [&](segment_result const& result) {
-        if (!result.error.empty()) std::cerr << result.error;
-        if (!result.stderr_streamed && !result.stderr_buffer.empty()) std::cerr << result.stderr_buffer;
+        if (!result.error.empty()) std::print(std::cerr, "{}", result.error);
+        if (!result.stderr_streamed && !result.stderr_buffer.empty()) std::print(std::cerr, "{}", result.stderr_buffer);
         if (!result.stderr_buffer.empty()) append_block(accumulated_stderr, result.stderr_buffer);
     };
 
@@ -940,6 +944,20 @@ Notes:
         return false;
     };
 
+    // A sink that is never invoked cannot explain itself: when the source batch
+    // failed and the chain policy stops it, say which sink did not run — so
+    // `.save` (and every other sink) never "does nothing" silently.
+    auto note_skipped_sink = [&](std::size_t i, prompt::sink_failure policy) {
+        std::string_view name = descriptors[i]->name;
+        if (policy == prompt::sink_failure::abort) {
+            std::println(std::cerr,
+                         "prompt: .{} not run: an earlier prompt failed; pass --on-error continue to run it anyway",
+                         name);
+        } else {
+            std::println(std::cerr, "prompt: .{} skipped: an earlier prompt failed (--on-error skip)", name);
+        }
+    };
+
     bool chain_aborted = false;
     for (std::size_t run_index = 0; run_index < plan.runs.size() && !chain_aborted; ++run_index) {
         auto const& run = plan.runs[run_index];
@@ -966,10 +984,14 @@ Notes:
             for (std::size_t i = run.begin; i < run.end; ++i) {
                 auto const& opts = sink_args[i]->options;
                 if (incomplete && opts.failure == prompt::sink_failure::abort) {
+                    note_skipped_sink(i, opts.failure);
                     fanout_abort = true;
                     break;
                 }
-                if (incomplete && opts.failure == prompt::sink_failure::skip) continue;
+                if (incomplete && opts.failure == prompt::sink_failure::skip) {
+                    note_skipped_sink(i, opts.failure);
+                    continue;
+                }
                 ensure_input();
                 auto result = run_sink(i, input, false);
                 report_result(result);
@@ -1002,10 +1024,14 @@ Notes:
             auto const& opts = sink_args[i]->options;
             if (incomplete) {
                 if (opts.failure == prompt::sink_failure::abort) {
+                    note_skipped_sink(i, opts.failure);
                     chain_aborted = true;
                     break;
                 }
-                if (opts.failure == prompt::sink_failure::skip) continue;
+                if (opts.failure == prompt::sink_failure::skip) {
+                    note_skipped_sink(i, opts.failure);
+                    continue;
+                }
             }
             std::string const input = current_input(i);
             bool const stream = descriptors[i]->stream_output;

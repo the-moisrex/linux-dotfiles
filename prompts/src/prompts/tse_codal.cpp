@@ -127,10 +127,9 @@ static void execute_tse_codal(prompt_context& ctx) {
     if (config.fund) tool_argv.emplace_back("--fund");
     if (config.refresh) tool_argv.emplace_back("--refresh");
 
-    auto fetch = prompt::process::run_command(tool_argv);
-    if (fetch.exit_code != 0) {
-        throw soft_error{std::string{}};
-    }
+    // Codal's own retry deadline is 60 s (`CODAL_DEADLINE`), so this cap must
+    // sit above it; the old 30 s prompt default cut a live fetch off silently.
+    auto fetch = tse_data::run_tool("tse.codal", "bin/tse.codal", tool_argv, std::chrono::seconds(120));
 
     ctx.save_hint = tse_data::save_stem(config.symbol);
     ctx.out = trim_context(fetch.stdout_data, config.head_lines);

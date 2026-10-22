@@ -124,10 +124,7 @@ static void execute_tse_intraday(prompt_context& ctx) {
     for (auto const& arg : config.tool_args) tool_argv.push_back(arg);
     tool_argv.push_back(config.symbol);
 
-    auto fetch = prompt::process::run_command(tool_argv);
-    if (fetch.exit_code != 0) {
-        throw soft_error{std::string{}};
-    }
+    auto fetch = tse_data::run_tool("tse.intraday", "bin/tse.intraday", tool_argv);
 
     ctx.save_hint = tse_data::save_stem(config.symbol);
     ctx.out = trim_context(fetch.stdout_data, config.head_lines);

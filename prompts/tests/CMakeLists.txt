@@ -53,6 +53,13 @@ add_test(NAME save_roundtrip
 add_test(NAME clear_roundtrip
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_clear.sh $<TARGET_FILE:prompt>)
 
+# `tse_data::run_tool`: a timeout, a non-zero exit and an empty dataset each
+# produce a message instead of the old silent empty soft_error.
+add_executable(test_tse_tool test_tse_tool.cpp)
+target_link_libraries(test_tse_tool PRIVATE prompt_lib)
+target_include_directories(test_tse_tool PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME tse_tool COMMAND test_tse_tool)
+
 add_executable(test_embed test_embed.cpp)
 target_link_libraries(test_embed PRIVATE prompt_lib)
 target_include_directories(test_embed PRIVATE ${CMAKE_SOURCE_DIR}/src)

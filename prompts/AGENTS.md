@@ -100,8 +100,11 @@ its answer become the context later segments see.
   prompt's own help follows it. Completion derives every flag from that block.
 - **Failure:** throw `prompt_error` like any prompt. The dispatcher catches it,
   applies the sink's `--on-error` policy, and keeps a failed source batch tainted
-  so each later sink can decide again. Fan-out sinks are captured and emitted in
-  argv order (no interleaved live streams); chained sinks stream as they run.
+  so each later sink can decide again. A sink that is not run because the source
+  batch failed is named on stderr (`prompt: .save not run: an earlier prompt
+  failed; pass --on-error continue …`), so a skipped sink is never silent.
+  Fan-out sinks are captured and emitted in argv order (no interleaved live
+  streams); chained sinks stream as they run.
 - **Passthrough, clearing and save hints:** a successful sink that emits no
   stdout is a no-op for the chain: it leaves the accumulated context and any
   failure taint unchanged. Register such a silent sink with `stream_output=false`
@@ -172,8 +175,11 @@ Use these instead of re-open-coding the same loops:
 - `src/core/process.hpp`: `process::command` / `run_command(argv, stdin, env,
   timeout)` — fork/exec, no shell, no quoting. `on_stdout`/`on_stderr` tee each
   chunk while still accumulating it, and the poll loop enforces the timeout
-  while reading. `src/core/fs.hpp::bin_tool` locates sibling `bin/` tools (exe
-  dir → git root → cwd → `$PATH`).
+  while reading. `run_command` defaults to 30 s, so a long fetch passes its own
+  timeout (`tse_data::run_tool` allows 10 min and turns a timeout, non-zero exit
+  or empty dataset into a `prompt <name>: bin/<tool> …` message).
+  `src/core/fs.hpp::bin_tool` locates sibling `bin/` tools (exe dir → git root →
+  cwd → `$PATH`).
 
 ## Shell completion (`--complete`)
 
