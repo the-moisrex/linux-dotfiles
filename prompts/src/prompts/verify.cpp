@@ -21,14 +21,11 @@ std::string strip_trailing_newlines(std::string_view s) {
 static void execute_verify(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
 
-    // verify.sh runs `bash git-dirty.sh ...` (matches byte-for-byte when we run
-    // the same script via the legacy runner). Its stderr is discarded and its
-    // exit status ignored (2>/dev/null || true).
     auto git_dirty_args = positional_args(ctx);
     if (git_dirty_args.empty()) git_dirty_args = {"--full-diff"};
 
-    // Deciding what to verify: piped stdin wins (verify.sh calls read_stdin);
-    // otherwise run git-dirty --full-diff (or the forwarded args).
+    // Deciding what to verify: piped stdin wins; otherwise run git-dirty
+    // --full-diff (or the forwarded args).
     std::string context;
     bool piped = ctx.stdin_consumed;
     if (piped) {

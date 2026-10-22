@@ -113,9 +113,9 @@ std::vector<std::string> split_lines(std::string_view s) {
 } // namespace
 
 static void execute_git_dirty(prompt_context& ctx) {
-    // git-dirty.sh parses its own flags (not via _common.sh's parse_arguments),
-    // and its --head accepts any value verbatim. --help/-h are intercepted by
-    // the native dispatcher before we run.
+    // This prompt parses its own flags (not the shared --head parser), and its
+    // --head accepts any value verbatim. --help/-h are intercepted by the
+    // dispatcher before we run.
     std::optional<std::size_t> head_lines;
     bool numbered = false;
     bool filter_staged = false;

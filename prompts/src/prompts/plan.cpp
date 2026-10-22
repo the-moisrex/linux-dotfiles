@@ -9,8 +9,8 @@ namespace prompt::prompts {
 
 namespace {
 
-// plan.sh embeds through _common.sh's embed_file, whose shape differs from the
-// inline loops the other prompts use (leading blank line, no trailing one).
+// The embed_file shape this prompt uses differs from the inline loops the
+// other prompts use (leading blank line, no trailing one).
 std::string embed_plan_file(std::filesystem::path const& path, file_options opts) {
     if (!std::filesystem::is_regular_file(path)) return {};
 

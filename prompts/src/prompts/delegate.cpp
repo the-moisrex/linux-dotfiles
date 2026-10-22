@@ -24,11 +24,8 @@ bool is_excluded(std::string const& name) {
     return excluded.contains(name);
 }
 
-// Locate the prompts/ directory whose list.sh the bash prompt runs (its own
-// COMMON_DIR, i.e. <repo>/prompts). Robust to where the binary lives: git
-// root first, then a cwd walk, then the exe-relative search_dirs.
-// Builds the "- `name` — desc" catalog from the native registry (sorted with
-// the same collation the bash list prompt applies). The registry is the
+// Builds the "- `name` — desc" catalog from the native registry, sorted with
+// prompt_descriptor_less so it matches `prompt list`. The registry is the
 // complete prompt catalog, so no prompts/ directory is needed.
 std::string build_prompt_list() {
     auto prompts = prompt::get_all_prompts();
@@ -120,9 +117,8 @@ static void execute_delegate(prompt_context& ctx) {
            "Make sure to properly escape characters.\n"
            "\n";
 
-    // No clipboard opt-out: bash only suppresses the inner `list.sh` copy (via
-    // PROMPT_NO_CLIPBOARD_FILE=/dev/null), so delegate's own output copies
-    // like every other prompt's.
+    // No clipboard opt-out: delegate's own output copies like every other
+    // prompt's.
     ctx.out = std::move(out);
 }
 

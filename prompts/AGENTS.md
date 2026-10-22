@@ -1,10 +1,9 @@
 # AGENTS.md — `prompts/` (native prompt dispatcher, C++)
 
-Native C++ replacement for the bash dispatcher under `../prompts-shell/`. This
-directory builds the `prompt` command. The bash scripts are kept only as a
-historical reference: the native dispatcher is now authoritative and its output
-is **not** required to match them (see "Output bytes"). The repo-wide guide is
-`../AGENTS.md`; this file is the working guide for this subtree.
+This directory builds the `prompt` command: a native C++ dispatcher where every
+prompt is a `src/prompts/<name>.cpp` that registers itself. There is no scripting
+runtime and no prompt-file scanning; the repo-wide guide is `../AGENTS.md`, and
+this file is the working guide for this subtree.
 
 ## Build, test, lint
 
@@ -220,17 +219,17 @@ exits 0 without running the prompt, reading stdin or touching the clipboard.
 
 ## Output bytes
 
-The native dispatcher is authoritative; its output is no longer byte-locked to
-`../prompts-shell/`. The old parity harness (`~/parity/`: `gen_cases.py` +
-`parity.sh` + `run_all.sh`) still exists and can be run as a smoke test, but
-deliberate divergences from the bash reference are expected and fine:
+The dispatcher's output is the contract the tests and the AI-facing prose rely
+on; there is no other implementation to stay compatible with. Two behaviours are
+deliberate and worth keeping in mind:
 
-- The native dispatcher prepends a one-line **redaction legend**
+- The dispatcher prepends a one-line **redaction legend**
   (`sanitize::kRedactionLegend`) whenever `clean_privacy` rewrites personal data
   (`HOME`, `USER`, `HOSTNAME`, `IP_ADDRESS`, `MAC_ADDRESS`, `EMAIL_ADDRESS`,
   `PHONE_NUMBER`, `SSN`).
-- Native-only prompts (`tse`, `tse.rigor`, `tse.times`) and options (`--num`/`--numbered`) have no
-  bash counterpart; the shared help helpers also standardised the usage lines.
+- Prompts such as `tse`, `tse.rigor` and `tse.times` and the `--num`/`--numbered`
+  options are specific to this dispatcher; the shared help helpers standardise
+  the usage lines across prompts.
 
 When changing output, prefer the shared helpers (`file_usage_help`,
 `file_options_help`) and keep the wording consistent across prompts.

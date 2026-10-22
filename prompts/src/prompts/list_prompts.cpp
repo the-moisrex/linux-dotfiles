@@ -22,7 +22,7 @@ static void execute_list_prompts(prompt_context& ctx) {
     }
     auto prompts = get_all_prompts();
 
-    // Sort by name (the bash list-prompts prompt sorts too).
+    // Sort by name (shared with list/delegate).
     std::vector<prompt_descriptor const*> sorted;
     sorted.reserve(prompts.size());
     for (auto const& desc : prompts) sorted.push_back(&desc);

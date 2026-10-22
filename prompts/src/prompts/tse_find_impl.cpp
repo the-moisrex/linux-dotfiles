@@ -314,11 +314,10 @@ std::string strip_trailing_newlines(std::string_view text) {
 // re-adds exactly one when it prints the value.
 std::string captured(std::string_view text) { return strip_trailing_newlines(text); }
 
-// Port of _common.sh trim_context as the script uses it: `printf '%s\n'` feeds
-// `sed -n 1,Np`, and sed treats a range whose end precedes its start as line 1,
-// so a --head of 0 keeps one line while an absent --head adds a single trailing
-// newline.
-std::string trim_like_bash(std::string_view text, std::optional<std::size_t> head_lines) {
+// Trim a --head-capped context the way `sed -n 1,Np` does: a range whose end
+// precedes its start counts as line 1, so a --head of 0 keeps one line while an
+// absent --head adds a single trailing newline.
+std::string trim_head(std::string_view text, std::optional<std::size_t> head_lines) {
     return trim_context_nl(text, head_lines);
 }
 
@@ -327,8 +326,8 @@ bool is_all_digits(std::string_view text) {
     return std::ranges::all_of(text, [](char c) { return c >= '0' && c <= '9'; });
 }
 
-// bash's `[[ "$2" -lt 1 ]]` reads leading-zero tokens in base 8 (and errors out
-// on 08-style tokens, which bash treats as false), so only all-zero values fail.
+// Leading-zero tokens would be read in base 8 by an arithmetic test, where
+// 08-style tokens error out and count as false, so only all-zero values fail.
 bool is_positive_int_token(std::string_view text) {
     if (!is_all_digits(text)) return false;
     return std::ranges::any_of(text, [](char c) { return c != '0'; });
@@ -382,8 +381,8 @@ parsed_args parse_args(prompt_context const& ctx) {
     parsed_args parsed;
     std::vector<bool> consumed(ctx.args_count, false);
 
-    // _common.sh parse_arguments: --help prints the help and exits 0, --head is
-    // validated here, everything else survives into the script's own loop.
+    // --help prints the help and exits 0, --head is validated here, everything
+    // else survives into this prompt's own loop.
     for (std::size_t i = 0; i < ctx.args_count;) {
         if (ctx.args[i] == "--help" || ctx.args[i] == "-h") {
             std::string help = help_text(render_help_tse_find_impl);
@@ -478,7 +477,7 @@ struct classified_input {
     int exit_code = 0;
 };
 
-// _common.sh resolve_exact_file: the token as given, then under the git root.
+// Resolve a file token: as given, then under the git root.
 std::optional<std::filesystem::path> resolve_exact_file(std::string const& file,
                                                         std::filesystem::path const& git_root) {
     std::error_code ec;
@@ -636,7 +635,7 @@ emit_result emit_review(std::string_view kind, std::string_view label, std::stri
             result.output += "(no rows)\n";
         } else {
             result.output += "```csv\n";
-            result.output += trim_like_bash(csv.output, head_lines);
+            result.output += trim_head(csv.output, head_lines);
             result.output += "\n```\n";
         }
         return result;
@@ -669,7 +668,7 @@ emit_result emit_review(std::string_view kind, std::string_view label, std::stri
 
     if (kind == "table") {
         result.output += "```text\n";
-        result.output += trim_like_bash(payload, head_lines);
+        result.output += trim_head(payload, head_lines);
         result.output += "\n```\n";
         return result;
     }
@@ -684,7 +683,7 @@ emit_result emit_review(std::string_view kind, std::string_view label, std::stri
         result.output += "(no rows)\n";
     } else {
         result.output += "```csv\n";
-        result.output += trim_like_bash(csv.output, head_lines);
+        result.output += trim_head(csv.output, head_lines);
         result.output += "\n```\n";
     }
     return result;
@@ -703,9 +702,7 @@ struct screener_paths {
 };
 
 screener_paths locate_screener(prompt_context const& ctx) {
-    // The bash version resolves the screener through the directory its script
-    // lives in (<prompts>/../bin/tse.find); this build knows the repo root
-    // directly, which is the same bin/ directory.
+    // The screener lives in the repo's bin/ directory (bin/tse.find).
     screener_paths paths;
     paths.tool = ctx.git_root.empty() ? std::filesystem::path{"bin"} / "tse.find" : ctx.git_root / "bin" / "tse.find";
     paths.tool_abs = paths.tool;
@@ -717,8 +714,8 @@ screener_paths locate_screener(prompt_context const& ctx) {
         paths.tool_abs = (ec || absolute.empty()) ? bin_dir.lexically_normal() : absolute;
         paths.tool_abs /= "tse.find";
     } else {
-        // bash's `cd ... && pwd` prints nothing when the directory is gone, so
-        // tool_abs degenerates to "/" + the basename it appends.
+        // A missing directory leaves no absolute path, so tool_abs
+        // degenerates to "/" + the basename it appends.
         paths.tool_abs = "/tse.find";
     }
     return paths;
@@ -818,7 +815,7 @@ void execute_tse_find_impl(prompt_context& ctx) {
     }
     // `help_text="$(trim_context "$help_text")"`: the captured text is capped by
     // sed and its trailing newline dropped, then printed with a single `\n`.
-    std::string help_text = trim_like_bash(captured(help_run.stdout_data), parsed.head_lines);
+    std::string help_text = trim_head(captured(help_run.stdout_data), parsed.head_lines);
 
     std::string output =
         std::format("{}{}\n{}{}{}", kGeneratorIntro, input.query, kHelpHeader, help_text, kBuildingCommand);

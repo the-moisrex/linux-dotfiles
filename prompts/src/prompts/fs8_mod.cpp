@@ -9,9 +9,9 @@ namespace prompt::prompts {
 
 namespace {
 
-// Port of _common.sh infer_lang (NOT the SDK's infer_lang, whose extension
-// table differs — e.g. .ixx maps to "text" in bash but "cpp" in the SDK).
-std::string bash_infer_lang(std::string const& filename) {
+// The old infer_lang table (NOT the SDK's infer_lang, whose extension table
+// differs — e.g. .ixx maps to "text" here but "cpp" in the SDK).
+std::string legacy_infer_lang(std::string const& filename) {
     std::string base = filename;
     auto slash = base.find_last_of('/');
     if (slash != std::string::npos) base = base.substr(slash + 1);
@@ -84,8 +84,8 @@ std::string bash_infer_lang(std::string const& filename) {
     return "text";
 }
 
-// Port of _common.sh embed_file: warns to stderr and emits nothing for a
-// missing file; otherwise a blank line, "File: <label>", ```lang fence, the
+// The embed_file shape this prompt uses: warns to stderr and emits nothing for
+// a missing file; otherwise a blank line, "File: <label>", ```lang fence, the
 // head-capped body, and a closing fence. infer_lang keys off the basename.
 void embed_file(std::string& out, std::string& err, std::filesystem::path const& path, std::string_view label,
                 std::optional<std::size_t> head_lines) {
@@ -98,7 +98,7 @@ void embed_file(std::string& out, std::string& err, std::filesystem::path const&
     std::string name = label.empty() ? base : std::string(label);
     out += '\n';
     out += std::format("File: {}\n", name);
-    out += std::format("```{}\n", bash_infer_lang(base));
+    out += std::format("```{}\n", legacy_infer_lang(base));
     out += trim_context_nl(read_file(path), head_lines);
     out += "```\n";
 }

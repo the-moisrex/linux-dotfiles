@@ -56,8 +56,8 @@ void test_unknown_defaults_to_auto() {
 }
 
 void test_all_prompts_registered() {
-    // Every prompt that the bash dispatcher served must be a native,
-    // executable prompt in this build (no script fallback anymore).
+    // Every prompt the command ships must be a native, executable prompt in
+    // this build (there is no script fallback).
     check(find_prompt("summarize") != nullptr, "summarize is registered");
     check(find_prompt("explain") != nullptr, "explain is registered");
     check(find_prompt("git.worktree.files") != nullptr, "dotted name registered");
@@ -68,8 +68,8 @@ void test_all_prompts_registered() {
         check(summarize->execute_fn != nullptr, "summarize has an executor");
     }
 
-    // The whole bash catalog (75 prompt files today) is native.
-    check(get_all_prompts().size() >= 75, "registry includes every prompt file");
+    // The whole catalog (75 prompts today) is registered natively.
+    check(get_all_prompts().size() >= 75, "registry includes every prompt");
 
     for (auto const& desc : get_all_prompts()) {
         std::string exec_msg = "prompt has an executor: " + std::string(desc.name);
@@ -240,8 +240,6 @@ void test_plan_chain() {
 } // namespace
 
 int main() {
-    init_prompt_registry();
-
     test_bare_prompt_name();
     test_prompt_with_args();
     test_chain_two_prompts();

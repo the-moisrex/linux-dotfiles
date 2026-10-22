@@ -18,15 +18,15 @@ void check(bool cond, char const* what) {
 
 // The exception surface the dispatcher (main.cpp) relies on: every failing
 // prompt throws a prompt_error that carries the exact stdout/stderr/exit code
-// the bash dispatcher produced, and the chain keeps running.
+// the dispatcher reports, and the chain keeps running.
 void test_exception_surface() {
-    // usage_error maps to bash's `exit 2`.
+    // usage_error maps to exit 2.
     usage_error usage{"Usage: prompt x\n"};
     check(usage.exit_code() == 2, "usage_error exits 2");
     check(std::string(usage.what()) == "Usage: prompt x\n", "usage_error keeps its message");
     check(usage.partial_output().empty(), "usage_error defaults to no stdout");
 
-    // soft_error maps to bash's `exit 1`.
+    // soft_error maps to exit 1.
     soft_error soft{"tse: boom\n"};
     check(soft.exit_code() == 1, "soft_error exits 1");
     check(soft.partial_output().empty(), "soft_error defaults to no stdout");

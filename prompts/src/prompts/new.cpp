@@ -42,7 +42,7 @@ static void execute_new(prompt_context& ctx) {
 
 Goal:
 Create a complete, ready-to-use implementation in `prompts/src/prompts/<name>.cpp` that generates an AI prompt.
-The native dispatcher in `prompts/` is a one-file-per-prompt C++ replacement for the bash `prompts-shell/` (its `prompt.sh` dispatcher + `*.sh` prompts); match the style, structure, and helpers of the prompts already there.
+The dispatcher in `prompts/` implements one file per prompt; match the style, structure, and helpers of the prompts already there.
 
 Requirements for the generated prompt:
 - Implement `static void execute_<name>(prompt_context&)` and `static void render_help_<name>(std::ostream&)`, then register the prompt at the end of the file:

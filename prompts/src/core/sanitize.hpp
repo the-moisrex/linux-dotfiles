@@ -20,7 +20,7 @@ result sanitize(std::string_view input);
 
 // One-line note the dispatcher prepends to the output when `redacted` is set, so
 // the model knows the placeholder tokens are redactions rather than the original
-// file/log text. Native-only: the bash reference does not emit it.
+// file/log text.
 inline constexpr std::string_view kRedactionLegend =
     "[prompt] Note: personal data below was redacted by the prompt pipeline — HOME, USER, HOSTNAME, IP_ADDRESS, "
     "MAC_ADDRESS, EMAIL_ADDRESS, PHONE_NUMBER and SSN are placeholders, not the original text.";

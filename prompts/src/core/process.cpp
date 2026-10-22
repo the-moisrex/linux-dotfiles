@@ -286,8 +286,8 @@ command_result command::run() {
 
 command_result run_script(std::string const& script, std::vector<std::string> const& extras,
                           std::string_view stdin_data, std::chrono::milliseconds timeout) {
-    // `bash -c <script> arg0 arg1 ...` replicates the prompt scripts' own
-    // invocation ($0 = script name, $@ = extras).
+    // `bash -c <script> arg0 arg1 ...` passes the extras as $0 and $1.. ($0 is
+    // the script name).
     command cmd{"bash", "-c", script};
     for (auto const& e : extras) cmd.arg(e);
     cmd.stdin_data(std::string(stdin_data));

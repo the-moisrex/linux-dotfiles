@@ -9,10 +9,10 @@ namespace prompt::prompts {
 
 namespace {
 
-// opportunities.sh is standalone (no _common.sh): it never reads stdin, never
-// embeds files, and applies no --head. --help/-h anywhere and the empty
-// category both print the help text; the native dispatcher intercepts
-// --help/-h before we run, so execute only sees the no-category case.
+// This prompt is standalone: it never reads stdin, never embeds files, and
+// applies no --head. --help/-h anywhere and the empty category both print the
+// help text; the dispatcher intercepts --help/-h before we run, so execute only
+// sees the no-category case.
 std::string opportunities_help() {
     return "Usage: prompt opportunities [CATEGORY] [EXTRA...]\n"
            "       prompt opportunities money\n"

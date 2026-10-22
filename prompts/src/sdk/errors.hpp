@@ -7,13 +7,12 @@
 namespace prompt {
 
 // A failing prompt throws this; the dispatcher catches it once and turns it
-// back into exactly what the bash dispatcher produced: `message` on stderr
-// (verbatim, unsanitized, including its trailing newline), `partial_output`
-// prepended to stdout (some prompts print their prompt text *and* fail), and
-// `exit_code` as the process status.
+// back into the process result: `message` on stderr (verbatim, unsanitized,
+// including its trailing newline), `partial_output` prepended to stdout (some
+// prompts print their prompt text *and* fail), and `exit_code` as the process
+// status.
 //
-// The chain keeps running after a failure — the first non-zero status wins,
-// exactly like the bash loop.
+// The chain keeps running after a failure — the first non-zero status wins.
 class prompt_error : public std::runtime_error {
   public:
     // NOLINTNEXTLINE(performance-unnecessary-value-param) — by value on purpose: callers std::move the message in.

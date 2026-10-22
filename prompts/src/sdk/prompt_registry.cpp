@@ -1,10 +1,8 @@
 #include "prompt_registry.hpp"
-#include "../core/fs.hpp"
 #include <algorithm>
 #include <array>
 #include <clocale>
 #include <cstring>
-#include <deque>
 #include <string>
 #include <vector>
 
@@ -17,16 +15,15 @@ std::size_t prompts_count = 0;
 } // namespace
 
 bool prompt_descriptor_less(prompt_descriptor const* a, prompt_descriptor const* b) noexcept {
-    // The bash reference (prompts-shell/) pipes whole `name<TAB>file` lines
-    // through `sort` under the caller's LC_COLLATE, and the file part can
-    // influence the collation result — so the key must include it verbatim.
+    // Locale-aware name ordering (LC_COLLATE from the environment) so
+    // `list`, `list-prompts` and `delegate` agree on one catalog order.
     static bool const locale_set = std::setlocale(LC_COLLATE, "") != nullptr;
     (void)locale_set;
-    std::string const ka = std::string(a->name) + '\t' + std::string(a->sort_file);
-    std::string const kb = std::string(b->name) + '\t' + std::string(b->sort_file);
+    std::string const ka(a->name);
+    std::string const kb(b->name);
     int const c = std::strcoll(ka.c_str(), kb.c_str());
     if (c != 0) return c < 0;
-    return a->name < b->name; // collation-equal keys: deterministic tiebreak
+    return a->name < b->name; // collation-equal names: deterministic tiebreak
 }
 
 std::span<prompt_descriptor const> get_all_prompts() { return {prompts_storage.data(), prompts_count}; }
@@ -53,16 +50,6 @@ std::vector<std::string_view> list_prompt_names() {
     return names;
 }
 
-void assign_sort_files(std::filesystem::path const& dir) {
-    // The keys must outlive the views; a deque keeps them stable.
-    static std::deque<std::string> keys;
-    for (std::size_t i = 0; i < prompts_count; ++i) {
-        std::string key = (dir / (std::string(prompts_storage[i].name) + ".sh")).string();
-        auto it = keys.emplace(keys.end(), std::move(key));
-        prompts_storage[i].sort_file = *it;
-    }
-}
-
 bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn, chain_role role,
                      sink_policy policy, bool stream_output, void (*preflight_fn)(prompt_context&)) noexcept {
@@ -73,7 +60,6 @@ bool register_prompt(std::string_view name, std::string_view help_summary, void 
         .execute_fn = execute_fn,
         .render_help_fn = render_help_fn,
         .complete_fn = complete_fn,
-        .sort_file = {},
         .role = role,
         .policy = policy,
         .stream_output = stream_output,
@@ -87,10 +73,6 @@ bool register_sink(std::string_view name, std::string_view help_summary, void (*
                    bool stream_output, void (*preflight_fn)(prompt_context&)) noexcept {
     return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, policy,
                            stream_output, preflight_fn);
-}
-
-void init_prompt_registry() {
-    assign_sort_files(fs::find_git_root().value_or(std::filesystem::current_path()) / "prompts-shell");
 }
 
 } // namespace prompt

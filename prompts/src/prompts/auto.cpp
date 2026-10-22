@@ -13,8 +13,7 @@ namespace prompt::prompts {
 namespace {
 
 bool is_compiler_output(std::string_view content) {
-    // auto.sh tests with `grep -qiE`, so the match is case-insensitive and
-    // can start on any line.
+    // The match is case-insensitive and can start on any line.
     static const std::regex compiler_regex(
         R"(:[0-9]+:([0-9]+:)? (error|warning|fatal error|note):|In file included from|undefined reference to|no matching function for call to|ld: symbol\(s\) not found|FAILED:|ninja: build stopped|make\[[0-9]+\]: \*\*\*)",
         std::regex::icase);
@@ -59,7 +58,7 @@ bool extract_stock_identifier(std::string_view content, std::string& out_identif
     return false;
 }
 
-// Approximation of the perl `\p{L}` test auto.sh runs: only letter
+// Approximation of a perl `\p{L}` test: only letter
 // characters count, English letters and Arabic-script letters (outside the
 // Arabic-only forms ة ي ك) stay untranslated, everything else translates.
 bool is_letter_codepoint(std::uint32_t cp) {
@@ -139,8 +138,8 @@ static void execute_auto(prompt_context& ctx) {
     bool has_stdin = ctx.stdin_consumed;
 
     if (has_stdin) {
-        // `$(cat)` strips every trailing newline, then auto.sh removes a
-        // trailing carriage return.
+        // Command substitution strips every trailing newline; drop a trailing
+        // carriage return too.
         input_buffer = ctx.stdin_content;
         while (!input_buffer.empty() && input_buffer.back() == '\n') input_buffer.pop_back();
         if (!input_buffer.empty() && input_buffer.back() == '\r') input_buffer.pop_back();
@@ -211,8 +210,8 @@ static void execute_auto(prompt_context& ctx) {
         if (std::filesystem::exists(p)) {
             auto ext = p.extension().string();
             auto fname = p.filename().string();
-            // bash auto.sh lists these as separate `case` arms whose bodies
-            // are identical; keep them separate for a 1:1 port.
+            // These extensions share one identical body; they stay separate
+            // arms only for readability of the extension list.
             // NOLINTBEGIN(bugprone-branch-clone)
             if (ext == ".cpp" || ext == ".hpp" || ext == ".cxx" || ext == ".hxx" || ext == ".cc" || ext == ".c" ||
                 ext == ".h") {
@@ -250,8 +249,8 @@ static void execute_auto(prompt_context& ctx) {
         }
     }
 
-    // bash auto.sh echoes the buffered input (stdin or clipboard) before
-    // running the chosen target, so the output shows what was detected.
+    // The buffered input (stdin or clipboard) is echoed before running the
+    // chosen target, so the output shows what was detected.
     std::string echo = input_buffer + "\n";
 
     // The buffer-derived stock identifier is only handed over when the
@@ -330,9 +329,9 @@ static void execute_auto(prompt_context& ctx) {
         return;
     }
 
-    // Every dispatch target of this binary is implemented natively; the
-    // dispatch above always resolves. (A missing target is a bug — report
-    // it like the bash dispatcher reports an unknown prompt.)
+    // Every dispatch target is implemented natively, so the dispatch above
+    // always resolves. (A missing target is a bug — report it as an unknown
+    // prompt.)
     throw prompt_error{3, "prompt auto: prompt '" + std::string(target_script) + "' not found\n", {}, false, has_stdin};
 }
 

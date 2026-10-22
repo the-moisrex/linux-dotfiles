@@ -10,9 +10,8 @@
 namespace prompt::prompts {
 
 static void execute_list(prompt_context& ctx) {
-    // list.sh runs init_prompt --no-files, so parse_arguments validates --head
-    // (and strips it) before the script's own --names loop runs; the value is
-    // never used.
+    // This prompt embeds no files, so --head is validated (and stripped) but
+    // its value is never used.
     head_lines_or_throw(ctx);
 
     bool names_only = false;
@@ -26,7 +25,7 @@ static void execute_list(prompt_context& ctx) {
         }
     }
 
-    // Sort by name (the bash list prompt sorts its collect_prompts output).
+    // Sort by name (shared with list-prompts/delegate).
     auto prompts = get_all_prompts();
     std::vector<prompt_descriptor const*> sorted;
     sorted.reserve(prompts.size());

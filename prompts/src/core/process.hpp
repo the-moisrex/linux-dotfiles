@@ -17,14 +17,11 @@ struct command_result {
     std::string stderr_data;
     int exit_code = 0;
     bool timed_out = false;
-    // Set by run_prompt_script when the script opted out of the clipboard
-    // via $PROMPT_NO_CLIPBOARD_FILE (bash dispatcher parity).
-    bool no_clipboard = false;
 };
 
 // How a child's stderr is handled.
 enum class stderr_mode : std::uint8_t {
-    inherit,   // the child writes straight to our stderr — what bash's `$(...)`
+    inherit,   // the child writes straight to our stderr — what a `$(...)`
                // capture does (the tool's diagnostics appear as they run).
     capture,   // piped into command_result::stderr_data.
     to_stdout, // `2>&1` — merged into command_result::stdout_data.
@@ -79,8 +76,8 @@ class command {
 };
 
 // Runs a bash script snippet (`/bin/bash -c <script>`), with "extras..." passed
-// as $0 $1 ... like prompt scripts do. This is the escape hatch: prefer argv
-// construction above unless the command needs a real shell.
+// as $0 $1 .... This is the escape hatch: prefer argv construction above unless
+// the command needs a real shell.
 command_result run_script(std::string const& script, std::vector<std::string> const& extras = {},
                           std::string_view stdin_data = {},
                           std::chrono::milliseconds timeout = std::chrono::seconds(30));

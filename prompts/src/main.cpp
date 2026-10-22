@@ -316,17 +316,12 @@ segment_result run_prompt(prompt::prompt_context& ctx, prompt::prompt_descriptor
 // format strings are literals and main has no recovery path.
 // NOLINTNEXTLINE(bugprone-exception-escape)
 int main(int argc, char** argv) {
-    // Every prompt registers itself before main (see sdk/prompt_registry.hpp);
-    // this only fills in the sort keys list/list-prompts order by.
-    prompt::init_prompt_registry();
-
     // Handle --help and --version early (only as first argument)
     if (argc > 1) {
         std::string_view arg(argv[1]);
         if (arg == "--help" || arg == "-h") {
-            // Mirrors the bash dispatcher's usage(); the Notes differ because
-            // the native dispatcher ships a fixed prompt set instead of
-            // scanning for prompt files.
+            // The dispatcher's usage text: it ships a fixed prompt set and
+            // never scans for prompt files.
             std::print(std::cout, "{}", R"(Usage:
   prompt --help
   prompt list
@@ -352,8 +347,6 @@ Examples:
 
 Notes:
   - Ships a fixed set of built-in prompts; it does not scan for prompt files.
-    (The bash reference under prompts-shell/ searches $XDG_CONFIG_DIRS/prompts
-    and its own directory and runs .sh/.txt/.md prompts.)
   - Sinks (.ai.chatgpt/.ai.dseek/.ai.gap/.ai.grok/.ai.kimi) wait for the
     preceding chain, send its text to the site, and continue with the answer.
     They share --with-context, --show-context, --on-error and --head.
@@ -504,9 +497,9 @@ Notes:
             if (std::filesystem::is_regular_file(full)) return full;
         }
 
-        // _common.sh resolve_input_file: filter the repo's files with fzf.
-        // stderr is silenced (fzf complains without a tty) because most
-        // callers capture the function through a command substitution.
+        // Filter the repo's files with fzf. stderr is silenced (fzf complains
+        // without a tty) because most callers capture the result through a
+        // command substitution.
         std::string name_str(name);
         std::vector<std::string> storage = {"bash", "-c"};
         if (git_root) {
@@ -528,8 +521,8 @@ Notes:
         return std::nullopt;
     };
 
-    // Read stdin if available. The bash dispatcher only tests for a pipe
-    // ([ -t 0 ]), so an empty pipe still counts as piped stdin.
+    // Read stdin if available: anything that is not a terminal counts as a
+    // pipe, so an empty pipe still yields (empty) piped stdin.
     if (isatty(STDIN_FILENO) == 0) {
         std::string stdin_content;
         std::string line;

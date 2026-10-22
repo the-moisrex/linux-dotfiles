@@ -113,8 +113,9 @@ std::string parse_frontmatter(std::filesystem::path const& file) {
     return data.dump();
 }
 
-// bash_infer_lang (same table as _common.sh).
-std::string bash_infer_lang(std::string const& filename) {
+// The extension table used by the old prompt scripts (kept verbatim so the
+// fenced language tags do not change).
+std::string legacy_infer_lang(std::string const& filename) {
     std::string base = filename;
     auto slash = base.find_last_of('/');
     if (slash != std::string::npos) base = base.substr(slash + 1);
@@ -442,7 +443,7 @@ static void execute_skill(prompt_context& ctx) {
             out += '\n';
             out += std::format("File: {}\n", file_name);
             out += '\n';
-            out += std::format("```{}\n", bash_infer_lang(file_name));
+            out += std::format("```{}\n", legacy_infer_lang(file_name));
             out += number_lines(trim_context_nl(read_file(fp), opts.head_lines), opts.numbered);
             out += "```\n";
         } else {

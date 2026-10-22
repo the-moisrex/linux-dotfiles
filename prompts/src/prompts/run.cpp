@@ -83,8 +83,8 @@ static void execute_run(prompt_context& ctx) {
         status_text = std::to_string(result.exit_code);
         description = "the `run` command";
     } else {
-        // run.sh only looks at $stdin_content, which _common.sh initializes
-        // empty and this script never fills in, so piped input is ignored.
+        // Only the stdin buffer matters here and run never fills it, so piped
+        // input is ignored.
         status_text = "unknown";
         description = "the piped `run` output";
     }

@@ -14,9 +14,9 @@ namespace prompt::prompts {
 
 namespace {
 
-// Byte-identical port of `_common.sh infer_lang` so the fenced language tag
-// matches the bash script (embed.cpp's infer_lang reorders CMakeLists.txt
-// after .txt and would emit "text" instead of "cmake").
+// The old fenced-language table, kept so CMakeLists.txt still tags as "cmake"
+// (embed.cpp's infer_lang reorders CMakeLists.txt after .txt and would emit
+// "text" instead).
 std::string_view infer_lang(std::string_view base) {
     auto after_last_dot = base.rfind('.');
     std::string_view ext = (after_last_dot == std::string_view::npos) ? base : base.substr(after_last_dot + 1);
