@@ -18,8 +18,8 @@ namespace {
 // pattern is fully anchored, i.e. an exact-name set.
 bool is_excluded(std::string const& name) {
     static const std::set<std::string> excluded = {
-        "english", "farsi", "auto",         "summarize",    "metadata", "tweets", "diagram",
-        "explain", "list",  "list-prompts", "ask-for-help", "ai-said",  "yt",
+        "english", "farsi", "auto",         "summarize", "metadata", "tweets", "diagram",
+        "explain", "list",  "list-prompts", "delegate",  "ai-said",  "yt",
     };
     return excluded.contains(name);
 }
@@ -51,7 +51,7 @@ std::string build_prompt_list() {
 
 } // namespace
 
-static void execute_ask_for_help(prompt_context& ctx) {
+static void execute_delegate(prompt_context& ctx) {
     auto head_lines = head_lines_or_throw(ctx);
     (void)head_lines; // the command-construction prompt embeds no head-capped files
 
@@ -121,14 +121,14 @@ static void execute_ask_for_help(prompt_context& ctx) {
            "\n";
 
     // No clipboard opt-out: bash only suppresses the inner `list.sh` copy (via
-    // PROMPT_NO_CLIPBOARD_FILE=/dev/null), so ask-for-help's own output copies
+    // PROMPT_NO_CLIPBOARD_FILE=/dev/null), so delegate's own output copies
     // like every other prompt's.
     ctx.out = std::move(out);
 }
 
-static void render_help_ask_for_help(std::ostream& os) {
-    os << R"EOF(Usage: prompt ask-for-help [--head N]
-       echo "I'm stuck on this problem..." | prompt ask-for-help [--head N]
+static void render_help_delegate(std::ostream& os) {
+    os << R"EOF(Usage: prompt delegate [--head N]
+       echo "I'm stuck on this problem..." | prompt delegate [--head N]
 
 Generates a ready-to-run `prompt` command line that bundles all the context needed to ask another AI for help with a coding problem.
 
@@ -146,9 +146,9 @@ Options:
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered =
-    prompt::register_prompt("ask-for-help",
+    prompt::register_prompt("delegate",
                             "Generates a ready-to-run `prompt` command line that bundles all the context needed to ask "
                             "another AI for help with a coding problem.",
-                            &execute_ask_for_help, &render_help_ask_for_help);
+                            &execute_delegate, &render_help_delegate);
 
 } // namespace prompt::prompts
