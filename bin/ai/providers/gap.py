@@ -38,6 +38,7 @@ import random
 import sys
 import time
 import uuid
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from .. import events as ev
 from .. import files as files_mod
@@ -51,7 +52,14 @@ EVENT_VERSION = 98
 CHAT_PATH = "/api/v1/get_chat/token/{token}"
 UPLOAD_PATH = "/api/v1/upload_file"
 PROJECTS_PATH = "/api/v1/projects"
-CHAT_LIST_PATH = "/api/v1/chat_list?limit=40&offset=0"
+CHAT_LIST_PAGE = 20       # smaller pages localise a stalled listing request
+CHAT_LIST_PATH = f"/api/v1/chat_list?limit={CHAT_LIST_PAGE}&offset=0"
+
+#: The site tarpits individual history requests.  Retry them in place instead
+#: of restarting the whole listing, then skip what still cannot be read.
+HISTORY_TIMEOUT = 20.0
+HISTORY_ATTEMPTS = 3
+HISTORY_BACKOFF = (0.5, 1.5)
 
 HEARTBEAT = 12.0        # send a heartbeat after this many idle seconds
 RECV_TIMEOUT = 2.0      # socket read slice, so we can heartbeat/poll
@@ -94,6 +102,49 @@ _SKIP_TYPES = ("text-loading",)
 #: ``message.extra_display.status`` / ``message.status`` values that end a turn.
 _DONE_STATUS = ("completed", "stopped")
 _FAILED_STATUS = ("error", "failed")
+
+
+def _history_json(url, headers):
+    """GET a history endpoint, retrying transient failures in place."""
+    last = None
+    for attempt in range(HISTORY_ATTEMPTS):
+        try:
+            return net.request_json(url, headers=headers, timeout=HISTORY_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001 - classify, then re-raise
+            last = exc
+            if attempt + 1 >= HISTORY_ATTEMPTS or not net.is_transient(exc):
+                raise
+            wait = HISTORY_BACKOFF[min(attempt, len(HISTORY_BACKOFF) - 1)]
+            print(f"gap: history: retrying in {wait:.1f}s ({exc})",
+                  file=sys.stderr)
+            time.sleep(wait)
+    raise last
+
+
+def _auth_failure(exc):
+    """An expired session must fail the listing, not be skipped as flaky."""
+    text = str(exc).casefold()
+    return any(marker in text for marker in
+               ("401", "403", "unauthorized", "forbidden"))
+
+
+def _chat_list_progress(url):
+    """Return ``(offset, page_size)`` from a chat-list URL."""
+    query = parse_qs(urlparse(url).query)
+    try:
+        offset = int((query.get("offset") or ["0"])[0])
+        page = int((query.get("limit") or [str(CHAT_LIST_PAGE)])[0])
+    except ValueError:
+        return None, CHAT_LIST_PAGE
+    return offset, max(1, page)
+
+
+def _chat_list_url(url, offset):
+    """Rebuild *url* with a new ``offset`` (used after skipping a page)."""
+    parts = urlparse(url)
+    query = parse_qs(parts.query)
+    query["offset"] = [str(offset)]
+    return urlunparse(parts._replace(query=urlencode(query, doseq=True)))
 
 
 class Gap(Provider):
@@ -207,21 +258,42 @@ class Gap(Provider):
         )
 
     def iter_chat_summaries(self, match, limit=None):
-        """Yield every chat in the sidebar (projects first, then the rest)."""
+        """Yield every chat in the sidebar (projects first, then the rest).
+
+        A single stalled project/page is skipped (and recorded in
+        ``self.list_skips``) so a transient edge failure cannot abort the whole
+        listing.  Project chats come first and are deduplicated against the
+        main list, which usually covers the skipped entries.
+        """
+        self.list_skips = []
         headers = self.history_headers(match)
         projects = {}
-        data = net.request_json(self.origin + PROJECTS_PATH, headers=headers,
-                                timeout=60)
-        for project in (data or {}).get("results") or []:
-            token = project.get("token")
-            if token:
-                projects[token] = project.get("name") or ""
+        try:
+            data = _history_json(self.origin + PROJECTS_PATH, headers)
+        except Exception as exc:  # noqa: BLE001 - the main list can still work
+            if _auth_failure(exc):
+                raise
+            print(f"gap: history: skipping projects ({exc})", file=sys.stderr)
+            self.list_skips.append(f"projects: {exc}")
+        else:
+            for project in (data or {}).get("results") or []:
+                token = project.get("token")
+                if token:
+                    projects[token] = project.get("name") or ""
 
         seen = set()
         count = 0
         for token, name in projects.items():
-            data = net.request_json(f"{self.origin}/api/v1/projects/{token}",
-                                    headers=headers, timeout=60)
+            try:
+                data = _history_json(
+                    f"{self.origin}/api/v1/projects/{token}", headers)
+            except Exception as exc:  # noqa: BLE001 - skip one project
+                if _auth_failure(exc):
+                    raise
+                print(f"gap: history: skipping project {name or token} "
+                      f"({exc})", file=sys.stderr)
+                self.list_skips.append(f"project:{token}")
+                continue
             for item in (data or {}).get("chats") or []:
                 chat_token = item.get("token")
                 if not chat_token or chat_token in seen:
@@ -235,8 +307,24 @@ class Gap(Provider):
                     return
 
         url = self.origin + CHAT_LIST_PATH
+        visited = set()
         while url:
-            data = net.request_json(url, headers=headers, timeout=60)
+            if url in visited:
+                break
+            visited.add(url)
+            try:
+                data = _history_json(url, headers)
+            except Exception as exc:  # noqa: BLE001 - skip one page
+                if _auth_failure(exc):
+                    raise
+                offset, page = _chat_list_progress(url)
+                print(f"gap: history: skipping chat list offset {offset} "
+                      f"({exc})", file=sys.stderr)
+                self.list_skips.append(f"chat_list:{offset}")
+                if offset is None:
+                    break
+                url = _chat_list_url(url, offset + page)
+                continue
             results = (data or {}).get("results") or []
             if not results:
                 break
@@ -250,6 +338,8 @@ class Gap(Provider):
                 if limit and count >= limit:
                     return
             url = (data or {}).get("next") or ""
+            if url.startswith("/"):
+                url = self.origin + url
 
     def fetch_chat(self, match, remote_id):
         """Fetch one chat and normalise its user/assistant turns."""

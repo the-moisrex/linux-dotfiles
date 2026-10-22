@@ -17,7 +17,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .. import history, session
+from .. import history, net, session
 from ..providers import all_providers
 from . import frontmatter, migrate as migrate_mod, render, rules
 from .store import Store, month_of, safe_title
@@ -51,16 +51,30 @@ def _store(args, create=False):
     return store
 
 
+#: Site names people naturally type mapped to the registry keys.
+PROVIDER_ALIASES = {
+    "gapgpt": "gap",
+    "gap-gpt": "gap",
+    "dseek": "deepseek",
+    "openai": "chatgpt",
+}
+
+
+def _canonical_provider(name):
+    key = name.strip()
+    return PROVIDER_ALIASES.get(key.casefold(), key)
+
+
 def _providers(requested):
     registry = all_providers()
     if not requested:
         return list(registry)
     names = []
     for item in requested:
-        for name in item.split(","):
-            name = name.strip()
-            if not name:
+        for part in item.split(","):
+            if not part.strip():
                 continue
+            name = _canonical_provider(part)
             if name not in registry:
                 raise LookupError(
                     f"unknown provider {name!r} (known: {', '.join(registry)})")
@@ -73,16 +87,6 @@ def _session(provider):
     return session.load(provider.session_target)
 
 
-_TRANSIENT = ("429", "too many requests", "timed out", "timeout", "curl: (28)",
-              "curl: (35)", "curl: (52)", "curl: (56)", "502", "503", "504",
-              "connection reset", "temporarily unavailable")
-
-
-def _transient(exc):
-    text = str(exc).casefold()
-    return any(marker in text for marker in _TRANSIENT)
-
-
 def _retry(label, operation, retries=3, delay=5.0):
     """Run *operation*, retrying transient HTTP/network failures."""
     attempt = 0
@@ -91,7 +95,7 @@ def _retry(label, operation, retries=3, delay=5.0):
             return operation()
         except Exception as exc:  # noqa: BLE001 - classify, then re-raise
             attempt += 1
-            if attempt >= retries or not _transient(exc):
+            if attempt >= retries or not net.is_transient(exc):
                 raise
             wait = max(0.0, delay) * (2 ** (attempt - 1))
             print(f"{label}: retrying in {wait:.0f}s ({exc})", file=sys.stderr)
@@ -102,8 +106,26 @@ def _provider_filter(args):
     values = getattr(args, "provider", None) or []
     names = []
     for item in values:
-        names.extend(part.strip() for part in item.split(",") if part.strip())
+        for part in item.split(","):
+            if not part.strip():
+                continue
+            name = _canonical_provider(part)
+            if name not in names:
+                names.append(name)
     return names
+
+
+def _check_provider_filter(args):
+    """Validate ``--provider`` for read commands (aliases included)."""
+    names = _provider_filter(args)
+    if not names:
+        return None
+    registry = all_providers()
+    for name in names:
+        if name not in registry:
+            return _fail(f"unknown provider {name!r} "
+                         f"(known: {', '.join(registry)})")
+    return None
 
 
 def _matches(local, args):
@@ -197,6 +219,10 @@ def cmd_sync(args):
             totals["failed"] += 1
             continue
 
+        skips = getattr(provider, "list_skips", None)
+        if skips:
+            totals.setdefault("incomplete", {})[name] = list(skips)
+
         todo = []
         for summary in summaries:
             local = local_map.get((summary.provider, summary.remote_id))
@@ -283,6 +309,9 @@ def cmd_sync(args):
 
 
 def cmd_last(args):
+    problem = _check_provider_filter(args)
+    if problem is not None:
+        return problem
     store = _store(args)
     scope = _scope(args, store)
     if args.chat:
@@ -350,6 +379,9 @@ def cmd_last(args):
 
 
 def cmd_list(args):
+    problem = _check_provider_filter(args)
+    if problem is not None:
+        return problem
     store = _store(args)
     scope = _scope(args, store)
     chats = [local for local in store.iter_local(scope) if _matches(local, args)]
@@ -453,7 +485,7 @@ def _add(args, chat_ref=None):
         store.commit(f"ai.save: reply to {local.title}", args.no_commit)
         return 0
 
-    provider = args.provider or "manual"
+    provider = _canonical_provider(args.provider or "manual")
     remote_id = args.id or str(uuid.uuid4())
     created = args.date or now
     title = args.title or next(
@@ -743,6 +775,8 @@ def cmd_providers(args):
             "label": cls.label,
             "session": cls.session_target,
             "default_model": cls.default_model,
+            "aliases": sorted(alias for alias, target
+                              in PROVIDER_ALIASES.items() if target == name),
         })
     if args.json:
         _json(rows)
@@ -750,6 +784,10 @@ def cmd_providers(args):
         for row in rows:
             print(f"{row['name']:<9} {row['label']:<10} "
                   f"{row['session']:<20} {row['default_model']}")
+        aliases = ", ".join(
+            f"{alias}={target}" for alias, target in PROVIDER_ALIASES.items())
+        if aliases:
+            print(f"\naliases: {aliases}")
     return 0
 
 
@@ -800,7 +838,8 @@ def build_parser():
     sync = sub.add_parser("sync", parents=[common],
                           help="fetch chats from the signed-in providers")
     sync.add_argument("--provider", action="append", metavar="NAME",
-                      help="only these providers (repeatable, comma separated)")
+                      help="only these providers (repeatable, comma separated; "
+                           "aliases: gapgpt=gap, dseek=deepseek)")
     sync.add_argument("--full", action="store_true",
                       help="re-fetch chats that look unchanged")
     sync.add_argument("--limit", type=int, default=0,
@@ -821,7 +860,8 @@ def build_parser():
 
     last = sub.add_parser("last", parents=[common],
                           help="print the newest saved message")
-    last.add_argument("--provider", action="append", metavar="NAME")
+    last.add_argument("--provider", action="append", metavar="NAME",
+                      help="only these providers (aliases accepted)")
     last.add_argument("--role", choices=("user", "assistant", "system", "tool"))
     last.add_argument("--kind", choices=("text", "thinking", "tool_call",
                                          "attachment"), default="text",
@@ -841,7 +881,8 @@ def build_parser():
 
     listing = sub.add_parser("list", parents=[common],
                              help="list stored chats")
-    listing.add_argument("--provider", action="append", metavar="NAME")
+    listing.add_argument("--provider", action="append", metavar="NAME",
+                         help="only these providers (aliases accepted)")
     listing.add_argument("--category")
     listing.add_argument("--tag", action="append")
     listing.add_argument("--month")

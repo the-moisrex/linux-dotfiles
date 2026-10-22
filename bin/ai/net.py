@@ -15,6 +15,19 @@ from http import HTTPStatus
 
 DEFAULT_IMPERSONATE = "firefox"
 
+#: Substrings in transport errors that are worth retrying.
+TRANSIENT_MARKERS = (
+    "429", "too many requests", "timed out", "timeout", "curl: (28)",
+    "curl: (35)", "curl: (52)", "curl: (56)", "502", "503", "504",
+    "connection reset", "temporarily unavailable",
+)
+
+
+def is_transient(exc):
+    """Whether *exc* looks like a rate limit, timeout or flaky edge."""
+    text = str(exc).casefold()
+    return any(marker in text for marker in TRANSIENT_MARKERS)
+
 
 class StreamError(Exception):
     """A transport or HTTP-level failure while talking to a provider."""
