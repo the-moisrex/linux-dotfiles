@@ -121,6 +121,10 @@ set_tests_properties(complete_values PROPERTIES PASS_REGULAR_EXPRESSION "mermaid
 add_test(NAME tse_analyze_instructions COMMAND $<TARGET_FILE:prompt> tse.analyze)
 set_tests_properties(tse_analyze_instructions PROPERTIES PASS_REGULAR_EXPRESSION "institutional analyst")
 
+# End-to-end smoke: the historical base-rate lens is instructions only too.
+add_test(NAME tse_analyze_history_instructions COMMAND $<TARGET_FILE:prompt> tse.analyze.history)
+set_tests_properties(tse_analyze_history_instructions PROPERTIES PASS_REGULAR_EXPRESSION "mid-trend correction")
+
 # End-to-end smoke: `length` turns a target into an answer-length instruction,
 # standalone and chained, with the exact/approximate and unit spellings.
 add_test(NAME length_exact COMMAND $<TARGET_FILE:prompt> .length =200)

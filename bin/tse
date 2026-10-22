@@ -1333,6 +1333,396 @@ def technicals(history_rows):
     return result
 
 
+# --- Historical corrections / consolidations -------------------------------
+#
+# A deterministic, structural scan over the adjusted closes the collector has
+# already fetched, so the analyst prompt reads measured episodes instead of
+# summing thousands of CSV rows. Episodes are selected by price structure only
+# — never by what happened afterwards — and the outcome columns are
+# measurements, not a filter. Daily حقیقی/حقوقی flow starts at 2018-11-26;
+# earlier rows keep their prices but report no flow.
+
+CORRECTION_MIN_DECLINE_PCT = 8.0
+CORRECTION_MAX_SESSIONS = 120
+CONSOLIDATION_MAX_WIDTH_PCT = 12.0
+CONSOLIDATION_MIN_SESSIONS = 15
+OUTCOME_WINDOW_SESSIONS = 250
+FLOW_HISTORY_FIRST_DATE = "1397/09/05"
+
+
+def corr_closing(row):
+    amount = row.get("adj_closing_rial")
+    return row.get("closing_rial") if amount is None else amount
+
+
+def corr_uptrend(closes, averages, index):
+    """Established uptrend: higher highs/lows over 3–6 months, rising MA50."""
+    if index < 120 or averages[index] is None or averages[index - 20] is None:
+        return False
+    recent, earlier = closes[index - 60:index], closes[index - 120:index - 60]
+    return (
+        closes[index] > averages[index]
+        and averages[index] > averages[index - 20]
+        and max(recent) > max(earlier)
+        and min(recent) > min(earlier)
+    )
+
+
+def corr_ma(closes, window=50):
+    averages = []
+    for index in range(len(closes)):
+        if index + 1 < window:
+            averages.append(None)
+            continue
+        averages.append(sum(closes[index + 1 - window:index + 1]) / window)
+    return averages
+
+
+def corr_swing_highs(closes, span=5):
+    """Fractal highs, ignoring the unfinished last `span` sessions."""
+    highs = []
+    for index in range(span, len(closes) - span):
+        window = closes[index - span:index + span + 1]
+        if closes[index] == max(window) and window.count(closes[index]) == 1:
+            highs.append(index)
+    return highs
+
+
+def corr_flow(rows, start, end):
+    """Legal (حقوقی) flow totals over an inclusive session range."""
+    sessions = end - start + 1
+    buy = sell = volume = 0
+    covered = 0
+    for index in range(start, end + 1):
+        row = rows[index]
+        legal_buy = row.get("legal_buy_shares")
+        legal_sell = row.get("legal_sell_shares")
+        if legal_buy is None or legal_sell is None:
+            continue
+        covered += 1
+        buy += legal_buy
+        sell += legal_sell
+        volume += row.get("volume_shares") or 0
+    if not covered:
+        return {
+            "legal_buy_shares": None,
+            "legal_sell_shares": None,
+            "net_legal_shares": None,
+            "net_flow_pct_of_volume": None,
+            "volume_shares": None,
+            "flow_coverage_pct": 0.0,
+        }
+    net = buy - sell
+    return {
+        "legal_buy_shares": int(buy),
+        "legal_sell_shares": int(sell),
+        "net_legal_shares": int(net),
+        "net_flow_pct_of_volume": round(net / volume * 100, 2) if volume else None,
+        "volume_shares": int(volume),
+        "flow_coverage_pct": round(covered / sessions * 100, 1),
+    }
+
+
+def corr_percent(numerator, denominator):
+    return (
+        round((numerator / denominator - 1) * 100, 2) if denominator else None
+    )
+
+
+def corr_level(amount):
+    return round(amount, 2) if amount is not None else None
+
+
+def corr_episode(rows, closes, high, trough):
+    """One mid-trend correction, measured from its swing high to its low."""
+    result = {
+        "start_date": rows[high].get("date"),
+        "end_date": rows[trough].get("date"),
+        "high_close_adj_rial": round(closes[high], 2),
+        "low_close_adj_rial": round(closes[trough], 2),
+        "decline_pct": corr_percent(closes[trough], closes[high]),
+        "sessions": trough - high,
+    }
+    result.update(corr_flow(rows, high, trough))
+    window_end = min(len(rows), trough + OUTCOME_WINDOW_SESSIONS + 1)
+    peak = trough
+    for index in range(trough, window_end):
+        if closes[index] > closes[peak]:
+            peak = index
+    breakout = None
+    for index in range(trough + 1, window_end):
+        if closes[index] > closes[high]:
+            breakout = index
+            break
+    result.update(
+        {
+            "rally_from_low_pct": corr_percent(closes[peak], closes[trough]),
+            "sessions_to_peak": peak - trough,
+            "broke_prior_high": breakout is not None,
+            "sessions_to_break": breakout - trough if breakout is not None else None,
+            "break_date": rows[breakout].get("date") if breakout is not None else None,
+            "return_after_break_20_pct": (
+                corr_percent(closes[breakout + 20], closes[breakout])
+                if breakout is not None and breakout + 20 < len(rows)
+                else None
+            ),
+            "return_after_break_60_pct": (
+                corr_percent(closes[breakout + 60], closes[breakout])
+                if breakout is not None and breakout + 60 < len(rows)
+                else None
+            ),
+            "outcome_window_complete": trough + OUTCOME_WINDOW_SESSIONS < len(rows),
+            "low_close_raw_rial": corr_level(rows[trough].get("closing_rial")),
+            "low_low_raw_rial": corr_level(
+                min(
+                    (
+                        row["low_rial"]
+                        for row in rows[high:trough + 1]
+                        if row.get("low_rial") is not None
+                    ),
+                    default=None,
+                )
+            ),
+            "prior_high_raw_rial": corr_level(rows[high].get("closing_rial")),
+        }
+    )
+    return result
+
+
+def corr_consolidation(rows, closes, start, end):
+    """One sideways range: width, flow and the breakout that followed."""
+    high = max(closes[start:end + 1])
+    low = min(closes[start:end + 1])
+    result = {
+        "start_date": rows[start].get("date"),
+        "end_date": rows[end].get("date"),
+        "width_pct": round((high / low - 1) * 100, 2),
+        "sessions": end - start + 1,
+        "high_close_adj_rial": round(high, 2),
+        "low_close_adj_rial": round(low, 2),
+    }
+    result.update(corr_flow(rows, start, end))
+    before = [
+        row["volume_shares"]
+        for row in rows[max(0, start - 60):start]
+        if row.get("volume_shares") is not None
+    ]
+    inside = [
+        row["volume_shares"]
+        for row in rows[start:end + 1]
+        if row.get("volume_shares") is not None
+    ]
+    result["volume_vs_before_pct"] = (
+        corr_percent(sum(inside) / len(inside), sum(before) / len(before))
+        if before
+        and inside
+        and sum(before) > 0
+        else None
+    )
+    horizon = min(len(rows) - 1, end + 60)
+    peak = max(closes[end + 1:horizon + 1], default=high)
+    result["breakout_pct"] = corr_percent(peak, high)
+    breakout = next(
+        (
+            index
+            for index in range(end + 1, min(len(rows), end + 121))
+            if closes[index] > high
+        ),
+        None,
+    )
+    result["breakout_date"] = rows[breakout].get("date") if breakout else None
+    result["breakout_held"] = (
+        closes[horizon] > high if horizon > end else None
+    )
+    return result
+
+
+def corr_current(rows, closes, averages, long_average):
+    """The newest episode: a correction or range still in progress, if any."""
+    if not rows:
+        return None
+    last = len(closes) - 1
+    window = max(0, last - 120)
+    high = max(range(window, last + 1), key=lambda index: closes[index])
+    current_close = closes[last]
+    decline = corr_percent(current_close, closes[high])
+    sessions = last - high
+    width = corr_percent(max(closes[high:]), min(closes[high:]))
+    status = "no qualifying episode"
+    if decline is not None and decline <= -CORRECTION_MIN_DECLINE_PCT:
+        status = "correction in progress"
+    elif (
+        width is not None
+        and width <= CONSOLIDATION_MAX_WIDTH_PCT
+        and sessions >= CONSOLIDATION_MIN_SESSIONS
+        and corr_uptrend(closes, averages, high)
+    ):
+        status = "consolidation in progress"
+    result = {
+        "status": status,
+        "start_date": rows[high].get("date"),
+        "last_date": rows[last].get("date"),
+        "high_close_adj_rial": round(closes[high], 2),
+        "current_close_adj_rial": round(current_close, 2),
+        "decline_pct": decline,
+        "sessions": sessions,
+        "range_width_pct": width,
+        "price_vs_ma_50_pct": (
+            corr_percent(current_close, averages[last])
+            if averages[last] is not None
+            else None
+        ),
+        "price_vs_ma_200_pct": (
+            corr_percent(current_close, long_average[last])
+            if long_average[last] is not None
+            else None
+        ),
+        "prior_high_raw_rial": corr_level(rows[high].get("closing_rial")),
+        "last_close_raw_rial": corr_level(rows[last].get("closing_rial")),
+        "last_low_raw_rial": corr_level(rows[last].get("low_rial")),
+    }
+    result.update(corr_flow(rows, high, last))
+    return result
+
+
+def corr_baseline(closes, averages):
+    """Unconditioned forward returns over every uptrend session."""
+    forward_60 = []
+    forward_250 = []
+    new_high = 0
+    uptrend_sessions = 0
+    for index in range(len(closes)):
+        if not corr_uptrend(closes, averages, index):
+            continue
+        uptrend_sessions += 1
+        if index + 60 < len(closes):
+            forward_60.append(closes[index + 60] / closes[index] - 1)
+        if index + 250 < len(closes):
+            forward_250.append(closes[index + 250] / closes[index] - 1)
+        threshold = max(closes[max(0, index - 60):index], default=None)
+        if threshold is None:
+            continue
+        if any(
+            value > threshold
+            for value in closes[index + 1:min(len(closes), index + 251)]
+        ):
+            new_high += 1
+    return {
+        "uptrend_sessions": uptrend_sessions,
+        "median_forward_60_pct": (
+            round(statistics.median(forward_60) * 100, 2) if forward_60 else None
+        ),
+        "share_positive_forward_60_pct": (
+            round(100 * sum(value > 0 for value in forward_60) / len(forward_60), 1)
+            if forward_60
+            else None
+        ),
+        "median_forward_250_pct": (
+            round(statistics.median(forward_250) * 100, 2) if forward_250 else None
+        ),
+        "share_positive_forward_250_pct": (
+            round(100 * sum(value > 0 for value in forward_250) / len(forward_250), 1)
+            if forward_250
+            else None
+        ),
+        "share_new_high_within_250_pct": (
+            round(100 * new_high / uptrend_sessions, 1) if uptrend_sessions else None
+        ),
+    }
+
+
+def corrections(history_rows):
+    """Historical corrections, consolidations, the current episode and a baseline."""
+    rows = [row for row in history_rows if corr_closing(row) is not None]
+    if len(rows) < 130:
+        return None
+    closes = [corr_closing(row) for row in rows]
+    averages = corr_ma(closes)
+    long_average = corr_ma(closes, 200)
+    episodes = []
+    last_trough = -1
+    for high in corr_swing_highs(closes):
+        if high <= last_trough + 5:
+            continue
+        if not corr_uptrend(closes, averages, high):
+            continue
+        trough = None
+        for index in range(
+            high + 1, min(len(rows) - 1, high + CORRECTION_MAX_SESSIONS) + 1
+        ):
+            if closes[index] > closes[high]:
+                break
+            if trough is None or closes[index] < closes[trough]:
+                trough = index
+        if trough is None or trough - high < 3:
+            continue
+        decline = corr_percent(closes[trough], closes[high])
+        if decline is None or decline > -CORRECTION_MIN_DECLINE_PCT:
+            continue
+        episodes.append(corr_episode(rows, closes, high, trough))
+        last_trough = trough
+    consolidations = []
+    index = 0
+    last_end = -1
+    while index <= len(rows) - CONSOLIDATION_MIN_SESSIONS:
+        if index <= last_end + 10:
+            index = last_end + 11
+            continue
+        end = index + CONSOLIDATION_MIN_SESSIONS - 1
+        high = max(closes[index:end + 1])
+        low = min(closes[index:end + 1])
+        while end + 1 < len(rows):
+            candidate_high = max(high, closes[end + 1])
+            candidate_low = min(low, closes[end + 1])
+            width = corr_percent(candidate_high, candidate_low)
+            if width is None or width > CONSOLIDATION_MAX_WIDTH_PCT:
+                break
+            high, low = candidate_high, candidate_low
+            end += 1
+        if end - index + 1 >= CONSOLIDATION_MIN_SESSIONS and corr_uptrend(
+            closes, averages, index
+        ):
+            sessions = end - index + 1
+            downs = sum(
+                1
+                for position in range(index + 1, end + 1)
+                if closes[position] < closes[position - 1]
+            )
+            ups = sum(
+                1
+                for position in range(index + 1, end + 1)
+                if closes[position] > closes[position - 1]
+            )
+            # A one-way leg is not a range: require real oscillation inside it.
+            oscillates = downs >= max(3, sessions * 0.2) and ups >= max(
+                3, sessions * 0.2
+            )
+            start_date = rows[index].get("date")
+            end_date = rows[end].get("date")
+            if oscillates and not any(
+                episode["start_date"] <= start_date <= episode["end_date"]
+                or start_date <= episode["start_date"] <= end_date
+                for episode in episodes
+            ):
+                consolidations.append(corr_consolidation(rows, closes, index, end))
+                last_end = end
+            index = end + 1
+        else:
+            index += 1
+    return {
+        "window": {
+            "first": rows[0].get("date"),
+            "last": rows[-1].get("date"),
+            "sessions": len(rows),
+        },
+        "flow_from": FLOW_HISTORY_FIRST_DATE,
+        "corrections": episodes,
+        "consolidations": consolidations,
+        "current": corr_current(rows, closes, averages, long_average),
+        "baseline": corr_baseline(closes, averages),
+    }
+
+
 def detect_fund(isin, industry, sub_industry, units=None):
     label = normal(industry) + " " + normal(sub_industry)
     if not isinstance(isin, str) and not units and "صندوق" not in label:
@@ -1942,6 +2332,7 @@ def collect(client, symbol, days, adjusted=False, skip=frozenset()):
         "indexes": None,
         "statistics": None,
         "technicals": None,
+        "corrections": None,
         "last_book": None,
         "market_context": None,
         "history": None,
@@ -2008,6 +2399,15 @@ def collect(client, symbol, days, adjusted=False, skip=frozenset()):
                 else history_data
             )
             output["technicals"] = technicals(rows)
+            if "corrections" not in skip:
+                output["corrections"] = (
+                    corrections(rows)
+                    if adjusted
+                    else {
+                        "note": "corrections need split/dividend-adjusted prices: "
+                        "run without --unadjusted"
+                    }
+                )
         if "book" not in skip:
             session = last_completed_session(history_data, now)
             if session:
@@ -2069,6 +2469,133 @@ def codal_cache_lines(cache):
         "Cached Codal data (`tse.codal snapshot --refresh` refetches):",
         *items,
     ]
+
+
+CORRECTION_COLUMNS = (
+    "start_date",
+    "end_date",
+    "sessions",
+    "high_close_adj_rial",
+    "low_close_adj_rial",
+    "decline_pct",
+    "legal_buy_shares",
+    "legal_sell_shares",
+    "net_legal_shares",
+    "net_flow_pct_of_volume",
+    "volume_shares",
+    "flow_coverage_pct",
+    "rally_from_low_pct",
+    "sessions_to_peak",
+    "broke_prior_high",
+    "sessions_to_break",
+    "break_date",
+    "return_after_break_20_pct",
+    "return_after_break_60_pct",
+    "outcome_window_complete",
+    "prior_high_raw_rial",
+    "low_close_raw_rial",
+    "low_low_raw_rial",
+)
+
+CONSOLIDATION_COLUMNS = (
+    "start_date",
+    "end_date",
+    "sessions",
+    "width_pct",
+    "high_close_adj_rial",
+    "low_close_adj_rial",
+    "net_legal_shares",
+    "net_flow_pct_of_volume",
+    "flow_coverage_pct",
+    "volume_vs_before_pct",
+    "breakout_pct",
+    "breakout_date",
+    "breakout_held",
+)
+
+CURRENT_COLUMNS = (
+    "status",
+    "start_date",
+    "last_date",
+    "sessions",
+    "high_close_adj_rial",
+    "current_close_adj_rial",
+    "decline_pct",
+    "range_width_pct",
+    "net_legal_shares",
+    "net_flow_pct_of_volume",
+    "flow_coverage_pct",
+    "price_vs_ma_50_pct",
+    "price_vs_ma_200_pct",
+    "prior_high_raw_rial",
+    "last_close_raw_rial",
+    "last_low_raw_rial",
+)
+
+
+def csv_block(rows, columns):
+    buffer = io.StringIO()
+    writer = csv.DictWriter(
+        buffer, fieldnames=columns, lineterminator="\n", extrasaction="ignore"
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+    return ["```csv", buffer.getvalue().rstrip(), "```"]
+
+
+def corrections_markdown(value):
+    """The precomputed historical base-rate section."""
+    lines = ["", "## Historical corrections / اصلاحات تاریخی"]
+    note = value.get("note") if isinstance(value, dict) else None
+    if note:
+        lines.append(note)
+        return lines
+    window = value.get("window") or {}
+    lines.append(
+        f"Window: {window.get('first')}–{window.get('last')} "
+        f"({window.get('sessions')} sessions). Episodes are selected by price structure only — "
+        "never by what followed them — so the outcome columns are measurements, not a filter. "
+        "Percentages use split/dividend-adjusted closes; the `*_raw_rial` columns are the levels that "
+        f"actually traded. Daily حقیقی/حقوقی flow is available from {value.get('flow_from')} only: "
+        "earlier episodes report empty flow, which is unknown, not zero."
+    )
+    episodes = value.get("corrections") or []
+    lines.extend(("", f"### Corrections ({len(episodes)})"))
+    lines.extend(
+        csv_block(episodes, CORRECTION_COLUMNS)
+        if episodes
+        else ["None met the structural definition in this window."]
+    )
+    consolidations = value.get("consolidations") or []
+    lines.extend(("", f"### Consolidations ({len(consolidations)})"))
+    lines.extend(
+        csv_block(consolidations, CONSOLIDATION_COLUMNS)
+        if consolidations
+        else ["None met the structural definition in this window."]
+    )
+    current = value.get("current")
+    lines.extend(("", "### Current episode"))
+    lines.extend(
+        csv_block([current], CURRENT_COLUMNS)
+        if current
+        else ["Not available: the history is too short."]
+    )
+    baseline = value.get("baseline") or {}
+    if baseline.get("uptrend_sessions"):
+        lines.extend(
+            (
+                "",
+                "Baseline over "
+                f"{baseline['uptrend_sessions']} uptrend sessions: median forward 60-session return "
+                f"{baseline.get('median_forward_60_pct')}% "
+                f"({baseline.get('share_positive_forward_60_pct')}% positive), "
+                f"median forward 250-session return {baseline.get('median_forward_250_pct')}% "
+                f"({baseline.get('share_positive_forward_250_pct')}% positive), "
+                f"{baseline.get('share_new_high_within_250_pct')}% reached a new 60-session high "
+                "within 250 sessions.",
+            )
+        )
+    return lines
 
 
 def markdown(data):
@@ -2212,6 +2739,8 @@ def markdown(data):
                     "```",
                 )
             )
+    if data.get("corrections") is not None:
+        lines.extend(corrections_markdown(data["corrections"]))
     if data["errors"]:
         lines.extend(
             (
@@ -2377,7 +2906,7 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 action="append",
                 metavar="NAME",
                 help=(
-                    "Skip a section: book, statistics, breadth"
+                    "Skip a section: book, statistics, breadth, corrections"
                     " (repeatable, comma-separated)"
                 ),
             )
@@ -2396,12 +2925,12 @@ History options: --full (all records) is the default; --days N overrides it.""",
                 name = name.strip().lower()
                 if name:
                     skip.add(name)
-        unknown = skip - {"book", "statistics", "breadth"}
+        unknown = skip - {"book", "statistics", "breadth", "corrections"}
         if unknown:
             parser.error(
                 "unknown --without name(s): "
                 + ", ".join(sorted(unknown))
-                + " (choose from book, statistics, breadth)"
+                + " (choose from book, statistics, breadth, corrections)"
             )
     if args.command in ("snapshot", "markdown"):
         return render_snapshot_command(args.command, args.path)

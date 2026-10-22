@@ -31,7 +31,7 @@ static void render_help_tse(std::ostream& os) {
     os << R"EOF(Usage: prompt tse [<symbol|finglish|ISIN|insCode|URL>] [--days N | --full] [--without NAME] [--unadjusted] [--head N]
        prompt tse <FILE.stock>... [--head N]
 
-Fetch the raw TSETMC dataset for an Iranian بورس instrument — market data, fundamentals (price ranges, average volume, fund NAV), technicals (returns, volatility, ATR, moving averages, RSI, drawdown), market benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP growth, whole-market breadth over the last sessions) and the last completed session's opening-auction and close order books — as Markdown, with no analysis instructions attached. Codal filings are not fetched by this prompt: chain `.tse.codal` when they are needed (it borrows this prompt's symbol unless given its own), then `.tse.analyze` for the institutional analysis, or `.tse.intraday`/`.tse.intraday.analysis` for a same-day verdict. Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the other `.tse*` data prompts in the chain are searched, then the clipboard. One or more `.stock` snapshot files (written by tse.snapshot) are rendered from cache instead, warning when a snapshot is older than 24 hours.
+Fetch the raw TSETMC dataset for an Iranian بورس instrument — market data, fundamentals (price ranges, average volume, fund NAV), technicals (returns, volatility, ATR, moving averages, RSI, drawdown), historical corrections (structural mid-trend correction and consolidation episodes with their حقیقی/حقوقی flow and measured outcomes), market benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP growth, whole-market breadth over the last sessions) and the last completed session's opening-auction and close order books — as Markdown, with no analysis instructions attached. Codal filings are not fetched by this prompt: chain `.tse.codal` when they are needed (it borrows this prompt's symbol unless given its own), then `.tse.analyze` for the institutional analysis, or `.tse.intraday`/`.tse.intraday.analysis` for a same-day verdict. Accepts a Persian symbol, a finglish name (`foolad`, `khodro`), a fuzzy/company-name fragment, an ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the other `.tse*` data prompts in the chain are searched, then the clipboard. One or more `.stock` snapshot files (written by tse.snapshot) are rendered from cache instead, warning when a snapshot is older than 24 hours.
 
 An Iranian IP is required for the public data sources. Prices are in rial.
 
@@ -43,12 +43,13 @@ Examples:
   prompt tse stocks/14050717_فولاد_IRO1FOLD0009.stock
   prompt tse فولاد .note "compare with فخوز"
   prompt .tse فولاد .tse.analyze
+  prompt .tse فولاد .tse.analyze.history
   prompt .tse فولاد .tse.codal .tse.intraday .tse.analyze
 
 Options:
   --days N         Number of daily trading records (max: 365; default: full history)
   --full           Include all available daily records (default; may be a large prompt)
-  --without NAME   Skip a section: book, statistics, breadth
+  --without NAME   Skip a section: book, statistics, breadth, corrections
   --unadjusted     Show only unadjusted prices (default includes split/dividend-adjusted)
   --head N         Limit lines of collected context
   -h, --help   Show this help
@@ -64,8 +65,10 @@ already contain a Codal block still render it; new ones contain market data only
 bool const registered = prompt::register_prompt(
     "tse",
     "Fetch the raw TSETMC dataset for an Iranian بورس instrument — market data, fundamentals (price ranges, "
-    "average volume, fund NAV), technicals (returns, volatility, ATR, moving averages, RSI, drawdown), market "
-    "benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP growth, whole-market breadth over "
+    "average volume, fund NAV), technicals (returns, volatility, ATR, moving averages, RSI, drawdown), "
+    "historical corrections (structural mid-trend correction and consolidation episodes with their حقیقی/حقوقی "
+    "flow and measured outcomes), market benchmarks, market context (free-market USD/IRR, Iran CPI inflation and GDP "
+    "growth, whole-market breadth over "
     "the last sessions) and the last completed session's opening-auction and close order books — as Markdown, with "
     "no analysis instructions attached. Codal filings are opt-in: chain `.tse.codal` (it borrows this prompt's "
     "symbol), then `.tse.analyze` for the analytical prompt, or use `.tse.intraday` + "

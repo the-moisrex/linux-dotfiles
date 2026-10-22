@@ -139,6 +139,10 @@ void test_registry_wiring() {
     check(find_prompt("tse.analyze") != nullptr && find_prompt("tse.analyze")->complete_fn == nullptr,
           "tse.analyze takes no arguments, so it registers no complete_fn");
 
+    check(find_prompt("tse.analyze.history") != nullptr, "tse.analyze.history is registered");
+    check(find_prompt("tse.analyze.history") != nullptr && find_prompt("tse.analyze.history")->complete_fn == nullptr,
+          "tse.analyze.history takes no arguments, so it registers no complete_fn");
+
     check(find_prompt("tse.intraday.analysis") != nullptr, "tse.intraday.analysis is registered");
     check(find_prompt("tse.intraday.analysis") != nullptr &&
               find_prompt("tse.intraday.analysis")->complete_fn == nullptr,
