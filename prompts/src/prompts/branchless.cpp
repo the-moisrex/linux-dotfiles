@@ -6,8 +6,8 @@
 
 namespace prompt::prompts {
 
-static void execute_branchless(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_branchless(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output;
     output +=
@@ -44,7 +44,7 @@ OUTPUT:
     output += '\n';
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += embed_file_block(file, opts);
     }
@@ -52,8 +52,8 @@ OUTPUT:
         error += std::format("Warning: File not found or is not a regular file: {}\n", std::string(arg));
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_branchless(std::ostream& os) {

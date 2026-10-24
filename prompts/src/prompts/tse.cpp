@@ -11,20 +11,21 @@ static void render_help_tse(std::ostream& os);
 // can be piped or chained into any workflow (`prompt tse فولاد .note "compare
 // with فخوز"`). The analysis prompt is a separate, data-free lens:
 // `prompt .tse فولاد .tse.analyze`.
-static void execute_tse(prompt_context& ctx) {
-    auto config = tse_data::parse_args(ctx, "tse", &render_help_tse);
+static void execute_tse(view const& v, result& r) {
+    auto config = tse_data::parse_args(v, "tse", &render_help_tse);
     if (config.failed) {
         throw prompt_error{config.exit_code, std::move(config.error), ""};
     }
 
     std::string errors;
-    std::string output = tse_data::collect(ctx, config, errors);
+    std::string output = tse_data::collect(v, config, errors);
 
     if (!errors.empty()) {
-        ctx.err = std::move(errors);
+        r.err = std::move(errors);
     }
-    ctx.save_hint = tse_data::save_stem(config);
-    ctx.out = std::move(output);
+    r.published.set(keys::save_stem, tse_data::save_stem(config));
+    tse_data::publish_identity(r, config.symbol);
+    r.out = std::move(output);
 }
 
 static void render_help_tse(std::ostream& os) {
@@ -80,6 +81,7 @@ bool const registered = prompt::register_prompt(
     "no argument the other `.tse*` data prompts in the chain are searched, then the clipboard. One or more "
     "`.stock` snapshot files (written by tse.snapshot) "
     "are rendered from cache instead, warning when a snapshot is older than 24 hours.",
-    &execute_tse, &render_help_tse, &tse_data::complete_instrument);
+    &execute_tse, &render_help_tse, &tse_data::complete_instrument, chain_role::normal, true, nullptr,
+    &tse_data::declare_identifier);
 
 } // namespace prompt::prompts

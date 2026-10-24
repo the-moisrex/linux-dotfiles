@@ -25,8 +25,8 @@ std::string embed_plan_file(std::filesystem::path const& path, file_options opts
 
 } // namespace
 
-static void execute_plan(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_plan(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output;
     output += R"HELP(You are in PLAN MODE. Your goal is to produce a detailed, decision-complete
@@ -95,9 +95,9 @@ Produce a structured plan with these sections:
     output += '\n';
 
     std::string error;
-    for (auto const& arg : positional_args(ctx)) {
+    for (auto const& arg : positional_args(v)) {
         // plan.sh: resolve_input_file first, then embed_file on the result.
-        auto resolved = resolve_input_file(ctx, arg);
+        auto resolved = resolve_input_file(v.env, arg);
         std::filesystem::path file(arg);
         if (resolved && std::filesystem::is_regular_file(*resolved)) {
             output += embed_plan_file(*resolved, opts);
@@ -108,8 +108,8 @@ Produce a structured plan with these sections:
         }
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_plan(std::ostream& os) {

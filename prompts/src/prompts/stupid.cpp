@@ -7,8 +7,8 @@
 
 namespace prompt::prompts {
 
-static void execute_stupid(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_stupid(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(Find the stupid mistakes in this code.
 Focus on obvious bugs, wrong assumptions, copy-paste errors, bad edge cases, misleading names, missing checks, and anything else that would make an experienced reviewer say 'well that was silly'.
@@ -18,7 +18,7 @@ At the end, suggest small git patches.
 )PROMPT";
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
@@ -29,8 +29,8 @@ At the end, suggest small git patches.
         warn_missing_file(error, arg);
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_stupid(std::ostream& os) {

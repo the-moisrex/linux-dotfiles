@@ -92,20 +92,20 @@ std::string strip_trailing_newlines(std::string_view s) {
 
 } // namespace
 
-static void execute_git_files(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_git_files(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
-    auto file_args = positional_args(ctx);
+    auto file_args = positional_args(v);
 
     // Resolve inputs. With no args the script falls back to `select_files`
-    // (fzf -m); the native dispatcher wires select_files(ctx) to that.
+    // (fzf -m); the native dispatcher wires select_files(v.env) to that.
     std::vector<std::filesystem::path> selected;
     std::string errors;
     if (file_args.empty()) {
-        selected = select_files(ctx);
+        selected = select_files(v.env);
     } else {
         for (auto const& arg : file_args) {
-            auto resolved = resolve_input_file(ctx, arg);
+            auto resolved = resolve_input_file(v.env, arg);
             if (!resolved) {
                 errors += std::format("prompt git.files: file not found: {}\n", arg);
                 continue;
@@ -120,7 +120,7 @@ static void execute_git_files(prompt_context& ctx) {
     }
 
     std::optional<std::filesystem::path> git_root;
-    if (!ctx.git_root.empty()) git_root = ctx.git_root;
+    if (!v.env.git_root.empty()) git_root = v.env.git_root;
 
     std::string output;
     for (auto const& file : selected) {
@@ -142,9 +142,9 @@ static void execute_git_files(prompt_context& ctx) {
     }
 
     if (!errors.empty()) {
-        ctx.err = std::move(errors);
+        r.err = std::move(errors);
     }
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_git_files(std::ostream& os) {

@@ -50,27 +50,34 @@ std::filesystem::path bin_tool(std::string_view name, std::filesystem::path cons
                ((std::filesystem::status(p, ec).permissions() & std::filesystem::perms::owner_exec) !=
                 std::filesystem::perms::none);
     };
+    // Test each candidate as it is produced (in search order) instead of
+    // building the whole list first: the common case finds the tool in the
+    // first directory and never walks the cwd.
+    auto in_dir = [&](std::filesystem::path const& dir) -> std::optional<std::filesystem::path> {
+        if (dir.empty()) return std::nullopt;
+        auto candidate = dir / bare;
+        if (is_tool(candidate)) return candidate;
+        return std::nullopt;
+    };
 
-    std::vector<std::filesystem::path> candidates;
     if (!exe_path.empty()) {
-        auto exe_dir = exe_path.parent_path();
-        candidates.push_back(exe_dir / bare); // installed layout: prompt sits in bin/
-        candidates.push_back(exe_dir.parent_path().parent_path() / "bin" /
-                             bare); // build layout: .../prompts/build/prompt
+        auto const exe_dir = exe_path.parent_path();
+        if (auto hit = in_dir(exe_dir)) return *hit; // installed layout: prompt sits in bin/
+        if (auto hit = in_dir(exe_dir.parent_path().parent_path() / "bin")) {
+            return *hit; // build layout: .../prompts/build/prompt
+        }
     }
-    if (git_root) candidates.push_back(*git_root / "bin" / bare);
+    if (git_root) {
+        if (auto hit = in_dir(*git_root / "bin")) return *hit;
+    }
     // Walk up from cwd (covers running from a repo subdirectory when the
     // executable lives elsewhere, e.g. installed).
     auto dir = std::filesystem::current_path(ec);
     for (std::size_t i = 0; i < 8 && !dir.empty(); ++i) {
-        candidates.push_back(dir / "bin" / bare);
+        if (auto hit = in_dir(dir / "bin")) return *hit;
         auto parent = dir.parent_path();
         if (parent == dir) break;
         dir = parent;
-    }
-
-    for (auto const& cand : candidates) {
-        if (is_tool(cand)) return cand;
     }
     // Fall back to PATH, resolved to an absolute path: callers may invoke the
     // tool through an interpreter (`python3 <tool>`), where a bare name would

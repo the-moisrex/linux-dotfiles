@@ -15,9 +15,9 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string strip_trailing_newlines(std::string s) {
-    while (!s.empty() && s.back() == '\n') s.pop_back();
-    return s;
+std::string strip_trailing_newlines(std::string_view text) {
+    while (!text.empty() && text.back() == '\n') text.remove_suffix(1);
+    return std::string(text);
 }
 
 std::vector<std::string> split_lines(std::string const& text) {
@@ -85,7 +85,7 @@ std::vector<std::string> to_sed_lines(std::string const& content) {
 
 } // namespace
 
-static void execute_paths(prompt_context& ctx) {
+static void execute_paths(view const& v, result& r) {
     // paths.sh parses its own args (no init_prompt): --context/--head are NOT
     // integer-validated, and --head is only consumed so it is not a path.
     std::string mode = "context";
@@ -95,21 +95,21 @@ static void execute_paths(prompt_context& ctx) {
     std::string sed_error;
     std::string sed_warnings;
     std::vector<std::string> file_args;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        std::string a(ctx.args[i]);
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        std::string a(v.args[i]);
         if (a == "--context") {
-            if (i + 1 >= ctx.args_count) {
+            if (i + 1 >= v.args.size()) {
                 throw usage_error{"Missing value for --context\n"};
             }
-            context_lines = prompt::text::to_ll(ctx.args[i + 1], 0); // bash $((word)) treats a bare word as 0
+            context_lines = prompt::text::to_ll(v.args[i + 1], 0); // bash $((word)) treats a bare word as 0
             ++i;
         } else if (a == "--full") {
             mode = "full";
         } else if (a == "--head") {
-            if (i + 1 >= ctx.args_count) {
+            if (i + 1 >= v.args.size()) {
                 throw usage_error{"Missing value for --head\n"};
             }
-            head_value = std::string(ctx.args[i + 1]);
+            head_value = std::string(v.args[i + 1]);
             if (head_value.find_first_not_of("0123456789") != std::string::npos) {
                 sed_error = "sed: -e expression #1, char 3: unexpected ','\n";
             } else {
@@ -126,20 +126,20 @@ static void execute_paths(prompt_context& ctx) {
     }
 
     std::string output;
-    if (ctx.stdin_consumed) {
-        output += embed_stdin(ctx.stdin_content, head_lines);
+    if (v.in.piped()) {
+        output += embed_stdin(v.in.text(), head_lines);
     }
 
-    std::string stdin_content = strip_trailing_newlines(ctx.stdin_content);
+    std::string stdin_content = strip_trailing_newlines(v.in.text());
     std::optional<std::filesystem::path> git_root_opt =
-        ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root);
+        v.env.git_root.empty() ? std::nullopt : std::optional(v.env.git_root);
 
     // First-seen path -> line number, stdin hits first, then args.
     std::vector<std::string> order;
     std::vector<std::pair<std::string, std::string>> hits; // (clean, line_num)
 
     if (!stdin_content.empty()) {
-        auto tool = fs::bin_tool("paths", ctx.exe_path, git_root_opt);
+        auto tool = fs::bin_tool("paths", v.env.exe_path, git_root_opt);
         std::vector<char const*> argv = {tool.c_str(), nullptr};
         auto result = prompt::process::run_command({tool}, stdin_content);
         for (auto const& line : split_lines(result.stdout_data)) {
@@ -179,7 +179,7 @@ static void execute_paths(prompt_context& ctx) {
     // Resolve each unique path and keep only readable, git-tracked files.
     std::vector<std::string> resolved_files;
     for (auto const& clean : order) {
-        auto resolved = resolve_input_file(ctx, clean);
+        auto resolved = resolve_input_file(v.env, clean);
         if (!resolved) continue;
         if (::access(resolved->c_str(), R_OK) != 0) continue;
         if (!git_tracked(resolved->string())) continue;
@@ -193,18 +193,13 @@ static void execute_paths(prompt_context& ctx) {
     if (mode == "full") {
         // Delegate to the native files prompt exactly like the script
         // delegates to files.sh.
-        prompt_context sub = ctx;
-        sub.name = "files";
-        std::size_t n = 0;
-        for (auto const& r : resolved_files) sub.args[n++] = r;
-        sub.args_count = n;
-        clear_output(sub);
-        if (const auto* files = prompt::find_prompt("files")) {
-            files->execute_fn(sub);
-            output += sub.out;
-            sed_warnings += sub.err;
-        }
-        ctx.out = std::move(output);
+        std::vector<std::string_view> sub_args;
+        sub_args.reserve(resolved_files.size());
+        for (auto const& resolved : resolved_files) sub_args.push_back(resolved);
+        auto sub = run_sub_prompt(v, "files", sub_args);
+        output += sub.out;
+        sed_warnings += sub.err;
+        r.out = std::move(output);
         return;
     }
 
@@ -255,7 +250,7 @@ static void execute_paths(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_paths(std::ostream& os) {

@@ -10,15 +10,15 @@ static void render_help_tse_analyze_history(std::ostream& os);
 // `tse.analyze` it is deliberately data-free: no arguments, no fetch, no
 // clipboard, so `prompt .tse <symbol> .tse.analyze.history` embeds the dataset
 // once and then these instructions.
-static void execute_tse_analyze_history(prompt_context& ctx) {
-    if (ctx.args_count > 0) {
+static void execute_tse_analyze_history(view const& v, result& r) {
+    if (!v.args.empty()) {
         throw usage_error{"prompt tse.analyze.history: takes no arguments — it only prints the analysis "
                           "instructions.\nChain it after the data prompt, e.g. "
                           "`prompt .tse فولاد .tse.analyze.history`.\n" +
                           help_text(render_help_tse_analyze_history)};
     }
 
-    ctx.out =
+    r.out =
         R"EOF(You are a technical analyst of the Tehran Stock Exchange (TSE) specializing in pure price action, volume and institutional (legal / حقوقی) investor behaviour.
 
 ### Objective

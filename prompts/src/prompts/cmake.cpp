@@ -52,11 +52,11 @@ std::string strip_source_lists(std::string const& content) {
 
 } // namespace
 
-static void execute_cmake(prompt_context& ctx) {
+static void execute_cmake(view const& v, result& r) {
     // init_prompt -> parse_arguments runs first (validates --head); the script
     // then walks the remaining args for its own flags.
-    auto opts = file_options_or_throw(ctx);
-    auto remaining = positional_args(ctx);
+    auto opts = file_options_or_throw(v);
+    auto remaining = positional_args(v);
 
     std::vector<std::string> exclude_patterns;
     bool strip_lists = false;
@@ -81,13 +81,13 @@ Please review the build setup, dependencies, and target structures.
 
     std::vector<std::string> files;
     std::string search_dir;
-    if (!ctx.git_root.empty()) {
+    if (!v.env.git_root.empty()) {
         std::vector<std::string> storage = {"bash", "-c", R"(git -C "$0" ls-files -- "$@" 2>/dev/null)"};
-        storage.push_back(ctx.git_root.string());
+        storage.push_back(v.env.git_root.string());
         storage.emplace_back("*CMakeLists.txt");
         storage.emplace_back("*.cmake");
         files = split_lines(prompt::process::run_command(storage).stdout_data);
-        search_dir = ctx.git_root.string();
+        search_dir = v.env.git_root.string();
     } else {
         for (auto& f :
              split_lines(prompt::process::run_command(
@@ -122,7 +122,7 @@ Please review the build setup, dependencies, and target structures.
         output += "\n    ```\n\n";
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_cmake(std::ostream& os) {

@@ -36,8 +36,8 @@ std::string detect_base_branch(std::string const& given) {
 
 } // namespace
 
-static void execute_git_worktree_diff(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_git_worktree_diff(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
@@ -45,7 +45,7 @@ static void execute_git_worktree_diff(prompt_context& ctx) {
     }
 
     // Custom flags: --not <commit>, --base <branch>; everything else is a file.
-    auto rest = positional_args(ctx);
+    auto rest = positional_args(v);
 
     std::string base_branch;
     std::string not_commit;
@@ -87,11 +87,11 @@ static void execute_git_worktree_diff(prompt_context& ctx) {
         output += "\n```diff\n";
         output += trim_context_nl(diff_output, head_lines);
         output += "```\n";
-        ctx.out = std::move(output);
+        r.out = std::move(output);
         return;
     }
-    ctx.out.clear();
-    ctx.err = "No diffs found between current branch and " + base_branch + ".\n";
+    r.out.clear();
+    r.err = "No diffs found between current branch and " + base_branch + ".\n";
 }
 
 static void render_help_git_worktree_diff(std::ostream& os) {

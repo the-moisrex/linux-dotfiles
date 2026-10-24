@@ -61,17 +61,17 @@ std::string_view infer_lang(std::string_view base) {
 
 } // namespace
 
-static void execute_git_diff(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_git_diff(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
         throw soft_error{"prompt git.diff: Error: Not inside a git repository.\n"};
     }
 
-    auto files = positional_args(ctx);
+    auto files = positional_args(v);
 
-    std::filesystem::path git_root = ctx.git_root;
+    std::filesystem::path git_root = v.env.git_root;
 
     std::string output;
     if (!files.empty()) {
@@ -83,8 +83,8 @@ static void execute_git_diff(prompt_context& ctx) {
             output += trim_context_nl(diff_output, opts.head_lines);
             output += "```\n";
         } else {
-            ctx.out.clear();
-            ctx.err = "No diffs found for the specified files.\n";
+            r.out.clear();
+            r.err = "No diffs found for the specified files.\n";
             return;
         }
     } else {
@@ -125,13 +125,13 @@ static void execute_git_diff(prompt_context& ctx) {
         }
 
         if (unstaged_diff.empty() && untracked_stripped.empty()) {
-            ctx.out.clear();
-            ctx.err = "No changes found in the working tree.\n";
+            r.out.clear();
+            r.err = "No changes found in the working tree.\n";
             return;
         }
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_git_diff(std::ostream& os) {

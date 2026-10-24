@@ -363,12 +363,12 @@ void complete_length(completion_request const& request, std::ostream& os) {
 
 } // namespace
 
-static void execute_length(prompt_context& ctx) {
+static void execute_length(view const& v, result& r) {
     // Any argument may hold a whole phrase ("200 words", "a letter"), so every
     // argv token is split into words and lower-cased before matching.
     std::vector<std::string> tokens;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        for (auto& word : prompt::text::words(ctx.args[i])) {
+    for (std::string_view arg : v.args) {
+        for (auto& word : prompt::text::words(arg)) {
             std::ranges::transform(word, word.begin(),
                                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             tokens.push_back(std::move(word));
@@ -509,9 +509,9 @@ static void execute_length(prompt_context& ctx) {
 
     spec.mode = requested_mode.value_or(length_mode::rough);
     if (spec.amount.has_value()) {
-        ctx.out = render_amount(*spec.amount, spec.unit, spec.mode);
+        r.out = render_amount(*spec.amount, spec.unit, spec.mode);
     } else {
-        ctx.out = std::string(preset_instruction(spec.preset)) + '\n';
+        r.out = std::string(preset_instruction(spec.preset)) + '\n';
     }
 }
 

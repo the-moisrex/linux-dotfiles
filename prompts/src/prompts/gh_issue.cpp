@@ -13,9 +13,9 @@ bool tool_exists(std::string const& name) {
     return prompt::process::run_command({"bash", "-c", cmd}).exit_code == 0;
 }
 
-std::string strip_trailing_newlines(std::string s) {
-    while (!s.empty() && s.back() == '\n') s.pop_back();
-    return s;
+std::string strip_trailing_newlines(std::string_view text) {
+    while (!text.empty() && text.back() == '\n') text.remove_suffix(1);
+    return std::string(text);
 }
 
 // gh issue view <num> --json <field> -q <query> 2>/dev/null || true
@@ -28,11 +28,11 @@ std::string gh_issue_field(std::string const& number, std::string const& field, 
 
 } // namespace
 
-static void execute_gh_issue(prompt_context& ctx) {
+static void execute_gh_issue(view const& v, result& r) {
     // init_prompt --no-files: --head is validated (but unused -- this prompt
     // takes no files); everything else is treated as the issue number.
-    head_lines_or_throw(ctx);
-    auto rest = positional_args(ctx);
+    head_lines_or_throw(v);
+    auto rest = positional_args(v);
 
     std::string issue_number = rest.empty() ? std::string{} : rest.front();
     std::string issue_url;
@@ -40,7 +40,7 @@ static void execute_gh_issue(prompt_context& ctx) {
     std::string issue_body;
     std::string issue_labels;
     std::string issue_comments;
-    std::string stdin_content = strip_trailing_newlines(ctx.stdin_content);
+    std::string stdin_content = strip_trailing_newlines(v.in.text());
     std::string error;
 
     if (!issue_number.empty()) {
@@ -103,8 +103,8 @@ Follow existing code conventions, patterns, and project structure.
         throw soft_error{std::move(error), std::move(output)};
     }
 
-    ctx.out = std::move(output);
-    ctx.err = error;
+    r.out = std::move(output);
+    r.err = error;
 }
 
 static void render_help_gh_issue(std::ostream& os) {

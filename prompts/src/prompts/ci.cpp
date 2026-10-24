@@ -12,9 +12,9 @@ namespace prompt::prompts {
 namespace {
 
 // git -C <root> ls-files -- <patterns...> 2>/dev/null, non-empty lines only.
-std::vector<std::string> git_ls_files(prompt_context const& ctx, std::vector<std::string> const& patterns) {
+std::vector<std::string> git_ls_files(view const& v, std::vector<std::string> const& patterns) {
     std::vector<std::string> storage = {"bash", "-c", R"(git -C "$0" ls-files -- "$@" 2>/dev/null)"};
-    storage.push_back(ctx.git_root.string());
+    storage.push_back(v.env.git_root.string());
     for (auto const& p : patterns) storage.push_back(p);
 
     auto result = prompt::process::run_command(storage);
@@ -42,8 +42,8 @@ bool contains_ci_path(std::string const& line) {
 
 } // namespace
 
-static void execute_ci(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_ci(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output;
     output +=
@@ -55,31 +55,31 @@ static void execute_ci(prompt_context& ctx) {
         "excessive runner minutes, artifact retention\n\nProvide specific improvements as a git diff.\n\n";
 
     std::vector<std::string> ci_files;
-    if (!ctx.git_root.empty()) {
+    if (!v.env.git_root.empty()) {
         auto append = [&](std::span<const std::string> lines) {
-            for (auto const& f : lines) ci_files.push_back(ctx.git_root.string() + "/" + f);
+            for (auto const& f : lines) ci_files.push_back(v.env.git_root.string() + "/" + f);
         };
-        for (auto const& f : git_ls_files(ctx, std::vector<std::string>{"*.yml", "*.yaml"})) {
-            if (contains_ci_path(f)) ci_files.push_back(ctx.git_root.string() + "/" + f);
+        for (auto const& f : git_ls_files(v, std::vector<std::string>{"*.yml", "*.yaml"})) {
+            if (contains_ci_path(f)) ci_files.push_back(v.env.git_root.string() + "/" + f);
         }
-        append(git_ls_files(ctx, std::vector<std::string>{
-                                     ".gitlab-ci.yml",
-                                     ".gitlab-ci.yaml",
-                                     "**/.gitlab-ci.yml",
-                                     "**/.gitlab-ci.yaml",
-                                 }));
-        append(git_ls_files(ctx, std::vector<std::string>{"*Jenkinsfile*"}));
+        append(git_ls_files(v, std::vector<std::string>{
+                                   ".gitlab-ci.yml",
+                                   ".gitlab-ci.yaml",
+                                   "**/.gitlab-ci.yml",
+                                   "**/.gitlab-ci.yaml",
+                               }));
+        append(git_ls_files(v, std::vector<std::string>{"*Jenkinsfile*"}));
         append(git_ls_files(
-            ctx, std::vector<std::string>{"*Dockerfile*", "*dockerfile*", "*docker-compose*", "*compose.y*"}));
-        append(git_ls_files(ctx, std::vector<std::string>{".circleci/config.yml", "**/.circleci/config.yml"}));
-        append(git_ls_files(ctx, std::vector<std::string>{".travis.yml", "**/.travis.yml"}));
+            v, std::vector<std::string>{"*Dockerfile*", "*dockerfile*", "*docker-compose*", "*compose.y*"}));
+        append(git_ls_files(v, std::vector<std::string>{".circleci/config.yml", "**/.circleci/config.yml"}));
+        append(git_ls_files(v, std::vector<std::string>{".travis.yml", "**/.travis.yml"}));
     }
 
     if (ci_files.empty()) {
         output += R"PROMPT(No CI/CD configuration files found in this repository.
 Searched for: GitHub Actions, GitLab CI, Jenkins, Docker, CircleCI, Travis CI.
 )PROMPT";
-        ctx.out = std::move(output);
+        r.out = std::move(output);
         return;
     }
 
@@ -98,14 +98,14 @@ Searched for: GitHub Actions, GitLab CI, Jenkins, Docker, CircleCI, Travis CI.
         std::error_code ec;
         if (std::filesystem::is_regular_file(file, ec)) {
             std::filesystem::path p(file);
-            auto label = fs::relative_path(p, ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
+            auto label = fs::relative_path(p, v.env.git_root.empty() ? std::nullopt : std::optional(v.env.git_root));
             output += std::format("File: {}\n\n```{}\n", label.string(), infer_lang(p));
             output += number_lines(trim_context_nl(read_file(p), opts.head_lines), opts.numbered);
             output += "\n```\n\n";
         }
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_ci(std::ostream& os) {

@@ -1,7 +1,7 @@
 #include "../sdk/errors.hpp"
-#include "../sdk/prompt_context.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include "../sdk/sink.hpp"
+#include "../sdk/stage.hpp"
 #include <atomic>
 #include <cctype>
 #include <cerrno>
@@ -84,8 +84,8 @@ std::string safe_stem(std::string_view raw) {
     return out;
 }
 
-std::filesystem::path derived_name(prompt_context const& ctx) {
-    std::filesystem::path const hinted{std::string(ctx.chain_save_hint)};
+std::filesystem::path derived_name(view const& v) {
+    std::filesystem::path const hinted{std::string(v.prior.get(keys::save_stem).value_or(""))};
     std::filesystem::path name{safe_stem(hinted.filename().string())};
     if (name.extension().empty()) name += ".md";
     return name;
@@ -177,7 +177,7 @@ void check_writable_directory(std::filesystem::path const& directory, command_in
     }
 }
 
-save_config parse_args(prompt_context const& ctx, command_info const& cmd) {
+save_config parse_args(view const& v, command_info const& cmd) {
     save_config cfg;
     bool options = true;
     auto help = [&] { return help_text(cmd.render_help); };
@@ -188,8 +188,7 @@ save_config parse_args(prompt_context const& ctx, command_info const& cmd) {
         cfg.kind = kind;
     };
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        std::string_view const arg = ctx.args[i];
+    for (std::string_view const arg : v.args) {
         if (options && arg == "--") {
             options = false;
             continue;
@@ -228,8 +227,8 @@ save_config parse_args(prompt_context const& ctx, command_info const& cmd) {
     return cfg;
 }
 
-void preflight_impl(prompt_context& ctx, command_info const& cmd) {
-    save_config const cfg = parse_args(ctx, cmd);
+void preflight_impl(view const& v, command_info const& cmd) {
+    save_config const cfg = parse_args(v, cmd);
     target_plan const plan = plan_target(cfg);
 
     ensure_directory(plan.directory, cmd);
@@ -247,12 +246,12 @@ void preflight_impl(prompt_context& ctx, command_info const& cmd) {
     check_writable_directory(plan.directory, cmd);
 }
 
-void preflight_save(prompt_context& ctx) { preflight_impl(ctx, kSave); }
-void preflight_flush(prompt_context& ctx) { preflight_impl(ctx, kFlush); }
+void preflight_save(view const& v) { preflight_impl(v, kSave); }
+void preflight_flush(view const& v) { preflight_impl(v, kFlush); }
 
-void run_save(prompt_context& ctx, command_info const& cmd) {
-    save_config const cfg = parse_args(ctx, cmd);
-    std::string const content(wait_for_prompts(ctx));
+void run_save(view const& v, result& r, command_info const& cmd) {
+    save_config const cfg = parse_args(v, cmd);
+    std::string const content(v.text);
     if (content.empty() && !cfg.allow_empty) {
         throw soft_error{
             std::format("{}no context to save (pass --allow-empty to write an empty file)\n", prefix(cmd))};
@@ -261,7 +260,7 @@ void run_save(prompt_context& ctx, command_info const& cmd) {
     target_plan const plan = plan_target(cfg);
     ensure_directory(plan.directory, cmd);
 
-    std::filesystem::path const target = plan.file ? *plan.file : plan.directory / derived_name(ctx);
+    std::filesystem::path const target = plan.file ? *plan.file : plan.directory / derived_name(v);
     std::error_code ec;
     if (std::filesystem::is_directory(target, ec)) {
         throw soft_error{std::format("{}{} is a directory\n", prefix(cmd), target.string())};
@@ -302,17 +301,17 @@ void run_save(prompt_context& ctx, command_info const& cmd) {
         throw soft_error{std::format("{}cannot write {}: {}\n", prefix(cmd), target.string(), ec.message())};
     }
 
-    ctx.no_clipboard = true;
-    ctx.err = std::format("{}wrote {}\n", prefix(cmd), target.string());
+    r.no_clipboard = true;
+    r.err = std::format("{}wrote {}\n", prefix(cmd), target.string());
     // `.flush` is `.save` + `.clear`: only a completed write discards the
     // context (a failed save throws above and leaves it intact).
-    ctx.clear_context = cmd.clear_after;
+    r.clear = cmd.clear_after;
 }
 
 } // namespace
 
-static void execute_save(prompt_context& ctx) { run_save(ctx, kSave); }
-static void execute_flush(prompt_context& ctx) { run_save(ctx, kFlush); }
+static void execute_save(view const& v, result& r) { run_save(v, r, kSave); }
+static void execute_flush(view const& v, result& r) { run_save(v, r, kFlush); }
 
 static void render_save_options(std::ostream& os) {
     render_sink_help(os);
@@ -389,14 +388,14 @@ Examples:
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_sink(
     "save", "Save the accumulated chain context to a file, then pass the context through unchanged to later sinks.",
-    &execute_save, &render_help_save, nullptr, prompt::sink_policy::chain, false, &preflight_save);
+    &execute_save, &render_help_save, nullptr, false, &preflight_save);
 
 // `.flush` shares this file because it is the same write path plus the
-// context reset declared through prompt_context::clear_context.
+// context reset declared through result::clear.
 bool const registered_flush = prompt::register_sink(
     "flush",
     "Save the accumulated chain context to a file, then clear it so later prompts and sinks start a new, "
     "independent section.",
-    &execute_flush, &render_help_flush, nullptr, prompt::sink_policy::chain, false, &preflight_flush);
+    &execute_flush, &render_help_flush, nullptr, false, &preflight_flush);
 
 } // namespace prompt::prompts

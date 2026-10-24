@@ -6,8 +6,8 @@
 
 namespace prompt::prompts {
 
-static void execute_api(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_api(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(Review this API design.
 Look for confusing names, inconsistent behavior, unclear contracts, weak validation, awkward call sites, leaky abstractions, and backward-compatibility risks.
@@ -16,7 +16,7 @@ Suggest the smallest meaningful API improvements, explain the tradeoffs briefly,
     output += '\n';
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += embed_file_block(file, opts);
     }
@@ -24,8 +24,8 @@ Suggest the smallest meaningful API improvements, explain the tradeoffs briefly,
         warn_missing_file(error, arg);
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_api(std::ostream& os) {

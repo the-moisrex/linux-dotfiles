@@ -269,6 +269,68 @@ browser.session grok.com --all                # every matching profile
 
 `--format` is `json` (default), `cookie` or `header`.
 
+### `accounts`
+
+Cross-browser account manager. An *account* is a named identity for one site
+(`x.com/work`, `x.com/personal`); a *profile* is one browser profile, written
+`browser/profile` (`firefox/default-3`, `brave/Profile 1`). `accounts` copies the
+session state — cookies **and** `localStorage` — between the two, so the same identity
+can move from Brave to Firefox and back, and two identities can share one browser.
+
+The pipeline is `profile --add--> account --install--> profile`: `add` captures a
+login out of a profile (or logs one in for you), `install` drops it into a profile,
+`open` installs and launches the browser.
+
+```bash
+accounts add     x.com work                 # capture it, or log in when nothing has it
+accounts add     x.com work --login         # force a login in a throwaway profile
+accounts add     x.com work --at firefox    # capture from firefox's default profile
+accounts install x.com work --at brave      # install it (exact replacement)
+accounts open    x.com personal --at brave  # install it and launch the browser
+accounts logout  x.com --at brave           # drop the site's state from a profile
+accounts list                               # accounts, sizes and expiry state
+accounts profiles                           # which profile currently holds what
+accounts diff    x.com work --at brave      # dry comparison, no writes
+accounts forget  x.com work                 # delete the saved account
+accounts undo    --at brave                 # roll the last write back
+accounts new-profile firefox work           # create the accounts-work profile
+```
+
+`--at BROWSER` means that browser's default profile, `--at BROWSER/PROFILE` names one
+exactly (`--at firefox/default-3`), and a bare `--at default-3` is accepted as a profile
+name. Without `--at` the profile is found for you: the profile recorded for that account
+wins, then the only profile that actually holds the site's state (cookies and
+`localStorage` counted, nothing decrypted), and when several do — or none, for
+`install` — `accounts` asks. On a terminal the question is an `fzf` picker (a numbered
+list when `fzf` is missing); `--pick` forces it and reads the answer from stdin, while
+`--no-pick` (and `--json`) turns it into an error that lists the candidates with their
+cookie/key counts.
+
+`add` captures when a profile already holds the site and logs in (in a throwaway
+Chromium/Firefox profile) when none does, printing which path it took; `--login` forces
+the login and `--at BROWSER[/PROFILE]` names the profile to log in inside.
+`install --dedicated` (and `new-profile`) create an `accounts-<label>` profile that also
+shows up in the browser's own profile picker.
+
+Bundles live under `${XDG_DATA_HOME:-~/.local/share}/accounts` (0700/0600), stored
+*decrypted* so one bundle works in both browser families; Chromium values are
+re-encrypted with the target profile's key when that key can be verified, and stored in
+the plaintext `value` column otherwise (Chromium reads both — an unverified keyring key
+would silently lose the cookie). Writes must happen with the profile closed (a running
+browser keeps cookies in memory and overwrites them on exit); `--close` terminates it
+first, and every write is backed up so `accounts undo` can restore it. `--dry-run`
+prints the exact cookie/localStorage operations without touching anything. Firefox's
+`originAttributes` (container / `userContextId`) survives a round trip. Saved passwords
+are deliberately not moved.
+
+Storage backends are the ones `cookies`/`browser.storage` already read: Chromium cookies
+in `Cookies`, `localStorage` by appending a write-ahead-log batch to
+`Local Storage/leveldb` (no LevelDB library), and Firefox's `cookies.sqlite` plus the
+per-origin `storage/default/<origin>/ls/data.sqlite`. `localStorage` needs the origin to
+exist in the target profile — a fresh profile has no store for it yet, so the command
+warns and applies cookies only (visiting the site once, or the `add --login` flow,
+creates it).
+
 ### `browser.record`
 
 **Development-only** recorder for reverse-engineering a site's own API: it drives a

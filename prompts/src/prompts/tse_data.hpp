@@ -118,26 +118,32 @@ inline std::optional<std::string> identifier_in_args(std::vector<std::string_vie
     return std::nullopt;
 }
 
-// Nearest preceding `tse`-family prompt with an identifier, then the nearest
-// following one. Reading neighbours makes `.tse foolad .tse.codal
-// .tse.intraday` and `.tse.codal foolad .tse.intraday` equivalent.
-inline std::optional<std::string> chain_identifier(prompt_context const& ctx) {
-    for (std::size_t distance = 1; distance < ctx.chain.size(); ++distance) {
-        if (ctx.chain_index >= distance) {
-            auto const& segment = ctx.chain[ctx.chain_index - distance];
-            if (tse_symbol_prompt(segment.name)) {
-                if (auto id = identifier_in_args(segment.args)) return id;
-            }
-        }
-        std::size_t const forward = ctx.chain_index + distance;
-        if (forward < ctx.chain.size()) {
-            auto const& segment = ctx.chain[forward];
-            if (tse_symbol_prompt(segment.name)) {
-                if (auto id = identifier_in_args(segment.args)) return id;
-            }
-        }
-    }
+// The identifier a sibling `tse*` prompt declared or published. Declarations
+// run before any batch forks, so this is order-independent: `.tse foolad
+// .tse.codal` and `.tse.codal foolad` both resolve one instrument, once.
+inline std::optional<std::string> prior_identifier(view const& v) {
+    if (auto id = v.prior.get(keys::tse_symbol)) return std::string(*id);
     return std::nullopt;
+}
+
+// The cheap pre-pass every tse-family prompt registers: publish the identifier
+// spelled on this invocation's command line so parallel siblings agree. `.stock`
+// snapshot files are not identifiers.
+inline void declare_identifier(declaration& d) {
+    if (d.prior.get(keys::tse_symbol)) return;
+    auto id = identifier_in_args(std::vector<std::string_view>(d.args.begin(), d.args.end()));
+    if (!id) return;
+    std::filesystem::path path(*id);
+    std::error_code ec;
+    if (path.extension() == ".stock" || std::filesystem::is_regular_file(path, ec)) return;
+    d.declared.set(keys::tse_symbol, *id);
+}
+
+// Publish the resolved instrument identity so later prompts read it instead of
+// re-deriving it from argv or the clipboard.
+inline void publish_identity(result& r, std::string_view symbol) {
+    if (symbol.empty()) return;
+    r.published.set(keys::tse_symbol, symbol);
 }
 
 inline std::string rstrip_newlines(std::string_view text) {
@@ -174,32 +180,32 @@ inline snapshot_info parse_snapshot_info(std::string_view output) {
 // Parses the arguments the `tse` prompt accepts. `help_fn` renders the
 // invoking prompt's usage, appended to the "no identifier" error.
 template <typename RenderFn>
-config parse_args(prompt_context const& ctx, std::string_view name, RenderFn help_fn) {
+config parse_args(view const& v, std::string_view name, RenderFn help_fn) {
     config cfg;
     cfg.name = std::string(name);
     std::string const pfx = "prompt " + std::string(name) + ": ";
 
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, cfg.head_lines); !msg.empty()) {
+    if (auto msg = parse_head_option(v.args, cfg.head_lines); !msg.empty()) {
         cfg.failed = true;
         cfg.exit_code = 2;
         cfg.error = std::move(msg);
         return cfg;
     }
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        std::string_view arg = ctx.args[i];
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        std::string_view arg = v.args[i];
         if (arg == "--head") {
             ++i; // value parsed by parse_head_option above
             continue;
         }
         if (arg == "--days") {
             cfg.fetch_flags = true;
-            if (i + 1 >= ctx.args_count || !is_positive_int(ctx.args[i + 1])) {
+            if (i + 1 >= v.args.size() || !is_positive_int(v.args[i + 1])) {
                 cfg.failed = true;
                 cfg.error = std::format("{}--days requires a positive integer\n", pfx);
                 return cfg;
             }
-            cfg.days = std::stoi(std::string(ctx.args[i + 1]));
+            cfg.days = std::stoi(std::string(v.args[i + 1]));
             cfg.days_set = true;
             ++i;
             continue;
@@ -211,12 +217,12 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
         }
         if (arg == "--without") {
             cfg.fetch_flags = true;
-            if (i + 1 >= ctx.args_count) {
+            if (i + 1 >= v.args.size()) {
                 cfg.failed = true;
                 cfg.error = std::format("{}--without requires a section name\n", pfx);
                 return cfg;
             }
-            std::string_view names = ctx.args[++i];
+            std::string_view names = v.args[++i];
             std::size_t start = 0;
             while (start <= names.size()) {
                 auto end = names.find(',', start);
@@ -254,9 +260,9 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
     }
 
     if (cfg.inputs.empty()) {
-        if (auto id = chain_identifier(ctx)) cfg.inputs.push_back(*id);
+        if (auto id = prior_identifier(v)) cfg.inputs.push_back(*id);
         if (cfg.inputs.empty()) {
-            if (auto id = clipboard_identifier(ctx)) cfg.inputs.push_back(*id);
+            if (auto id = clipboard_identifier(v.env)) cfg.inputs.push_back(*id);
         }
         if (cfg.inputs.empty()) {
             cfg.failed = true;
@@ -302,7 +308,7 @@ config parse_args(prompt_context const& ctx, std::string_view name, RenderFn hel
     if (!file_inputs.empty()) {
         cfg.cache_mode = true;
         auto git_root = prompt::fs::find_git_root();
-        std::string tse_tool = prompt::fs::bin_tool("tse", ctx.exe_path, std::nullopt).string();
+        std::string tse_tool = prompt::fs::bin_tool("tse", v.env.exe_path, std::nullopt).string();
         for (auto const& input : file_inputs) {
             std::filesystem::path resolved;
             if (std::filesystem::is_regular_file(input)) {
@@ -428,8 +434,8 @@ inline std::string fetch_live(config const& cfg, std::string const& tse_tool) {
 
 // The collected data block: the live Markdown (capped by --head) or the
 // rendered snapshot files. Fetch failures throw, exactly as before.
-inline std::string collect(prompt_context& ctx, config const& cfg, std::string& errors) {
-    std::string tse_tool = prompt::fs::bin_tool("tse", ctx.exe_path, std::nullopt).string();
+inline std::string collect(view const& v, config const& cfg, std::string& errors) {
+    std::string tse_tool = prompt::fs::bin_tool("tse", v.env.exe_path, std::nullopt).string();
     if (cfg.cache_mode) {
         std::string out;
         for (std::size_t i = 0; i < cfg.snapshot_files.size(); ++i) {

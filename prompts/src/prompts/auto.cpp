@@ -133,20 +133,20 @@ bool should_translate_to_english(std::string_view content) {
 
 } // namespace
 
-static void execute_auto(prompt_context& ctx) {
+static void execute_auto(view const& v, result& r) {
     std::string input_buffer;
-    bool has_stdin = ctx.stdin_consumed;
+    bool has_stdin = v.in.piped();
 
     if (has_stdin) {
         // Command substitution strips every trailing newline; drop a trailing
         // carriage return too.
-        input_buffer = ctx.stdin_content;
+        input_buffer = v.in.text();
         while (!input_buffer.empty() && input_buffer.back() == '\n') input_buffer.pop_back();
         if (!input_buffer.empty() && input_buffer.back() == '\r') input_buffer.pop_back();
     }
 
     if (input_buffer.empty()) {
-        input_buffer = clipboard_content(ctx);
+        input_buffer = clipboard_content(v.env);
     }
 
     std::string target_script = "summarize";
@@ -192,8 +192,7 @@ static void execute_auto(prompt_context& ctx) {
         }
     }
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        std::string_view arg = ctx.args[i];
+    for (std::string_view arg : v.args) {
         std::string arg_stock;
         if (is_stock_identifier(arg, arg_stock)) {
             // The identifier is passed along as this prompt's argument.
@@ -241,8 +240,8 @@ static void execute_auto(prompt_context& ctx) {
         }
     }
 
-    if (!ctx.stdin_consumed && target_script != "tse") {
-        if (auto id = clipboard_identifier(ctx)) {
+    if (!v.in.piped() && target_script != "tse") {
+        if (auto id = clipboard_identifier(v.env)) {
             target_script = "tse";
             want_analysis = true;
             extra_args.push_back(*id);
@@ -278,35 +277,22 @@ static void execute_auto(prompt_context& ctx) {
                                    std::move(combined), false, has_stdin};
             }
 
-            // A copy: `ctx` is still needed below to carry the sub-prompt's
-            // result out (and it holds the chain's stdin if the target doesn't
-            // read it).
-            prompt_context sub_ctx = ctx;
-            sub_ctx.name = targets[t];
-            clear_output(sub_ctx);
+            std::vector<std::string_view> sub_args;
             if (t == 0) {
-                auto orig_args = sub_ctx.args;
-                auto orig_count = sub_ctx.args_count;
-                std::size_t n = 0;
                 if (pass_extra) {
-                    for (auto const& a : extra_args) {
-                        if (n >= sub_ctx.args.size()) break;
-                        sub_ctx.args[n++] = a;
-                    }
+                    for (auto const& a : extra_args) sub_args.push_back(a);
                 }
-                for (std::size_t i = 0; i < orig_count && n < sub_ctx.args.size(); ++i) {
-                    sub_ctx.args[n++] = orig_args[i];
-                }
-                sub_ctx.args_count = n;
-            } else {
-                sub_ctx.args_count = 0;
+                for (auto const& a : v.args) sub_args.push_back(a);
             }
+
             // `printf '%s\n' "$input_buffer"` re-adds the trailing newline that
             // $(cat) stripped.
-            sub_ctx.stdin_content = has_stdin ? input_buffer + "\n" : std::string{};
-            sub_ctx.stdin_consumed = has_stdin;
+            std::optional<std::string> stdin_text;
+            if (has_stdin) stdin_text = input_buffer + "\n";
+
+            result sub;
             try {
-                target->execute_fn(sub_ctx);
+                sub = run_sub_prompt(v, targets[t], sub_args, stdin_text);
             } catch (prompt_error const& err) {
                 combined += err.partial_output();
                 throw prompt_error{err.exit_code(), err.what(), std::move(combined), err.no_clipboard(), has_stdin};
@@ -314,18 +300,19 @@ static void execute_auto(prompt_context& ctx) {
             // Separate the instructions from the dataset the way the
             // dispatcher separates chained prompt segments.
             if (!first_segment) combined += '\n';
-            combined += sub_ctx.out;
+            combined += sub.out;
             first_segment = false;
-            errors += sub_ctx.err;
-            no_clipboard = no_clipboard || sub_ctx.no_clipboard;
+            errors += sub.err;
+            no_clipboard = no_clipboard || sub.no_clipboard;
+            r.published.merge(sub.published, true);
         }
         // The echoed decision line comes first, then the dataset and, for a
         // stock identifier, the analysis instructions. The chain's stdin is
         // spent regardless of what the targets did.
-        ctx.out = std::move(combined);
-        ctx.err = std::move(errors);
-        ctx.no_clipboard = no_clipboard;
-        ctx.stdin_consumed = has_stdin;
+        r.out = std::move(combined);
+        r.err = std::move(errors);
+        r.no_clipboard = no_clipboard;
+        if (has_stdin) v.in.spend();
         return;
     }
 

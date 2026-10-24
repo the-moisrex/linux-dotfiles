@@ -40,7 +40,9 @@ file(GLOB PROMPT_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prompts
 # stays self-contained; the header is regenerated whenever one of them changes.
 set(PROMPT_ASSETS
     prompt_registry_hpp|src/sdk/prompt_registry.hpp
-    prompt_context_hpp|src/sdk/prompt_context.hpp
+    stage_hpp|src/sdk/stage.hpp
+    facts_hpp|src/sdk/facts.hpp
+    chain_state_hpp|src/sdk/chain_state.hpp
     errors_hpp|src/sdk/errors.hpp
     embed_hpp|src/sdk/embed.hpp
     args_hpp|src/sdk/args.hpp
@@ -76,15 +78,17 @@ add_custom_command(
 # pulls in members that resolve some undefined symbol — the registrar of a
 # prompt nothing references would be dropped, silently unregistering it.
 add_library(prompt_lib OBJECT
+    src/environment.cpp
     src/core/fs.cpp
     src/core/process.cpp
     src/core/clipboard.cpp
     src/core/sanitize.cpp
     src/core/strings.cpp
-    src/sdk/prompt_context.cpp
+    src/sdk/facts.cpp
+    src/sdk/stage.cpp
+    src/sdk/wire.cpp
     src/sdk/prompt_registry.cpp
     src/sdk/chaining.cpp
-    src/sdk/pipeline.cpp
     src/sdk/embed.cpp
     src/sdk/args.cpp
     src/sdk/sink.cpp

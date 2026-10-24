@@ -59,18 +59,18 @@ bool in(std::string const& cat, std::initializer_list<char const*> names) {
 
 } // namespace
 
-static void execute_opportunities(prompt_context& ctx) {
+static void execute_opportunities(view const& v, result& r) {
     // CATEGORY="${1:-}"; shift; EXTRA="$*"
-    if (ctx.args_count == 0 || ctx.args[0].empty()) {
-        ctx.out = opportunities_help();
+    if (v.args.empty() || v.args[0].empty()) {
+        r.out = opportunities_help();
         return;
     }
 
-    std::string category(ctx.args[0]);
+    std::string category(v.args[0]);
     std::string extra;
-    for (std::size_t i = 1; i < ctx.args_count; ++i) {
+    for (std::size_t i = 1; i < v.args.size(); ++i) {
         if (!extra.empty()) extra += ' ';
-        extra += std::string(ctx.args[i]);
+        extra += std::string(v.args[i]);
     }
 
     std::string out;
@@ -367,7 +367,7 @@ static void execute_opportunities(prompt_context& ctx) {
         throw soft_error{std::move(err)};
     }
 
-    ctx.out = std::move(out);
+    r.out = std::move(out);
 }
 
 static void render_help_opportunities(std::ostream& os) { os << opportunities_help(); }

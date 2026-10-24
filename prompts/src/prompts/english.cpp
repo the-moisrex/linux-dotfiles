@@ -5,19 +5,19 @@
 
 namespace prompt::prompts {
 
-static void execute_english(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_english(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     std::string output;
     output += "Translate to English; no explanations, no comments, no extra text, just the translation.\n\n";
 
     // bash's embed_stdin fails on a tty stdin, and since it is the script's
     // last command its status becomes the prompt's exit code (1).
-    if (!ctx.stdin_consumed) throw soft_error{std::string{}, std::move(output)};
+    if (!v.in.piped()) throw soft_error{std::string{}, std::move(output)};
 
-    output += embed_stdin(ctx.stdin_content, head_lines);
-    ctx.out = std::move(output);
-    ctx.stdin_consumed = true;
+    output += embed_stdin(v.in.text(), head_lines);
+    r.out = std::move(output);
+    v.in.spend();
 }
 
 static void render_help_english(std::ostream& os) {

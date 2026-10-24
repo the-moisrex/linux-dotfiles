@@ -104,7 +104,21 @@ void render_sink_help(std::ostream& out) {
            "  --head N          keep only the first N lines of the context\n";
 }
 
-std::string_view wait_for_prompts(prompt_context const& ctx) { return ctx.chain_context; }
+void write_stdout(view const& in, result& out, std::string_view chunk) {
+    out.out.append(chunk);
+    if (in.stream.stream_stdout && in.stream.stdout_writer != nullptr) {
+        in.stream.stdout_writer(chunk);
+        out.stdout_streamed = true;
+    }
+}
+
+void write_stderr(view const& in, result& out, std::string_view chunk) {
+    out.stderr_buffer.append(chunk);
+    if (in.stream.stream_stderr && in.stream.stderr_writer != nullptr) {
+        in.stream.stderr_writer(chunk);
+        out.stderr_streamed = true;
+    }
+}
 
 std::string_view trim_context_lines(std::string_view text, std::size_t limit) {
     std::size_t start = 0;
@@ -118,29 +132,13 @@ std::string_view trim_context_lines(std::string_view text, std::size_t limit) {
     return text.substr(0, start);
 }
 
-void write_stdout(prompt_context& ctx, std::string_view chunk) {
-    ctx.out.append(chunk);
-    if (ctx.stream_stdout && ctx.stdout_writer != nullptr) {
-        ctx.stdout_writer(chunk);
-        ctx.stdout_streamed = true;
-    }
-}
-
-void write_stderr(prompt_context& ctx, std::string_view chunk) {
-    ctx.stderr_buffer.append(chunk);
-    if (ctx.stream_stderr && ctx.stderr_writer != nullptr) {
-        ctx.stderr_writer(chunk);
-        ctx.stderr_streamed = true;
-    }
-}
-
-process::command_result run_sink_tool(prompt_context& ctx, std::vector<std::string> argv, std::string stdin_data,
-                                      std::chrono::milliseconds timeout) {
+process::command_result run_sink_tool(view const& in, result& out, std::vector<std::string> argv,
+                                      std::string stdin_data, std::chrono::milliseconds timeout) {
     process::command cmd{std::move(argv)};
     cmd.stdin_data(std::move(stdin_data));
     cmd.timeout(timeout);
-    cmd.on_stdout([&ctx](std::string_view chunk) { write_stdout(ctx, chunk); });
-    cmd.on_stderr([&ctx](std::string_view chunk) { write_stderr(ctx, chunk); });
+    cmd.on_stdout([&in, &out](std::string_view chunk) { write_stdout(in, out, chunk); });
+    cmd.on_stderr([&in, &out](std::string_view chunk) { write_stderr(in, out, chunk); });
     return cmd.run();
 }
 

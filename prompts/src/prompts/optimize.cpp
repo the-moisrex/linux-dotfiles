@@ -7,8 +7,8 @@
 
 namespace prompt::prompts {
 
-static void execute_optimize_prompt(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_optimize_prompt(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(Act as an expert prompt engineer. Review the provided prompt(s) or instructions below.
 Your goal is to optimize the input to create a clearer, more effective, and more robust prompt for an AI assistant.
@@ -23,7 +23,7 @@ Here is the input to optimize:
 )PROMPT";
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         // optimize-prompt.sh puts no blank line between "File:" and the fence.
         output += std::format("File: {}\n```{}\n", file.filename().string(), infer_lang(file));
@@ -34,8 +34,8 @@ Here is the input to optimize:
         warn_missing_file(error, arg);
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_optimize_prompt(std::ostream& os) {

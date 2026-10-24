@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../core/process.hpp"
-#include "prompt_context.hpp"
 #include "sink_types.hpp"
+#include "stage.hpp"
 #include <chrono>
 #include <iosfwd>
 #include <span>
@@ -28,24 +28,21 @@ sink_args parse_sink_args(std::span<std::string_view const> args);
 // The common Options: block every sink appends to its own help.
 void render_sink_help(std::ostream& out);
 
-// The chain text accumulated before this segment. The dispatcher already ran
-// every earlier batch, so this is a barrier result rather than a blocking wait.
-[[nodiscard]] std::string_view wait_for_prompts(prompt_context const& ctx);
-
 // The `--head N` helper the dispatcher applies to every sink (so the flag is
 // genuinely shared): the first `limit` lines, including their newline; limit 0
 // yields an empty view. It is applied before the redaction legend is prepended.
 [[nodiscard]] std::string_view trim_context_lines(std::string_view text, std::size_t limit);
 
 // Stream a chunk to the real terminal (when the dispatcher enabled streaming)
-// and retain it: stdout in ctx.out for the next sink, stderr in a separate
-// buffer that is never part of the AI chain context automatically.
-void write_stdout(prompt_context& ctx, std::string_view chunk);
-void write_stderr(prompt_context& ctx, std::string_view chunk);
+// and retain it: stdout in the result (and thus the next sink's context),
+// stderr in a separate buffer that is never part of the AI chain context.
+void write_stdout(view const& in, result& out, std::string_view chunk);
+void write_stderr(view const& in, result& out, std::string_view chunk);
 
 // Run a tool-backed sink: stdout goes through write_stdout, stderr through
 // write_stderr. The command still returns its captured result as usual.
-process::command_result run_sink_tool(prompt_context& ctx, std::vector<std::string> argv, std::string stdin_data,
+process::command_result run_sink_tool(view const& in, result& out, std::vector<std::string> argv,
+                                      std::string stdin_data,
                                       std::chrono::milliseconds timeout = std::chrono::milliseconds{0});
 
 } // namespace prompt

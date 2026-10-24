@@ -377,34 +377,34 @@ struct parsed_args {
     int exit_code = 0;
 };
 
-parsed_args parse_args(prompt_context const& ctx) {
+parsed_args parse_args(view const& v) {
     parsed_args parsed;
-    std::vector<bool> consumed(ctx.args_count, false);
+    std::vector<bool> consumed(v.args.size(), false);
 
     // --help prints the help and exits 0, --head is validated here, everything
     // else survives into this prompt's own loop.
-    for (std::size_t i = 0; i < ctx.args_count;) {
-        if (ctx.args[i] == "--help" || ctx.args[i] == "-h") {
+    for (std::size_t i = 0; i < v.args.size();) {
+        if (v.args[i] == "--help" || v.args[i] == "-h") {
             std::string help = help_text(render_help_tse_find_impl);
             parsed.wants_help = true;
             parsed.help_text = help;
             return parsed;
         }
-        if (ctx.args[i] != "--head") {
+        if (v.args[i] != "--head") {
             ++i;
             continue;
         }
-        if (i + 1 >= ctx.args_count) {
+        if (i + 1 >= v.args.size()) {
             parsed.error = "Missing value for --head\n";
             parsed.exit_code = 2;
             return parsed;
         }
-        if (!is_all_digits(ctx.args[i + 1])) {
+        if (!is_all_digits(v.args[i + 1])) {
             parsed.error = "--head requires a non-negative integer\n";
             parsed.exit_code = 2;
             return parsed;
         }
-        parsed.head_lines = parse_head_value(ctx.args[i + 1]);
+        parsed.head_lines = parse_head_value(v.args[i + 1]);
         consumed[i] = true;
         consumed[i + 1] = true;
         i += 2;
@@ -414,16 +414,16 @@ parsed_args parse_args(prompt_context const& ctx) {
     constexpr std::string_view kModeChoice = "prompt tse.find: --mode must be chat or agentic\n";
     constexpr std::string_view kMaxIter = "prompt tse.find: --max-iter requires a positive integer\n";
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
         if (consumed[i]) continue;
-        std::string_view arg = ctx.args[i];
+        std::string_view arg = v.args[i];
         if (arg == "--mode") {
-            if (i + 1 >= ctx.args_count || consumed[i + 1]) {
+            if (i + 1 >= v.args.size() || consumed[i + 1]) {
                 parsed.error = kModeUsage;
                 parsed.exit_code = 2;
                 return parsed;
             }
-            std::string_view value = ctx.args[i + 1];
+            std::string_view value = v.args[i + 1];
             if (value != "chat" && value != "agentic") {
                 parsed.error = kModeChoice;
                 parsed.exit_code = 2;
@@ -435,12 +435,12 @@ parsed_args parse_args(prompt_context const& ctx) {
             continue;
         }
         if (arg == "--max-iter") {
-            if (i + 1 >= ctx.args_count || consumed[i + 1] || !is_positive_int_token(ctx.args[i + 1])) {
+            if (i + 1 >= v.args.size() || consumed[i + 1] || !is_positive_int_token(v.args[i + 1])) {
                 parsed.error = kMaxIter;
                 parsed.exit_code = 2;
                 return parsed;
             }
-            parsed.max_iter = std::string(ctx.args[i + 1]);
+            parsed.max_iter = std::string(v.args[i + 1]);
             consumed[i] = true;
             consumed[i + 1] = true;
             continue;
@@ -451,7 +451,7 @@ parsed_args parse_args(prompt_context const& ctx) {
         }
         if (arg == "--") {
             // Everything after `--` is collected verbatim, flags included.
-            for (std::size_t j = i + 1; j < ctx.args_count; ++j) parsed.rest_args.emplace_back(ctx.args[j]);
+            for (std::size_t j = i + 1; j < v.args.size(); ++j) parsed.rest_args.emplace_back(v.args[j]);
             break;
         }
         parsed.rest_args.emplace_back(arg);
@@ -489,7 +489,7 @@ std::optional<std::filesystem::path> resolve_exact_file(std::string const& file,
     return std::nullopt;
 }
 
-classified_input classify_input(prompt_context const& ctx, parsed_args const& parsed) {
+classified_input classify_input(view const& v, parsed_args const& parsed) {
     classified_input out;
 
     std::vector<std::string> screen_files;
@@ -529,7 +529,7 @@ classified_input classify_input(prompt_context const& ctx, parsed_args const& pa
                 out.run_args = std::move(screen_files);
             } else {
                 for (auto const& file : screen_files) {
-                    auto resolved = resolve_exact_file(file, ctx.git_root);
+                    auto resolved = resolve_exact_file(file, v.env.git_root);
                     if (!resolved) {
                         out.error = "prompt tse.find: screen file not found: " + file + "\n";
                         out.exit_code = 2;
@@ -554,7 +554,7 @@ classified_input classify_input(prompt_context const& ctx, parsed_args const& pa
     } else {
         out.read_stdin = true;
         // read_stdin captures through `$(cat)`, which drops trailing newlines.
-        out.review_payload = captured(ctx.stdin_content);
+        out.review_payload = captured(v.in.text());
         if (out.review_payload.empty()) {
             out.error = no_query();
             out.exit_code = 2;
@@ -701,10 +701,11 @@ struct screener_paths {
     std::filesystem::path tool_abs;
 };
 
-screener_paths locate_screener(prompt_context const& ctx) {
+screener_paths locate_screener(view const& v) {
     // The screener lives in the repo's bin/ directory (bin/tse.find).
     screener_paths paths;
-    paths.tool = ctx.git_root.empty() ? std::filesystem::path{"bin"} / "tse.find" : ctx.git_root / "bin" / "tse.find";
+    paths.tool =
+        v.env.git_root.empty() ? std::filesystem::path{"bin"} / "tse.find" : v.env.git_root / "bin" / "tse.find";
     paths.tool_abs = paths.tool;
 
     std::error_code ec;
@@ -721,30 +722,30 @@ screener_paths locate_screener(prompt_context const& ctx) {
     return paths;
 }
 
-std::string screener_to_run(screener_paths const& paths, prompt_context const& ctx) {
+std::string screener_to_run(screener_paths const& paths, view const& v) {
     if (std::filesystem::is_regular_file(paths.tool)) return paths.tool.string();
     // Same file for the installed/build layouts.
-    return prompt::fs::bin_tool("tse.find", ctx.exe_path, ctx.git_root).string();
+    return prompt::fs::bin_tool("tse.find", v.env.exe_path, v.env.git_root).string();
 }
 
 } // namespace
 
-void execute_tse_find_impl(prompt_context& ctx) {
-    auto parsed = parse_args(ctx);
+void execute_tse_find_impl(view const& v, result& r) {
+    auto parsed = parse_args(v);
     if (parsed.wants_help) {
-        ctx.out = std::move(parsed.help_text);
+        r.out = std::move(parsed.help_text);
         return;
     }
     if (!parsed.error.empty()) throw prompt_error{parsed.exit_code, std::move(parsed.error)};
 
-    auto screener = locate_screener(ctx);
+    auto screener = locate_screener(v);
     if (!std::filesystem::is_regular_file(screener.tool)) {
         throw soft_error{"prompt tse.find: screener not found: " + screener.tool_abs.string() + "\n"};
     }
-    std::string tool = screener_to_run(screener, ctx);
+    std::string tool = screener_to_run(screener, v);
 
-    auto input = classify_input(ctx, parsed);
-    bool stdin_consumed = input.read_stdin && ctx.stdin_consumed;
+    auto input = classify_input(v, parsed);
+    bool stdin_consumed = input.read_stdin && v.in.piped();
     if (!input.error.empty()) {
         throw prompt_error{input.exit_code, std::move(input.error)};
     }
@@ -757,7 +758,7 @@ void execute_tse_find_impl(prompt_context& ctx) {
                 // `$(cat -- "$resolved")`: its stderr is inherited and its
                 // trailing newlines are dropped by the capture.
                 auto payload = captured(prompt::process::run_command({"cat", "--", file}).stdout_data);
-                auto rendered = emit_review("doc", prompt::fs::relative_path(file, ctx.git_root).string(), payload,
+                auto rendered = emit_review("doc", prompt::fs::relative_path(file, v.env.git_root).string(), payload,
                                             parsed.head_lines);
                 output += rendered.output;
                 if (rendered.exit_code != 0) {
@@ -772,8 +773,8 @@ void execute_tse_find_impl(prompt_context& ctx) {
                 throw usage_error{std::move(rendered.error), std::move(output)};
             }
         }
-        ctx.out = std::move(output);
-        ctx.stdin_consumed = stdin_consumed;
+        r.out = std::move(output);
+        if (stdin_consumed) v.in.spend();
         return;
     }
 
@@ -800,8 +801,8 @@ void execute_tse_find_impl(prompt_context& ctx) {
         if (rendered.exit_code != 0) {
             throw usage_error{std::move(rendered.error), std::move(output)};
         }
-        ctx.out = std::move(output);
-        ctx.stdin_consumed = stdin_consumed;
+        r.out = std::move(output);
+        if (stdin_consumed) v.in.spend();
         return;
     }
 
@@ -829,8 +830,8 @@ void execute_tse_find_impl(prompt_context& ctx) {
     }
     output += kGroundRules;
 
-    ctx.out = std::move(output);
-    ctx.stdin_consumed = stdin_consumed;
+    r.out = std::move(output);
+    if (stdin_consumed) v.in.spend();
 }
 
 void render_help_tse_find_impl(std::ostream& os) { os << kHelpText; }

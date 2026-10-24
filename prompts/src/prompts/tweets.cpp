@@ -5,15 +5,15 @@
 
 namespace prompt::prompts {
 
-static void execute_tweets(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_tweets(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     std::string output;
 
     // bash's `embed_stdin || true` prints a blank block for an empty (but
     // still piped) stdin too — the separator tweets.sh relies on.
-    if (ctx.stdin_consumed) {
-        output += embed_stdin(ctx.stdin_content, head_lines);
+    if (v.in.piped()) {
+        output += embed_stdin(v.in.text(), head_lines);
     }
 
     output += R"PROMPT(Based on the input content, generate several high-quality tweet ideas.
@@ -24,7 +24,7 @@ Prefer 3–5 strong, ready-to-post ideas. Keep them concise.
 )PROMPT";
     output += '\n';
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_tweets(std::ostream& os) {

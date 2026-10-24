@@ -1,7 +1,7 @@
 #pragma once
 
 #include "embed.hpp"
-#include "prompt_context.hpp"
+#include "stage.hpp"
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -28,7 +28,7 @@ std::string parse_head_option(std::span<std::string_view const> args, std::optio
 // (the three-line preamble those prompts repeat). Returns the cap, or throws
 // the exact message parse_head_option produced. `strict = false` mirrors the
 // scripts with their own arg loop.
-std::optional<std::size_t> head_lines_or_throw(prompt_context const& ctx, bool strict = true);
+std::optional<std::size_t> head_lines_or_throw(view const& in, bool strict = true);
 
 // The value-less flags that ask the file prompts to number the embedded lines.
 inline constexpr std::array<std::string_view, 2> kNumberFlags = {"--num", "--numbered"};
@@ -42,7 +42,7 @@ bool is_number_flag(std::string_view arg);
 // The file prompts' whole CLI: `--head N` (validated like parse_head_option)
 // plus the value-less `--num`/`--numbered`. Throws usage_error on a bad --head
 // value, exactly like head_lines_or_throw.
-file_options file_options_or_throw(prompt_context const& ctx, bool strict = true);
+file_options file_options_or_throw(view const& in, bool strict = true);
 
 // The two usage lines shared by the file prompts:
 //   Usage: prompt <name> <prefix>[--head N] [--num]<tail>
@@ -57,11 +57,12 @@ std::string file_usage_help(std::string_view name, std::string_view tail = "[FIL
 // the standard `-h, --help` line.
 std::string file_options_help(std::string_view what, bool show_help = false);
 
-// The context's arguments with the `--head <value>` pair and the value-less
+// The arguments with the `--head <value>` pair and the value-less
 // --num/--numbered removed: the filter loop the prompts run before treating
 // each remaining token as a path. The strings are owned copies (callers build
 // argv vectors and concatenate them).
-std::vector<std::string> positional_args(prompt_context const& ctx);
+std::vector<std::string> positional_args(std::span<std::string_view const> args);
+std::vector<std::string> positional_args(view const& in);
 
 // The FILE arguments (everything but --head's value and --num/--numbered) split
 // into the ones that are regular files and the ones that are not. Prompts embed
@@ -73,6 +74,10 @@ struct file_args {
     std::vector<std::string_view> missing;
 };
 
-file_args collect_file_args(prompt_context const& ctx);
+file_args collect_file_args(std::span<std::string_view const> args);
+// The view overload is the one prompts call; it reads the prompt's own FILE
+// arguments. A sibling `.files` already embeds what it resolved, so its output
+// carries the files into the chain — a prompt must not embed them a second time.
+file_args collect_file_args(view const& in);
 
 } // namespace prompt

@@ -8,8 +8,8 @@
 
 namespace prompt::prompts {
 
-static void execute_readme(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_readme(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(You are a technical documentation expert.
 Generate or improve a comprehensive README.md based on the provided code and context.
@@ -36,9 +36,9 @@ Guidelines:
     // readme.sh: `git rev-parse --is-inside-work-tree` gates the project
     // structure block; the listing is the locale-collated `ls -1 <root> |
     // head -30` the script runs, so run it verbatim.
-    if (!ctx.git_root.empty()) {
+    if (!v.env.git_root.empty()) {
         output += "Project structure:\n\n```text\n";
-        std::string root = ctx.git_root.string();
+        std::string root = v.env.git_root.string();
         std::vector<std::string> storage = {"bash", "-c", "ls -1 \"$1\" 2>/dev/null | head -30"};
         storage.push_back(root); // $0
         storage.push_back(root); // $1
@@ -47,7 +47,7 @@ Guidelines:
     }
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
@@ -58,8 +58,8 @@ Guidelines:
         warn_missing_file(error, arg);
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_readme(std::ostream& os) {

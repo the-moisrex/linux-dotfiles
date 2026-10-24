@@ -10,10 +10,10 @@ namespace prompt::prompts {
 
 static void render_help_man(std::ostream& os);
 
-static void execute_man(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_man(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
-    auto pages = positional_args(ctx);
+    auto pages = positional_args(v);
 
     if (pages.empty()) {
         std::string help_os = help_text(render_help_man);
@@ -46,7 +46,7 @@ static void execute_man(prompt_context& ctx) {
     }
     output += "\n```\n\n";
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_man(std::ostream& os) {

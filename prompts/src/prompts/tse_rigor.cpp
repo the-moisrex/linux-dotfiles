@@ -8,8 +8,8 @@ static void render_help_tse_rigor(std::ostream& os);
 
 // A standalone checklist that keeps market/TSE analysis and backtests honest.
 // Chain it onto a data prompt (`prompt tse فولاد .tse.rigor`) or run it on its own.
-static void execute_tse_rigor(prompt_context& ctx) {
-    ctx.out = R"EOF(**When analyzing Tehran Stock Exchange (TSE) data or any market backtest:**
+static void execute_tse_rigor([[maybe_unused]] view const& v, result& r) {
+    r.out = R"EOF(**When analyzing Tehran Stock Exchange (TSE) data or any market backtest:**
 
 1. **Never compute buyer/seller power or ratios manually in prose.**
    First build a clear table (or code output) with: date, closing_rial, last_rial, volume, individual_buy_shares, individual_sell_shares, individual_buyers, individual_sellers, and the computed power. Show the exact arithmetic for any example you cite.

@@ -138,7 +138,7 @@ std::string ai_said_help() {
 
 } // namespace
 
-static void execute_ai_said(prompt_context& ctx) {
+static void execute_ai_said(view const& v, result& r) {
     std::string interval = "0.5";
     std::string clip_timeout = "3";
     bool clear_on_start = true;
@@ -146,24 +146,24 @@ static void execute_ai_said(prompt_context& ctx) {
     std::string head_str;
     std::vector<std::string> positional;
 
-    for (std::size_t i = 0; i < ctx.args_count;) {
-        std::string a(ctx.args[i]);
+    for (std::size_t i = 0; i < v.args.size();) {
+        std::string a(v.args[i]);
         if (a == "--help" || a == "-h") {
-            ctx.out = ai_said_help();
+            r.out = ai_said_help();
             return;
         }
         if (a == "--head") {
-            if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --head\n"};
-            head_str = std::string(ctx.args[++i]);
+            if (i + 1 >= v.args.size()) throw usage_error{"prompt ai-said: Missing value for --head\n"};
+            head_str = std::string(v.args[++i]);
             ++i;
             head_set = true;
         } else if (a == "--interval") {
-            if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --interval\n"};
-            interval = std::string(ctx.args[++i]);
+            if (i + 1 >= v.args.size()) throw usage_error{"prompt ai-said: Missing value for --interval\n"};
+            interval = std::string(v.args[++i]);
             ++i;
         } else if (a == "--timeout") {
-            if (i + 1 >= ctx.args_count) throw usage_error{"prompt ai-said: Missing value for --timeout\n"};
-            clip_timeout = std::string(ctx.args[++i]);
+            if (i + 1 >= v.args.size()) throw usage_error{"prompt ai-said: Missing value for --timeout\n"};
+            clip_timeout = std::string(v.args[++i]);
             ++i;
         } else if (a == "--no-clear") {
             clear_on_start = false;
@@ -200,7 +200,7 @@ static void execute_ai_said(prompt_context& ctx) {
     if (char const* cmd = std::getenv("CLIPBOARD_CMD")) {
         clipboard_path = cmd;
     } else {
-        clipboard_path = prompt::fs::bin_tool("clipboard", ctx.exe_path, ctx.git_root).string();
+        clipboard_path = prompt::fs::bin_tool("clipboard", v.env.exe_path, v.env.git_root).string();
     }
     if (::access(clipboard_path.c_str(), X_OK) != 0) {
         throw soft_error{"prompt ai-said: Clipboard helper not found: " + clipboard_path + "\n"};

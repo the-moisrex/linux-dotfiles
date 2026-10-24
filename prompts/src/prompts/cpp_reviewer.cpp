@@ -5,13 +5,13 @@
 
 namespace prompt::prompts {
 
-static void execute_cpp_reviewer(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_cpp_reviewer(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
     (void)head_lines; // cpp-reviewer.sh only embeds stdin, which --head never trims
 
     std::string output;
-    if (ctx.stdin_consumed) {
-        output += embed_stdin(ctx.stdin_content, head_lines);
+    if (v.in.piped()) {
+        output += embed_stdin(v.in.text(), head_lines);
     }
 
     output +=
@@ -38,7 +38,7 @@ Provide constructive feedback highlighting issues, suggesting improvements, and 
 )PROMPT";
     output += '\n';
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_cpp_reviewer(std::ostream& os) {

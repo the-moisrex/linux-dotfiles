@@ -1,0 +1,2683 @@
+#!/usr/bin/env python3
+"""accounts — manage per-site login identities across browsers and profiles.
+
+An *account* is a named identity for one site (``x.com/work``): the session state
+— cookies and ``localStorage`` — that the site uses to recognise you.  A
+*profile* is one browser profile, written ``browser/profile`` (``firefox/default-3``,
+``brave/Profile 1``).  This tool copies state between the two: capture it out of a
+profile, install it into a profile, or log in from scratch and keep the result.
+
+Bundles are stored decrypted, so one account can move between a Chromium browser
+and a Firefox profile; cookie values are re-encrypted with the *target* browser's
+keyring key on write.  Writes always need the profile to be closed (a running
+browser keeps cookies in memory and would overwrite them on exit) and are backed
+up first, so ``accounts undo`` can put everything back.
+
+Usage:
+  accounts add     x.com work                  # capture it, or log in if nothing has it
+  accounts add     x.com work --login          # force a login in a scratch profile
+  accounts add     x.com work --at firefox     # capture from firefox's default profile
+  accounts install x.com work --at brave       # put it in brave (exact replacement)
+  accounts open    x.com work                  # install it and launch the browser
+  accounts logout  x.com --at brave            # drop the site's session state
+  accounts list                                # every account, with expiry state
+  accounts profiles                            # which profile holds which account
+  accounts diff    x.com work --at brave       # what ``install`` would change
+  accounts forget  x.com work                  # delete the saved account
+  accounts undo    --at brave                  # roll the last write back
+
+``--at BROWSER`` means that browser's default profile, ``--at BROWSER/PROFILE``
+names one exactly, and no ``--at`` lets the tool find (or ask for) one.  A
+dedicated ``accounts-<label>`` profile is created on demand by ``install
+--dedicated`` and by ``new-profile``; both show up in the browser's own profile
+picker.  Firefox's native container attribute (``userContextId``) is preserved in
+bundles, so a container-scoped account round-trips inside one profile.
+
+Exit status is 0 on success, 1 when nothing matched or a write was refused, and 2
+on usage errors.
+"""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import calendar
+import glob
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import shutil
+import sqlite3
+import struct
+import subprocess
+import sys
+import tempfile
+import textwrap
+import time
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+from urllib.parse import quote, urlparse
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+STORE_ENV = "ACCOUNTS_DIR"
+INDEX_VERSION = 2
+
+
+# ----------------------------------------------------------------------- errors
+
+
+class AccountsError(Exception):
+    """Base class; ``exit_code`` decides the process status."""
+
+    exit_code = 1
+
+
+class UsageError(AccountsError):
+    exit_code = 2
+
+
+class Refused(AccountsError):
+    """A write was refused (open browser, missing profile, ...)."""
+
+
+# ------------------------------------------------------------------- siblings
+
+
+def _load_module(name, filename):
+    path = os.path.join(HERE, filename)
+    if not os.path.exists(path):
+        path = shutil.which(filename) or ""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        loader = SourceFileLoader(name, path)
+        spec = importlib.util.spec_from_loader(name, loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        loader.exec_module(module)
+    except Exception:  # pragma: no cover - a missing/broken sibling
+        return None
+    return module
+
+
+_MODULES = {}
+
+
+def _sibling(name, filename):
+    if name not in _MODULES:
+        _MODULES[name] = _load_module(name, filename)
+    return _MODULES[name]
+
+
+def _ck():
+    module = _sibling("accounts_cookies", "cookies")
+    if module is None:
+        raise AccountsError("cookies not found next to accounts or on PATH")
+    return module
+
+
+def _bs():
+    module = _sibling("accounts_storage", "browser.storage")
+    if module is None:
+        raise AccountsError("browser.storage not found next to accounts or on PATH")
+    return module
+
+
+def _bf():
+    module = _sibling("accounts_find", "browser.find")
+    if module is None:
+        raise AccountsError("browser.find not found next to accounts or on PATH")
+    return module
+
+
+def browsers():
+    """Browser/profile snapshot as plain dicts (browser.find's own schema)."""
+    return [_bf().browser_dict(b) for b in _bf().collect()]
+
+
+# ----------------------------------------------------------------------- utils
+
+
+_SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@+-]*$")
+_SAFE_SITE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
+
+# Registrable-domain approximation: the two-label suffix normally wins, these
+# need three labels to reach the registrable name.  No public-suffix dependency.
+_MULTI_LABEL = {
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au",
+    "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp",
+    "com.br", "net.br", "org.br", "com.cn", "net.cn", "org.cn",
+    "com.tr", "net.tr", "org.tr", "co.in", "net.in", "org.in",
+    "co.nz", "net.nz", "org.nz", "co.za", "org.za",
+    "com.sa", "net.sa", "org.sa", "com.ae", "net.ae", "org.ae",
+    "co.ir", "ac.ir", "org.ir", "com.ir",
+    "com.mx", "com.ar", "com.co", "com.pe", "com.ve",
+    "co.kr", "or.kr", "com.sg", "com.hk", "com.tw",
+    "co.il", "org.il", "com.eg", "com.pk", "com.ng",
+}
+
+
+def registrable_domain(host):
+    """Best-effort registrable domain for a host (no PSL dependency)."""
+    host = (host or "").strip().lower().rstrip(".")
+    if not host:
+        return ""
+    if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", host) or ":" in host:
+        return host
+    labels = host.split(".")
+    if len(labels) <= 2:
+        return host
+    two = ".".join(labels[-2:])
+    if two in _MULTI_LABEL and len(labels) >= 3:
+        return ".".join(labels[-3:])
+    return two
+
+
+def site_of(target, override=None):
+    """Turn a domain/URL (or an explicit --site) into the account namespace."""
+    if override:
+        site = override.strip().lower().rstrip(".")
+    else:
+        raw = (target or "").strip()
+        if "://" in raw:
+            raw = urlparse(raw).hostname or ""
+        else:
+            raw = raw.split("/", 1)[0].split("?", 1)[0]
+            if raw.count(":") == 1 and raw.rsplit(":", 1)[1].isdigit():
+                raw = raw.rsplit(":", 1)[0]
+        site = registrable_domain(raw)
+    if not site or not _SAFE_SITE.match(site):
+        raise UsageError(f"could not parse a site from {target!r}")
+    return site
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def now_unix():
+    return int(time.time())
+
+
+def site_matches_host(host, site):
+    return bool(host and site and _ck().host_matches(host, site, False))
+
+
+def site_matches_origin(origin, site):
+    return bool(origin and site and _bs().origin_matches(
+        origin, {"scheme": "", "host": site, "port": None}, False))
+
+
+def read_json(path, default=None):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(path, payload, mode=0o600):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def human_age(timestamp):
+    if not timestamp:
+        return "never"
+    delta = now_unix() - int(timestamp)
+    if delta < 0:
+        return "in " + human_age_span(-delta)
+    return human_age_span(delta) + " ago"
+
+
+def human_age_span(seconds):
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{seconds // size}{unit}"
+    return f"{seconds}s"
+
+
+# --------------------------------------------------------------------- crypto
+
+
+def _pad(data, block=16):
+    n = block - (len(data) % block)
+    return data + bytes([n]) * n
+
+
+def _aes_cbc_encrypt(key, iv, data):
+    _ck()._require_crypto()
+    if _ck()._HAVE_PYCRYPTODOME:
+        from Crypto.Cipher import AES
+        return AES.new(key, AES.MODE_CBC, iv).encrypt(data)
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    enc = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return enc.update(data) + enc.finalize()
+
+
+def keyring_secret(app_id):
+    """The libsecret secret for a Chromium-family app, or None when unavailable."""
+    if not shutil.which("secret-tool"):
+        return None
+    try:
+        out = subprocess.run(["secret-tool", "lookup", "application", app_id or "chromium"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+def chromium_encrypt(value, host, key, db_version):
+    """Encrypt a cookie the way Chromium expects (``v10`` + AES-128-CBC)."""
+    plain = value.encode("utf-8")
+    if db_version >= 24:
+        # Chromium >= 127 binds the value to its domain with a SHA256 prefix.
+        plain = hashlib.sha256(host.encode("utf-8")).digest() + plain
+    return b"v10" + _aes_cbc_encrypt(key, b" " * 16, _pad(plain))
+
+
+def verified_chromium_key(conn, app_id, db_version):
+    """The keyring key, but only when it provably decrypts a stored cookie.
+
+    A wrong key does not fail loudly: Chromium drops the cookie on next start,
+    so an unverified key is worse than the plaintext ``value`` column, which
+    Chromium reads happily.  Returns None when the key cannot be verified.
+    """
+    secret = keyring_secret(app_id)
+    if not secret:
+        return None
+    key = hashlib.pbkdf2_hmac("sha1", secret.encode("utf-8"), b"saltysalt", 1, 16)
+    try:
+        rows = conn.execute(
+            "select host_key, encrypted_value from cookies "
+            "where length(encrypted_value) > 3").fetchall()
+    except sqlite3.Error:
+        return None
+    for row in rows:
+        blob = row[1]
+        if isinstance(blob, memoryview):
+            blob = bytes(blob)
+        if not blob or blob[:3] not in (b"v10", b"v11"):
+            continue
+        ciphertext = blob[3:]
+        ciphertext = ciphertext[:len(ciphertext) // 16 * 16]
+        if not ciphertext:
+            continue
+        try:
+            plain = _ck()._unpad(_ck()._aes_cbc_decrypt(key, b" " * 16, ciphertext))
+        except Exception:
+            continue
+        if db_version >= 24:
+            host = (row[0] or "").lstrip(".")
+            digest = hashlib.sha256(host.encode("utf-8")).digest()
+            if plain.startswith(digest):
+                return key
+        else:
+            try:
+                plain.decode("utf-8")
+                return key
+            except UnicodeDecodeError:
+                continue
+    return None
+
+
+# ---------------------------------------------------------------------- store
+
+
+def store_root():
+    override = os.environ.get(STORE_ENV)
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(Path.home(), ".local", "share")
+    return os.path.join(base, "accounts")
+
+
+def ensure_store():
+    root = store_root()
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(root, 0o700)
+    except OSError:
+        pass
+    return root
+
+
+def index_path():
+    return os.path.join(ensure_store(), "index.json")
+
+
+def load_index():
+    data = read_json(index_path())
+    if not isinstance(data, dict):
+        data = {}
+    # v1 called a (browser, profile) pair a "seat"; read both spellings.
+    legacy = data.pop("seats", None)
+    data.setdefault("version", INDEX_VERSION)
+    data.setdefault("accounts", {})
+    data.setdefault("profiles", {})
+    if legacy:
+        data["profiles"] = {**legacy, **data["profiles"]}
+    for entry in data["accounts"].values():
+        if "profile" not in entry and entry.get("seat"):
+            entry["profile"] = entry.pop("seat")
+    return data
+
+
+def save_index(index):
+    write_json(index_path(), index)
+
+
+_STORE_LOCK = None
+
+
+def lock_store():
+    global _STORE_LOCK
+    root = ensure_store()
+    fh = open(os.path.join(root, ".lock"), "a+")
+    try:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (ImportError, OSError):
+        if _STORE_LOCK is not None:
+            return _STORE_LOCK
+        raise Refused("another accounts command is running "
+                      f"(lock: {os.path.join(root, '.lock')})")
+    _STORE_LOCK = fh
+    return fh
+
+
+def account_key(site, label):
+    return f"{site}/{label}"
+
+
+def account_dir(site, label):
+    if not _SAFE_LABEL.match(label):
+        raise UsageError(f"invalid account label {label!r} "
+                         "(letters, digits and . _ - @ + only)")
+    return os.path.join(ensure_store(), "sites", site, label)
+
+
+def read_bundle(site, label):
+    base = account_dir(site, label)
+    meta = read_json(os.path.join(base, "meta.json"))
+    if not meta:
+        raise AccountsError(f"no account {site}/{label} "
+                            f"(see: accounts list)")
+    if "profile" not in meta and meta.get("seat"):
+        meta["profile"] = meta.pop("seat")
+    return {
+        "meta": meta,
+        "cookies": read_json(os.path.join(base, "cookies.json"), []) or [],
+        "storage": read_json(os.path.join(base, "storage.json"), {}) or {},
+    }
+
+
+def write_bundle(site, label, meta, cookies, storage):
+    base = account_dir(site, label)
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    write_json(os.path.join(base, "meta.json"), meta)
+    write_json(os.path.join(base, "cookies.json"), cookies)
+    write_json(os.path.join(base, "storage.json"), storage)
+    return base
+
+
+def profile_key(browser, profile):
+    return f"{browser['id']}/{profile['name']}"
+
+
+def profile_kind(profile, dedicated=False):
+    """``profile`` for a dedicated accounts-<label> profile, else ``existing``."""
+    if dedicated or profile["name"].startswith("accounts-"):
+        return "profile"
+    return "existing"
+
+
+def sync_meta(index, site, label):
+    """Write the account's index entry back to its meta.json (profile bookkeeping)."""
+    entry = index["accounts"].get(account_key(site, label))
+    if entry:
+        write_json(os.path.join(account_dir(site, label), "meta.json"), entry)
+
+
+def record_profile(index, browser, profile, site, label, mode="existing"):
+    key = profile_key(browser, profile)
+    entry = index["profiles"].setdefault(key, {
+        "browser": browser["id"],
+        "profile": profile["name"],
+        "path": profile["path"],
+        "mode": mode,
+        "sites": {},
+    })
+    entry["path"] = profile["path"]
+    entry["mode"] = mode
+    entry["sites"][site] = {"label": label, "at": now_iso(), "at_unix": now_unix()}
+    account = index["accounts"].get(account_key(site, label))
+    if account:
+        account["profile"] = {
+            "browser": browser["id"],
+            "profile": profile["name"],
+            "path": profile["path"],
+            "mode": mode,
+            "at": now_iso(),
+            "at_unix": now_unix(),
+        }
+
+
+def forget_profile(index, browser, profile, site):
+    key = profile_key(browser, profile)
+    entry = index["profiles"].get(key)
+    if entry:
+        entry["sites"].pop(site, None)
+        if not entry["sites"]:
+            index["profiles"].pop(key, None)
+
+
+# --------------------------------------------------------------- profile choice
+
+
+def _profile_matches(profile, wanted):
+    if not wanted:
+        return True
+    low = wanted.lower()
+    return low in {profile["name"].lower(),
+                   os.path.basename(profile["path"]).lower(),
+                   profile["path"].lower()}
+
+
+def _browser_matches(browser, wanted):
+    if not wanted:
+        return True
+    names = {w.lower() for w in wanted}
+    return browser["id"].lower() in names or browser["name"].lower() in names
+
+
+def parse_at(at, snapshot):
+    """Split ``--at BROWSER[/PROFILE]`` into ``(browser ids, profile name)``.
+
+    ``--at firefox`` means that browser's default profile, ``--at
+    firefox/default-3`` names one exactly, and a bare ``--at default-3`` falls
+    back to a profile name when no browser is called that.
+    """
+    at = (at or "").strip()
+    if not at:
+        return [], None
+    if "/" in at:
+        browser, _, profile = at.partition("/")
+        return ([browser] if browser else []), (profile or None)
+    known = {b["id"].lower() for b in snapshot}
+    known |= {b["name"].lower() for b in snapshot}
+    if at.lower() in known:
+        return [at], None
+    return [], at
+
+
+def candidate_profiles(snapshot, at=""):
+    wanted_browsers, wanted_profile = parse_at(at, snapshot)
+    pairs = []
+    seen = set()
+    for b in snapshot:
+        if not _browser_matches(b, wanted_browsers):
+            continue
+        for p in b["profiles"]:
+            if not _profile_matches(p, wanted_profile):
+                continue
+            real = os.path.realpath(p["path"])
+            if real in seen:
+                continue
+            seen.add(real)
+            pairs.append((b, p))
+    pairs.sort(key=lambda bp: (not bp[1]["is_default"], bp[1]["is_open"],
+                               bp[0]["id"], bp[1]["name"]))
+    return pairs
+
+
+def describe_profile(browser, profile):
+    return f"{browser['id']}/{profile['name']} ({profile['path']})"
+
+
+_PROBE_CACHE = {}
+
+
+def open_readonly(path):
+    """A SQLite handle that also sees an uncheckpointed WAL.
+
+    A running browser keeps recent rows in ``-wal``, and a plain read-only
+    connection to such a database fails (or, worse, sees stale data), so any
+    WAL/shm sidecar sends us through ``cookies``' consistent temp copy.  A
+    quiescent profile is opened read-only in place.
+    """
+    if os.path.exists(path + "-wal") or os.path.exists(path + "-shm"):
+        try:
+            return _ck().open_sqlite(path)
+        except (OSError, sqlite3.Error):
+            return None
+    try:
+        uri = "file:" + quote(path, safe="/") + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=1.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("select 1 from sqlite_master limit 1").fetchall()
+        return conn
+    except sqlite3.Error:
+        pass
+    try:
+        return _ck().open_sqlite(path)
+    except (OSError, sqlite3.Error):
+        return None
+
+
+def count_site_cookies(conn, browser, site):
+    chromium = browser["family"] == "chromium"
+    column = "host_key" if chromium else "host"
+    table = "cookies" if chromium else "moz_cookies"
+    count = 0
+    for row in conn.execute(f"select {column} from {table}"):
+        if site_matches_host(row[0], site):
+            count += 1
+    return count
+
+
+def probe_site_state(browser, profile, site):
+    """(cookies, localStorage keys) a profile holds for *site*, no decryption."""
+    cache_key = (browser["id"], os.path.realpath(profile["path"]), site)
+    if cache_key in _PROBE_CACHE:
+        return _PROBE_CACHE[cache_key]
+    cookies = keys = 0
+    if os.path.isdir(profile["path"]):
+        db = cookie_db_path(browser, profile)
+        if db and os.path.exists(db):
+            counted = None
+            conn = open_readonly(db)
+            if conn is not None:
+                try:
+                    counted = count_site_cookies(conn, browser, site)
+                except sqlite3.Error:
+                    counted = None
+                finally:
+                    conn.close()
+            if counted is None:
+                # Locked mid-read (a browser writing): retry on a temp copy.
+                conn = None
+                try:
+                    conn = _ck().open_sqlite(db)
+                    counted = count_site_cookies(conn, browser, site)
+                except (OSError, sqlite3.Error):
+                    counted = 0
+                finally:
+                    if conn is not None:
+                        conn.close()
+            cookies = counted or 0
+        reader = (_bs().read_chromium_storage
+                  if browser["family"] == "chromium"
+                  else _bs().read_firefox_storage)
+        try:
+            keys = len(reader(profile, "localstorage",
+                              {"scheme": "", "host": site, "port": None}, False))
+        except Exception:
+            keys = 0
+    _PROBE_CACHE[cache_key] = (cookies, keys)
+    return cookies, keys
+
+
+def counts_label(cookies, keys):
+    parts = []
+    if cookies:
+        parts.append(f"{cookies} cookie" + ("s" if cookies != 1 else ""))
+    if keys:
+        parts.append(f"{keys} key" + ("s" if keys != 1 else ""))
+    return ", ".join(parts) or "empty"
+
+
+def profile_label(browser, profile):
+    return f"{browser['id']}/{profile['name']}"
+
+
+def profile_rows(entries, site):
+    """Aligned (label, counts, path) rows; counts are blank without a site."""
+    rows = [(profile_label(b, p), counts_label(c, k) if site else "", p["path"])
+            for b, p, c, k in entries]
+    label_width = max(len(label) for label, _, _ in rows)
+    detail_width = max(len(detail) for _, detail, _ in rows)
+    return [(label.ljust(label_width), detail.ljust(detail_width), path)
+            for label, detail, path in rows]
+
+
+def shortlist_error(entries, site):
+    head = (f"{len(entries)} candidate profiles for {site}:"
+            if site else f"{len(entries)} candidate profiles:")
+    lines = [head]
+    for label, detail, path in profile_rows(entries, site):
+        lines.append(f"  {label}  {detail}  {path}".rstrip())
+    lines.append("choose one with --at, or --pick")
+    return "\n".join(lines)
+
+
+def choose_profile(entries, args, site=None, purpose="install"):
+    """Ask which profile to use: fzf on a terminal, a numbered list otherwise."""
+    if not entries:
+        raise AccountsError("no browser profiles found (see: browser.find list)")
+    if getattr(args, "no_pick", False) or getattr(args, "json", False):
+        raise UsageError(shortlist_error(entries, site))
+    forced = getattr(args, "pick", False)
+    if not forced and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise UsageError(shortlist_error(entries, site))
+
+    rows = profile_rows(entries, site)
+    fzf = shutil.which("fzf")
+    if fzf and sys.stdin.isatty() and sys.stdout.isatty():
+        header = f"select the profile for {purpose}" + (f" ({site})" if site else "")
+        payload = "\n".join(f"{label}\t{detail}\t{path}"
+                            for label, detail, path in rows)
+        try:
+            proc = subprocess.run(
+                [fzf, "--height=40%", "--reverse", "--prompt", "profile> ",
+                 "--header", header, "--delimiter", "\t", "--with-nth", "1,2"],
+                input=payload, text=True, capture_output=True)
+        except OSError:
+            proc = None
+        if proc is not None:
+            if proc.returncode != 0 or not proc.stdout.strip():
+                raise Refused("no profile selected")
+            wanted = proc.stdout.split("\t", 1)[0].strip()
+            for entry in entries:
+                if profile_label(entry[0], entry[1]) == wanted:
+                    return entry
+            raise Refused(f"selected profile {wanted} is gone")
+
+    for index, (label, detail, path) in enumerate(rows, 1):
+        print(f"  {index}) {label}  {detail}  {path}".rstrip(),
+              file=sys.stderr)
+    print("profile> ", end="", file=sys.stderr, flush=True)
+    line = sys.stdin.readline()
+    text = line.strip()
+    if not text:
+        raise Refused("no profile selected")
+    for entry in entries:
+        if profile_label(entry[0], entry[1]) == text:
+            return entry
+    try:
+        choice = int(text)
+    except ValueError:
+        raise UsageError(f"no such profile {text!r}")
+    if not 1 <= choice <= len(entries):
+        raise UsageError(f"no such profile {text!r}")
+    return entries[choice - 1]
+
+
+def resolve_profile(args, snapshot=None, account=None, purpose="install", site=None,
+                    need="any", announce=True):
+    """Pick exactly one (browser, profile), never guessing between equals.
+
+    ``--at`` names it (``firefox``, ``firefox/default-3`` or a bare profile
+    name).  Without ``--at`` the account's recorded profile wins, then the only
+    profile that holds the site's state, then the caller is asked
+    (``--pick``/fzf on a terminal).  ``need="data"`` requires a profile that
+    already holds the site (add, diff, logout); ``need="any"`` accepts an empty
+    one (install, undo).
+    """
+    snapshot = snapshot if snapshot is not None else browsers()
+    if not any(b["profiles"] for b in snapshot):
+        raise AccountsError("no browser profiles found (see: browser.find list)")
+
+    at = getattr(args, "at", None)
+    if at:
+        wanted_browsers, wanted_profile = parse_at(at, snapshot)
+        pairs = candidate_profiles(snapshot, at)
+        if not pairs:
+            raise AccountsError(f"no profile matches --at {at} "
+                                "(see: accounts profiles)")
+        if wanted_browsers and not wanted_profile:
+            # A bare browser means its default profile, not a picker.
+            pairs = [bp for bp in pairs if bp[1]["is_default"]] or pairs
+        entries = [(b, p) + (probe_site_state(b, p, site) if site else (0, 0))
+                   for b, p in pairs]
+        if site and need == "data":
+            held = [entry for entry in entries if entry[2] or entry[3]]
+            if not held:
+                if len(entries) == 1:
+                    raise AccountsError(
+                        f"{describe_profile(entries[0][0], entries[0][1])} holds "
+                        f"no {site}; run `accounts add {site} <label> --login`, "
+                        "or pick another with --at")
+                raise AccountsError(f"no profile in --at {at} holds {site}; "
+                                    f"run `accounts add {site} <label> --login`")
+            entries = held
+        if len(entries) > 1:
+            return choose_profile(entries, args, site, purpose)[:2]
+        return entries[0][:2]
+
+    # No --at: reuse the profile this account was last saved from / put into.
+    if account is not None:
+        recorded = (account.get("meta") or {}).get("profile") or {}
+        for b, p in candidate_profiles(snapshot):
+            if (b["id"] == recorded.get("browser")
+                    and p["name"] == recorded.get("profile")):
+                return b, p
+
+    pairs = candidate_profiles(snapshot)
+    entries = [(b, p) + (probe_site_state(b, p, site) if site else (0, 0))
+               for b, p in pairs]
+    with_data = [entry for entry in entries if entry[2] or entry[3]]
+    if len(with_data) == 1:
+        browser, profile, cookies, keys = with_data[0]
+        if announce:
+            print(f"accounts: using {describe_profile(browser, profile)} "
+                  f"({counts_label(cookies, keys)})", file=sys.stderr)
+        return browser, profile
+    if with_data:
+        return choose_profile(with_data, args, site, purpose)[:2]
+    if site and need == "data":
+        raise AccountsError(
+            f"no profile holds {site} yet; run `accounts add {site} <label> "
+            "--login`, or name a profile with --at")
+
+    # Nothing holds the site (or no site at all): one installed browser means
+    # its default profile, several mean the caller has to choose.
+    installed = [b for b in snapshot if b["profiles"]]
+    if len(installed) == 1:
+        default = [bp for bp in pairs if bp[1]["is_default"]] or pairs
+        return default[0]
+    return choose_profile(entries, args, site, purpose)[:2]
+
+
+def profile_is_open(profile):
+    if profile.get("is_open"):
+        return True, profile.get("pid") or 0
+    target = os.path.realpath(profile["path"]) + os.sep
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or int(pid) == os.getpid():
+            continue
+        fddir = f"/proc/{pid}/fd"
+        try:
+            fds = os.listdir(fddir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                link = os.readlink(f"{fddir}/{fd}")
+            except OSError:
+                continue
+            if link.startswith(target):
+                return True, int(pid)
+    return False, 0
+
+
+def require_closed(browser, profile, close=False):
+    is_open, pid = profile_is_open(profile)
+    if not is_open:
+        return
+    if not close:
+        raise Refused(f"{describe_profile(browser, profile)} is running (pid {pid}); "
+                      "close it first, or pass --close")
+    print(f"accounts: closing {describe_profile(browser, profile)} (pid {pid})", file=sys.stderr)
+    try:
+        os.kill(pid, 15)
+    except OSError as exc:
+        raise Refused(f"could not signal pid {pid}: {exc}")
+    for _ in range(60):
+        time.sleep(0.25)
+        still_open, _pid = profile_is_open(profile)
+        if not still_open:
+            return
+    raise Refused(f"{describe_profile(browser, profile)} did not exit; close it manually")
+
+
+# ------------------------------------------------------------------- launching
+
+
+def browser_executable(browser):
+    exe = browser.get("executable") or ""
+    if not exe or not os.path.exists(exe):
+        raise Refused(f"{browser['name']} is not installed "
+                      f"({browser['id']} has no executable on PATH)")
+    return exe
+
+
+def launch_args(browser, profile=None, url=None, headless=False, scratch_dir=None):
+    exe = browser_executable(browser)
+    argv = [exe]
+    if browser["family"] == "chromium":
+        if scratch_dir:
+            argv.append(f"--user-data-dir={scratch_dir}")
+        else:
+            argv += [f"--user-data-dir={browser['config_dir']}",
+                     f"--profile-directory={profile['name']}"]
+        argv += ["--no-first-run", "--no-default-browser-check"]
+        if headless:
+            argv += ["--headless=new", "--disable-gpu"]
+    else:
+        if scratch_dir:
+            argv += ["--profile", scratch_dir, "-no-remote"]
+        elif profile and profile.get("name"):
+            argv += ["-P", profile["name"], "-no-remote"]
+        else:
+            argv += ["--profile", profile["path"], "-no-remote"]
+        if headless:
+            argv.append("-headless")
+    if url:
+        argv.append(url)
+    return argv
+
+
+def launch(browser, profile=None, url=None, scratch_dir=None, headless=False,
+           wait=False, quiet=True):
+    argv = launch_args(browser, profile, url, headless, scratch_dir)
+    kwargs = {}
+    if quiet:
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
+    proc = subprocess.Popen(argv, **kwargs)
+    if wait:
+        proc.wait()
+        return proc.returncode
+    return proc
+
+
+def wait_for_file(paths, timeout=30.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for path in paths:
+            if os.path.exists(path):
+                return path
+        time.sleep(0.25)
+    return None
+
+
+def cookie_db_path(browser, profile):
+    if profile.get("cookies_db"):
+        return profile["cookies_db"]
+    base = profile["path"]
+    if browser["family"] == "chromium":
+        for candidate in (os.path.join(base, "Network", "Cookies"),
+                          os.path.join(base, "Cookies")):
+            if os.path.exists(candidate):
+                return candidate
+        return ""
+    return os.path.join(base, "cookies.sqlite")
+
+
+def _firefox_cookie_db(profile):
+    return profile.get("cookies_db") or os.path.join(profile["path"], "cookies.sqlite")
+
+
+def storage_dir(browser, profile):
+    if browser["family"] == "chromium":
+        base = os.path.join(profile["path"], "Local Storage")
+        leveldb = os.path.join(base, "leveldb")
+        return leveldb if os.path.isdir(leveldb) else base
+    return os.path.join(profile["path"], "storage")
+
+
+def initialise_profile(browser, profile, site, timeout=45.0):
+    """Launch a fresh profile once (headless) so the browser creates its DBs."""
+    db = cookie_db_path(browser, profile)
+    if db and os.path.exists(db):
+        return
+    url = f"https://{site}/" if site else "about:blank"
+    proc = launch(browser, profile, url, headless=True)
+    try:
+        found = wait_for_file([cookie_db_path(browser, profile),
+                               os.path.join(profile["path"], "Network", "Cookies"),
+                               os.path.join(profile["path"], "Cookies")], timeout)
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+    if not found:
+        raise Refused(
+            f"could not initialise {browser['id']} profile {profile['name']}; "
+            "start it once manually and retry")
+
+
+# ------------------------------------------------------------------ capture
+
+
+def _chromium_db_version(conn):
+    try:
+        row = conn.execute("select value from meta where key='version'").fetchone()
+        return int(row[0]) if row else 0
+    except (sqlite3.Error, TypeError, ValueError):
+        return 0
+
+
+def capture_chromium_cookies(profile, browser, site):
+    db = cookie_db_path(browser, profile)
+    if not db or not os.path.exists(db):
+        return []
+    conn = _ck().open_sqlite(db)
+    version = _chromium_db_version(conn)
+    key = _ck().chromium_key(browser.get("app_id") or browser["id"])
+    try:
+        rows = conn.execute("select * from cookies").fetchall()
+    except sqlite3.Error:
+        return []
+    out = []
+    for row in rows:
+        host = _ck().pick(row, "host_key", default="") or ""
+        if not site_matches_host(host, site):
+            continue
+        value = _ck().pick(row, "value", default="") or ""
+        if not value:
+            blob = _ck().pick(row, "encrypted_value", default=b"") or b""
+            try:
+                value = _ck().decrypt_chromium(blob, key)
+            except _ck().UnsupportedEncryption:
+                print(f"accounts: skipping undecryptable cookie "
+                      f"{host} {_ck().pick(row, 'name', default='')}", file=sys.stderr)
+                continue
+        out.append({
+            "name": _ck().pick(row, "name", default="") or "",
+            "value": value,
+            "host": host,
+            "path": _ck().pick(row, "path", default="/") or "/",
+            "expires": _ck().chromium_expiry(_ck().pick(row, "expires_utc", default=0)),
+            "secure": bool(_ck().pick(row, "is_secure", "secure", default=0)),
+            "http_only": bool(_ck().pick(row, "is_httponly", "httponly", default=0)),
+            "same_site": _coerce_same_site(_ck().pick(row, "samesite", "same_site",
+                                                     default=-1)),
+            "partition_key": _ck().pick(row, "top_frame_site_key",
+                                        "partition_key", default="") or "",
+            "family": "chromium",
+            "db_version": version,
+        })
+    return out
+
+
+def capture_firefox_cookies(profile, site):
+    db = _firefox_cookie_db(profile)
+    if not db or not os.path.exists(db):
+        return []
+    conn = _ck().open_sqlite(db)
+    try:
+        rows = conn.execute("select * from moz_cookies").fetchall()
+    except sqlite3.Error:
+        return []
+    out = []
+    for row in rows:
+        host = _ck().pick(row, "host", default="") or ""
+        if not site_matches_host(host, site):
+            continue
+        expiry = int(_ck().pick(row, "expiry", default=0) or 0)
+        if expiry > 10 ** 11:
+            expiry //= 1000
+        out.append({
+            "name": _ck().pick(row, "name", default="") or "",
+            "value": _ck().pick(row, "value", default="") or "",
+            "host": host,
+            "path": _ck().pick(row, "path", default="/") or "/",
+            "expires": expiry,
+            "secure": bool(_ck().pick(row, "isSecure", default=0)),
+            "http_only": bool(_ck().pick(row, "isHttpOnly", default=0)),
+            "same_site": _coerce_same_site(_ck().pick(row, "sameSite", default=0)),
+            "partition_key": _ck().pick(row, "originAttributes", default="") or "",
+            "family": "firefox",
+        })
+    return out
+
+
+_SAME_SITE_WORDS = {
+    "no_restriction": 0, "none": 0, "unspecified": -1, "unset": -1, "-1": -1,
+    "lax": 1, "strict": 2, "0": 0, "1": 1, "2": 2,
+}
+
+
+def _coerce_same_site(value):
+    if value is None:
+        return -1
+    if isinstance(value, int):
+        return value
+    text = str(value).strip().lower()
+    if text in _SAME_SITE_WORDS:
+        return _SAME_SITE_WORDS[text]
+    try:
+        return int(text)
+    except ValueError:
+        return -1
+
+
+def _chromium_origin_key(origin):
+    return origin.rstrip("/")
+
+
+def capture_chromium_storage(profile, site):
+    directory = storage_dir({"family": "chromium"}, profile)
+    if not os.path.isdir(directory):
+        return {}
+    entries = _bs().read_leveldb(directory)
+    out = {}
+    for key, value in entries.items():
+        if not key.startswith(b"_"):
+            continue
+        rest = key[1:]
+        nul = rest.find(b"\x00")
+        if nul <= 0:
+            continue
+        origin = rest[:nul].decode("utf-8", "replace")
+        if not site_matches_origin(origin, site):
+            continue
+        tail = rest[nul + 1:]
+        if not tail:
+            continue
+        name = _bs()._decode_storage_string(tail[0], tail[1:])
+        payload = value or b""
+        encoding = payload[0] if payload else 1
+        decoded = (_bs()._decode_storage_string(encoding, payload[1:])
+                   if payload else "")
+        out.setdefault(_chromium_origin_key(origin), {}).setdefault(
+            "localstorage", {})[name] = {"value": decoded, "encoding": encoding}
+    return out
+
+
+def capture_firefox_storage(profile, site):
+    domain = {"scheme": "", "host": site, "port": None}
+    try:
+        entries = _bs().read_firefox_storage(profile, "localstorage", domain, False)
+    except Exception:
+        return {}
+    out = {}
+    for entry in entries:
+        out.setdefault(entry["origin"], {}).setdefault(
+            "localstorage", {})[entry["key"]] = {"value": entry["value"]}
+    return out
+
+
+def capture(browser, profile, site):
+    if browser["family"] == "chromium":
+        cookies = capture_chromium_cookies(profile, browser, site)
+        storage = capture_chromium_storage(profile, site)
+    else:
+        cookies = capture_firefox_cookies(profile, site)
+        storage = capture_firefox_storage(profile, site)
+    return {"cookies": cookies, "storage": storage}
+
+
+# ------------------------------------------------------------------- backups
+
+
+def backup_dir(profile_name, stamp=None):
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", profile_name)
+    stamp = stamp or time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    return os.path.join(ensure_store(), "backups", safe, stamp)
+
+
+def backup_paths(profile_name, files, note):
+    """Copy *files* (paths) into a fresh backup slot; returns the slot."""
+    slot = backup_dir(profile_name)
+    os.makedirs(slot, mode=0o700, exist_ok=True)
+    saved = []
+    for index, src in enumerate(files):
+        if not os.path.exists(src):
+            continue
+        name = f"{index:02d}_{os.path.basename(src)}"
+        dst = os.path.join(slot, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+        saved.append({"src": src, "copy": name})
+    write_json(os.path.join(slot, "manifest.json"),
+               {"profile": profile_name, "at": now_iso(), "note": note,
+                "files": saved})
+    slots = sorted(glob.glob(os.path.join(
+        ensure_store(), "backups",
+        re.sub(r"[^A-Za-z0-9._-]+", "_", profile_name), "*")))
+    for old in slots[:-10]:
+        shutil.rmtree(old, ignore_errors=True)
+    return slot
+
+
+def profile_write_targets(browser, profile):
+    targets = []
+    db = cookie_db_path(browser, profile)
+    if db:
+        targets += [db, db + "-wal", db + "-shm", db + "-journal"]
+    if browser["family"] == "chromium":
+        directory = storage_dir(browser, profile)
+        if os.path.isdir(directory):
+            targets += sorted(glob.glob(os.path.join(directory, "*.log")))
+            targets += sorted(glob.glob(os.path.join(directory, "MANIFEST-*")))
+            targets.append(os.path.join(directory, "CURRENT"))
+    else:
+        for root in ("default", "permanent", "temporary"):
+            base = os.path.join(profile["path"], "storage", root)
+            if not os.path.isdir(base):
+                continue
+            for child in sorted(os.listdir(base)):
+                for name in ("ls/data.sqlite", "ls/data.sqlite-wal"):
+                    candidate = os.path.join(base, child, name)
+                    if os.path.exists(candidate):
+                        targets.append(candidate)
+    return [t for t in dict.fromkeys(targets) if os.path.exists(t)]
+
+
+def undo_last(profile_name):
+    slots = sorted(glob.glob(os.path.join(
+        ensure_store(), "backups",
+        re.sub(r"[^A-Za-z0-9._-]+", "_", profile_name), "*")))
+    if not slots:
+        raise AccountsError(f"no backup recorded for {profile_name}")
+    slot = slots[-1]
+    manifest = read_json(os.path.join(slot, "manifest.json"), {}) or {}
+    restored = []
+    for item in manifest.get("files", []):
+        src = item.get("src")
+        copy = os.path.join(slot, item.get("copy", ""))
+        if not src or not os.path.exists(copy):
+            continue
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        if os.path.isdir(copy):
+            shutil.rmtree(src, ignore_errors=True)
+            shutil.copytree(copy, src)
+        else:
+            shutil.copy2(copy, src)
+        restored.append(src)
+    shutil.rmtree(slot, ignore_errors=True)
+    return restored
+
+
+# ---------------------------------------------------------- leveldb (writing)
+
+
+def _crc_table():
+    table = []
+    for i in range(256):
+        crc = i
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0x82F63B78 if crc & 1 else crc >> 1
+        table.append(crc)
+    return table
+
+
+_CRC_TABLE = _crc_table()
+
+
+def crc32c(data):
+    crc = 0xFFFFFFFF
+    for byte in data:
+        crc = _CRC_TABLE[(crc ^ byte) & 0xFF] ^ (crc >> 8)
+    return crc ^ 0xFFFFFFFF
+
+
+def _masked_crc(data):
+    crc = crc32c(data)
+    return (((crc >> 15) | (crc << 17)) + 0xA282EAD8) & 0xFFFFFFFF
+
+
+def _put_varint(out, value):
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        out.append(byte | 0x80 if value else byte)
+        if not value:
+            return
+
+
+def _encode_batch(sequence, ops):
+    out = bytearray(struct.pack("<QI", sequence, len(ops)))
+    for key, value in ops:
+        if value is None:
+            out.append(0)
+            _put_varint(out, len(key))
+            out += key
+        else:
+            out.append(1)
+            _put_varint(out, len(key))
+            out += key
+            _put_varint(out, len(value))
+            out += value
+    return bytes(out)
+
+
+def _append_log(path, payload):
+    """Append one logical record to a LevelDB WAL, fragmenting across blocks."""
+    block = 32768
+    header = 7
+    try:
+        offset = os.path.getsize(path) % block
+    except OSError:
+        offset = 0
+    out = bytearray()
+    pos = 0
+    first = True
+    while pos < len(payload) or first:
+        if block - offset < header + 1:
+            out += b"\x00" * (block - offset)
+            offset = 0
+        room = block - offset - header
+        chunk = payload[pos:pos + room]
+        pos += len(chunk)
+        last = pos >= len(payload)
+        rtype = 1 if (first and last) else 2 if first else 4 if last else 3
+        out += struct.pack("<I", _masked_crc(chunk))
+        out += struct.pack("<H", len(chunk))
+        out += bytes([rtype])
+        out += chunk
+        offset += header + len(chunk)
+        first = False
+    with open(path, "ab") as fh:
+        fh.write(bytes(out))
+
+
+def _read_varint(buf, pos):
+    result = 0
+    shift = 0
+    while True:
+        byte = buf[pos]
+        pos += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, pos
+        shift += 7
+
+
+def _prefixed_string(buf, pos):
+    length, pos = _read_varint(buf, pos)
+    return buf[pos:pos + length], pos + length
+
+
+def _manifest_last_sequence(directory):
+    """The LevelDB sequence counter, or None when it cannot be read.
+
+    A wrong (too low) sequence would let an older value win after compaction,
+    so callers refuse the write instead of guessing.
+    """
+    manifests = glob.glob(os.path.join(directory, "MANIFEST-*"))
+    if not manifests:
+        return None
+    manifests.sort(key=lambda p: int(re.sub(r"\D", "", os.path.basename(p)) or 0))
+    path = manifests[-1]
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    if not data:
+        return None
+    last = 0
+    for record in _bs()._iter_log_records(data):
+        pos = 0
+        try:
+            while pos < len(record):
+                tag, pos = _read_varint(record, pos)
+                if tag == 1:      # comparator
+                    _, pos = _prefixed_string(record, pos)
+                elif tag in (2, 3, 9):   # log number, next file, prev log
+                    _, pos = _read_varint(record, pos)
+                elif tag == 4:    # last sequence
+                    value, pos = _read_varint(record, pos)
+                    last = max(last, value)
+                elif tag == 5:    # compact pointer
+                    _, pos = _read_varint(record, pos)
+                    _, pos = _prefixed_string(record, pos)
+                elif tag == 6:    # deleted file
+                    _, pos = _read_varint(record, pos)
+                    _, pos = _read_varint(record, pos)
+                elif tag == 7:    # new file
+                    for _ in range(3):
+                        _, pos = _read_varint(record, pos)
+                    _, pos = _prefixed_string(record, pos)
+                    _, pos = _prefixed_string(record, pos)
+                else:
+                    break
+        except (IndexError, ValueError):
+            continue
+    return last
+
+
+def _storage_key(origin, name, encoding):
+    text = name.encode("utf-16-le") if encoding == 0 else name.encode("utf-8")
+    return b"_" + origin.encode("utf-8") + b"\x00" + bytes([encoding]) + text
+
+
+def _storage_value(value, encoding):
+    raw = value.encode("utf-16-le") if encoding == 0 else value.encode("utf-8")
+    return bytes([encoding]) + raw
+
+
+def _pick_encoding(text):
+    try:
+        text.encode("ascii")
+        return 1
+    except UnicodeEncodeError:
+        return 0
+
+
+def _apply_chromium_storage(profile, site, storage, merge, dry_run, warn):
+    directory = storage_dir({"family": "chromium"}, profile)
+    if not os.path.isdir(directory):
+        warn("no Local Storage directory; cookies only")
+        return []
+    logs = sorted(glob.glob(os.path.join(directory, "[0-9]*.log")))
+    if not logs:
+        warn("Local Storage has no write-ahead log (the browser compacted it); "
+             "cookies only — start the browser once and retry")
+        return []
+    log = logs[-1]
+    existing = _bs().read_leveldb(directory)
+    ops = []
+    report = []
+
+    wanted = {}
+    for origin, kinds in storage.items():
+        for name, entry in (kinds.get("localstorage") or {}).items():
+            encoding = entry.get("encoding")
+            if encoding not in (0, 1):
+                encoding = _pick_encoding(entry.get("value", ""))
+            key = _storage_key(_chromium_origin_key(origin), name, encoding)
+            wanted[key] = _storage_value(entry.get("value", ""), encoding)
+            report.append(f"+ localStorage {origin} {name}")
+    for key, value in wanted.items():
+        ops.append((key, value))
+
+    if not merge:
+        for key in existing:
+            if not key.startswith(b"_") or key in wanted:
+                continue
+            rest = key[1:]
+            nul = rest.find(b"\x00")
+            if nul <= 0:
+                continue
+            origin = rest[:nul].decode("utf-8", "replace")
+            if site_matches_origin(origin, site):
+                tail = rest[nul + 1:]
+                name = (_bs()._decode_storage_string(tail[0], tail[1:])
+                        if tail else "")
+                ops.append((key, None))
+                report.append(f"- localStorage {origin} {name}")
+
+    if dry_run or not ops:
+        return report
+
+    last_sequence = _manifest_last_sequence(directory)
+    if last_sequence is None:
+        warn("cannot read the Local Storage MANIFEST; cookies only — "
+             "start the browser once so it rewrites the store, then retry")
+        return report
+    _append_log(log, _encode_batch(last_sequence + 1, ops))
+
+    # Verify the round trip through the same reader the capture side uses.
+    check = _bs().read_leveldb(directory)
+    missing = [k for k in wanted if k not in check]
+    if missing:
+        warn(f"{len(missing)} localStorage entries did not survive the write")
+    return report
+
+
+def _firefox_origin_dir(origin):
+    scheme, rest = origin.split("://", 1) if "://" in origin else ("https", origin)
+    if scheme not in ("http", "https"):
+        # ``file`` origins encode ``/`` and ``+`` identically; not a site anyway.
+        return ""
+    body = rest.rstrip("/")
+    if scheme == "file":
+        body = body.replace("/", "+")
+    elif ":" in body.rsplit("/", 1)[-1]:
+        host, port = body.rsplit(":", 1)
+        if port.isdigit():
+            body = f"{host}+{port}"
+    return f"{scheme}+++{body}"
+
+
+def _apply_firefox_storage(profile, site, storage, merge, dry_run, warn):
+    roots = [os.path.join(profile["path"], "storage", name)
+             for name in ("default", "permanent")]
+    report = []
+
+    def find_dir(origin):
+        name = _firefox_origin_dir(origin)
+        for root in roots:
+            candidate = os.path.join(root, name)
+            if os.path.isdir(candidate):
+                return candidate
+        return ""
+
+    existing = {}
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for child in os.listdir(root):
+            origin = _bs().origin_from_dir(child)
+            if origin and site_matches_origin(origin, site):
+                db = os.path.join(root, child, "ls", "data.sqlite")
+                if os.path.isfile(db):
+                    existing[origin] = db
+
+    for origin, db in sorted(existing.items()):
+        if merge:
+            continue
+        wanted = (storage.get(origin) or {}).get("localstorage") or {}
+        conn = sqlite3.connect(db)
+        try:
+            keys = [row[0] for row in conn.execute("select key from data")]
+            stale = [k for k in keys if k not in wanted]
+            if stale:
+                conn.executemany("delete from data where key=?", [(k,) for k in stale])
+                conn.commit()
+                report += [f"- localStorage {origin}/{k}" for k in stale]
+        finally:
+            conn.close()
+
+    for origin, kinds in storage.items():
+        entries = kinds.get("localstorage") or {}
+        if not entries:
+            continue
+        if not _firefox_origin_dir(origin):
+            warn(f"skipping non-web origin {origin}")
+            continue
+        directory = find_dir(origin)
+        db = os.path.join(directory, "ls", "data.sqlite") if directory else ""
+        if not db or not os.path.isfile(db):
+            warn(f"no localStorage store for {origin}; visit the site once in "
+                 "this profile, then retry (cookies were still applied)")
+            continue
+        if dry_run:
+            report += [f"+ localStorage {origin}/{k}" for k in entries]
+            continue
+        conn = sqlite3.connect(db)
+        try:
+            for name, entry in entries.items():
+                value = entry.get("value", "")
+                raw = value.encode("utf-8")
+                conn.execute(
+                    "insert or replace into data "
+                    "(key, utf16_length, conversion_type, compression_type, "
+                    "last_access_time, value) values (?, ?, 1, 0, ?, ?)",
+                    (name, len(value.encode("utf-16-le")) // 2, now_unix(), raw))
+            total = conn.execute("select coalesce(sum(length(value)), 0) from data"
+                                 ).fetchone()[0]
+            conn.execute("update database set usage=? where origin=?",
+                         (total, origin))
+            conn.commit()
+        finally:
+            conn.close()
+        usage = os.path.join(directory, "ls", "usage")
+        try:
+            with open(usage, "wb") as fh:
+                fh.write(struct.pack(">I", 0x420A420A) + struct.pack(">Q", total))
+        except OSError:
+            pass
+        report += [f"+ localStorage {origin}/{k}" for k in entries]
+    return report
+
+
+# -------------------------------------------------------------- apply: cookies
+
+
+def _default_for(column):
+    """A value for a NOT NULL column that has no default and no bundle value."""
+    ctype, notnull, default = column[2], column[3], column[4]
+    if default is not None or not notnull:
+        return None
+    upper = (ctype or "").upper()
+    if "INT" in upper:
+        return 0
+    if "BLOB" in upper:
+        return b""
+    return ""
+
+
+def _row_for(conn, table, values):
+    """Build an insert row covering exactly the table's columns, in order."""
+    row = {}
+    for column in conn.execute(f"pragma table_info({table})"):
+        name = column[1]
+        if name in values:
+            row[name] = values[name]
+        else:
+            fallback = _default_for(column)
+            if fallback is not None:
+                row[name] = fallback
+    return row
+
+
+def _insert(conn, table, values):
+    row = _row_for(conn, table, values)
+    placeholders = ",".join("?" for _ in row)
+    conn.execute(f"insert into {table} ({','.join(row)}) values ({placeholders})",
+                 list(row.values()))
+
+
+def _chromium_expires_utc(row):
+    """Unix seconds -> Chromium's microseconds-since-1601 (0 = session)."""
+    expires = int(row.get("expires") or 0)
+    return int((expires + 11_644_473_600) * 1_000_000) if expires else 0
+
+
+def _apply_chromium_cookies(profile, browser, site, cookies, merge, dry_run):
+    db = cookie_db_path(browser, profile)
+    if not db or not os.path.exists(db):
+        raise Refused(f"no cookie database for {profile['name']}; "
+                      "start the browser once to create it")
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    report = []
+    try:
+        conn.execute("pragma busy_timeout=5000")
+        version = _chromium_db_version(conn)
+        wanted = {(c["host"], c["name"], c["path"]) for c in cookies}
+
+        stale = []
+        for row in conn.execute("select rowid, host_key, name, path from cookies"):
+            if not site_matches_host(row["host_key"], site):
+                continue
+            if merge and (row["host_key"], row["name"], row["path"]) in wanted:
+                continue
+            stale.append(row["rowid"])
+            report.append(f"- cookie {row['host_key']} {row['name']}")
+        if not dry_run:
+            conn.executemany("delete from cookies where rowid=?", [(r,) for r in stale])
+
+        now = now_unix()
+        app_id = browser.get("app_id") or browser["id"]
+        key = verified_chromium_key(conn, app_id, version)
+        if cookies and key is None and conn.execute(
+                "select 1 from cookies where length(encrypted_value) > 3 limit 1"
+        ).fetchone():
+            print("accounts: note: cookie values will be stored in plaintext "
+                  f"(the {app_id} keyring key is not verified)", file=sys.stderr)
+        for cookie in cookies:
+            host = cookie["host"]
+            encrypted = (chromium_encrypt(cookie["value"], host, key, version)
+                         if key else None)
+            values = {
+                "creation_utc": int((now + 11_644_473_600) * 1_000_000),
+                "host_key": host,
+                "top_frame_site_key": cookie.get("partition_key", ""),
+                "name": cookie["name"],
+                "value": "" if encrypted else cookie["value"],
+                "encrypted_value": encrypted or b"",
+                "path": cookie.get("path") or "/",
+                "expires_utc": _chromium_expires_utc(cookie),
+                "is_secure": 1 if cookie.get("secure") else 0,
+                "is_httponly": 1 if cookie.get("http_only") else 0,
+                "last_access_utc": int((now + 11_644_473_600) * 1_000_000),
+                "has_expires": 1 if cookie.get("expires") else 0,
+                "is_persistent": 1 if cookie.get("expires") else 0,
+                "priority": 1,
+                "samesite": _to_chromium_same_site(cookie.get("same_site")),
+                "source_scheme": 2 if cookie.get("secure") else 1,
+                "source_port": -1,
+                "last_update_utc": int((now + 11_644_473_600) * 1_000_000),
+                "source_type": 0,
+                "has_cross_site_ancestor": 0,
+            }
+            report.append(f"+ cookie {host} {cookie['name']}")
+            if dry_run:
+                continue
+            conn.execute("delete from cookies where host_key=? and name=? and path=?",
+                         (host, cookie["name"], cookie.get("path") or "/"))
+            _insert(conn, "cookies", values)
+        if not dry_run:
+            conn.commit()
+    finally:
+        conn.close()
+    return report
+
+
+def _to_chromium_same_site(value):
+    value = _coerce_same_site(value)
+    return value if value in (-1, 0, 1, 2) else -1
+
+
+def _to_firefox_same_site(value):
+    value = _coerce_same_site(value)
+    if value in (1, 2):
+        return value
+    return 0
+
+
+def _apply_firefox_cookies(profile, site, cookies, merge, dry_run):
+    db = _firefox_cookie_db(profile)
+    if not db or not os.path.exists(db):
+        raise Refused(f"no cookies.sqlite for {profile['name']}; "
+                      "start the browser once to create it")
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    report = []
+    try:
+        conn.execute("pragma busy_timeout=5000")
+        wanted = {(c["host"], c["name"], c["path"]) for c in cookies}
+        stale = []
+        for row in conn.execute("select id as rowid, host, name, path from moz_cookies"):
+            if not site_matches_host(row["host"], site):
+                continue
+            if merge and (row["host"], row["name"], row["path"]) in wanted:
+                continue
+            stale.append(row["rowid"])
+            report.append(f"- cookie {row['host']} {row['name']}")
+        if not dry_run:
+            conn.executemany("delete from moz_cookies where id=?",
+                             [(r,) for r in stale])
+
+        now = now_unix()
+        for cookie in cookies:
+            values = {
+                "originAttributes": cookie.get("partition_key") or "",
+                "name": cookie["name"],
+                "value": cookie["value"],
+                "host": cookie["host"],
+                "path": cookie.get("path") or "/",
+                "expiry": int(cookie.get("expires") or 0),
+                "lastAccessed": now * 1_000_000,
+                "creationTime": now * 1_000_000,
+                "isSecure": 1 if cookie.get("secure") else 0,
+                "isHttpOnly": 1 if cookie.get("http_only") else 0,
+                "sameSite": _to_firefox_same_site(cookie.get("same_site")),
+                "schemeMap": 0,
+            }
+            report.append(f"+ cookie {cookie['host']} {cookie['name']}")
+            if dry_run:
+                continue
+            conn.execute(
+                "delete from moz_cookies where host=? and name=? and path=?",
+                (cookie["host"], cookie["name"], cookie.get("path") or "/"))
+            _insert(conn, "moz_cookies", values)
+        if not dry_run:
+            conn.commit()
+    finally:
+        conn.close()
+    return report
+
+
+# ------------------------------------------------------------------ apply all
+
+
+def apply_bundle(browser, profile, site, bundle, merge=False, dry_run=False,
+                 storage_mode="auto"):
+    family = browser["family"]
+    report = []
+    warnings = []
+    if family == "chromium":
+        report += _apply_chromium_cookies(profile, browser, site,
+                                          bundle["cookies"], merge, dry_run)
+    else:
+        report += _apply_firefox_cookies(profile, site,
+                                         bundle["cookies"], merge, dry_run)
+    if storage_mode != "cookies":
+        storage = bundle.get("storage") or {}
+        if family == "chromium":
+            report += _apply_chromium_storage(profile, site, storage, merge,
+                                              dry_run, warnings.append)
+        else:
+            report += _apply_firefox_storage(profile, site, storage, merge,
+                                             dry_run, warnings.append)
+    return report, warnings
+
+
+# ----------------------------------------------------------- dedicated profiles
+
+
+def profile_slug(label):
+    return f"accounts-{label}"
+
+
+def _register_firefox_profile(config_dir, name, path):
+    ini = os.path.join(config_dir, "profiles.ini")
+    try:
+        text = Path(ini).read_text(errors="replace")
+    except OSError:
+        text = ""
+    if re.search(rf"^Path={re.escape(name)}$", text, re.M):
+        return
+    indexes = [int(n) for n in re.findall(r"^\[Profile(\d+)\]", text, re.M)]
+    index = max(indexes) + 1 if indexes else 0
+    block = (f"\n[Profile{index}]\nName={name}\nIsRelative=1\nPath={name}\n")
+    os.makedirs(config_dir, exist_ok=True)
+    with open(ini, "a", encoding="utf-8") as fh:
+        fh.write(block)
+
+
+def ensure_profile(browser, label, site):
+    """Create (or reuse) a dedicated profile for one account family."""
+    name = profile_slug(label)
+    path = os.path.join(browser["config_dir"], name)
+    if not browser["config_dir"]:
+        raise Refused(f"{browser['name']} has no configuration directory")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    if browser["family"] == "firefox":
+        _register_firefox_profile(browser["config_dir"], name, path)
+    profile = {
+        "name": name,
+        "path": path,
+        "is_default": False,
+        "is_open": False,
+        "pid": 0,
+        "last_used": "",
+        "cookies_db": "",
+        "login_db": "",
+        "login_data": "",
+    }
+    initialise_profile(browser, profile, site)
+    profile["cookies_db"] = cookie_db_path(browser, profile)
+    return profile
+
+
+# ------------------------------------------------------------------------ add
+
+
+def _wait_for_login(proc):
+    """Block until the browser exits or the user presses Enter."""
+    if not sys.stdin.isatty():
+        proc.wait()
+        return
+    import select
+    while True:
+        if proc.poll() is not None:
+            return
+        ready, _, _ = select.select([sys.stdin], [], 0.5)
+        if ready:
+            sys.stdin.readline()
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            return
+
+
+def storage_key_count(data):
+    return sum(len(kinds.get("localstorage") or {})
+               for kinds in (data.get("storage") or {}).values())
+
+
+def _login_browser(args, snapshot):
+    """The browser to authenticate in: from --at, else the system default."""
+    at = getattr(args, "at", None)
+    if at:
+        browsers, _profile = parse_at(at, snapshot)
+        matching = [b for b in snapshot if _browser_matches(b, browsers)]
+        if not matching:
+            raise AccountsError(f"no installed browser matches --at {at}")
+        return matching[0]
+    defaults = [b for b in snapshot if b.get("is_system_default")]
+    installed = [b for b in snapshot if b.get("executable")]
+    return (defaults or installed or snapshot)[0]
+
+
+def _login_profile(browser, args, site):
+    """The profile to log in inside when ``--at`` names only a browser."""
+    profiles = browser["profiles"]
+    if not profiles:
+        raise AccountsError(f"{browser['name']} has no profile to log in to")
+    held = [p for p in profiles if any(probe_site_state(browser, p, site))]
+    if held:
+        return held[0]
+    defaults = [p for p in profiles if p["is_default"]]
+    if defaults:
+        return defaults[0]
+    if len(profiles) == 1:
+        return profiles[0]
+    entries = [(browser, p) + probe_site_state(browser, p, site)
+               for p in profiles]
+    return choose_profile(entries, args, site, "add")[1]
+
+
+def add_by_login(args, site, label, snapshot):
+    """Log in (in a scratch profile unless --at names one) and keep the result."""
+    browser = _login_browser(args, snapshot)
+    browser_executable(browser)
+    url = args.url or f"https://{site}/"
+
+    if getattr(args, "at", None):
+        _browsers, wanted_profile = parse_at(args.at, snapshot)
+        if wanted_profile:
+            browser, profile = resolve_profile(args, snapshot, purpose="add",
+                                               site=site)
+        else:
+            profile = _login_profile(browser, args, site)
+        require_closed(browser, profile, close=args.close)
+        if not args.keep_session:
+            backup_paths(profile_key(browser, profile),
+                         profile_write_targets(browser, profile),
+                         f"add {site}/{label}")
+            apply_bundle(browser, profile, site, {"cookies": [], "storage": {}},
+                         merge=False)
+        where = f"in {describe_profile(browser, profile)}"
+        print(f"accounts: logging in at {url} {where}", file=sys.stderr)
+        print("accounts: log in, then close the window (or press Enter)",
+              file=sys.stderr)
+        proc = launch(browser, profile, url)
+    else:
+        directory = tempfile.mkdtemp(prefix="accounts-login-")
+        atexit.register(lambda: shutil.rmtree(directory, ignore_errors=True))
+        where = f"in a scratch {browser['name']} profile"
+        profile = {
+            "name": "scratch",
+            "path": directory,
+            "is_default": False, "is_open": False, "pid": 0, "last_used": "",
+            "cookies_db": "", "login_db": "", "login_data": "",
+            "transient": True,
+        }
+        if browser["family"] == "chromium":
+            profile["path"] = os.path.join(directory, "Default")
+        print(f"accounts: logging in at {url} {where}", file=sys.stderr)
+        print("accounts: log in, then close the window (or press Enter)",
+              file=sys.stderr)
+        proc = launch(browser, url=url, scratch_dir=directory)
+
+    _wait_for_login(proc)
+    if profile.get("transient"):
+        profile["cookies_db"] = cookie_db_path(browser, profile)
+        if args.keep_scratch:
+            print(f"accounts: kept scratch profile at {profile['path']}",
+                  file=sys.stderr)
+
+    data = capture(browser, profile, site)
+    if not data["cookies"] and not data["storage"]:
+        raise AccountsError(f"no cookies or localStorage found for {site} "
+                            "(did the login complete?)")
+    meta = save_bundle(browser, profile, site, label, data,
+                       note=args.notes or "login")
+    print(f"accounts: saved {site}/{label} "
+          f"({len(data['cookies'])} cookies, "
+          f"{storage_key_count(data)} localStorage keys) {where}", file=sys.stderr)
+    return meta
+
+
+def save_bundle(browser, profile, site, label, data, note=""):
+    index = load_index()
+    key = account_key(site, label)
+    previous = index["accounts"].get(key) or {}
+    origins = sorted(data["storage"])
+    meta = {
+        "version": 1,
+        "site": site,
+        "label": label,
+        "created": previous.get("created") or now_iso(),
+        "created_unix": previous.get("created_unix") or now_unix(),
+        "updated": now_iso(),
+        "updated_unix": now_unix(),
+        "source": {
+            "browser": browser["id"],
+            "family": browser["family"],
+            "profile": profile["name"],
+            "path": profile["path"],
+            "user_agent": browser.get("user_agent") or "",
+        },
+        "cookies": len(data["cookies"]),
+        "origins": origins,
+        "tags": previous.get("tags") or [],
+        "notes": note or previous.get("notes") or "",
+    }
+    index["accounts"][key] = meta
+    if not profile.get("transient"):
+        record_profile(index, browser, profile, site, label, mode=profile_kind(profile))
+    meta = index["accounts"][key]
+    write_bundle(site, label, meta, data["cookies"], data["storage"])
+    save_index(index)
+    return meta
+
+
+# ------------------------------------------------------------------- commands
+
+
+def _snapshot_or_error():
+    try:
+        return browsers()
+    except AccountsError:
+        raise
+    except Exception as exc:
+        raise AccountsError(f"could not enumerate browsers: {exc}")
+
+
+def cmd_add(args):
+    site = site_of(args.site, args.site_override)
+    snapshot = _snapshot_or_error()
+
+    if not args.login and not getattr(args, "at", None):
+        # Nothing holds the site anywhere yet: log in instead of failing.
+        held = [(b, p) for b, p in candidate_profiles(snapshot)
+                if any(probe_site_state(b, p, site))]
+        if not held:
+            print(f"accounts: no profile holds {site} yet; logging in",
+                  file=sys.stderr)
+            args.login = True
+
+    if args.login:
+        meta = add_by_login(args, site, args.label, snapshot)
+    else:
+        browser, profile = resolve_profile(args, snapshot, purpose="add",
+                                           site=site, need="data",
+                                           announce=False)
+        data = capture(browser, profile, site)
+        if not data["cookies"] and not data["storage"]:
+            raise AccountsError(f"no cookies or localStorage for {site} in "
+                                f"{describe_profile(browser, profile)}")
+        where = describe_profile(browser, profile)
+        print(f"accounts: captured {site} from {where} "
+              f"({len(data['cookies'])} cookies, "
+              f"{storage_key_count(data)} localStorage keys)", file=sys.stderr)
+        meta = save_bundle(browser, profile, site, args.label, data,
+                           note=args.notes or "")
+    if args.json:
+        print(json.dumps(meta, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_install(args):
+    site = site_of(args.site, args.site_override)
+    bundle = read_bundle(site, args.label)
+    snapshot = _snapshot_or_error()
+    if args.dedicated:
+        browser = _only_browser(args, snapshot)
+        profile = ensure_profile(browser, args.label, site)
+    else:
+        browser, profile = resolve_profile(args, snapshot, account=bundle,
+                                           purpose="install", site=site,
+                                           need="any")
+
+    require_closed(browser, profile, close=args.close)
+    if not args.dry_run:
+        lock_store()
+        slot = backup_paths(profile_key(browser, profile),
+                            profile_write_targets(browser, profile),
+                            f"install {site}/{args.label}")
+        print(f"accounts: backup in {slot}", file=sys.stderr)
+    report, warnings = apply_bundle(browser, profile, site, bundle,
+                                    merge=args.merge, dry_run=args.dry_run,
+                                    storage_mode=args.storage)
+    for warning in warnings:
+        print(f"accounts: warning: {warning}", file=sys.stderr)
+    if args.dry_run:
+        print(f"# would install {site}/{args.label} into "
+              f"{describe_profile(browser, profile)}",
+              file=sys.stderr if args.json else sys.stdout)
+    else:
+        index = load_index()
+        record_profile(index, browser, profile, site, args.label,
+                       mode=profile_kind(profile, args.dedicated))
+        sync_meta(index, site, args.label)
+        save_index(index)
+    if args.json:
+        print(json.dumps({"account": f"{site}/{args.label}",
+                          "profile": describe_profile(browser, profile),
+                          "operations": report,
+                          "warnings": warnings,
+                          "dry_run": args.dry_run}, indent=2, ensure_ascii=False))
+    else:
+        for line in report:
+            print(line)
+        if not report:
+            print("accounts: nothing to change", file=sys.stderr)
+    if getattr(args, "open", False) and not args.dry_run:
+        launch(browser, profile, f"https://{site}/")
+    if warnings and args.strict:
+        return 1
+    return 0
+
+
+def cmd_open(args):
+    args.open = True
+    return cmd_install(args)
+
+
+def cmd_logout(args):
+    site = site_of(args.site, args.site_override)
+    snapshot = _snapshot_or_error()
+    browser, profile = resolve_profile(args, snapshot, purpose="logout",
+                                      site=site, need="data")
+    require_closed(browser, profile, close=args.close)
+    if not args.dry_run:
+        lock_store()
+        slot = backup_paths(profile_key(browser, profile),
+                            profile_write_targets(browser, profile),
+                            f"logout {site}")
+        print(f"accounts: backup in {slot}", file=sys.stderr)
+    bundle = {"cookies": [], "storage": {}}
+    report, warnings = apply_bundle(browser, profile, site, bundle, merge=False,
+                                    dry_run=args.dry_run, storage_mode=args.storage)
+    for warning in warnings:
+        print(f"accounts: warning: {warning}", file=sys.stderr)
+    if not args.dry_run:
+        index = load_index()
+        forget_profile(index, browser, profile, site)
+        save_index(index)
+    if args.json:
+        print(json.dumps({"site": site, "profile": describe_profile(browser, profile),
+                          "operations": report, "dry_run": args.dry_run},
+                         indent=2, ensure_ascii=False))
+    else:
+        for line in report:
+            print(line)
+        if not report:
+            print(f"accounts: no {site} state in {describe_profile(browser, profile)}")
+    return 1 if warnings and args.strict else 0
+
+
+def _account_rows(index, site=None):
+    rows = []
+    for _key, entry in sorted(index["accounts"].items()):
+        if site and entry.get("site") != site:
+            continue
+        rows.append(entry)
+    return rows
+
+
+def _expiry_state(cookies, now):
+    """Soonest expiry that still counts; stale trackers do not doom a session."""
+    expiries = [c["expires"] for c in cookies if c.get("expires")]
+    if not expiries:
+        return "session"
+    alive = sorted(expiry for expiry in expiries if expiry >= now)
+    stale = len(expiries) - len(alive)
+    if not alive:
+        return "expired"
+    label = human_age_span(alive[0] - now)
+    return f"{label} (+{stale})" if stale else label
+
+
+def cmd_list(args):
+    site = site_of(args.site, args.site_override) if args.site else None
+    index = load_index()
+    rows = _account_rows(index, site)
+    now = now_unix()
+    payload = []
+    for entry in rows:
+        try:
+            bundle = read_bundle(entry["site"], entry["label"])
+            cookies = bundle["cookies"]
+            storage = bundle["storage"]
+            state = _expiry_state(cookies, now)
+            keys = sum(len(v.get("localstorage") or {}) for v in storage.values())
+        except AccountsError:
+            cookies, storage, state, keys = [], {}, "missing", 0
+        profile = entry.get("profile") or {}
+        payload.append({
+            "site": entry["site"],
+            "label": entry["label"],
+            "cookies": len(cookies),
+            "storage_keys": keys,
+            "origins": len(storage),
+            "updated": entry.get("updated"),
+            "updated_unix": entry.get("updated_unix"),
+            "expires": state,
+            "profile": (f"{profile.get('browser', '')}/"
+                        f"{profile.get('profile', '')}" if profile else ""),
+        })
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0 if payload else 1
+    if not payload:
+        print("accounts: no accounts saved yet")
+        return 1
+    print(f"{'SITE':<24} {'LABEL':<16} {'COOKIES':>7} {'KEYS':>5} "
+          f"{'UPDATED':<14} {'EXPIRES':<9} PROFILE")
+    for row in payload:
+        print(f"{row['site']:<24} {row['label']:<16} {row['cookies']:>7} "
+              f"{row['storage_keys']:>5} {human_age(_unix_of(row, 'updated')):<14} "
+              f"{row['expires']:<9} {row['profile']}")
+    return 0
+
+
+def _parse_iso(text):
+    """Unix seconds for a stored UTC timestamp string (``...Z``)."""
+    if not text:
+        return 0
+    if isinstance(text, (int, float)):
+        return int(text)
+    try:
+        return int(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+    except ValueError:
+        return 0
+
+
+def _unix_of(entry, field):
+    """Prefer the exact ``<field>_unix`` stamp, fall back to the ISO string."""
+    if not entry:
+        return 0
+    return int(entry.get(f"{field}_unix") or _parse_iso(entry.get(field)))
+
+
+def cmd_show(args):
+    site = site_of(args.site, args.site_override)
+    bundle = read_bundle(site, args.label)
+    meta = bundle["meta"]
+    payload = dict(meta)
+    payload["cookie_list"] = [
+        {k: v for k, v in c.items() if k != "value"}
+        for c in bundle["cookies"]
+    ]
+    if args.reveal:
+        payload["cookie_list"] = bundle["cookies"]
+    payload["storage"] = bundle["storage"]
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    print(f"{meta['site']}/{meta['label']}")
+    print(f"  updated:  {meta.get('updated')}  (created {meta.get('created')})")
+    source = meta.get("source") or {}
+    print(f"  source:   {source.get('browser')}/{source.get('profile')} "
+          f"[{source.get('family')}]")
+    if source.get("user_agent"):
+        print(f"  ua:       {source['user_agent']}")
+    profile = meta.get("profile") or {}
+    if profile:
+        print(f"  profile:  {profile.get('browser')}/{profile.get('profile')} "
+              f"({human_age(_unix_of(profile, 'at'))})")
+    now = now_unix()
+    print(f"  expires:  {_expiry_state(bundle['cookies'], now)}")
+    print()
+    print(f"{'HOST':<32} {'NAME':<26} {'SEC':<4} {'HTTP':<5} {'EXPIRES':<12} VALUE")
+    for cookie in bundle["cookies"]:
+        value = cookie["value"] if args.reveal else "***"
+        print(f"{cookie['host']:<32} {cookie['name']:<26} "
+              f"{'S' if cookie.get('secure') else '-':<4} "
+              f"{'H' if cookie.get('http_only') else '-':<5} "
+              f"{str(cookie.get('expires') or 0):<12} {value}")
+    for origin, kinds in (bundle["storage"] or {}).items():
+        entries = kinds.get("localstorage") or {}
+        if not entries:
+            continue
+        print()
+        print(f"# localStorage {origin} ({len(entries)} keys)")
+        for key in entries:
+            print(f"  {key}")
+    return 0
+
+
+def cmd_profiles(args):
+    index = load_index()
+    snapshot = _snapshot_or_error()
+    open_paths = {os.path.realpath(p["path"]): p.get("is_open")
+                  for b in snapshot for p in b["profiles"]}
+    rows = []
+    for key, entry in sorted(index["profiles"].items()):
+        is_open = open_paths.get(os.path.realpath(entry.get("path", "")), None)
+        for site, info in sorted((entry.get("sites") or {}).items()):
+            rows.append({
+                "browser": entry["browser"],
+                "profile": entry["profile"],
+                "mode": entry.get("mode", "existing"),
+                "path": entry.get("path", ""),
+                "site": site,
+                "label": info.get("label", ""),
+                "at": info.get("at", ""),
+                "at_unix": info.get("at_unix"),
+                "open": is_open,
+            })
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0 if rows else 1
+    if not rows:
+        print("accounts: no profile recorded yet")
+        return 1
+    print(f"{'BROWSER':<12} {'PROFILE':<24} {'MODE':<9} {'SITE':<22} "
+          f"{'ACCOUNT':<14} LAST USE")
+    for row in rows:
+        flag = "(open)" if row["open"] else ""
+        print(f"{row['browser']:<12} {row['profile']:<24} {row['mode']:<9} "
+              f"{row['site']:<22} {row['label']:<14} "
+              f"{human_age(_unix_of(row, 'at'))} {flag}")
+    return 0
+
+
+def cmd_diff(args):
+    site = site_of(args.site, args.site_override)
+    bundle = read_bundle(site, args.label)
+    snapshot = _snapshot_or_error()
+    browser, profile = resolve_profile(args, snapshot, account=bundle,
+                                     purpose="diff", site=site, need="data")
+    current = capture(browser, profile, site)
+
+    def cookie_map(items):
+        return {(c["host"], c["name"], c["path"]): c["value"] for c in items}
+
+    def storage_map(items):
+        out = {}
+        for origin, kinds in items.items():
+            for name, entry in (kinds.get("localstorage") or {}).items():
+                out[(origin, name)] = entry.get("value")
+        return out
+
+    ours, theirs = cookie_map(bundle["cookies"]), cookie_map(current["cookies"])
+    lines = []
+    for key in sorted(set(ours) | set(theirs)):
+        mark = "+" if key not in theirs else "-" if key not in ours else None
+        if key in ours and key in theirs and ours[key] != theirs[key]:
+            mark = "~"
+        if mark:
+            lines.append(f"{mark} cookie {key[0]} {key[1]}")
+    ostore, tstore = storage_map(bundle["storage"]), storage_map(current["storage"])
+    for key in sorted(set(ostore) | set(tstore)):
+        mark = "+" if key not in tstore else "-" if key not in ostore else None
+        if key in ostore and key in tstore and ostore[key] != tstore[key]:
+            mark = "~"
+        if mark:
+            lines.append(f"{mark} localStorage {key[0]} {key[1]}")
+    if args.json:
+        print(json.dumps({"site": site, "account": args.label,
+                          "profile": describe_profile(browser, profile),
+                          "changes": lines, "identical": not lines},
+                         indent=2, ensure_ascii=False))
+    else:
+        if not lines:
+            print(f"accounts: {describe_profile(browser, profile)} already holds "
+                  f"{site}/{args.label}")
+            return 0
+        print(f"# {site}/{args.label} -> {describe_profile(browser, profile)}")
+        for line in lines:
+            print(line)
+    return 0
+
+
+def cmd_forget(args):
+    site = site_of(args.site, args.site_override)
+    base = account_dir(site, args.label)
+    if not os.path.isdir(base):
+        raise AccountsError(f"no account {site}/{args.label}")
+    lock_store()
+    shutil.rmtree(base)
+    index = load_index()
+    index["accounts"].pop(account_key(site, args.label), None)
+    for key in list(index["profiles"]):
+        sites = index["profiles"][key]["sites"]
+        if sites.get(site, {}).get("label") == args.label:
+            sites.pop(site, None)
+        if not sites:
+            index["profiles"].pop(key, None)
+    save_index(index)
+    print(f"accounts: removed {site}/{args.label}", file=sys.stderr)
+    return 0
+
+
+def cmd_new_profile(args):
+    site = site_of(args.site, None) if args.site else ""
+    snapshot = _snapshot_or_error()
+    wanted = {args.browser.lower()}
+    matching = [b for b in snapshot
+                if b["id"].lower() in wanted or b["name"].lower() in wanted]
+    if not matching:
+        raise AccountsError(f"no installed browser matches {args.browser}")
+    browser = matching[0]
+    profile = ensure_profile(browser, args.label, site)
+    index = load_index()
+    key = profile_key(browser, profile)
+    entry = index["profiles"].setdefault(key, {
+        "browser": browser["id"], "profile": profile["name"],
+        "path": profile["path"], "mode": "profile", "sites": {},
+    })
+    entry["mode"] = "profile"
+    entry["path"] = profile["path"]
+    save_index(index)
+    if args.json:
+        print(json.dumps({"browser": browser["id"], "profile": profile["name"],
+                          "path": profile["path"]}, indent=2))
+    else:
+        print(f"{browser['id']}/{profile['name']}\t{profile['path']}")
+    return 0
+
+
+def cmd_undo(args):
+    snapshot = _snapshot_or_error()
+    browser, profile = resolve_profile(args, snapshot, purpose="undo",
+                                     need="any")
+    require_closed(browser, profile, close=args.close)
+    restored = undo_last(profile_key(browser, profile))
+    if args.json:
+        print(json.dumps({"profile": describe_profile(browser, profile),
+                          "restored": restored}, indent=2))
+    else:
+        print(f"accounts: restored {len(restored)} files for "
+              f"{describe_profile(browser, profile)}")
+    return 0
+
+
+def cmd_export(args):
+    site = site_of(args.site, args.site_override)
+    bundle = read_bundle(site, args.label)
+    payload = {"version": 1, "meta": bundle["meta"],
+               "cookies": bundle["cookies"], "storage": bundle["storage"]}
+    if args.output:
+        write_json(os.path.abspath(args.output), payload)
+        print(f"accounts: wrote {args.output}", file=sys.stderr)
+    else:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_import(args):
+    path = os.path.abspath(args.file)
+    payload = read_json(path)
+    if not isinstance(payload, dict) or "meta" not in payload:
+        raise AccountsError(f"{args.file} is not an accounts bundle")
+    meta = payload["meta"]
+    site = site_of(args.site or meta.get("site"), args.site_override)
+    label = args.label or meta.get("label")
+    if not label:
+        raise UsageError("bundle has no label; pass --label")
+    lock_store()
+    meta = dict(meta)
+    meta.update({"site": site, "label": label, "updated": now_iso(),
+                 "updated_unix": now_unix()})
+    meta.setdefault("created_unix", _unix_of(meta, "created") or now_unix())
+    write_bundle(site, label, meta, payload.get("cookies") or [],
+                 payload.get("storage") or {})
+    index = load_index()
+    index["accounts"][account_key(site, label)] = meta
+    save_index(index)
+    print(f"accounts: imported {site}/{label}", file=sys.stderr)
+    return 0
+
+
+def _only_browser(args, snapshot):
+    """The browser a dedicated profile belongs to; never a profile name."""
+    at = getattr(args, "at", None)
+    if at:
+        wanted, profile_name = parse_at(at, snapshot)
+        if not wanted or profile_name:
+            listing = ", ".join(b["id"] for b in snapshot if b.get("executable"))
+            raise UsageError(
+                "--dedicated creates its own profile: name a browser with "
+                f"--at BROWSER (installed: {listing or 'none'})")
+        matching = [b for b in snapshot if _browser_matches(b, wanted)]
+        if not matching:
+            raise UsageError(f"no installed browser matches --at {at}")
+        return matching[0]
+    installed = [b for b in snapshot if b.get("executable")]
+    if len(installed) == 1:
+        return installed[0]
+    listing = ", ".join(b["id"] for b in installed) or "none"
+    raise UsageError(f"--dedicated needs --at BROWSER (installed: {listing})")
+
+
+# ------------------------------------------------------------------------- CLI
+
+
+def _add_profile_args(sp):
+    sp.add_argument("--at", default=None, metavar="BROWSER[/PROFILE]",
+                    help="use that profile (a bare browser means its default)")
+    sp.add_argument("--close", action="store_true",
+                    help="close a running browser before writing")
+    picker = sp.add_mutually_exclusive_group()
+    picker.add_argument("--pick", action="store_true",
+                        help="ask which profile when several match (reads stdin)")
+    picker.add_argument("--no-pick", action="store_true",
+                        help="never prompt; list the candidates instead")
+    sp.add_argument("--json", action="store_true", help="machine-readable output")
+
+
+MODEL = """\
+Two nouns:
+
+  account   a saved login for one site, named by you: x.com/work
+  profile   one browser profile, written browser/profile: firefox/default-3
+
+The pipeline:
+
+  profile --add--> account --install--> profile
+
+``add`` captures the login state out of a profile (or logs in for you when no
+profile has it), ``install`` puts it into a profile, ``open`` installs and
+launches the browser.  One account can be installed into several profiles; the
+tool always says which profile it used.
+
+Common tasks:
+
+  log in somewhere new        accounts add x.com work
+  keep this browser's login   accounts add x.com work --at firefox/default-3
+  put it in another browser   accounts install x.com work --at brave
+  remove it from a profile    accounts logout x.com
+  delete the saved account    accounts forget x.com work
+"""
+
+PROFILE_NOTE = ("Without --at the profile is found for you: the account's recorded "
+                "profile, then the only profile that holds the site's state, then a "
+                "picker on a terminal (--pick forces it and reads stdin, --no-pick "
+                "lists the candidates instead).")
+
+# Examples are (command, comment) rows: the commands are aligned, the comments
+# are optional, and the whole block lands under ``examples:`` in --help.
+MAIN_EXAMPLES = [
+    ("accounts add x.com work", "capture the login, or log in when nothing has it"),
+    ("accounts install x.com work --at brave", "put it in brave's default profile"),
+    ("accounts open x.com work", "install it and launch the browser"),
+    ("accounts diff x.com work", "what install would change, without writing"),
+    ("accounts logout x.com", "strip the site's state again"),
+    ("accounts undo --at brave", "roll the last write back"),
+    ("accounts profiles", "which profile holds what"),
+    ("accounts list", "saved accounts, sizes and expiry"),
+]
+
+EXAMPLES = {
+    "add": [
+        ("accounts add x.com work", "capture it, or log in when nothing has it"),
+        ("accounts add x.com work --login", "log in instead of capturing"),
+        ("accounts add x.com work --at firefox/default-3", "capture from that profile"),
+        ("accounts add x.com work --at brave --pick", "choose a brave profile"),
+        ("accounts add x.com work --login --keep-session", "keep that profile's state"),
+    ],
+    "install": [
+        ("accounts install x.com work --at brave", "replace the site's state there"),
+        ("accounts install x.com work --dry-run", "show the operations only"),
+        ("accounts install x.com work --merge", "keep what the bundle lacks"),
+        ("accounts install x.com work --dedicated",
+         "use its own accounts-work profile"),
+    ],
+    "open": [
+        ("accounts open x.com work", "install it and launch the browser"),
+        ("accounts open x.com personal --at brave", "name the profile as well"),
+    ],
+    "logout": [
+        ("accounts logout x.com", "drop the site's state from its profile"),
+        ("accounts logout x.com --at brave", "or from one named profile"),
+        ("accounts logout x.com --dry-run", "show what would go"),
+    ],
+    "list": [
+        ("accounts list", "every account, its size and expiry state"),
+        ("accounts list x.com --json", "one site, machine-readable"),
+    ],
+    "show": [
+        ("accounts show x.com work", "cookie hosts, storage origins and the profile"),
+        ("accounts show x.com work --reveal", "print the secret values too"),
+    ],
+    "profiles": [
+        ("accounts profiles", "which profile currently holds which account"),
+        ("accounts profiles --json", "machine-readable"),
+    ],
+    "diff": [
+        ("accounts diff x.com work", "what `install` would change"),
+        ("accounts diff x.com work --at firefox", "against a named profile"),
+    ],
+    "forget": [
+        ("accounts forget x.com work",
+         "delete the saved account (profiles are untouched)"),
+    ],
+    "new-profile": [
+        ("accounts new-profile firefox work", "create the accounts-work profile"),
+        ("accounts new-profile brave work --site x.com", "note which site it is for"),
+    ],
+    "undo": [
+        ("accounts undo --at brave", "roll the last write to that profile back"),
+        ("accounts undo --pick", "pick the profile from a list"),
+    ],
+    "export": [
+        ("accounts export x.com work -o work.json", "bundle to a JSON file"),
+    ],
+    "import": [
+        ("accounts import work.json", "restore a bundle"),
+        ("accounts import work.json --site x.com --label work",
+         "override site and label"),
+    ],
+}
+
+
+class HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Wrap prose normally, but leave indented example lines exactly as written."""
+
+    def _fill_text(self, text, width, indent):
+        lines = []
+        for line in text.splitlines():
+            if line.startswith("  ") or not line.strip():
+                lines.append(line)
+            else:
+                lines.extend(textwrap.wrap(line, width) or [""])
+        return "".join(indent + line + "\n" for line in lines)
+
+
+def examples_epilog(rows):
+    """``examples:`` block for one command, commands left-aligned."""
+    width = max(len(command) for command, _ in rows)
+    lines = [f"  {command:<{width}}  {comment}".rstrip() for command, comment in rows]
+    return "examples:\n" + "\n".join(lines)
+
+
+def set_help(parser, *parts):
+    parser.formatter_class = HelpFormatter
+    parser.epilog = "\n\n".join(part for part in parts if part)
+    return parser
+
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="accounts", description=MODEL)
+    sub = p.add_subparsers(dest="command", metavar="COMMAND")
+
+    add = sub.add_parser("add", help="capture a login into an account (or log in)")
+    add.add_argument("site", help="site or URL, e.g. x.com")
+    add.add_argument("label", help="account name, e.g. work")
+    add.add_argument("--login", action="store_true",
+                     help="log in instead of capturing (also used automatically)")
+    add.add_argument("--url", default=None,
+                     help="page to open (default https://SITE/)")
+    add.add_argument("--keep-session", action="store_true",
+                     help="log in without clearing the site's state first")
+    add.add_argument("--keep-scratch", action="store_true",
+                     help="keep the throwaway login profile on disk")
+    add.add_argument("--notes", default="")
+    add.add_argument("--site-override", default=None, metavar="DOMAIN")
+    _add_profile_args(add)
+
+    for name, help_text in (("install", "install an account into a profile"),
+                            ("open", "install an account and open the browser")):
+        sp = sub.add_parser(name, help=help_text)
+        sp.add_argument("site")
+        sp.add_argument("label")
+        sp.add_argument("--merge", action="store_true",
+                        help="keep cookies/localStorage not present in the bundle")
+        sp.add_argument("--dry-run", action="store_true", help="show changes only")
+        sp.add_argument("--strict", action="store_true",
+                        help="fail when localStorage could not be applied")
+        sp.add_argument("--dedicated", action="store_true",
+                        help="create a dedicated accounts-LABEL profile and use it")
+        sp.add_argument("--storage", choices=["auto", "cookies"], default="auto",
+                        help="'cookies' skips localStorage entirely")
+        sp.add_argument("--site-override", default=None, metavar="DOMAIN")
+        _add_profile_args(sp)
+
+    logout = sub.add_parser("logout", help="delete a site's state from a profile")
+    logout.add_argument("site")
+    logout.add_argument("--dry-run", action="store_true")
+    logout.add_argument("--strict", action="store_true")
+    logout.add_argument("--storage", choices=["auto", "cookies"], default="auto")
+    logout.add_argument("--site-override", default=None, metavar="DOMAIN")
+    _add_profile_args(logout)
+
+    listing = sub.add_parser("list", help="list saved accounts")
+    listing.add_argument("site", nargs="?", default=None)
+    listing.add_argument("--site-override", default=None, metavar="DOMAIN")
+    listing.add_argument("--json", action="store_true")
+
+    show = sub.add_parser("show", help="inspect one account")
+    show.add_argument("site")
+    show.add_argument("label")
+    show.add_argument("--reveal", action="store_true", help="print secret values")
+    show.add_argument("--site-override", default=None, metavar="DOMAIN")
+    show.add_argument("--json", action="store_true")
+
+    profiles = sub.add_parser("profiles",
+                              help="show which profile holds which account")
+    profiles.add_argument("--json", action="store_true")
+
+    diff = sub.add_parser("diff", help="compare an account with a profile")
+    diff.add_argument("site")
+    diff.add_argument("label")
+    diff.add_argument("--site-override", default=None, metavar="DOMAIN")
+    _add_profile_args(diff)
+
+    forget = sub.add_parser("forget", help="delete a saved account")
+    forget.add_argument("site")
+    forget.add_argument("label")
+    forget.add_argument("--site-override", default=None, metavar="DOMAIN")
+
+    new_profile = sub.add_parser("new-profile",
+                                 help="create a dedicated profile for an account")
+    new_profile.add_argument("browser")
+    new_profile.add_argument("label")
+    new_profile.add_argument("--site", default=None)
+    new_profile.add_argument("--json", action="store_true")
+
+    undo = sub.add_parser("undo", help="restore the last write to a profile")
+    _add_profile_args(undo)
+
+    export = sub.add_parser("export", help="write an account bundle as JSON")
+    export.add_argument("site")
+    export.add_argument("label")
+    export.add_argument("-o", "--output", default=None)
+    export.add_argument("--site-override", default=None, metavar="DOMAIN")
+
+    imp = sub.add_parser("import", help="read an account bundle from JSON")
+    imp.add_argument("file")
+    imp.add_argument("--site", default=None)
+    imp.add_argument("--label", default=None)
+    imp.add_argument("--site-override", default=None, metavar="DOMAIN")
+
+    set_help(p, PROFILE_NOTE, examples_epilog(MAIN_EXAMPLES))
+    for name, parser in sub.choices.items():
+        rows = EXAMPLES.get(name)
+        if rows:
+            set_help(parser, examples_epilog(rows))
+    return p
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.command:
+        parser.print_help(sys.stderr)
+        return 2
+    handlers = {
+        "add": cmd_add,
+        "install": cmd_install,
+        "open": cmd_open,
+        "logout": cmd_logout,
+        "list": cmd_list,
+        "show": cmd_show,
+        "profiles": cmd_profiles,
+        "diff": cmd_diff,
+        "forget": cmd_forget,
+        "new-profile": cmd_new_profile,
+        "undo": cmd_undo,
+        "export": cmd_export,
+        "import": cmd_import,
+    }
+    try:
+        return handlers[args.command](args) or 0
+    except UsageError as exc:
+        print(f"accounts: {exc}", file=sys.stderr)
+        return 2
+    except Refused as exc:
+        print(f"accounts: {exc}", file=sys.stderr)
+        return 1
+    except AccountsError as exc:
+        print(f"accounts: {exc}", file=sys.stderr)
+        return 1
+    except BrokenPipeError:
+        return 0
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

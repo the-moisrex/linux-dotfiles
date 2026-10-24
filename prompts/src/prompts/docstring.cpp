@@ -7,8 +7,8 @@
 
 namespace prompt::prompts {
 
-static void execute_docstring(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_docstring(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output =
         R"PROMPT(Add comprehensive docstrings to all functions, classes, and methods in the following code.
@@ -24,8 +24,8 @@ Return the updated code with the newly added docstrings or write a patch file.
 )PROMPT";
 
     std::string error;
-    for (auto const& arg : positional_args(ctx)) {
-        auto resolved = resolve_input_file(ctx, arg);
+    for (auto const& arg : positional_args(v)) {
+        auto resolved = resolve_input_file(v.env, arg);
         if (!resolved) {
             error += std::format("prompt docstring: file not found: {}\n", arg);
             continue;
@@ -40,8 +40,8 @@ Return the updated code with the newly added docstrings or write a patch file.
         output += "\n```\n";
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_docstring(std::ostream& os) {

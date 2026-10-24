@@ -9,10 +9,10 @@
 
 namespace prompt::prompts {
 
-static void execute_gdb(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_gdb(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
-    auto files = positional_args(ctx);
+    auto files = positional_args(v);
 
     // gdb.sh: a fixed instruction block (echoes + a quoted heredoc) followed by
     // the sample `gdb ... | grep` probe, whose stdout is streamed verbatim. The
@@ -74,8 +74,8 @@ Running the command: `gdb -q --nh -batch -ex "help" -ex "help data" -ex "help br
         }
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_gdb(std::ostream& os) {

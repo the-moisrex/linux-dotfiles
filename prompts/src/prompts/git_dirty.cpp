@@ -112,7 +112,7 @@ std::vector<std::string> split_lines(std::string_view s) {
 
 } // namespace
 
-static void execute_git_dirty(prompt_context& ctx) {
+static void execute_git_dirty(view const& v, result& r) {
     // This prompt parses its own flags (not the shared --head parser), and its
     // --head accepts any value verbatim. --help/-h are intercepted by the
     // dispatcher before we run.
@@ -127,15 +127,15 @@ static void execute_git_dirty(prompt_context& ctx) {
     bool output_full = false;
     bool output_full_diff = false;
 
-    for (std::size_t i = 0; i < ctx.args_count;) {
-        std::string_view a = ctx.args[i];
+    for (std::size_t i = 0; i < v.args.size();) {
+        std::string_view a = v.args[i];
         if (a == "--help" || a == "-h") {
             ++i; // handled by the dispatcher; unreachable in practice
         } else if (a == "--head") {
-            if (i + 1 >= ctx.args_count) {
+            if (i + 1 >= v.args.size()) {
                 throw usage_error{"Missing value for --head\n"};
             }
-            head_lines = static_cast<std::size_t>(std::strtoull(std::string(ctx.args[i + 1]).c_str(), nullptr, 10));
+            head_lines = static_cast<std::size_t>(std::strtoull(std::string(v.args[i + 1]).c_str(), nullptr, 10));
             i += 2;
         } else if (is_number_flag(a)) {
             numbered = true;
@@ -178,7 +178,7 @@ static void execute_git_dirty(prompt_context& ctx) {
         throw soft_error{"prompt git-dirty: Error: Not inside a git repository.\n"};
     }
 
-    std::filesystem::path git_root = ctx.git_root;
+    std::filesystem::path git_root = v.env.git_root;
 
     std::string staged_files;
     std::string staged_diff;
@@ -230,8 +230,8 @@ static void execute_git_dirty(prompt_context& ctx) {
 
     bool has_content = !staged_files.empty() || !unstaged_files.empty() || !untracked_files.empty();
     if (!has_content) {
-        ctx.out.clear();
-        ctx.err = "No changes found in the repository.\n";
+        r.out.clear();
+        r.err = "No changes found in the repository.\n";
         return;
     }
 
@@ -321,7 +321,7 @@ static void execute_git_dirty(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_git_dirty(std::ostream& os) {

@@ -5,21 +5,21 @@
 
 namespace prompt::prompts {
 
-static void execute_note(prompt_context& ctx) {
+static void execute_note(view const& v, result& r) {
     std::optional<std::size_t> head_lines;
     bool prepend = false;
     std::vector<std::string_view> notes;
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        if (v.args[i] == "--head") {
             // note.sh's own parser rejects a missing --head value with exit 2
             // (unlike its value, which it never validates or reads).
-            if (i + 1 >= ctx.args_count) throw usage_error{"Missing value for --head\n"};
-            head_lines = prompt::text::to_size(ctx.args[++i], 0);
-        } else if (ctx.args[i] == "--prepend" || ctx.args[i] == "-p") {
+            if (i + 1 >= v.args.size()) throw usage_error{"Missing value for --head\n"};
+            head_lines = prompt::text::to_size(v.args[++i], 0);
+        } else if (v.args[i] == "--prepend" || v.args[i] == "-p") {
             prepend = true;
         } else {
-            notes.push_back(ctx.args[i]);
+            notes.push_back(v.args[i]);
         }
     }
 
@@ -31,14 +31,14 @@ static void execute_note(prompt_context& ctx) {
         }
         // bash's `embed_stdin || true` prints a blank block for an empty
         // (but piped) stdin too — note.sh relies on that separator.
-        if (ctx.stdin_consumed) {
-            output += embed_stdin(ctx.stdin_content, head_lines);
+        if (v.in.piped()) {
+            output += embed_stdin(v.in.text(), head_lines);
         }
     } else {
         // bash's `embed_stdin || true` prints a blank block for an empty
         // (but piped) stdin too — note.sh relies on that separator.
-        if (ctx.stdin_consumed) {
-            output += embed_stdin(ctx.stdin_content, head_lines);
+        if (v.in.piped()) {
+            output += embed_stdin(v.in.text(), head_lines);
         }
         if (!notes.empty()) output += '\n';
         for (auto note : notes) {
@@ -46,7 +46,7 @@ static void execute_note(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_note(std::ostream& os) {

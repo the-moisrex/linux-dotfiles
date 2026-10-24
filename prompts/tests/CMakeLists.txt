@@ -23,6 +23,18 @@ target_link_libraries(test_sink PRIVATE prompt_lib)
 target_include_directories(test_sink PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME sink COMMAND test_sink)
 
+add_executable(test_facts test_facts.cpp)
+target_link_libraries(test_facts PRIVATE prompt_lib)
+target_include_directories(test_facts PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME facts COMMAND test_facts)
+
+# The pasted-text → instrument policy, now next to the clipboard instead of
+# inline in the dispatcher's environment initializer.
+add_executable(test_clipboard test_clipboard.cpp)
+target_link_libraries(test_clipboard PRIVATE prompt_lib)
+target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME clipboard_identifier COMMAND test_clipboard)
+
 add_test(NAME ai_help COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
 set_tests_properties(ai_help PROPERTIES PASS_REGULAR_EXPRESSION "--with-context")
 

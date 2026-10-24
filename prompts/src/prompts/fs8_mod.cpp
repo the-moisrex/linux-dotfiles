@@ -119,8 +119,8 @@ std::filesystem::path find_foresight_root() {
 
 } // namespace
 
-static void execute_fs8_mod(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_fs8_mod(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     auto root = find_foresight_root();
     if (root.empty()) {
@@ -160,9 +160,9 @@ static void execute_fs8_mod(prompt_context& ctx) {
            "\n"
            "### Mod invocation forms\n"
            "\n"
-           "- `mod(ctx)` \xE2\x80\x94 sees the whole context (event + sibling mods).\n"
+           "- `mod(v)` \xE2\x80\x94 sees the whole context (event + sibling mods).\n"
            "- `mod(event)` \xE2\x80\x94 only needs the current event.\n"
-           "- `mod(ctx, tag)` \xE2\x80\x94 a tag request (start, load_event, next_event, etc.).\n"
+           "- `mod(v, tag)` \xE2\x80\x94 a tag request (start, load_event, next_event, etc.).\n"
            "\n"
            "### context_action return values\n"
            "\n"
@@ -194,8 +194,8 @@ static void execute_fs8_mod(prompt_context& ctx) {
     out += "\n## Registration: mods/mods.ixx (export imports)\n";
     embed_file(out, err, root / "mods/mods.ixx", "mods/mods.ixx", head_lines);
 
-    ctx.out = std::move(out);
-    ctx.err = std::move(err);
+    r.out = std::move(out);
+    r.err = std::move(err);
 }
 
 static void render_help_fs8_mod(std::ostream& os) {

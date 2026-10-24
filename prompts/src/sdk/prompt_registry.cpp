@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <array>
 #include <clocale>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -9,8 +11,10 @@
 namespace prompt {
 
 namespace {
-// Every prompt is native.
-std::array<prompt_descriptor, 128> prompts_storage{};
+// Every prompt is native. The catalog is fixed at build time; register_prompt
+// aborts if it ever outgrows this, because a dropped registration would
+// silently remove a prompt from the command.
+std::array<prompt_descriptor, prompt_registry_capacity> prompts_storage{};
 std::size_t prompts_count = 0;
 } // namespace
 
@@ -50,10 +54,15 @@ std::vector<std::string_view> list_prompt_names() {
     return names;
 }
 
-bool register_prompt(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
+bool register_prompt(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn, chain_role role,
-                     sink_policy policy, bool stream_output, void (*preflight_fn)(prompt_context&)) noexcept {
-    if (prompts_count >= prompts_storage.size()) return false;
+                     bool stream_output, preflight_fn preflight, declare_fn declare) noexcept {
+    if (prompts_count >= prompts_storage.size()) {
+        // Static-init registration cannot report an error to anyone: aborts with
+        // a message a developer can act on.
+        std::fputs("prompt: prompt registry is full; raise prompt_registry_capacity\n", stderr);
+        std::abort();
+    }
     prompts_storage[prompts_count++] = prompt_descriptor{
         .name = name,
         .help_summary = help_summary,
@@ -61,18 +70,18 @@ bool register_prompt(std::string_view name, std::string_view help_summary, void 
         .render_help_fn = render_help_fn,
         .complete_fn = complete_fn,
         .role = role,
-        .policy = policy,
         .stream_output = stream_output,
-        .preflight_fn = preflight_fn,
+        .preflight = preflight,
+        .declare = declare,
     };
     return true;
 }
 
-bool register_sink(std::string_view name, std::string_view help_summary, void (*execute_fn)(prompt_context&),
-                   void (*render_help_fn)(std::ostream&), completion_fn complete_fn, sink_policy policy,
-                   bool stream_output, void (*preflight_fn)(prompt_context&)) noexcept {
-    return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, policy,
-                           stream_output, preflight_fn);
+bool register_sink(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
+                   void (*render_help_fn)(std::ostream&), completion_fn complete_fn, bool stream_output,
+                   preflight_fn preflight, declare_fn declare) noexcept {
+    return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, stream_output,
+                           preflight, declare);
 }
 
 } // namespace prompt

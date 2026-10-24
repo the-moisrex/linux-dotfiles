@@ -9,19 +9,19 @@
 
 namespace prompt::prompts {
 
-static void execute_list(prompt_context& ctx) {
+static void execute_list(view const& v, result& r) {
     // This prompt embeds no files, so --head is validated (and stripped) but
     // its value is never used.
-    head_lines_or_throw(ctx);
+    head_lines_or_throw(v);
 
     bool names_only = false;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        if (v.args[i] == "--head") {
             ++i;
-        } else if (ctx.args[i] == "--names") {
+        } else if (v.args[i] == "--names") {
             names_only = true;
         } else {
-            throw usage_error{"prompt list: unknown argument: " + std::string(ctx.args[i]) + "\n", {}, true};
+            throw usage_error{"prompt list: unknown argument: " + std::string(v.args[i]) + "\n", {}, true};
         }
     }
 
@@ -56,8 +56,8 @@ static void execute_list(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(output);
-    ctx.no_clipboard = true;
+    r.out = std::move(output);
+    r.no_clipboard = true;
 }
 
 static void render_help_list(std::ostream& os) {

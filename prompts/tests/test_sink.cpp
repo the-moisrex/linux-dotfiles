@@ -73,24 +73,40 @@ void test_sink_head_trim() {
 }
 
 void test_sink_tool_streaming() {
-    prompt_context ctx;
-    ctx.stream_stdout = true;
-    ctx.stream_stderr = true;
-    ctx.stdout_writer = &collect_stdout;
-    ctx.stderr_writer = &collect_stderr;
     streamed_stdout.clear();
     streamed_stderr.clear();
 
-    auto result = run_sink_tool(ctx, {"sh", "-c", "printf out; printf err >&2"}, "");
+    std::array<std::string_view, 0> args{};
+    facts prior;
+    environment env;
+    stdin_source in;
+    stream_config stream{
+        .stdout_writer = &collect_stdout,
+        .stderr_writer = &collect_stderr,
+        .stream_stdout = true,
+        .stream_stderr = true,
+    };
+    view const streamed{
+        .name = "test",
+        .args = args,
+        .text = {},
+        .prior = prior,
+        .env = env,
+        .in = in,
+        .stream = stream,
+    };
+
+    result out;
+    auto result = run_sink_tool(streamed, out, {"sh", "-c", "printf out; printf err >&2"}, "");
     check(result.exit_code == 0, "sink tool: exit code");
-    check(ctx.out == "out", "sink tool: stdout retained in ctx.out");
-    check(ctx.stderr_buffer == "err", "sink tool: stderr retained separately");
+    check(out.out == "out", "sink tool: stdout retained in the result");
+    check(out.stderr_buffer == "err", "sink tool: stderr retained separately");
     check(streamed_stdout == "out", "sink tool: stdout streamed");
     check(streamed_stderr == "err", "sink tool: stderr streamed");
-    check(ctx.stdout_streamed, "sink tool: stdout streamed flag");
-    check(ctx.stderr_streamed, "sink tool: stderr streamed flag");
+    check(out.stdout_streamed, "sink tool: stdout streamed flag");
+    check(out.stderr_streamed, "sink tool: stderr streamed flag");
 
-    auto timed = run_sink_tool(ctx, {"sh", "-c", "exec sleep 5"}, "", std::chrono::milliseconds{50});
+    auto timed = run_sink_tool(streamed, out, {"sh", "-c", "exec sleep 5"}, "", std::chrono::milliseconds{50});
     check(timed.timed_out, "sink tool: timeout kills a silent child");
     check(timed.exit_code == -1, "sink tool: timed-out child has no exit code");
 }

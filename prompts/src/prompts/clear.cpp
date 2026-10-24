@@ -1,5 +1,5 @@
-#include "../sdk/prompt_context.hpp"
 #include "../sdk/prompt_registry.hpp"
+#include "../sdk/stage.hpp"
 #include <ostream>
 #include <string>
 
@@ -7,15 +7,15 @@ namespace prompt::prompts {
 
 static void render_help_clear(std::ostream& os);
 
-static void execute_clear(prompt_context& ctx) {
-    if (ctx.args_count != 0) {
+static void execute_clear(view const& v, result& r) {
+    if (!v.args.empty()) {
         throw usage_error{"prompt clear: does not take arguments\n" + help_text(render_help_clear)};
     }
 
     // A silent passthrough-like sink: it emits nothing, and only asks the
     // dispatcher to drop the chain state later segments would inherit.
-    ctx.no_clipboard = true;
-    ctx.clear_context = true;
+    r.no_clipboard = true;
+    r.clear = true;
 }
 
 static void render_help_clear(std::ostream& os) {
@@ -40,6 +40,6 @@ Examples:
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_sink(
     "clear", "Reset the accumulated chain context so later prompts and sinks start a new, independent section.",
-    &execute_clear, &render_help_clear, nullptr, prompt::sink_policy::chain, false);
+    &execute_clear, &render_help_clear, nullptr, false);
 
 } // namespace prompt::prompts

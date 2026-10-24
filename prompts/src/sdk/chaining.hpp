@@ -2,7 +2,6 @@
 
 #include "prompt_registry.hpp"
 #include "sink_types.hpp"
-#include <array>
 #include <span>
 #include <string>
 #include <string_view>
@@ -12,25 +11,24 @@ namespace prompt {
 
 struct prompt_invocation {
     std::string_view name;
-    std::array<std::string_view, 16> args{};
-    std::size_t args_count = 0;
+    std::vector<std::string_view> args;
 };
 
 struct chain_result {
-    std::array<prompt_invocation, 8> invocations{};
-    std::size_t count = 0;
+    std::vector<prompt_invocation> invocations;
 };
 
+// No fixed limits: the arguments are views into argv, so an arbitrary chain
+// costs one small vector per invocation and nothing is silently truncated.
 chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_descriptor const> registry);
 
-// A maximal run of ordinary prompts or sinks, in argv order. Normal runs are
-// executed as one batch (parallel when no stdin is pending); sink runs follow
-// the sink_policy of their descriptors.
+// A maximal run of ordinary prompts or sinks, in argv order. A normal run is
+// one batch (parallel when no stdin is pending); a sink run chains its sinks
+// in order, each answer becoming the next sink's context.
 struct chain_run {
     std::size_t begin = 0;
     std::size_t end = 0;
     bool sink = false;
-    sink_policy policy = sink_policy::chain;
 };
 
 struct chain_plan {
@@ -38,9 +36,7 @@ struct chain_plan {
     std::string error; // non-empty: the chain cannot be executed
 };
 
-// Partition a parsed chain into normal/sink runs and validate sink policies:
-// contiguous sinks must all be chain or all fanout, and an exclusive sink may
-// not share the chain with any other sink.
+// Partition a parsed chain into maximal normal/sink runs.
 chain_plan plan_chain(chain_result const& chain, std::span<prompt_descriptor const> registry);
 
 } // namespace prompt

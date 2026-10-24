@@ -9,18 +9,18 @@
 
 namespace prompt::prompts {
 
-static void execute_files(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_files(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
-    auto file_args = positional_args(ctx);
+    auto file_args = positional_args(v);
 
     std::vector<std::filesystem::path> selected_files;
     std::string errors;
     if (file_args.empty()) {
-        selected_files = select_files(ctx);
+        selected_files = select_files(v.env);
     } else {
         for (auto const& arg : file_args) {
-            auto resolved = resolve_input_file(ctx, arg);
+            auto resolved = resolve_input_file(v.env, arg);
             if (!resolved) {
                 errors += std::format("prompt files: file not found: {}\n", std::string(arg));
                 continue;
@@ -35,16 +35,17 @@ static void execute_files(prompt_context& ctx) {
     }
 
     std::string output;
+    std::vector<std::string> embedded_paths;
 
     for (auto const& file : selected_files) {
         if (!std::filesystem::exists(file) || !std::filesystem::is_regular_file(file)) continue;
 
-        auto rel = fs::relative_path(file, ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
+        auto rel = fs::relative_path(file, v.env.git_root.empty() ? std::nullopt : std::optional(v.env.git_root));
         auto lang = infer_lang(file);
         auto content = read_file(file);
 
         if (!content.empty()) {
-            if (ctx.save_hint.empty()) ctx.save_hint = file.stem().string();
+            embedded_paths.push_back(file.string());
             if (opts.head_lines) {
                 output += std::format("File {} (first {} lines)\n\n", rel.string(), std::to_string(*opts.head_lines));
             } else {
@@ -57,9 +58,12 @@ static void execute_files(prompt_context& ctx) {
     }
 
     if (!errors.empty()) {
-        ctx.err = std::move(errors);
+        r.err = std::move(errors);
     }
-    ctx.out = std::move(output);
+    r.out = std::move(output);
+    if (!embedded_paths.empty()) {
+        r.published.set(keys::save_stem, std::filesystem::path(embedded_paths.front()).stem().string());
+    }
 }
 
 static void render_help_files(std::ostream& os) {

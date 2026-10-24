@@ -113,8 +113,8 @@ std::filesystem::path find_foresight_root() {
 
 } // namespace
 
-static void execute_fs8_test(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_fs8_test(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     auto root = find_foresight_root();
     if (root.empty()) {
@@ -186,8 +186,8 @@ static void execute_fs8_test(prompt_context& ctx) {
     out += "\n## Mod source being tested (for reference)\n";
     embed_file(out, err, root / "mods/mods.ixx", "mods/mods.ixx", head_lines);
 
-    ctx.out = std::move(out);
-    ctx.err = std::move(err);
+    r.out = std::move(out);
+    r.err = std::move(err);
 }
 
 static void render_help_fs8_test(std::ostream& os) {

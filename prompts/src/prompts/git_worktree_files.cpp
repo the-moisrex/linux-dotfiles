@@ -92,15 +92,15 @@ std::string detect_base_branch(std::string const& given) {
 
 } // namespace
 
-static void execute_git_worktree_files(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_git_worktree_files(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
         throw soft_error{"prompt git.worktree.files: Error: Not inside a git repository.\n"};
     }
 
-    auto rest = positional_args(ctx);
+    auto rest = positional_args(v);
 
     std::string base_branch;
     std::string not_commit;
@@ -138,18 +138,18 @@ static void execute_git_worktree_files(prompt_context& ctx) {
     }
 
     if (changed_files.empty()) {
-        ctx.out.clear();
-        ctx.err = "No changed files found between current branch and " + base_branch + ".\n";
+        r.out.clear();
+        r.err = "No changed files found between current branch and " + base_branch + ".\n";
         return;
     }
 
     std::optional<std::filesystem::path> git_root;
-    if (!ctx.git_root.empty()) git_root = ctx.git_root;
+    if (!v.env.git_root.empty()) git_root = v.env.git_root;
 
     std::string output;
     std::string error;
     for (auto const& file : changed_files) {
-        auto resolved = resolve_input_file(ctx, file);
+        auto resolved = resolve_input_file(v.env, file);
         if (!resolved) {
             error += std::format("prompt git.worktree.files: file not found: {}\n", file);
             continue;
@@ -174,9 +174,9 @@ static void execute_git_worktree_files(prompt_context& ctx) {
     }
 
     if (!error.empty()) {
-        ctx.err = std::move(error);
+        r.err = std::move(error);
     }
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_git_worktree_files(std::ostream& os) {

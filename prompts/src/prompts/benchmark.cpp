@@ -7,8 +7,8 @@
 
 namespace prompt::prompts {
 
-static void execute_benchmark(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_benchmark(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(You are a performance engineering expert.
 Analyze the provided code and design meaningful benchmarks to measure its performance.
@@ -35,7 +35,7 @@ Guidelines:
 )PROMPT";
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
@@ -46,8 +46,8 @@ Guidelines:
         warn_missing_file(error, arg);
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_benchmark(std::ostream& os) {

@@ -30,10 +30,10 @@ std::string git_toplevel() {
 
 } // namespace
 
-static void execute_clang_tidy(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_clang_tidy(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
-    auto file_args = positional_args(ctx);
+    auto file_args = positional_args(v);
 
     std::string git_root = git_toplevel();
 
@@ -43,17 +43,17 @@ static void execute_clang_tidy(prompt_context& ctx) {
     // --head verbatim. The `if [ $# -eq 0 ]` guard tests the raw arg count.
     std::vector<std::string> run_args;     // ARGS
     std::vector<std::string> display_args; // $*
-    if (ctx.args_count == 0) {
-        auto selected = select_files(ctx);
+    if (v.args.empty()) {
+        auto selected = select_files(v.env);
         if (selected.empty()) {
-            ctx.out.clear();
-            ctx.err = "No files specified or selected.\n";
+            r.out.clear();
+            r.err = "No files specified or selected.\n";
             return;
         }
         for (auto const& s : selected) display_args.emplace_back(s.string());
         // Files from fzf only populate $@ (via `set --`), never ARGS.
     } else {
-        for (std::size_t i = 0; i < ctx.args_count; ++i) display_args.emplace_back(ctx.args[i]);
+        for (std::string_view arg : v.args) display_args.emplace_back(arg);
         run_args = file_args;
     }
 
@@ -133,7 +133,7 @@ static void execute_clang_tidy(prompt_context& ctx) {
     output += run_output;
     output += "\n\n```\n";
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_clang_tidy(std::ostream& os) {

@@ -27,40 +27,40 @@ struct tse_codal_prompt_config {
     std::string error;
 };
 
-tse_codal_prompt_config parse_tse_codal_args(prompt_context const& ctx) {
+tse_codal_prompt_config parse_tse_codal_args(view const& v) {
     tse_codal_prompt_config config;
     std::string const pfx = "prompt tse.codal: ";
 
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, config.head_lines); !msg.empty()) {
+    if (auto msg = parse_head_option({v.args.data(), v.args.size()}, config.head_lines); !msg.empty()) {
         config.failed = true;
         config.error = std::move(msg);
         return config;
     }
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        std::string_view arg = ctx.args[i];
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        std::string_view arg = v.args[i];
         if (arg == "--head") {
             ++i; // value consumed by parse_head_option
             continue;
         }
         if (arg == "--top") {
-            if (i + 1 >= ctx.args_count || !tse_data::is_positive_int(ctx.args[i + 1])) {
+            if (i + 1 >= v.args.size() || !tse_data::is_positive_int(v.args[i + 1])) {
                 config.failed = true;
                 config.error = pfx + "--top requires a positive integer\n";
                 return config;
             }
-            if (ctx.args[i + 1].size() > 2) {
+            if (v.args[i + 1].size() > 2) {
                 config.failed = true;
                 config.error = pfx + "--top must be between 1 and 20\n";
                 return config;
             }
-            int const top = std::stoi(std::string(ctx.args[i + 1]));
+            int const top = std::stoi(std::string(v.args[i + 1]));
             if (top < 1 || top > 20) {
                 config.failed = true;
                 config.error = pfx + "--top must be between 1 and 20\n";
                 return config;
             }
-            config.top = std::string(ctx.args[i + 1]);
+            config.top = std::string(v.args[i + 1]);
             ++i;
             continue;
         }
@@ -87,9 +87,9 @@ tse_codal_prompt_config parse_tse_codal_args(prompt_context const& ctx) {
     }
 
     if (config.symbol.empty()) {
-        if (auto id = tse_data::chain_identifier(ctx)) config.symbol = *id;
+        if (auto id = tse_data::prior_identifier(v)) config.symbol = *id;
         if (config.symbol.empty()) {
-            if (auto id = clipboard_identifier(ctx)) config.symbol = *id;
+            if (auto id = clipboard_identifier(v.env)) config.symbol = *id;
         }
         if (config.symbol.empty()) {
             config.failed = true;
@@ -107,8 +107,8 @@ tse_codal_prompt_config parse_tse_codal_args(prompt_context const& ctx) {
 // Raw Codal dataset from `bin/tse.codal`, without analysis instructions — so it
 // can be piped or chained into any workflow. Codal is opt-in: `prompt tse` no
 // longer fetches it. The analysis lens is the data-free `tse.analyze`.
-static void execute_tse_codal(prompt_context& ctx) {
-    auto config = parse_tse_codal_args(ctx);
+static void execute_tse_codal(view const& v, result& r) {
+    auto config = parse_tse_codal_args(v);
     if (config.failed) {
         throw prompt_error{config.exit_code, std::move(config.error), ""};
     }
@@ -117,7 +117,8 @@ static void execute_tse_codal(prompt_context& ctx) {
     // embeds exactly the Markdown `tse.codal snapshot --markdown` prints. Its
     // stderr is inherited and a failure aborts the prompt.
     std::vector<std::string> tool_argv = {
-        "python3",    prompt::fs::bin_tool("tse.codal", ctx.exe_path, std::nullopt).string(), "snapshot", config.symbol,
+        "python3",    prompt::fs::bin_tool("tse.codal", v.env.exe_path, std::nullopt).string(),
+        "snapshot",   config.symbol,
         "--markdown",
     };
     if (!config.top.empty()) {
@@ -131,8 +132,9 @@ static void execute_tse_codal(prompt_context& ctx) {
     // sit above it; the old 30 s prompt default cut a live fetch off silently.
     auto fetch = tse_data::run_tool("tse.codal", "bin/tse.codal", tool_argv, std::chrono::seconds(120));
 
-    ctx.save_hint = tse_data::save_stem(config.symbol);
-    ctx.out = trim_context(fetch.stdout_data, config.head_lines);
+    r.published.set(keys::save_stem, tse_data::save_stem(config.symbol));
+    tse_data::publish_identity(r, config.symbol);
+    r.out = trim_context(fetch.stdout_data, config.head_lines);
 }
 
 static void render_help_tse_codal(std::ostream& os) {
@@ -174,6 +176,7 @@ bool const registered = prompt::register_prompt(
     "ISIN (e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite "
     "`فولاد-IRO1FOLD0001` token — all resolved through `tse.resolve`; with no argument the other `.tse*` data "
     "prompts in the chain are searched, then the clipboard.",
-    &execute_tse_codal, &render_help_tse_codal, &tse_data::complete_instrument);
+    &execute_tse_codal, &render_help_tse_codal, &tse_data::complete_instrument, chain_role::normal, true, nullptr,
+    &tse_data::declare_identifier);
 
 } // namespace prompt::prompts

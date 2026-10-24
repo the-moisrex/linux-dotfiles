@@ -22,8 +22,8 @@ std::string git_output(std::initializer_list<char const*> args) {
 
 } // namespace
 
-static void execute_commit(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_commit(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
@@ -58,7 +58,7 @@ Keep it specific and practical, not generic.
     output += trim_context_nl(diff, head_lines);
     output += "\n```\n\n";
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_commit(std::ostream& os) {

@@ -48,8 +48,8 @@ std::string build_prompt_list() {
 
 } // namespace
 
-static void execute_delegate(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_delegate(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
     (void)head_lines; // the command-construction prompt embeds no head-capped files
 
     std::string out;
@@ -119,7 +119,7 @@ static void execute_delegate(prompt_context& ctx) {
 
     // No clipboard opt-out: delegate's own output copies like every other
     // prompt's.
-    ctx.out = std::move(out);
+    r.out = std::move(out);
 }
 
 static void render_help_delegate(std::ostream& os) {

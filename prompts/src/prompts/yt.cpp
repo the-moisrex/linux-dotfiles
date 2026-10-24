@@ -116,19 +116,19 @@ std::string transform_url(std::string_view url, std::span<const std::string> too
 
 } // namespace
 
-static void execute_yt(prompt_context& ctx) {
+static void execute_yt(view const& v, result& r) {
     std::vector<std::string> tools;
     tools.reserve(3);
     for (char const* name : {"yt.links", "subtitle", "srt2text"}) {
-        tools.push_back(prompt::fs::bin_tool(name, ctx.exe_path, ctx.git_root).string());
+        tools.push_back(prompt::fs::bin_tool(name, v.env.exe_path, v.env.git_root).string());
     }
 
     // bash checks `[ -t 0 ]`: a piped stdin wins over the clipboard.
     std::string input;
-    if (ctx.stdin_consumed) {
-        input = drop_trailing_newlines(ctx.stdin_content);
+    if (v.in.piped()) {
+        input = drop_trailing_newlines(v.in.text());
     } else {
-        input = drop_trailing_newlines(clipboard_content(ctx));
+        input = drop_trailing_newlines(clipboard_content(v.env));
         if (input.empty()) {
             throw soft_error{"No input. Pipe a URL or clipboard content.\n"};
         }
@@ -151,7 +151,7 @@ static void execute_yt(prompt_context& ctx) {
                           "takeaways and summary notes at the end as well: \n\n\n";
             }
             output += result;
-            ctx.out = std::move(output);
+            r.out = std::move(output);
             return;
         }
         // transform_url failed: fall through to the raw-input branch.
@@ -160,7 +160,7 @@ static void execute_yt(prompt_context& ctx) {
     output += "Turn this into an article and remove the ads, repetition, meaningless stuff and add all key "
               "takeaways and summary notes at the end as well: \n\n\n";
     output += input;
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_yt(std::ostream& os) {

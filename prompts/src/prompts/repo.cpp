@@ -43,7 +43,7 @@ std::string run_tree(std::vector<std::string> const& ls_dirs, std::span<const st
 
 } // namespace
 
-static void execute_repo(prompt_context& ctx) {
+static void execute_repo(view const& v, result& r) {
     // repo.sh scans every arg for --help/-h itself (before the git check);
     // the native dispatcher already intercepted those before we run.
 
@@ -54,11 +54,11 @@ static void execute_repo(prompt_context& ctx) {
 
     std::string depth;
     std::vector<std::string> dirs;
-    for (std::size_t i = 0; i < ctx.args_count;) {
-        std::string_view a = ctx.args[i];
+    for (std::size_t i = 0; i < v.args.size();) {
+        std::string_view a = v.args[i];
         if (a == "--depth") {
-            if (i + 1 >= ctx.args_count) throw usage_error{"Missing value for --depth\n"};
-            depth = std::string(ctx.args[i + 1]);
+            if (i + 1 >= v.args.size()) throw usage_error{"Missing value for --depth\n"};
+            depth = std::string(v.args[i + 1]);
             i += 2;
         } else {
             dirs.emplace_back(a);
@@ -81,7 +81,7 @@ static void execute_repo(prompt_context& ctx) {
         for (auto const& dir : dirs) output += run_tree({dir}, tree_args);
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_repo(std::ostream& os) {

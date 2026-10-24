@@ -113,9 +113,8 @@ std::string parse_frontmatter(std::filesystem::path const& file) {
     return data.dump();
 }
 
-// The extension table used by the old prompt scripts (kept verbatim so the
-// fenced language tags do not change).
-std::string legacy_infer_lang(std::string const& filename) {
+// bash_infer_lang (same table as _common.sh).
+std::string bash_infer_lang(std::string const& filename) {
     std::string base = filename;
     auto slash = base.find_last_of('/');
     if (slash != std::string::npos) base = base.substr(slash + 1);
@@ -287,8 +286,8 @@ std::string find_rec(std::string const& results, std::string const& name) {
 
 } // namespace
 
-static void execute_skill(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_skill(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     // command -v jq is required before anything else.
     {
@@ -297,20 +296,20 @@ static void execute_skill(prompt_context& ctx) {
         if (ec != 0) throw soft_error{"error: jq is required\n"};
     }
 
-    std::string first = ctx.args_count > 0 ? std::string(ctx.args[0]) : std::string();
+    std::string first = v.args.empty() ? std::string() : std::string(v.args[0]);
 
     // Build the positional arg list (parse_arguments drops --head + value and
     // the value-less --num/--numbered line-number flags).
     auto positionals = [&] {
         std::vector<std::string> pos;
-        for (std::size_t i = 0; i < ctx.args_count;) {
-            if (ctx.args[i] == "--head") {
+        for (std::size_t i = 0; i < v.args.size();) {
+            if (v.args[i] == "--head") {
                 ++i;
-                if (i < ctx.args_count) ++i;
-            } else if (is_number_flag(ctx.args[i])) {
+                if (i < v.args.size()) ++i;
+            } else if (is_number_flag(v.args[i])) {
                 ++i;
             } else {
-                pos.emplace_back(ctx.args[i++]);
+                pos.emplace_back(v.args[i++]);
             }
         }
         return pos;
@@ -324,7 +323,7 @@ static void execute_skill(prompt_context& ctx) {
             std::string out;
             out += "Cached skills:\n\n";
             list_cached_skills(out);
-            ctx.out = std::move(out);
+            r.out = std::move(out);
             return;
         }
 
@@ -348,14 +347,14 @@ static void execute_skill(prompt_context& ctx) {
             if (!found) {
                 throw soft_error{"error: skill '" + name + "' not found in any cache directory\n"};
             }
-            ctx.out = std::move(out);
+            r.out = std::move(out);
             return;
         }
 
         if (subcommand == "install") {
             // install_skill uses the raw $1 ("install"); this hits the network.
             std::string name = "install";
-            std::string tool = ai_find_skills_tool(ctx.exe_path, ctx.git_root);
+            std::string tool = ai_find_skills_tool(v.env.exe_path, v.env.git_root);
             std::string err;
             err += std::format("Searching for '{}'...\n", name);
             std::string results = merge_results(search_skills(name, tool));
@@ -384,8 +383,8 @@ static void execute_skill(prompt_context& ctx) {
             std::string out;
             out += "\nInstalled skill content:\n\n";
             out += read_file(std::filesystem::path(skills_dir()) / skill_name / "SKILL.md");
-            ctx.out = std::move(out);
-            ctx.err = std::move(err);
+            r.out = std::move(out);
+            r.err = std::move(err);
             return;
         }
     }
@@ -405,7 +404,7 @@ static void execute_skill(prompt_context& ctx) {
     if (skill_file.empty()) {
         err += std::format("Skill '{}' not cached, downloading...\n", skill_name);
         // download_by_name: search registries and download if a match exists.
-        std::string tool = ai_find_skills_tool(ctx.exe_path, ctx.git_root);
+        std::string tool = ai_find_skills_tool(v.env.exe_path, v.env.git_root);
         std::string results = merge_results(search_skills(skill_name, tool, /*discard_stderr=*/true));
         std::string rec = find_rec(results, skill_name);
         std::string downloaded_skill = rec.empty() ? std::string() : jq_extract(rec, ".name");
@@ -424,8 +423,8 @@ static void execute_skill(prompt_context& ctx) {
 
     std::string out = read_file(std::filesystem::path(skill_file));
 
-    if (ctx.stdin_consumed) {
-        std::string content = ctx.stdin_content;
+    if (v.in.piped()) {
+        std::string content(v.in.text());
         while (!content.empty() && content.back() == '\n') content.pop_back();
         if (!content.empty()) {
             out += '\n';
@@ -443,7 +442,7 @@ static void execute_skill(prompt_context& ctx) {
             out += '\n';
             out += std::format("File: {}\n", file_name);
             out += '\n';
-            out += std::format("```{}\n", legacy_infer_lang(file_name));
+            out += std::format("```{}\n", bash_infer_lang(file_name));
             out += number_lines(trim_context_nl(read_file(fp), opts.head_lines), opts.numbered);
             out += "```\n";
         } else {
@@ -451,8 +450,8 @@ static void execute_skill(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(out);
-    ctx.err = std::move(err);
+    r.out = std::move(out);
+    r.err = std::move(err);
 }
 
 static void render_help_skill(std::ostream& os) {

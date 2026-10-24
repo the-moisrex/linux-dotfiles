@@ -6,8 +6,8 @@
 
 namespace prompt::prompts {
 
-static void execute_symbols(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_symbols(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(Review the symbols in this code and find bad names that should be renamed.
 Focus on unclear, misleading, overly abbreviated, inconsistent, or non-idiomatic symbol names.
@@ -18,14 +18,14 @@ Only suggest renames that materially improve readability or maintainability.
     // symbols.sh tests $#, which is the script's whole argument list (bash's
     // parse_arguments shifts the function's own parameters, not the caller's
     // ones) — so even a bare `--head N` selects the "files" wording.
-    if (ctx.args_count > 0) {
+    if (!v.args.empty()) {
         output += "At the end, provide a git diff that applies the renames in the provided files.\n";
     } else {
         output += "At the end, provide a git diff that applies the renames.\n";
     }
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += std::format("\nFile: {}\n```{}\n", file.filename().string(), infer_lang(file));
         output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
@@ -35,8 +35,8 @@ Only suggest renames that materially improve readability or maintainability.
         error += std::format("Warning: File not found or is not a regular file: {}\n", std::string(arg));
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_symbols(std::ostream& os) {

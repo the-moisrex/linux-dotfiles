@@ -7,8 +7,8 @@ namespace prompt::prompts {
 // The TSE/IFB session schedule. Reference data with no instructions of its own,
 // so it is useful standalone or chained onto a data prompt
 // (`prompt tse فولاد .tse.times`).
-static void execute_tse_times(prompt_context& ctx) {
-    ctx.out = R"EOF(**Tehran Stock Exchange (TSE) / Iran Fara Bourse (IFB) trading hours** (IRST, UTC+03:30):
+static void execute_tse_times([[maybe_unused]] view const& v, result& r) {
+    r.out = R"EOF(**Tehran Stock Exchange (TSE) / Iran Fara Bourse (IFB) trading hours** (IRST, UTC+03:30):
 
 | category | pre_open | trading |
 |---|---|---|

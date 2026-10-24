@@ -157,7 +157,7 @@ std::string run_head(std::string_view spec, std::filesystem::path const& file) {
 
 } // namespace
 
-static void execute_overengineering(prompt_context& ctx) {
+static void execute_overengineering(view const& v, result& r) {
     // overengineering.sh parses "$@" itself (never init_prompt), so its loop
     // sees the unprocessed arguments.
     std::vector<std::string_view> selected;
@@ -165,18 +165,18 @@ static void execute_overengineering(prompt_context& ctx) {
     std::string head_spec;
     bool numbered = false;
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        std::string_view arg = ctx.args[i];
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        std::string_view arg = v.args[i];
         if (arg == "--help" || arg == "-h") {
             std::string help = help_text(render_help_overengineering);
-            ctx.out = help;
+            r.out = help;
             return;
         }
         if (arg == "--head") {
-            if (i + 1 >= ctx.args_count) {
+            if (i + 1 >= v.args.size()) {
                 throw usage_error{"Missing value for --head\n"};
             }
-            head_spec = std::string(ctx.args[i + 1]);
+            head_spec = std::string(v.args[i + 1]);
             ++i;
             continue;
         }
@@ -185,7 +185,7 @@ static void execute_overengineering(prompt_context& ctx) {
             continue;
         }
         if (arg == "list") {
-            ctx.out = render_pattern_list();
+            r.out = render_pattern_list();
             return;
         }
         if (arg.starts_with('-')) {
@@ -217,8 +217,8 @@ static void execute_overengineering(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_overengineering(std::ostream& os) {

@@ -1,11 +1,13 @@
 #include "clipboard.hpp"
 #include "process.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -120,6 +122,38 @@ std::string paste() {
     default:
         return "";
     }
+}
+
+std::optional<std::string> detect_identifier(std::string_view pasted) {
+    std::string text(pasted);
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    text.erase(std::remove(text.begin(), text.end(), '\n'), text.end());
+    if (text.empty()) return std::nullopt;
+
+    // Order matters: the URL forms are more specific than the bare ISIN and
+    // insCode tokens they contain.
+    static const std::regex easytrader_re(R"(https?://d\.easytrader\.ir/(easy-chart|stock-details)/[A-Za-z0-9]{12})");
+    static const std::regex tsetmc_re(R"(https?://(www\.)?tsetmc\.com/instInfo/[0-9]{15,})");
+    static const std::regex codal_re(R"(https?://(www\.)?codal\.ir/ReportList\.aspx\?([^&]*&)?Symbol=[^&[:space:]]+)");
+    static const std::regex isin_re(R"(IR[A-Za-z0-9]{10})");
+    static const std::regex inscode_re(R"([0-9]{15,})");
+
+    std::smatch match;
+    if (std::regex_search(text, match, easytrader_re) || std::regex_search(text, match, tsetmc_re) ||
+        std::regex_search(text, match, codal_re) || std::regex_search(text, match, isin_re) ||
+        std::regex_search(text, match, inscode_re)) {
+        return std::string(match[0]);
+    }
+
+    // A copied Persian symbol ("فولاد") is an identifier; a sentence is not,
+    // so cap the length and reject anything containing a Latin letter or digit.
+    if (text.size() <= 64 && std::ranges::none_of(text, [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        })) {
+        return text;
+    }
+
+    return std::nullopt;
 }
 
 bool copy(std::string_view data) {

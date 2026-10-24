@@ -10,10 +10,10 @@ namespace prompt::prompts {
 
 static void render_help_cli(std::ostream& os);
 
-static void execute_cli(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_cli(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
-    auto cmd_args = positional_args(ctx);
+    auto cmd_args = positional_args(v);
 
     if (cmd_args.empty()) {
         std::string help_os = help_text(render_help_cli);
@@ -29,7 +29,7 @@ static void execute_cli(prompt_context& ctx) {
     }
 
     std::vector<char const*> argv = {"bash", "-c", "eval \"$0\" 2>&1", command.c_str(), nullptr};
-    auto result = prompt::process::run_command(argv, ctx.stdin_content);
+    auto result = prompt::process::run_command(argv, v.in.text());
 
     std::string output;
     output += std::format("Output of command `{}`:\n\n", command);
@@ -42,7 +42,7 @@ static void execute_cli(prompt_context& ctx) {
     }
     output += "\n```\n";
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_cli(std::ostream& os) {

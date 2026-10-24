@@ -44,11 +44,11 @@ std::string head_lines_raw(std::string_view s, std::size_t n) {
 
 } // namespace
 
-static void execute_git(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_git(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     // parse_arguments leaves the non-flag files in ARGS (with --head N removed).
-    auto files = positional_args(ctx);
+    auto files = positional_args(v);
 
     std::string output;
     output += R"PROMPT(You are a git expert. Help with the following git-related task.
@@ -104,9 +104,9 @@ Common scenarios you can help with:
     }
 
     if (!error.empty()) {
-        ctx.err = std::move(error);
+        r.err = std::move(error);
     }
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_git(std::ostream& os) {

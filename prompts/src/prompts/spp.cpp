@@ -8,36 +8,36 @@
 
 namespace prompt::prompts {
 
-static void execute_spp(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_spp(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     // spp.sh tests the raw $# (so `prompt spp --head 5` is not an error).
-    if (ctx.args_count == 0) {
+    if (v.args.empty()) {
         throw usage_error{"Usage: prompt spp [--head N] <symbol> [symbol...]\n"};
     }
 
-    auto tool = prompt::fs::bin_tool("spp", ctx.exe_path, ctx.git_root);
+    auto tool = prompt::fs::bin_tool("spp", v.env.exe_path, v.env.git_root);
 
     std::string output;
     output += "Additional C++ symbol context:\n\n";
 
     std::string error;
-    for (auto const& arg : positional_args(ctx)) {
+    for (auto const& arg : positional_args(v)) {
         std::string symbol(arg);
         output += std::format("Symbol: {}\n\n", symbol);
         output += "```cpp\n";
 
         std::string spp_path = tool.string();
         std::vector<char const*> argv = {spp_path.c_str(), symbol.c_str(), nullptr};
-        auto result = prompt::process::run_command(argv, ctx.stdin_content);
+        auto result = prompt::process::run_command(argv, v.in.text());
         output += trim_context_nl(result.stdout_data, head_lines);
         output += "\n```\n\n";
         if (!result.stderr_data.empty()) error += result.stderr_data;
     }
 
     output += "Use the symbol context above when analyzing the issue.";
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_spp(std::ostream& os) {

@@ -10,15 +10,15 @@ static void render_help_tse_analyze(std::ostream& os);
 // deliberately data-free: it takes no arguments and never fetches, reads the
 // clipboard or embeds a snapshot, so `prompt .tse <symbol> .tse.analyze` adds
 // the dataset exactly once (from `tse`) and then these instructions.
-static void execute_tse_analyze(prompt_context& ctx) {
-    if (ctx.args_count > 0) {
+static void execute_tse_analyze(view const& v, result& r) {
+    if (!v.args.empty()) {
         throw usage_error{"prompt tse.analyze: takes no arguments — it only prints the analysis "
                           "instructions.\nChain it after the data prompt, e.g. "
                           "`prompt .tse فولاد .tse.analyze`.\n" +
                           help_text(render_help_tse_analyze)};
     }
 
-    ctx.out =
+    r.out =
         R"EOF(You are an institutional analyst of the Tehran Stock Exchange (TSE). Analyze the instrument data in this prompt.
 
 ### 0. Data provenance and absent sections

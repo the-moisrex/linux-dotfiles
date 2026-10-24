@@ -25,42 +25,42 @@ struct tse_intraday_prompt_config {
     std::string error;
 };
 
-tse_intraday_prompt_config parse_tse_intraday_args(prompt_context const& ctx) {
+tse_intraday_prompt_config parse_tse_intraday_args(view const& v) {
     tse_intraday_prompt_config config;
     std::string const pfx = "prompt tse.intraday: ";
 
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, config.head_lines); !msg.empty()) {
+    if (auto msg = parse_head_option({v.args.data(), v.args.size()}, config.head_lines); !msg.empty()) {
         config.failed = true;
         config.error = std::move(msg);
         return config;
     }
 
     auto store_value = [&](std::size_t& i, std::string_view flag) {
-        if (i + 1 >= ctx.args_count) {
+        if (i + 1 >= v.args.size()) {
             config.failed = true;
             config.error = pfx + std::string(flag) + " requires a value\n";
             return false;
         }
         config.tool_args.emplace_back(flag);
-        config.tool_args.emplace_back(ctx.args[i + 1]);
+        config.tool_args.emplace_back(v.args[i + 1]);
         ++i;
         return true;
     };
 
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        std::string_view arg = ctx.args[i];
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        std::string_view arg = v.args[i];
         if (arg == "--head") {
             ++i; // value consumed by parse_head_option
             continue;
         }
         if (arg == "--days") {
-            if (i + 1 >= ctx.args_count || !tse_data::is_positive_int(ctx.args[i + 1])) {
+            if (i + 1 >= v.args.size() || !tse_data::is_positive_int(v.args[i + 1])) {
                 config.failed = true;
                 config.error = pfx + "--days requires a positive integer\n";
                 return config;
             }
             config.tool_args.emplace_back(arg);
-            config.tool_args.emplace_back(ctx.args[i + 1]);
+            config.tool_args.emplace_back(v.args[i + 1]);
             ++i;
             continue;
         }
@@ -87,9 +87,9 @@ tse_intraday_prompt_config parse_tse_intraday_args(prompt_context const& ctx) {
     }
 
     if (config.symbol.empty()) {
-        if (auto id = tse_data::chain_identifier(ctx)) config.symbol = *id;
+        if (auto id = tse_data::prior_identifier(v)) config.symbol = *id;
         if (config.symbol.empty()) {
-            if (auto id = clipboard_identifier(ctx)) config.symbol = *id;
+            if (auto id = clipboard_identifier(v.env)) config.symbol = *id;
         }
         if (config.symbol.empty()) {
             config.failed = true;
@@ -108,8 +108,8 @@ tse_intraday_prompt_config parse_tse_intraday_args(prompt_context const& ctx) {
 // — so it can be piped or chained into any workflow (`prompt .tse.intraday
 // فولاد .note "compare with فخوز"`). The verdict lens is a separate, data-free
 // prompt: `prompt .tse.intraday فولاد .tse.intraday.analysis`.
-static void execute_tse_intraday(prompt_context& ctx) {
-    auto config = parse_tse_intraday_args(ctx);
+static void execute_tse_intraday(view const& v, result& r) {
+    auto config = parse_tse_intraday_args(v);
     if (config.failed) {
         throw prompt_error{config.exit_code, std::move(config.error), ""};
     }
@@ -119,15 +119,16 @@ static void execute_tse_intraday(prompt_context& ctx) {
     // tool already prefixes its errors) and a failure aborts the prompt.
     std::vector<std::string> tool_argv = {
         "python3",
-        prompt::fs::bin_tool("tse.intraday", ctx.exe_path, std::nullopt).string(),
+        prompt::fs::bin_tool("tse.intraday", v.env.exe_path, std::nullopt).string(),
     };
     for (auto const& arg : config.tool_args) tool_argv.push_back(arg);
     tool_argv.push_back(config.symbol);
 
     auto fetch = tse_data::run_tool("tse.intraday", "bin/tse.intraday", tool_argv);
 
-    ctx.save_hint = tse_data::save_stem(config.symbol);
-    ctx.out = trim_context(fetch.stdout_data, config.head_lines);
+    r.published.set(keys::save_stem, tse_data::save_stem(config.symbol));
+    tse_data::publish_identity(r, config.symbol);
+    r.out = trim_context(fetch.stdout_data, config.head_lines);
 }
 
 static void render_help_tse_intraday(std::ostream& os) {
@@ -171,15 +172,15 @@ The data comes from `tse.intraday`; run that tool directly for the raw tape
 // reads the clipboard or runs the tool, so
 // `prompt .tse.intraday <symbol> .tse.intraday.analysis` adds the dataset
 // exactly once (from `tse.intraday`) and then these instructions.
-static void execute_tse_intraday_analysis(prompt_context& ctx) {
-    if (ctx.args_count > 0) {
+static void execute_tse_intraday_analysis(view const& v, result& r) {
+    if (!v.args.empty()) {
         throw usage_error{"prompt tse.intraday.analysis: takes no arguments — it only prints the analysis "
                           "instructions.\nChain it after the data prompt, e.g. "
                           "`prompt .tse.intraday فولاد .tse.intraday.analysis`.\n" +
                           help_text(render_help_tse_intraday_analysis)};
     }
 
-    ctx.out =
+    r.out =
         R"EOF(You are an intraday trader on the Tehran Stock Exchange deciding whether to buy this instrument at tomorrow's open and close the position before tomorrow's close (a same-day round trip). Decide using only the intraday dataset in this prompt: per-minute OHLCV bars rebuilt from the per-trade tape, each bar's own VWAP, the official daily row, each session's structure (high/low times, opening ranges, value area, largest prints), the daily حقیقی/حقوقی breakdown, the run's context lines (instrument statistics, whole-market breadth and the live market overview), the order-book summaries (on by default), today's static price limits and, when the run enabled it, the estimated buy/sell-initiated flow. This dataset has no fundamentals, Codal filings, NAV or per-minute حقیقی/حقوقی — say so where one of them would change the verdict instead of assuming it.
 
 - Read the dataset shape first: each `## <symbol> — <date> (source: …)` section is one session; `source: live` is still trading and its bars can change, completed sessions are final. An `Official:` line carries the daily row — قیمت پایانی (`pClosing`, the day's VWAP capped by حجم مبنا, not an auction print), last trade, first/range, change vs the previous close, trade/volume/value totals. A `Live quote:` line shows the running tape and how many minutes it trails the quote.
@@ -233,7 +234,8 @@ bool const registered = prompt::register_prompt(
     "(e.g. IRT1DARA0001), a TSETMC insCode, an easytrader/tsetmc/codal URL, or a composite `فولاد-IRO1FOLD0001` "
     "token — all resolved through `tse.resolve`; with no argument the other `.tse*` data prompts in the chain are "
     "searched, then the clipboard.",
-    &execute_tse_intraday, &render_help_tse_intraday, &tse_data::complete_instrument);
+    &execute_tse_intraday, &render_help_tse_intraday, &tse_data::complete_instrument, chain_role::normal, true, nullptr,
+    &tse_data::declare_identifier);
 
 bool const registered_analysis = prompt::register_prompt(
     "tse.intraday.analysis",

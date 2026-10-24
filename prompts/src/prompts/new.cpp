@@ -28,12 +28,12 @@ std::string embed_block(std::filesystem::path const& path, file_options opts) {
 
 } // namespace
 
-static void execute_new(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_new(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output;
-    if (ctx.stdin_consumed) {
-        std::string content = ctx.stdin_content;
+    if (v.in.piped()) {
+        std::string content(v.in.text());
         while (!content.empty() && content.back() == '\n') content.pop_back();
         if (!content.empty()) output += content + "\n\n";
     }
@@ -45,14 +45,17 @@ Create a complete, ready-to-use implementation in `prompts/src/prompts/<name>.cp
 The dispatcher in `prompts/` implements one file per prompt; match the style, structure, and helpers of the prompts already there.
 
 Requirements for the generated prompt:
-- Implement `static void execute_<name>(prompt_context&)` and `static void render_help_<name>(std::ostream&)`, then register the prompt at the end of the file:
+- Implement `static void execute_<name>(prompt::view const& v, prompt::result& r)` and `static void render_help_<name>(std::ostream&)`, then register the prompt at the end of the file:
     bool const registered = prompt::register_prompt("<name>", "<summary>", &execute_<name>, &render_help_<name>);
   CMake globs src/prompts/*.cpp, so the file registers itself and no other file changes.
 - "<summary>" is the first paragraph of render_help_<name>'s help (verbatim), and it is what `prompt list` prints; it must read as a complete standalone summary.
 - The prompt is invoked as `prompt <name> ...`, so the help's Usage line must say `Usage: prompt <name>`.
-- Write the result onto the prompt_context handed in: ctx.out for stdout (it is sanitised, piped onward and copied to the clipboard), ctx.err for stderr (the exit status stays 0). Set ctx.no_clipboard = true to opt this output out of the clipboard.
-- Report failures by throwing usage_error (exit 2) or soft_error (exit 1) with a message ending in a newline; never call std::exit and never return a non-zero status directly.
-- Accept `--head N` and the value-less `--num`/`--numbered` with file_options_or_throw(ctx); pass the returned file_options to the embedding helpers (embed_file_block, or number_lines + trim_context_nl + infer_lang) so --num prefixes each embedded line with its line number; split the file arguments with collect_file_args(ctx) (or positional_args(ctx) when each token needs custom handling) and embed stdin with embed_stdin when ctx.stdin_consumed.
+- The `view` is read-only: `v.args`, `v.in.text()`, `v.env.git_root`/`v.env.exe_path`, `v.text` (the chain context when this prompt is a sink) and `v.prior` (facts earlier segments declared or published). Never mutate chain state.
+- Write the result onto the `result`: r.out for stdout (sanitised, piped onward and copied to the clipboard), r.err for stderr (the exit status stays 0). Set r.no_clipboard = true to opt this output out of the clipboard.
+- A prompt that reads stdin spends the shared pipe: call `v.in.spend()` after reading `v.in.text()`, so a later prompt in the chain sees it already consumed. A sibling `.files` already embeds the files it resolved, so a file prompt never re-embeds them.
+- To tell later segments something, publish facts on the result: `r.published.set(key, value)`, with the key spelled as a `prompt::keys::` constant when one exists. Sibling prompts that must agree before they fork (like the `tse` family's instrument) also register a cheap `declare_fn` that publishes argv-derived facts; see `facts.hpp`/`stage.hpp` below.
+- Report failures by throwing usage_error (exit 2) or soft_error (exit 1) with a message ending in a newline; never call std::exit and never return a non-zero status directly. A segment may run in parallel with unrelated siblings in a forked child: it must not assume it is alone or that it runs first.
+- Accept `--head N` and the value-less `--num`/`--numbered` with file_options_or_throw(v); pass the returned file_options to the embedding helpers (embed_file_block, or number_lines + trim_context_nl + infer_lang) so --num prefixes each embedded line with its line number; split the file arguments with collect_file_args(v) (or positional_args(v) when each token needs custom handling) and embed stdin with embed_stdin(v.in.text(), opts.head_lines) when v.in.piped().
 - Render the help from the shared pieces: file_usage_help("<name>"[, tail, pipe, prefix]) for the usage lines and file_options_help("<what>"[, show_help]) for the --head/--num options, so they stay consistent with the other file prompts.
 - Locate repository tools with prompt::fs::bin_tool and run subprocesses with prompt::process::command / run_command (argv arrays, no shell quoting).
 - Optional shell completion: a prompt that knows its own operands can register a fifth argument, a `completion_fn` (`void complete_<name>(prompt::completion_request const&, std::ostream&)`), and print `value<TAB>description` candidates for `prompt <name> --complete <prefix> [args...]`. Flags are completed automatically from the help's Options block, so the callback only adds positional/flag-value candidates (see completion.hpp below).
@@ -73,9 +76,9 @@ Return:
     }
 
     std::string error;
-    for (auto const& wanted : positional_args(ctx)) {
+    for (auto const& wanted : positional_args(v)) {
         std::filesystem::path resolved;
-        if (auto found = resolve_input_file(ctx, wanted)) {
+        if (auto found = resolve_input_file(v.env, wanted)) {
             resolved = *found;
         }
         if (!resolved.empty() && std::filesystem::is_regular_file(resolved)) {
@@ -87,8 +90,8 @@ Return:
         }
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_new(std::ostream& os) {

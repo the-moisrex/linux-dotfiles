@@ -8,10 +8,10 @@
 
 namespace prompt::prompts {
 
-static void execute_docker(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_docker(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
-    auto files = positional_args(ctx);
+    auto files = positional_args(v);
 
     std::string output;
     output +=
@@ -36,8 +36,8 @@ static void execute_docker(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_docker(std::ostream& os) {

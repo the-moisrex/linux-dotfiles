@@ -8,13 +8,13 @@
 
 namespace prompt::prompts {
 
-static void execute_list_prompts(prompt_context& ctx) {
+static void execute_list_prompts(view const& v, result& r) {
     // list-prompts.sh runs init_prompt --no-files, so parse_arguments validates
     // and strips --head before the script's "takes no arguments" check; the
     // value is never used.
-    head_lines_or_throw(ctx);
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
+    head_lines_or_throw(v);
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        if (v.args[i] == "--head") {
             ++i;
         } else {
             throw usage_error{"prompt list-prompts: takes no arguments\n"};
@@ -45,8 +45,8 @@ static void execute_list_prompts(prompt_context& ctx) {
         output += '\n';
     }
 
-    ctx.out = std::move(output);
-    ctx.no_clipboard = true;
+    r.out = std::move(output);
+    r.no_clipboard = true;
 }
 
 static void render_help_list_prompts(std::ostream& os) {

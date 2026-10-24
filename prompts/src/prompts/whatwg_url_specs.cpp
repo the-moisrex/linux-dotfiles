@@ -8,13 +8,13 @@
 
 namespace prompt::prompts {
 
-static void execute_whatwg_url_specs(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_whatwg_url_specs(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
-    auto sections = positional_args(ctx);
+    auto sections = positional_args(v);
 
-    std::filesystem::path tool = fs::bin_tool("whatwg-url-specs", ctx.exe_path,
-                                              ctx.git_root.empty() ? std::nullopt : std::optional(ctx.git_root));
+    std::filesystem::path tool = fs::bin_tool("whatwg-url-specs", v.env.exe_path,
+                                              v.env.git_root.empty() ? std::nullopt : std::optional(v.env.git_root));
 
     std::string output = R"PROMPT(Review the following sections from the WHATWG URL specification.
 Ensure that any code, fixes, or analysis strictly adhere to these standard algorithms and definitions.
@@ -28,8 +28,8 @@ Ensure that any code, fixes, or analysis strictly adhere to these standard algor
         output += "```text\n";
         output += result.stdout_data;
         output += "```\n\n";
-        ctx.out = std::move(output);
-        ctx.err = "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n";
+        r.out = std::move(output);
+        r.err = "Warning: No queries provided. Use 'list' to see sections or provide specific keywords.\n";
         return;
     }
 
@@ -48,7 +48,7 @@ Ensure that any code, fixes, or analysis strictly adhere to these standard algor
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "```\n\n";
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_whatwg_url_specs(std::ostream& os) {

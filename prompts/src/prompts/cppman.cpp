@@ -18,10 +18,10 @@ bool tool_exists(std::string const& name) {
 
 } // namespace
 
-static void execute_cppman(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_cppman(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
-    auto pages = positional_args(ctx);
+    auto pages = positional_args(v);
 
     if (!tool_exists("cppman")) {
         throw soft_error{"Error: cppman is not installed. Please install it (e.g., pip install cppman or your "
@@ -55,7 +55,7 @@ static void execute_cppman(prompt_context& ctx) {
         output += "```\n\n";
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_cppman(std::ostream& os) {

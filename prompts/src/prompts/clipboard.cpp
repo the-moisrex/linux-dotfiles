@@ -5,19 +5,19 @@
 
 namespace prompt::prompts {
 
-static void execute_clipboard(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_clipboard(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     // bash: content="$(clipboard_content)" — the command substitution strips
     // trailing newlines, so an all-whitespace clipboard reads as empty.
-    std::string content = clipboard_content(ctx);
+    std::string content = clipboard_content(v.env);
     while (!content.empty() && content.back() == '\n') content.pop_back();
 
     if (content.empty()) {
         throw soft_error{"prompt clipboard: Clipboard is empty or unavailable.\n"};
     }
 
-    ctx.out = trim_context_nl(content, head_lines);
+    r.out = trim_context_nl(content, head_lines);
 }
 
 static void render_help_clipboard(std::ostream& os) {

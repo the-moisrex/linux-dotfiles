@@ -8,26 +8,26 @@
 
 namespace prompt::prompts {
 
-static void execute_gtest_case(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx, false);
+static void execute_gtest_case(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v, false);
 
     bool exact = false;
     std::vector<std::string> test_names;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        if (v.args[i] == "--head") {
             ++i;
-        } else if (ctx.args[i] == "--exact") {
+        } else if (v.args[i] == "--exact") {
             exact = true;
         } else {
-            test_names.emplace_back(ctx.args[i]);
+            test_names.emplace_back(v.args[i]);
         }
     }
 
     // gtest-case.sh embeds stdin before it validates the test names, so a
     // usage error still ships the piped context on stdout.
     std::string output;
-    if (ctx.stdin_consumed) {
-        output += embed_stdin(ctx.stdin_content, head_lines);
+    if (v.in.piped()) {
+        output += embed_stdin(v.in.text(), head_lines);
     }
 
     if (test_names.empty()) {
@@ -35,14 +35,14 @@ static void execute_gtest_case(prompt_context& ctx) {
                           std::move(output)};
     }
 
-    std::string tool = prompt::fs::bin_tool("gtest-case", ctx.exe_path, ctx.git_root).string();
+    std::string tool = prompt::fs::bin_tool("gtest-case", v.env.exe_path, v.env.git_root).string();
 
     std::vector<std::string> cmd;
     cmd.push_back(tool);
     if (exact) cmd.emplace_back("--exact");
     for (auto const& name : test_names) cmd.push_back(name);
 
-    auto result = prompt::process::run_command(cmd, ctx.stdin_content);
+    auto result = prompt::process::run_command(cmd, v.in.text());
 
     std::string tests;
     for (std::size_t i = 0; i < test_names.size(); ++i) {
@@ -56,8 +56,8 @@ static void execute_gtest_case(prompt_context& ctx) {
     output += trim_context_nl(result.stdout_data, head_lines);
     output += "\n```\n\nUse the test case context above when analyzing the issue.";
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(result.stderr_data);
+    r.out = std::move(output);
+    r.err = std::move(result.stderr_data);
 }
 
 static void render_help_gtest_case(std::ostream& os) {

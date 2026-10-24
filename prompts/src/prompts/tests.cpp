@@ -7,8 +7,8 @@
 
 namespace prompt::prompts {
 
-static void execute_tests(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_tests(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(Review this code and identify the highest-value missing tests.
 Focus on edge cases, regressions, error handling, boundary conditions, invalid input, and behavior that looks easy to break.
@@ -18,7 +18,7 @@ Prefer the smallest practical diff that materially improves confidence.
 )PROMPT";
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
@@ -30,8 +30,8 @@ Prefer the smallest practical diff that materially improves confidence.
                  "regular file.\n";
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_tests(std::ostream& os) {

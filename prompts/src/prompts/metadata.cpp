@@ -6,20 +6,20 @@
 
 namespace prompt::prompts {
 
-static void execute_metadata(prompt_context& ctx) {
+static void execute_metadata(view const& v, result& r) {
     // metadata.sh calls init_prompt (validating --head, whose value is never
     // used) so --head errors are the only failure mode besides --format's.
-    head_lines_or_throw(ctx);
+    head_lines_or_throw(v);
 
     // metadata.sh's loop walks the ORIGINAL arguments, ignoring everything
     // that is not --format/-f.
     std::string format = "json";
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--format" || ctx.args[i] == "-f") {
-            if (i + 1 >= ctx.args_count) {
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        if (v.args[i] == "--format" || v.args[i] == "-f") {
+            if (i + 1 >= v.args.size()) {
                 throw usage_error{"Missing value for --format\n"};
             }
-            format = std::string(ctx.args[i + 1]);
+            format = std::string(v.args[i + 1]);
             ++i;
         }
     }
@@ -40,7 +40,7 @@ static void execute_metadata(prompt_context& ctx) {
               "parsed.\n";
     output += '\n';
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_metadata(std::ostream& os) {

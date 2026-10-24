@@ -46,15 +46,15 @@ bool matches_any_line(std::string const& content, std::regex const& re) {
 
 } // namespace
 
-static void execute_de_export(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_de_export(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     // de-export.sh reads $stdin_content, which the dispatcher never exports and
     // the script never fills (it has no read_stdin), so piped stdin never
     // reaches all_content — mirror that here.
     std::vector<std::filesystem::path> cpp_files;
     std::string all_content;
-    for (auto const& arg : positional_args(ctx)) {
+    for (auto const& arg : positional_args(v)) {
         std::filesystem::path file(arg);
         if (std::filesystem::is_regular_file(file) && is_cpp_file(std::string(arg))) {
             cpp_files.push_back(file);
@@ -106,7 +106,7 @@ static void execute_de_export(prompt_context& ctx) {
         output += "\n```\n\n";
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_de_export(std::ostream& os) {

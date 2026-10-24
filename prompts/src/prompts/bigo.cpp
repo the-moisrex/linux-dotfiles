@@ -7,8 +7,8 @@
 
 namespace prompt::prompts {
 
-static void execute_bigo(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_bigo(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output =
         R"PROMPT(Calculate the Big O notation for the time and space complexity of the following algorithms.
@@ -25,13 +25,13 @@ ALWAYS format your Big O notations using math delimiters, such as \mathcal{O}(N)
     // Its output is stored in $@ but the loop iterates ARGS, so the fzf
     // result is discarded; running select_files only reproduces fzf's
     // stderr ("inappropriate ioctl for device" without a tty).
-    if (ctx.args_count == 0) {
-        (void)select_files(ctx);
+    if (v.args.empty()) {
+        (void)select_files(v.env);
     }
 
     std::string error;
-    for (auto const& arg : positional_args(ctx)) {
-        auto resolved = resolve_input_file(ctx, arg);
+    for (auto const& arg : positional_args(v)) {
+        auto resolved = resolve_input_file(v.env, arg);
         if (!resolved) {
             error += std::format("prompt bigo: file not found: {}\n", arg);
             continue;
@@ -46,8 +46,8 @@ ALWAYS format your Big O notations using math delimiters, such as \mathcal{O}(N)
         output += "\n```\n";
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_bigo(std::ostream& os) {

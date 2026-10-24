@@ -25,11 +25,11 @@ std::string strip_trailing_newlines(std::string_view content) {
 
 } // namespace
 
-static void execute_cpp(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_cpp(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
     (void)head_lines; // cpp.sh never embeds files, so --head has no effect
 
-    std::string content = ctx.stdin_consumed ? strip_trailing_newlines(ctx.stdin_content) : std::string{};
+    std::string content = v.in.piped() ? strip_trailing_newlines(v.in.text()) : std::string{};
 
     std::string output;
     if (!content.empty()) {
@@ -67,7 +67,7 @@ Follow these principles when providing C++ code:
     }
     output += '\n';
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_cpp(std::ostream& os) {

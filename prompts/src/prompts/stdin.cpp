@@ -5,16 +5,16 @@
 
 namespace prompt::prompts {
 
-static void execute_stdin(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_stdin(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     // bash's `if ! embed_stdin` branch: no piped stdin is a hard error.
-    if (!ctx.stdin_consumed) {
+    if (!v.in.piped()) {
         throw soft_error{"prompt stdin: No input. Pipe something to stdin.\n"};
     }
 
-    ctx.out = embed_stdin(ctx.stdin_content, head_lines);
-    ctx.stdin_consumed = true;
+    r.out = embed_stdin(v.in.text(), head_lines);
+    v.in.spend();
 }
 
 static void render_help_stdin(std::ostream& os) {

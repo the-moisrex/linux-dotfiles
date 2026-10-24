@@ -48,18 +48,18 @@ std::string head_n(std::string_view text, std::size_t n) { return head_output(te
 
 } // namespace
 
-static void execute_run(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_run(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
     bool include_gtest = false;
     std::vector<std::string> run_args;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        if (v.args[i] == "--head") {
             ++i;
-        } else if (ctx.args[i] == "--gtest") {
+        } else if (v.args[i] == "--gtest") {
             include_gtest = true;
         } else {
-            run_args.emplace_back(ctx.args[i]);
+            run_args.emplace_back(v.args[i]);
         }
     }
 
@@ -68,7 +68,7 @@ static void execute_run(prompt_context& ctx) {
     std::string description;
 
     if (!run_args.empty()) {
-        auto run_path = prompt::fs::bin_tool("run", ctx.exe_path, ctx.git_root).string();
+        auto run_path = prompt::fs::bin_tool("run", v.env.exe_path, v.env.git_root).string();
         std::vector<std::string> cmd;
         cmd.push_back(run_path);
         for (auto const& arg : run_args) cmd.push_back(arg);
@@ -77,7 +77,7 @@ static void execute_run(prompt_context& ctx) {
         std::vector<std::string> storage = {"bash", "-c", R"("$0" "$@" 2>&1)", run_path};
         for (std::size_t i = 1; i < cmd.size(); ++i) storage.push_back(cmd[i]);
 
-        auto result = prompt::process::run_command(storage, ctx.stdin_content);
+        auto result = prompt::process::run_command(storage, v.in.text());
         run_output = prompt::sanitize::strip_osc(result.stdout_data);
         while (!run_output.empty() && run_output.back() == '\n') run_output.pop_back();
         status_text = std::to_string(result.exit_code);
@@ -112,23 +112,18 @@ static void execute_run(prompt_context& ctx) {
 
             // Native gtest-case prompt, invoked in-process exactly as the
             // script would be (`gtest-case` with --exact + the test names).
-            prompt_context sub = ctx;
-            sub.name = "gtest-case";
-            std::size_t n = 0;
-            for (auto const& a : gtest_args) sub.args[n++] = a;
-            sub.args_count = n;
-            clear_output(sub);
-            if (const auto* gtest_case = prompt::find_prompt("gtest-case")) {
-                gtest_case->execute_fn(sub);
-                output += sub.out;
-                error += sub.err;
-            }
+            std::vector<std::string_view> sub_args;
+            sub_args.reserve(gtest_args.size());
+            for (auto const& a : gtest_args) sub_args.push_back(a);
+            auto sub = run_sub_prompt(v, "gtest-case", sub_args);
+            output += sub.out;
+            error += sub.err;
         } else {
             output += "\nNo failed Google Test cases were detected in the output.\n";
         }
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_run(std::ostream& os) {

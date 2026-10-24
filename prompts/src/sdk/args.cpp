@@ -38,9 +38,9 @@ std::string parse_head_option(std::span<std::string_view const> args, std::optio
     return {};
 }
 
-std::optional<std::size_t> head_lines_or_throw(prompt_context const& ctx, bool strict) {
+std::optional<std::size_t> head_lines_or_throw(view const& in, bool strict) {
     std::optional<std::size_t> head_lines;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, head_lines, strict); !msg.empty()) {
+    if (auto msg = parse_head_option(in.args, head_lines, strict); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }
     return head_lines;
@@ -50,13 +50,13 @@ bool is_number_flag(std::string_view arg) {
     return std::ranges::any_of(kNumberFlags, [arg](std::string_view flag) { return arg == flag; });
 }
 
-file_options file_options_or_throw(prompt_context const& ctx, bool strict) {
+file_options file_options_or_throw(view const& in, bool strict) {
     file_options opts;
-    if (auto msg = parse_head_option({ctx.args.data(), ctx.args_count}, opts.head_lines, strict); !msg.empty()) {
+    if (auto msg = parse_head_option(in.args, opts.head_lines, strict); !msg.empty()) {
         throw usage_error{std::move(msg)};
     }
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (is_number_flag(ctx.args[i])) {
+    for (std::string_view arg : in.args) {
+        if (is_number_flag(arg)) {
             opts.numbered = true;
             break;
         }
@@ -84,36 +84,40 @@ std::string file_options_help(std::string_view what, bool show_help) {
     return help;
 }
 
-std::vector<std::string> positional_args(prompt_context const& ctx) {
+std::vector<std::string> positional_args(std::span<std::string_view const> args) {
     std::vector<std::string> out;
-    out.reserve(ctx.args_count);
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
+    out.reserve(args.size());
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--head") {
             ++i;
             continue;
         }
-        if (is_number_flag(ctx.args[i])) continue;
-        out.emplace_back(ctx.args[i]);
+        if (is_number_flag(args[i])) continue;
+        out.emplace_back(args[i]);
     }
     return out;
 }
 
-file_args collect_file_args(prompt_context const& ctx) {
+std::vector<std::string> positional_args(view const& in) { return positional_args(in.args); }
+
+file_args collect_file_args(std::span<std::string_view const> args) {
     file_args result;
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--head") {
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--head") {
             ++i;
             continue;
         }
-        if (is_number_flag(ctx.args[i])) continue;
-        std::filesystem::path file(ctx.args[i]);
+        if (is_number_flag(args[i])) continue;
+        std::filesystem::path file(args[i]);
         if (std::filesystem::is_regular_file(file)) {
             result.files.push_back(std::move(file));
         } else {
-            result.missing.push_back(ctx.args[i]);
+            result.missing.push_back(args[i]);
         }
     }
     return result;
 }
+
+file_args collect_file_args(view const& in) { return collect_file_args(in.args); }
 
 } // namespace prompt

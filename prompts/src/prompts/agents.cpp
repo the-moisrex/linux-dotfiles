@@ -38,10 +38,10 @@ std::string target_inode_key(std::filesystem::path const& path) {
 
 } // namespace
 
-static void execute_agents(prompt_context& ctx) {
-    auto head_lines = head_lines_or_throw(ctx);
+static void execute_agents(view const& v, result& r) {
+    auto head_lines = head_lines_or_throw(v);
 
-    if (ctx.git_root.empty()) {
+    if (v.env.git_root.empty()) {
         throw soft_error{"Error: not inside a git repository.\n"};
     }
 
@@ -65,12 +65,12 @@ static void execute_agents(prompt_context& ctx) {
     };
 
     for (auto const* name : agent_files) {
-        maybe_embed(ctx.git_root / name);
+        maybe_embed(v.env.git_root / name);
     }
 
     // .opencode/*.md, maxdepth 1, regular files only, sorted like `sort -z`.
     std::error_code ec;
-    auto opencode = ctx.git_root / ".opencode";
+    auto opencode = v.env.git_root / ".opencode";
     if (std::filesystem::is_directory(opencode, ec)) {
         std::vector<std::string> md_paths;
         std::error_code it_ec;
@@ -89,7 +89,7 @@ static void execute_agents(prompt_context& ctx) {
         }
     }
 
-    ctx.out = std::move(output);
+    r.out = std::move(output);
 }
 
 static void render_help_agents(std::ostream& os) {

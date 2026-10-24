@@ -9,19 +9,19 @@
 
 namespace prompt::prompts {
 
-static void execute_diagram(prompt_context& ctx) {
+static void execute_diagram(view const& v, result& r) {
     // diagram.sh runs init_prompt (which already validated --head) before its
     // own --type loop, so --head errors win.
-    auto opts = file_options_or_throw(ctx);
+    auto opts = file_options_or_throw(v);
 
     // diagram.sh's loop walks the ORIGINAL arguments, not the parsed ARGS.
     std::string diagram_type = "mermaid";
-    for (std::size_t i = 0; i < ctx.args_count; ++i) {
-        if (ctx.args[i] == "--type" || ctx.args[i] == "-t") {
-            if (i + 1 >= ctx.args_count) {
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        if (v.args[i] == "--type" || v.args[i] == "-t") {
+            if (i + 1 >= v.args.size()) {
                 throw usage_error{"Missing value for --type\n"};
             }
-            diagram_type = std::string(ctx.args[i + 1]);
+            diagram_type = std::string(v.args[i + 1]);
             ++i;
         }
     }
@@ -47,7 +47,7 @@ If the code is complex, produce multiple focused diagrams rather than one overwh
     output += '\n';
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
@@ -58,8 +58,8 @@ If the code is complex, produce multiple focused diagrams rather than one overwh
         warn_missing_file(error, arg);
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_diagram(std::ostream& os) {

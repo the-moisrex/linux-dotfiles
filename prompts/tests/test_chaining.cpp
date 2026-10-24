@@ -26,33 +26,33 @@ void test_bare_prompt_name() {
     // back to "auto".
     std::array<char const*, 2> argv = {"prompt", "fix"};
     auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
-    check(chain.count == 1, "bare name: one invocation");
-    check(chain.count == 1 && chain.invocations[0].name == "fix", "bare name resolves to fix");
+    check(chain.invocations.size() == 1, "bare name: one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "fix", "bare name resolves to fix");
 }
 
 void test_prompt_with_args() {
     std::array<char const*, 4> argv = {"prompt", "fix", "--head", "10"};
     auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
-    check(chain.count == 1, "args: one invocation");
-    check(chain.count == 1 && chain.invocations[0].name == "fix", "args: name is fix");
-    check(chain.count == 1 && chain.invocations[0].args_count == 2, "args: --head 10 kept");
-    check(chain.count == 1 && chain.invocations[0].args[0] == "--head", "args: --head first");
+    check(chain.invocations.size() == 1, "args: one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "fix", "args: name is fix");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args.size() == 2, "args: --head 10 kept");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args[0] == "--head", "args: --head first");
 }
 
 void test_chain_two_prompts() {
     std::array<char const*, 5> argv = {"prompt", "tse", "فولاد", ".note", "compare"};
     auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
-    check(chain.count == 2, "chain: two invocations");
-    check(chain.count == 2 && chain.invocations[0].name == "tse", "chain: first is tse");
-    check(chain.count == 2 && chain.invocations[1].name == "note", "chain: second is note");
-    check(chain.count == 2 && chain.invocations[1].args_count >= 1, "chain: note has args");
+    check(chain.invocations.size() == 2, "chain: two invocations");
+    check(chain.invocations.size() == 2 && chain.invocations[0].name == "tse", "chain: first is tse");
+    check(chain.invocations.size() == 2 && chain.invocations[1].name == "note", "chain: second is note");
+    check(chain.invocations.size() == 2 && !chain.invocations[1].args.empty(), "chain: note has args");
 }
 
 void test_unknown_defaults_to_auto() {
     std::array<char const*, 1> argv = {"prompt"};
     auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
-    check(chain.count == 1, "empty argv: one invocation");
-    check(chain.count == 1 && chain.invocations[0].name == "auto", "empty argv: defaults to auto");
+    check(chain.invocations.size() == 1, "empty argv: one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "auto", "empty argv: defaults to auto");
 }
 
 void test_all_prompts_registered() {
@@ -71,6 +71,10 @@ void test_all_prompts_registered() {
     // The whole catalog (75 prompts today) is registered natively.
     check(get_all_prompts().size() >= 75, "registry includes every prompt");
 
+    // A full registry aborts at startup, so this catches a build that grows
+    // past the fixed capacity before the binary does.
+    check(get_all_prompts().size() < prompt_registry_capacity, "the catalog fits the fixed registry");
+
     for (auto const& desc : get_all_prompts()) {
         std::string exec_msg = "prompt has an executor: " + std::string(desc.name);
         std::string summary_msg = "prompt has a summary: " + std::string(desc.name);
@@ -81,52 +85,58 @@ void test_all_prompts_registered() {
     // Dotted names resolve through the chain parser directly.
     std::array<char const*, 2> argv = {"prompt", "explain"};
     auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
-    check(chain.count == 1, "dotted name: one invocation");
-    check(chain.count == 1 && chain.invocations[0].name == "explain", "dotted name resolves to explain, not auto");
+    check(chain.invocations.size() == 1, "dotted name: one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "explain",
+          "dotted name resolves to explain, not auto");
 }
 
-void test_tse_chain_identifier() {
-    // The `tse` family may give the symbol once: `.tse foolad .tse.codal`
-    // (and the reverse order) both resolve to foolad.
-    prompt_context ctx;
-    ctx.chain = {
-        {.name = "tse", .args = {"foolad"}},
-        {.name = "tse.codal", .args = {}},
-    };
-    ctx.chain_index = 1;
-    auto id = prompts::tse_data::chain_identifier(ctx);
-    check(id && *id == "foolad", "tse chain: later prompt borrows the preceding symbol");
+void test_tse_identifier_declaration() {
+    // `.tse foolad .tse.codal` gives the symbol once: the first declaration
+    // publishes it and the sibling borrows it from `prior`, so both orders work
+    // and every segment sees the same instrument.
+    environment env;
+    std::array<std::string_view, 1> foolad = {"foolad"};
+    std::array<std::string_view, 0> none{};
+    facts declared;
+    {
+        declaration d{.args = foolad, .env = env, .prior = declared, .declared = declared};
+        prompts::tse_data::declare_identifier(d);
+    }
+    check(declared.get(keys::tse_symbol) == "foolad", "tse declare: the symbol is published for siblings");
 
-    ctx.chain_index = 0;
-    id = prompts::tse_data::chain_identifier(ctx);
-    check(!id, "tse chain: the prompt with its own symbol does not need a fallback");
+    stdin_source in;
+    {
+        view const sibling{.name = "tse.codal", .args = none, .text = {}, .prior = declared, .env = env, .in = in};
+        auto id = prompts::tse_data::prior_identifier(sibling);
+        check(id && *id == "foolad", "tse declare: a sibling with no identifier borrows the declared one");
+    }
 
-    ctx.chain = {
-        {.name = "tse.codal", .args = {}},
-        {.name = "tse.intraday", .args = {"khodro"}},
-    };
-    ctx.chain_index = 0;
-    id = prompts::tse_data::chain_identifier(ctx);
-    check(id && *id == "khodro", "tse chain: an earlier prompt borrows from a later one");
+    // An existing declaration is never overwritten: the first writer wins, so a
+    // second identifier in the chain cannot silently retarget the batch.
+    std::array<std::string_view, 1> khodro = {"khodro"};
+    {
+        declaration d{.args = khodro, .env = env, .prior = declared, .declared = declared};
+        prompts::tse_data::declare_identifier(d);
+    }
+    check(declared.get(keys::tse_symbol) == "foolad", "tse declare: the first declaration wins");
 
-    // The nearest preceding symbol wins, and flags/values are skipped.
-    ctx.chain = {
-        {.name = "tse", .args = {"foolad"}},
-        {.name = "tse.codal", .args = {"--top", "3", "khodro"}},
-        {.name = "tse.intraday", .args = {"--days", "5"}},
-    };
-    ctx.chain_index = 2;
-    id = prompts::tse_data::chain_identifier(ctx);
-    check(id && *id == "khodro", "tse chain: nearest preceding symbol wins and flag values are skipped");
+    // Flags and their values are skipped when looking for the identifier.
+    facts fresh;
+    std::array<std::string_view, 3> flagged = {"--top", "3", "khodro"};
+    {
+        declaration d{.args = flagged, .env = env, .prior = fresh, .declared = fresh};
+        prompts::tse_data::declare_identifier(d);
+    }
+    check(fresh.get(keys::tse_symbol) == "khodro", "tse declare: flag values are skipped");
 
     // A `.stock` snapshot is not an instrument identifier for the other prompts.
-    ctx.chain = {
-        {.name = "tse", .args = {"stocks/14050717_فولاد_IRO1FOLD0009.stock"}},
-        {.name = "tse.codal", .args = {}},
-    };
-    ctx.chain_index = 1;
-    id = prompts::tse_data::chain_identifier(ctx);
-    check(!id, "tse chain: a .stock snapshot is not borrowed as a symbol");
+    facts snapshot;
+    std::array<std::string_view, 1> file = {"stocks/14050717_فولاد_IRO1FOLD0009.stock"};
+    {
+        declaration d{.args = file, .env = env, .prior = snapshot, .declared = snapshot};
+        prompts::tse_data::declare_identifier(d);
+    }
+    check(!snapshot.get(keys::tse_symbol), "tse declare: a .stock snapshot is not borrowed as a symbol");
 }
 
 void test_ai_sinks_registered() {
@@ -136,7 +146,6 @@ void test_ai_sinks_registered() {
         check(desc != nullptr, msg.c_str());
         if (desc != nullptr) {
             check(desc->role == chain_role::sink, "ai sink role");
-            check(desc->policy == sink_policy::chain, "ai sink default policy");
             check(desc->stream_output, "ai sink streams its answer");
         }
     }
@@ -147,9 +156,8 @@ void test_save_sink_registered() {
     check(desc != nullptr, "save sink registered");
     if (desc != nullptr) {
         check(desc->role == chain_role::sink, "save sink role");
-        check(desc->policy == sink_policy::chain, "save sink default policy");
         check(!desc->stream_output, "save sink is silent");
-        check(desc->preflight_fn != nullptr, "save sink has a preflight");
+        check(desc->preflight != nullptr, "save sink has a preflight");
     }
 }
 
@@ -158,18 +166,16 @@ void test_clear_sinks_registered() {
     check(clear != nullptr, "clear sink registered");
     if (clear != nullptr) {
         check(clear->role == chain_role::sink, "clear sink role");
-        check(clear->policy == sink_policy::chain, "clear sink default policy");
         check(!clear->stream_output, "clear sink is silent");
-        check(clear->preflight_fn == nullptr, "clear sink needs no preflight");
+        check(clear->preflight == nullptr, "clear sink needs no preflight");
     }
 
     auto const* flush = find_prompt("flush");
     check(flush != nullptr, "flush sink registered");
     if (flush != nullptr) {
         check(flush->role == chain_role::sink, "flush sink role");
-        check(flush->policy == sink_policy::chain, "flush sink default policy");
         check(!flush->stream_output, "flush sink is silent");
-        check(flush->preflight_fn != nullptr, "flush sink shares save's preflight");
+        check(flush->preflight != nullptr, "flush sink shares save's preflight");
     }
 }
 
@@ -185,56 +191,42 @@ void test_tse_save_stem() {
           "tse snapshot save stem uses the snapshot name");
 }
 
-prompt_descriptor synthetic_prompt(std::string_view name, chain_role role, sink_policy policy) {
+prompt_descriptor synthetic_prompt(std::string_view name, chain_role role) {
     prompt_descriptor desc{};
     desc.name = name;
     desc.role = role;
-    desc.policy = policy;
     return desc;
 }
 
 chain_result synthetic_chain(std::initializer_list<std::string_view> names) {
     chain_result chain;
-    for (auto name : names) {
-        if (chain.count >= chain.invocations.size()) break;
-        chain.invocations[chain.count].name = name;
-        ++chain.count;
-    }
+    for (auto name : names) chain.invocations.push_back({.name = name, .args = {}});
     return chain;
 }
 
 void test_plan_chain() {
     std::array prompts = {
-        synthetic_prompt("fix", chain_role::normal, sink_policy::chain),
-        synthetic_prompt("ai.dseek", chain_role::sink, sink_policy::chain),
-        synthetic_prompt("ai.grok", chain_role::sink, sink_policy::chain),
-        synthetic_prompt("ai.kimi", chain_role::sink, sink_policy::fanout),
-        synthetic_prompt("only", chain_role::sink, sink_policy::exclusive),
+        synthetic_prompt("fix", chain_role::normal),
+        synthetic_prompt("review", chain_role::normal),
+        synthetic_prompt("ai.dseek", chain_role::sink),
+        synthetic_prompt("ai.grok", chain_role::sink),
     };
 
-    auto plan = plan_chain(synthetic_chain({"fix", "ai.dseek", "ai.grok", "fix"}), prompts);
+    auto plan = plan_chain(synthetic_chain({"fix", "ai.dseek", "ai.grok", "review"}), prompts);
     check(plan.error.empty(), "plan: chained sinks accepted");
     check(plan.runs.size() == 3, "plan: normal, sink, normal");
     check(plan.runs.size() == 3 && !plan.runs[0].sink, "plan: first run is normal");
-    check(plan.runs.size() == 3 && plan.runs[1].sink && plan.runs[1].policy == sink_policy::chain,
-          "plan: contiguous chain sinks form one run");
+    check(plan.runs.size() == 3 && plan.runs[1].sink, "plan: the middle run is a sink barrier");
     check(plan.runs.size() == 3 && plan.runs[1].begin == 1 && plan.runs[1].end == 3,
-          "plan: chain sink run spans both invocations");
+          "plan: contiguous sinks form one run");
+    check(plan.runs.size() == 3 && plan.runs[2].begin == 3 && plan.runs[2].end == 4,
+          "plan: the trailing normal prompt is its own run");
 
-    plan = plan_chain(synthetic_chain({"fix", "ai.dseek", "ai.kimi"}), prompts);
-    check(!plan.error.empty(), "plan: mixing chain and fanout in one run is rejected");
+    plan = plan_chain(synthetic_chain({"ai.dseek"}), prompts);
+    check(plan.error.empty() && plan.runs.size() == 1 && plan.runs[0].sink, "plan: a lone sink is one run");
 
-    plan = plan_chain(synthetic_chain({"fix", "only", "ai.dseek"}), prompts);
-    check(!plan.error.empty(), "plan: exclusive sink rejects a second sink");
-
-    plan = plan_chain(synthetic_chain({"fix", "only"}), prompts);
-    check(plan.error.empty(), "plan: a lone exclusive sink is accepted");
-    check(plan.runs.size() == 2 && plan.runs[1].policy == sink_policy::exclusive,
-          "plan: lone exclusive policy preserved");
-
-    plan = plan_chain(synthetic_chain({"fix", "ai.kimi", "ai.kimi"}), prompts);
-    check(plan.error.empty(), "plan: fanout run accepted");
-    check(plan.runs.size() == 2 && plan.runs[1].policy == sink_policy::fanout, "plan: fanout policy preserved");
+    plan = plan_chain(synthetic_chain({"fix", "missing"}), prompts);
+    check(!plan.error.empty(), "plan: an unknown prompt is an error");
 }
 
 } // namespace
@@ -244,7 +236,7 @@ int main() {
     test_prompt_with_args();
     test_chain_two_prompts();
     test_unknown_defaults_to_auto();
-    test_tse_chain_identifier();
+    test_tse_identifier_declaration();
     test_all_prompts_registered();
     test_ai_sinks_registered();
     test_save_sink_registered();

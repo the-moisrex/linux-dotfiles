@@ -26,13 +26,21 @@ void check_eq(std::string_view got, std::string_view want, char const* what) {
     }
 }
 
-prompt_context make_ctx(std::initializer_list<std::string_view> args) {
-    prompt_context ctx;
-    for (auto arg : args) {
-        ctx.args[ctx.args_count++] = arg;
+// `view` holds references, so the fixture owns the storage the view points at.
+struct fixture {
+    std::vector<std::string_view> args;
+    facts prior;
+    environment env;
+    stdin_source in;
+
+    fixture(std::initializer_list<std::string_view> arguments) : args(arguments) {}
+
+    [[nodiscard]] view make() {
+        return view{.name = "test", .args = args, .text = {}, .prior = prior, .env = env, .in = in};
     }
-    return ctx;
-}
+};
+
+fixture make_ctx(std::initializer_list<std::string_view> args) { return fixture{args}; }
 
 // --num numbers the kept lines relative to the (possibly --head-trimmed)
 // content, right-aligns to the width of the last number, and keeps the input's
@@ -60,25 +68,26 @@ void test_number_lines() {
 void test_file_options_or_throw() {
     {
         auto ctx = make_ctx({"--num"});
-        auto opts = file_options_or_throw(ctx);
+        auto opts = file_options_or_throw(ctx.make());
         check(opts.numbered, "--num sets numbered");
         check(!opts.head_lines.has_value(), "--num alone leaves --head unset");
     }
     {
         auto ctx = make_ctx({"--numbered", "--head", "5"});
-        auto opts = file_options_or_throw(ctx);
+        auto opts = file_options_or_throw(ctx.make());
         check(opts.numbered, "--numbered sets numbered");
         check(opts.head_lines == 5, "--head keeps its value");
     }
     {
         auto ctx = make_ctx({"file.cpp", "--num"});
-        auto opts = file_options_or_throw(ctx);
+        auto opts = file_options_or_throw(ctx.make());
         check(opts.numbered, "the flag is found among the FILE arguments");
     }
 
     auto expect_message = [](std::initializer_list<std::string_view> args, std::string_view want, char const* what) {
         try {
-            file_options_or_throw(make_ctx(args));
+            auto fixture = make_ctx(args);
+            file_options_or_throw(fixture.make());
             std::fprintf(stderr, "FAIL: %s (no exception)\n", what);
             ++failures;
         } catch (prompt_error const& e) {
@@ -101,10 +110,10 @@ void test_is_number_flag() {
 // prompt never treats them as paths.
 void test_argument_filtering() {
     auto ctx = make_ctx({"--num", "a.cpp", "--head", "3", "--numbered", "b.cpp"});
-    auto args = positional_args(ctx);
+    auto args = positional_args(ctx.make());
     check(args.size() == 2 && args[0] == "a.cpp" && args[1] == "b.cpp", "positional_args drops the flags");
 
-    auto files = collect_file_args(ctx);
+    auto files = collect_file_args(ctx.make());
     check(files.files.empty(), "non-existent paths are not files");
     check(files.missing.size() == 2 && files.missing[0] == "a.cpp" && files.missing[1] == "b.cpp",
           "collect_file_args reports the missing ones without the flags");

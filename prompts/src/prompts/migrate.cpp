@@ -7,8 +7,8 @@
 
 namespace prompt::prompts {
 
-static void execute_migrate(prompt_context& ctx) {
-    auto opts = file_options_or_throw(ctx);
+static void execute_migrate(view const& v, result& r) {
+    auto opts = file_options_or_throw(v);
 
     std::string output = R"PROMPT(You are a code migration expert.
 Help migrate the provided code from its current state to the target framework, API, or language version.
@@ -26,7 +26,7 @@ Approach:
         "cannot be done automatically\n- Update imports, function signatures, and deprecated patterns\n\n";
 
     std::string error;
-    auto sources = collect_file_args(ctx);
+    auto sources = collect_file_args(v);
     for (auto const& file : sources.files) {
         output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
         output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
@@ -37,8 +37,8 @@ Approach:
         warn_missing_file(error, arg);
     }
 
-    ctx.out = std::move(output);
-    ctx.err = std::move(error);
+    r.out = std::move(output);
+    r.err = std::move(error);
 }
 
 static void render_help_migrate(std::ostream& os) {
