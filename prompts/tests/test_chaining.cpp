@@ -1,4 +1,5 @@
 #include "../src/prompts/tse_data.hpp"
+#include "../src/sdk/agent.hpp"
 #include "../src/sdk/chaining.hpp"
 #include "../src/sdk/prompt_registry.hpp"
 #include <array>
@@ -200,8 +201,108 @@ prompt_descriptor synthetic_prompt(std::string_view name, chain_role role) {
 
 chain_result synthetic_chain(std::initializer_list<std::string_view> names) {
     chain_result chain;
-    for (auto name : names) chain.invocations.push_back({.name = name, .args = {}});
+    for (auto name : names) chain.invocations.push_back({.name = name, .args = {}, .body = {}});
     return chain;
+}
+
+void test_each_body() {
+    // The body is everything between `.each`'s prefix and the matching `.end`;
+    // the dispatcher's flag parser never sees it.
+    std::array<char const*, 7> argv = {"prompt", ".each", "table:symbol", ".tse", "{symbol}", ".tse.analyze", ".end"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
+    check(chain.error.empty(), "body: a closed body parses");
+    check(chain.invocations.size() == 1, "body: one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "each", "body: the opener is each");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args.size() == 1, "body: the selector stays in args");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args[0] == "table:symbol",
+          "body: args are the prefix only");
+    check(chain.invocations.size() == 1 && chain.invocations[0].body.size() == 3, "body: three tokens");
+    check(chain.invocations.size() == 1 && chain.invocations[0].body[0] == ".tse", "body: first token kept");
+
+    // A prompt after the closing `.end` resumes normal parsing.
+    std::array<char const*, 8> after = {"prompt", ".each", ".length", "5", ".end", ".note", "after", "body"};
+    chain = parse_chain(std::span<char const* const>(after.data(), after.size()), get_all_prompts());
+    check(chain.error.empty(), "body: a following prompt parses");
+    check(chain.invocations.size() == 2, "body: the following prompt is its own invocation");
+    check(chain.invocations.size() == 2 && chain.invocations[1].name == "note", "body: note follows each");
+
+    // Nested bodies keep their own `.end` and close the outer one only at the
+    // second `.end`.
+    std::array<char const*, 11> nested = {
+        "prompt", ".each", "table:x", ".each", "code", ".length", "5", ".end", ".note", "tail", ".end",
+    };
+    chain = parse_chain(std::span<char const* const>(nested.data(), nested.size()), get_all_prompts());
+    check(chain.error.empty(), "body: nested body parses");
+    check(chain.invocations.size() == 1, "body: nested body is still one outer invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].body.size() == 7,
+          "body: the inner .end stays in the outer body");
+
+    // `.each --help` has no body, and must reach the help path instead of a
+    // parse error.
+    std::array<char const*, 3> help = {"prompt", ".each", "--help"};
+    chain = parse_chain(std::span<char const* const>(help.data(), help.size()), get_all_prompts());
+    check(chain.error.empty(), "body: --help without a body parses");
+    check(chain.invocations.size() == 1 && chain.invocations[0].body.empty(), "body: --help has no body");
+
+    std::array<char const*, 3> missing = {"prompt", ".each", ".length"};
+    chain = parse_chain(std::span<char const* const>(missing.data(), missing.size()), get_all_prompts());
+    check(!chain.error.empty(), "body: a missing .end is an error");
+
+    std::array<char const*, 2> stray = {"prompt", ".end"};
+    chain = parse_chain(std::span<char const* const>(stray.data(), stray.size()), get_all_prompts());
+    check(!chain.error.empty(), "body: a stray .end is an error");
+
+    // `.exec -- ...` owns the rest of argv: a child prompt chain is not parsed
+    // as another segment of this chain.
+    std::array<char const*, 7> exec_chain = {"prompt", ".exec", "--", "prompt", ".tse", "foolad", ".tse.analyze"};
+    chain = parse_chain(std::span<char const* const>(exec_chain.data(), exec_chain.size()), get_all_prompts());
+    check(chain.error.empty(), "exec: a -- child chain parses");
+    check(chain.invocations.size() == 1, "exec: -- keeps one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args.size() == 5, "exec: -- keeps the rest in args");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args[1] == "prompt",
+          "exec: the child prompt follows --");
+}
+
+void test_agent_commands() {
+    check(agent::is_selector_token("table:symbol"), "agent: a table selector");
+    check(agent::is_selector_token("auto"), "agent: auto is a selector");
+    check(!agent::is_selector_token("git"), "agent: a program is not a selector");
+
+    auto words = agent::split_command("git commit -m 'two words' -- \"a b\"");
+    check(words.size() == 6, "agent: split keeps quoted spaces");
+    check(words.size() == 6 && words[3] == "two words", "agent: single quotes removed");
+    check(words.size() == 6 && words[5] == "a b", "agent: double quotes removed");
+
+    bool refused = false;
+    try {
+        (void)agent::split_command("echo hi | wc -c");
+    } catch (usage_error const&) {
+        refused = true;
+    }
+    check(refused, "agent: a pipe is refused");
+
+    auto spec = agent::parse_exec_args(std::array<std::string_view, 3>{"--print", "git", "status"});
+    check(spec.print_only && spec.command.size() == 2 && spec.command[0] == "git", "agent: --print before the program");
+    check(spec.command.size() == 2 && spec.command[1] == "status", "agent: program arguments are kept");
+
+    auto selector = agent::parse_exec_args(std::array<std::string_view, 1>{"table:symbol"});
+    check(selector.selector == "table:symbol" && selector.command.empty(), "agent: a selector is not a command");
+
+    auto flag_after = agent::parse_exec_args(std::array<std::string_view, 2>{"echo", "--version"});
+    check(flag_after.command.size() == 2 && flag_after.command[1] == "--version",
+          "agent: after the program, flags belong to the program");
+
+    // Static `.exec` programs are pre-approved by a parent `.each`, including
+    // the ones inside a nested body and a `prompt` chain, but a placeholder
+    // program is dynamic and is left for the child.
+    std::array<std::string, 8> tokens = {".each", ".exec", "echo", "{x}", ".end", ".exec", "git", "push"};
+    auto commands = agent::static_exec_commands(tokens);
+    check(commands.size() == 2, "agent: two static commands");
+    check(commands.size() == 2 && commands[0][0] == "echo", "agent: the nested echo is found");
+    check(commands.size() == 2 && commands[1][1] == "push", "agent: the following git command is found");
+
+    std::array<std::string, 2> dynamic = {".exec", "command:prompt"};
+    check(agent::static_exec_commands(dynamic).empty(), "agent: an extracted command is dynamic");
 }
 
 void test_plan_chain() {
@@ -242,6 +343,8 @@ int main() {
     test_save_sink_registered();
     test_clear_sinks_registered();
     test_tse_save_stem();
+    test_each_body();
+    test_agent_commands();
     test_plan_chain();
 
     if (failures == 0) {

@@ -59,9 +59,10 @@ mutates chain state, which is what makes forked parallel segments safe.
 - **Reading** (`sdk/stage.hpp`): `v.name`, `v.args` (a span — `.empty()`,
   `.size()`, indexed), `v.in.text()` (the shared stdin, a `string_view`),
   `v.env.git_root`/`v.env.exe_path`, `v.text` (the accumulated chain context,
-  which a sink reads) and `v.prior` (the facts earlier segments declared or
-  published). `v.stream` is the live-terminal writers, set by the dispatcher for
-  a streaming sink only.
+  which a sink reads), `v.body` (the raw `.each` body tokens, empty for every
+  prompt that is not registered with `takes_body`) and `v.prior` (the facts
+  earlier segments declared or published). `v.stream` is the live-terminal
+  writers, set by the dispatcher for a streaming sink only.
 - **Writing** (`r.`): `r.out` (stdout — sanitised, piped onward, clipboarded),
   `r.err` (stderr, exit stays 0), `r.stderr_buffer` (sink streaming only),
   `r.published` (facts later segments read), `r.no_clipboard`, `r.clear`
@@ -102,11 +103,12 @@ points, with two merge rules:
 
 One agreement rides on this today: `tse_data::declare_identifier` publishes
 `keys::tse_symbol` once per chain, so `.tse foolad .tse.codal` and the reverse
-order resolve the same instrument. `.files` needs no fact for a sibling file
-prompt — its output already carries the embedded files into the chain, and
-re-embedding them would duplicate the content. Facts are deliberately opt-in:
-add a key when two prompts genuinely cannot work it out from their own
-arguments, not as a general channel.
+order resolve the same instrument. `.delegate` and `.expect` publish
+`keys::expect` (a selector) so `.extract`, `.exec` and `.each` need no selector
+of their own. `.files` needs no fact for a sibling file prompt — its output
+already carries the embedded files into the chain, and re-embedding them would
+duplicate the content. Facts are deliberately opt-in: add a key when two prompts
+genuinely cannot work it out from their own arguments, not as a general channel.
 
 The fork wire (`sdk/wire.hpp`) carries a `segment_outcome` — stdout, stderr, the
 separate stderr buffer, the published facts, the output flags and the exit
@@ -202,6 +204,90 @@ loop offline (turn order, framing, `--rounds`/`--until-agree`, context
 selection, failure), and the `ai_help`/`ai_print_prompt`/`ai_debate_help`/
 `ai_debate_print_prompt` ctest smokes exercise an offline sink chain.
 
+## Agentic chain layer (`.expect`, `.extract`, `.exec`, `.each`)
+
+Four prompts turn a chain into an extract/act loop; `bin/md.extract` owns the
+selector grammar and the response contracts, so the native prompts only shell
+out to it.
+
+- **`.expect SELECTOR`** asks `md.extract --contract`, appends that instruction
+  to the context (the next AI sink sees it) and publishes `keys::expect`.
+- **`.extract [SELECTOR]`** is a sink that replaces the context with the
+  selection (`md.extract --select`). No selector means `keys::expect`, then
+  `auto`. `--list` leaves the context alone and prints candidates on stderr;
+  `--json` and `--pick` pass through.
+- **`.exec [SELECTOR] [--] COMMAND…`** is a sink that runs one command and
+  replaces the context with its output. With no command it extracts one from
+  the context (selector → fact → `auto`); a context that is exactly one
+  `prompt …` line is run directly, which is what makes
+  `… .extract .exec` work. A child `prompt` chain runs with the normal chain
+  semantics.
+- **`.each [SELECTOR] [loop flags] BODY .end`** is a sink that loops `BODY` over
+  `md.extract --items` items, one child `prompt` per item, in parallel.
+
+### Bodies and the parser
+
+`.each` registers with `takes_body=true`
+(`register_sink(..., takes_body=true)`), so `parse_chain` keeps the raw body
+tokens as `prompt_invocation::body` (a `string_view` span in `view::body`) and
+the dispatcher's flag/help parser never sees them. The body starts at the first
+dot token; everything before it is `.each`'s own flags and selector. Bodies
+nest by counting `.each` openers, and a missing or unexpected `.end` is a parse
+error (exit 2). The body is a normal chain, never a quoted string; item data is
+substituted into its tokens before the child runs.
+
+`.exec -- COMMAND…` is the other parser-level rule: `--` gives the sink the
+rest of argv so a child `prompt` chain (`.exec -- prompt .tse …`) is not split
+into segments of the outer chain. A `prompt` command without `--` is
+diagnosed. Direct program arguments are used as argv verbatim; one token that
+contains whitespace is treated as a command line and split with quotes and
+backslashes only. Compound shell syntax (`| & ; < > \`` and `$(`) is refused.
+
+### Contracts and item substitution
+
+The shared grammar is `kind[:qualifier][@N]` — `table[:col1,col2]`,
+`code[:lang]`, `section[:heading]`, `command[:program]`, `frontmatter`, `any`,
+`auto`, `none`, or a bare heading. `@N` selects the Nth match. `.delegate`
+publishes `command:prompt` itself, so its output feeds `.extract`/`.exec`
+without an explicit `.expect`.
+
+`.each` substitutes `{field}` (any table column or item key), `{item}`,
+`{body}`, `{index}`, `{n}` and `{file}` (a temporary file holding the item, for
+`.files`). Item data only ever reaches argv: a whole-token placeholder whose
+value resolves to a prompt name or `.end` is rejected. A `{field}` program is
+allowed (it is dynamic, so the child's policy approves the resolved command).
+
+### Execution and permissions
+
+Each `.each` item is a child `prompt` process with `PROMPT_INNER=1`,
+`PROMPT_INNER_DEPTH` (parent + 1; loops are capped at depth 2) and
+`PROMPT_INNER_ALLOW` (the static-program grants). The parent owns the clipboard
+and prints one redaction legend, so an inner process does neither.
+
+`policy::engine` (`sdk/policy.*`) decides commands: built-ins (`tse*` and
+`md.extract` allow; `sudo`, `su`, `dd`, `mkfs*`, `shutdown`, `reboot`,
+`poweroff`, `halt` deny; everything else ask), then
+`$XDG_CONFIG_HOME/prompt/policy` (or `~/.config/prompt/policy`), then
+`<git-root>/.prompt/policy`, then `PROMPT_POLICY_ALLOW`/`PROMPT_POLICY_DENY`
+and `PROMPT_INNER_ALLOW`/`PROMPT_INNER_YES`. Rules are
+`allow|ask|deny PROGRAM [arg-globs…]`; argument patterns are a prefix (`**`
+for the rest). More specific rules win, then the higher source; deny wins a full
+tie, then allow, then ask. `--yes` turns an ask into an allow but never
+overrides a deny. An ask with no `/dev/tty` is a soft failure with the rule
+hint. Prompts are trusted code, but a generated `prompt …` chain is displayed
+whole and approved through `require_chain`. `.each` pre-approves the static
+`.exec` programs in its body once and passes the program names as
+`PROMPT_INNER_ALLOW`; a dynamic command asks in the child.
+
+`.each` flags: `-j/--jobs N` (default min(items, 8), capped at 64), `--limit N`,
+`--stdin`, `--print`, `--list`, `--json`, `--no-header`, `--keep-files`,
+`--on-item-error stop|skip|keep`, `--timeout SEC` (600), `--yes`. `--print`
+prints the substituted body commands without running them.
+
+Tests: the `agent_*` ctests (`expect`, `extract`, `exec` print/allowed/denied/
+`--` chain/verbatim args, `each` print/run/list) plus the body and `--` cases in
+`tests/test_chaining.cpp`.
+
 ## SDK helpers (`src/sdk/`)
 
 Use these instead of re-open-coding the same loops:
@@ -243,6 +329,14 @@ Use these instead of re-open-coding the same loops:
   `encode_outcome`/`decode_outcome`, `drain_all`; `chain_state.hpp`: the
   dispatcher's accumulated text plus known facts and the redaction/incomplete
   flags.
+- `agent.hpp`: the agentic layer's shared pieces — `is_selector_token`,
+  `split_command` (quotes/backslashes, compound-syntax refusal), `join_argv`,
+  `parse_exec_args` (`.exec`'s own flags plus command/selector split),
+  `program_name`, `static_exec_commands` (the `.exec` programs a `.each` body
+  will run, nested bodies included) and `validate_exec_template` (a
+  malformed `.exec`, before any child runs).
+- `policy.hpp`: the permission engine — `engine::require(argv)`,
+  `require_chain(tokens)`, `set_yes`, the rule sources and the `/dev/tty` ask.
 - `sink.hpp` / `sink_types.hpp`: `register_sink` support — `parse_sink_args`,
   `render_sink_help`, `trim_context_lines`, `write_stdout`, `write_stderr` and
   `run_sink_tool` (see "Sinks").

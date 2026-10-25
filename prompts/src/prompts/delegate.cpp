@@ -19,7 +19,8 @@ namespace {
 bool is_excluded(std::string const& name) {
     static const std::set<std::string> excluded = {
         "english", "farsi", "auto",         "summarize", "metadata", "tweets", "diagram",
-        "explain", "list",  "list-prompts", "delegate",  "ai-said",  "yt",
+        "explain", "list",  "list-prompts", "delegate",  "ai-said",  "yt",     "save",
+        "flush",   "clear", "each",         "exec",      "extract",  "expect",
     };
     return excluded.contains(name);
 }
@@ -116,6 +117,10 @@ static void execute_delegate(view const& v, result& r) {
            "so be careful about what the AI needs.\n"
            "Make sure to properly escape characters.\n"
            "\n";
+
+    // The delegate contract is exactly one sh block containing a prompt
+    // command, so the extraction stage needs no `.expect` of its own.
+    r.published.set(keys::expect, "command:prompt");
 
     // No clipboard opt-out: delegate's own output copies like every other
     // prompt's.

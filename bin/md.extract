@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,10 @@ from pathlib import Path
 
 PROG = "md.extract"
 
-KINDS = ("code", "table", "section", "frontmatter")
+# `command` is a derived view of a code block, so it is opt-in (`--kind
+# command`/`--select command…`) and `any` means the four source kinds.
+SOURCE_KINDS = ("code", "table", "section", "frontmatter")
+KINDS = SOURCE_KINDS + ("command",)
 KIND_ORDER = {kind: i for i, kind in enumerate(KINDS)}
 
 # --- Markdown grammar -------------------------------------------------------
@@ -32,8 +36,10 @@ FENCE_CLOSE = re.compile(r"^[ \t]*(?:>[ \t]?)*[ \t]*(?P<fence>`{3,}|~{3,})[ \t]*
 HEADING = re.compile(
     r"^[ \t]*(?:>[ \t]?)*[ \t]*(?P<h>#{1,6})[ \t]+(?P<text>.*?)(?:[ \t]+#+)?[ \t]*$"
 )
+# A delimiter row needs at least one pipe (a bare `---` is a horizontal rule);
+# one-column tables (`| a |` / `| --- |`) are valid GFM too.
 TABLE_DELIM = re.compile(
-    r"^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)+\|?[ \t]*$"
+    r"^[ \t]*(?=[^\n]*\|)[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"
 )
 BLOCKQUOTE = re.compile(r"^[ \t]*>[ \t]?")
 ATTR = re.compile(
@@ -162,6 +168,7 @@ class Block:
     after: str = ""
     closed: bool = True
     file_order: int = 0
+    program: str = ""
     _guess: str | None = None
 
     def guessed(self) -> str:
@@ -713,6 +720,408 @@ def select_blocks(
     return picked
 
 
+# --- Selectors --------------------------------------------------------------
+
+
+@dataclass
+class Selector:
+    """The `kind[:qualifier][@position]` grammar shared by --select/--items/--contract.
+
+    A bare word that is not a kind is a section heading. `.expect`, `.extract`,
+    `.each` and `.exec` hand the same string to this parser, so the grammar
+    lives in exactly one place.
+    """
+
+    kind: str
+    qualifier: str = ""
+    position: int | None = None
+
+
+SELECTOR_KINDS = set(KINDS) | {"auto", "any", "all", "none"}
+
+
+def parse_selector(raw: str) -> Selector:
+    raw = raw.strip()
+    if not raw:
+        raise UsageError("empty selector")
+    position: int | None = None
+    match = re.search(r"@(-?\d+)$", raw)
+    if match:
+        position = int(match[1])
+        raw = raw[: match.start()]
+    if raw in ("auto", "any", "all", "none"):
+        return Selector("any" if raw == "all" else raw, "", position)
+    if ":" in raw:
+        kind, qualifier = raw.split(":", 1)
+        kind = kind.strip().lower()
+        qualifier = qualifier.strip()
+    else:
+        kind, qualifier = raw.lower(), ""
+    if kind not in SELECTOR_KINDS:
+        # A bare word is the heading of the section to take.
+        return Selector("section", raw, position)
+    if kind == "all":
+        kind = "any"
+    return Selector(kind, qualifier, position)
+
+
+def split_table_row(line: str) -> list[str]:
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for char in text:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "|":
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    cells.append("".join(current).strip())
+    return cells
+
+
+def table_headers(block: Block) -> list[str]:
+    lines = [line for line in block.body.splitlines() if line.strip()]
+    return split_table_row(lines[0]) if lines else []
+
+
+def table_rows(block: Block) -> list[dict[str, str]]:
+    lines = [line for line in block.body.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return []
+    headers = split_table_row(lines[0])
+    rows: list[dict[str, str]] = []
+    for line in lines[2:]:
+        cells = split_table_row(line)
+        cells = (cells + [""] * len(headers))[: len(headers)]
+        rows.append(dict(zip(headers, cells)))
+    return rows
+
+
+def table_columns(block: Block) -> list[str]:
+    return table_headers(block)
+
+
+def command_line(block: Block) -> str:
+    """The command a code/command block carries: its first non-comment line.
+
+    A leading shell prompt (`$ `) is a transcript marker, not part of the
+    command, so it is stripped.
+    """
+    if block.kind not in ("code", "command") or not block.body.strip():
+        return ""
+    for raw in block.body.splitlines():
+        text = raw.strip()
+        if not text or text.startswith("#"):
+            continue
+        if text.startswith("$ "):
+            text = text[2:].strip()
+        return text
+    return ""
+
+
+def derive_command(block: Block) -> Block | None:
+    """A code block viewed as the command on its first non-comment line."""
+    line = command_line(block)
+    if block.kind != "code" or not line:
+        return None
+    try:
+        words = shlex.split(line)
+    except ValueError:
+        words = line.split()
+    if not words:
+        return None
+    return Block(
+        kind="command",
+        file=block.file,
+        start_line=block.start_line,
+        end_line=block.end_line,
+        body=block.body,
+        lang_raw=block.lang_raw,
+        lang=block.lang,
+        info_raw=block.info_raw,
+        fence=block.fence,
+        title=block.title,
+        ident=block.ident,
+        heading_path=block.heading_path,
+        heading_level=block.heading_level,
+        before=block.before,
+        after=block.after,
+        closed=block.closed,
+        file_order=block.file_order,
+        program=Path(words[0]).name,
+    )
+
+
+def derive_commands(blocks: list[Block]) -> list[Block]:
+    derived: list[Block] = []
+    for block in blocks:
+        command = derive_command(block)
+        if command is not None:
+            derived.append(command)
+    return derived
+
+
+def selector_kinds(selector: Selector) -> set[str]:
+    if selector.kind == "auto":
+        return set(SOURCE_KINDS)
+    if selector.kind == "any":
+        return set(SOURCE_KINDS)
+    if selector.kind == "none":
+        return set()
+    return {selector.kind}
+
+
+def auto_select(blocks: list[Block]) -> list[Block]:
+    # A `command` is a view of a code block, not a second candidate: auto picks
+    # the only table, code block or section, and refuses when the answer has
+    # more than one shape (the caller must then name the selector).
+    groups = (
+        ("table", [block for block in blocks if block.kind == "table"]),
+        ("code", [block for block in blocks if block.kind == "code"]),
+        ("section", [block for block in blocks if block.kind == "section"]),
+    )
+    nonempty = [(name, group) for name, group in groups if group]
+    if len(nonempty) == 1 and len(nonempty[0][1]) == 1:
+        return nonempty[0][1]
+    counts = ", ".join(f"{len(group)} {name}" for name, group in nonempty)
+    raise SoftError(
+        "cannot auto-select: "
+        + (counts or "no blocks")
+        + "; pass a selector (e.g. table, table:column, code:sh, command:prompt)"
+    )
+
+
+def drop_nested(blocks: list[Block]) -> list[Block]:
+    """Keep top-level blocks when a selected section already contains them."""
+    sections = [block for block in blocks if block.kind == "section"]
+    return [
+        block
+        for block in blocks
+        if not any(
+            section is not block
+            and section.file == block.file
+            and section.start_line <= block.start_line <= section.end_line
+            for section in sections
+        )
+    ]
+
+
+def apply_position(blocks: list[Block], selector: Selector) -> list[Block]:
+    if selector.position is None:
+        return blocks
+    position = selector.position - 1 if selector.position > 0 else len(blocks) + selector.position
+    if position < 0 or position >= len(blocks):
+        raise SoftError(
+            f"position {selector.position} is out of range"
+            f" (the selector matched {len(blocks)} block{'s' if len(blocks) != 1 else ''})"
+        )
+    return [blocks[position]]
+
+
+def select_selector(blocks: list[Block], selector: Selector) -> list[Block]:
+    if selector.kind == "none":
+        raise SoftError("the 'none' selector has no blocks")
+    if selector.kind == "auto":
+        return apply_position(auto_select(blocks), selector)
+
+    query = Query(
+        kinds=selector_kinds(selector),
+        langs=[],
+        guess=False,
+        heading=[],
+        under=[],
+        before=[],
+        after=[],
+        title=[],
+        grep=[],
+    )
+    if selector.kind == "code" and selector.qualifier:
+        query.langs = [selector.qualifier]
+    elif selector.kind == "section" and selector.qualifier:
+        query.heading = compile_patterns([selector.qualifier], False)
+
+    matched = select_blocks(blocks, query, None)
+    if selector.kind == "table" and selector.qualifier:
+        wanted = [column.strip().lower() for column in selector.qualifier.split(",") if column.strip()]
+        kept = []
+        for block in matched:
+            have = [column.lower() for column in table_headers(block)]
+            if all(column in have for column in wanted):
+                kept.append(block)
+        if not kept:
+            available = sorted({column for block in matched for column in table_headers(block)})
+            raise SoftError(
+                "no table has "
+                + ", ".join(wanted)
+                + " (available columns: "
+                + (", ".join(available) if available else "none")
+                + ")"
+            )
+        matched = kept
+    elif selector.kind == "command" and selector.qualifier:
+        wanted = selector.qualifier.lower()
+        matched = [block for block in matched if wanted == "*" or block.program.lower() == wanted]
+
+    return apply_position(matched, selector)
+
+
+def render_projection(block: Block, columns: list[str], header: bool) -> str:
+    headers = table_headers(block)
+    names = {name.lower(): name for name in headers}
+    chosen = [names[column.lower()] for column in columns if column.lower() in names]
+    lines: list[str] = []
+    if header:
+        lines.append("\t".join(chosen))
+    for row in table_rows(block):
+        lines.append("\t".join(row.get(name, "") for name in chosen))
+    return "\n".join(lines)
+
+
+def render_selection(blocks: list[Block], selector: Selector, args: argparse.Namespace) -> str:
+    if selector.kind == "table" and selector.qualifier:
+        columns = [column.strip() for column in selector.qualifier.split(",") if column.strip()]
+        rendered = [render_projection(block, columns, not args.no_header) for block in blocks]
+        return "\n\n".join(part for part in rendered if part) + ("\n" if rendered else "")
+    if selector.kind == "section":
+        parts = []
+        for block in blocks:
+            heading = ""
+            if block.kind == "section" and block.heading_level:
+                heading = "#" * block.heading_level + " " + block.title
+            body = block.body if block.kind == "section" else render_block(block, args)
+            parts.append("\n\n".join(part for part in (heading, body) if part))
+        return "\n\n".join(parts) + ("\n" if parts else "")
+    if selector.kind == "any" or blocks and blocks[0].kind == "command":
+        # A section already renders its nested code/tables; keeping both would
+        # print the same content twice.
+        parts = []
+        for block in drop_nested(blocks):
+            if block.kind == "section" and block.heading_level:
+                parts.append("#" * block.heading_level + " " + block.title + "\n\n" + block.body)
+            elif block.kind == "command":
+                parts.append(command_line(block))
+            else:
+                parts.append(block.body)
+        return "\n\n".join(parts) + ("\n" if parts else "")
+    return render_many(blocks, args)
+
+
+def selector_items(blocks: list[Block], selector: Selector, guess: bool) -> list[dict[str, object]]:
+    selected = select_selector(blocks, selector)
+    if selector.kind == "any":
+        selected = drop_nested(selected)
+    items: list[dict[str, object]] = []
+
+    def table_items(group: list[Block], qualifier: str = "") -> None:
+        columns = [column.strip() for column in qualifier.split(",") if column.strip()]
+        for block in group:
+            if block.kind != "table":
+                continue
+            headers = table_headers(block)
+            if columns:
+                names = {name.lower(): name for name in headers}
+                headers = [names[column.lower()] for column in columns if column.lower() in names]
+            for row_index, row in enumerate(table_rows(block), 1):
+                record: dict[str, object] = {column: row.get(column, "") for column in headers}
+                text = "\t".join(record[column] for column in headers)
+                record.setdefault("item", text)
+                record.setdefault("body", text)
+                record["_row"] = row_index
+                record["_table"] = block.index
+                items.append(record)
+
+    if selector.kind == "table":
+        table_items(selected, selector.qualifier)
+    elif selector.kind == "auto" and selected and selected[0].kind == "table":
+        table_items(selected)
+    else:
+        for block in selected:
+            if block.kind == "table":
+                table_items([block])
+                continue
+            record = block_record(block, guess)
+            text = command_line(block) if block.kind == "command" else block.body
+            record.setdefault("item", text)
+            record.setdefault("body", text)
+            if block.kind == "command":
+                record.setdefault("command", text)
+                record.setdefault("program", block.program)
+            items.append(record)
+    return items
+
+
+def contract_for(selector: Selector) -> str:
+    kind = selector.kind
+    qualifier = selector.qualifier
+    if kind == "none":
+        return (
+            "Answer in plain prose. Do not add code fences, tables or headings unless the answer genuinely needs "
+            "them.\n"
+        )
+    if kind == "table":
+        if qualifier:
+            columns = ", ".join(f"`{column.strip()}`" for column in qualifier.split(",") if column.strip())
+            return (
+                "Return exactly one Markdown table with a header row and these columns: "
+                + columns
+                + ". Put no prose before or after the table.\n"
+            )
+        return "Return exactly one Markdown table with a header row. Put no prose before or after the table.\n"
+    if kind == "code":
+        language = f" tagged `{qualifier}`" if qualifier else ""
+        return (
+            f"Return exactly one fenced code block{language} containing only the code. "
+            "Put no prose before or after the block.\n"
+        )
+    if kind == "section":
+        heading = qualifier or "Answer"
+        return (
+            f"Use a Markdown section headed `{heading}` and put the whole answer under it. "
+            "Do not add other top-level sections.\n"
+        )
+    if kind == "command":
+        program = f" `{qualifier}`" if qualifier else ""
+        return (
+            f"Return exactly one fenced `sh` code block containing a single{program} command line. "
+            "Put no prose, no explanation and no other code blocks before or after it.\n"
+        )
+    if kind == "frontmatter":
+        return (
+            "Begin the response with a YAML frontmatter block delimited by `---` lines, then the answer.\n"
+        )
+    if kind == "any":
+        return "Return only the requested block or blocks, with no surrounding commentary.\n"
+    return (
+        "Return only the requested result (a table, code block, section or command), "
+        "with no surrounding commentary.\n"
+    )
+
+
+def render_kinds() -> str:
+    return "\n".join(
+        (
+            "code         fenced ``` / ~~~ blocks (and 4-space blocks with --indented)",
+            "table        GFM tables; table:col1,col2 projects named columns",
+            "section      a heading and everything under it",
+            "frontmatter  the leading --- / +++ block",
+            "command      a code block viewed as the command on its first line;",
+            "             command:program filters by that program's basename",
+            "any          the four source kinds above (commands are opt-in)",
+            "auto         the only table, code block or section in the document",
+        )
+    )
+
+
 # --- Rendering --------------------------------------------------------------
 
 
@@ -734,6 +1143,8 @@ def render_block(block: Block, args: argparse.Namespace) -> str:
         parts.append(block.body)
     elif block.kind == "table":
         parts.append(block.body)
+    elif block.kind == "command":
+        parts.append(command_line(block))
     elif args.fence:
         marker = block.fence or "```"
         parts.append(marker + block.info_raw.rstrip() + "\n" + block.body + "\n" + marker)
@@ -793,6 +1204,7 @@ def block_record(block: Block, guess: bool) -> dict[str, object]:
         "lines": count_lines(block.body),
         "closed": block.closed,
         "body": block.body,
+        "program": block.program,
     }
 
 
@@ -905,6 +1317,10 @@ Default output is the block body alone, so the tool composes:
   md.extract --kind csv --before "monthly totals" report.md > totals.csv
   md.extract --kind section --heading Installation README.md
   md.extract --lang cpp --one answer.md > parser.cpp
+  md.extract --select table:symbol answer.md
+  md.extract --select command:prompt answer.md | sh
+  md.extract --items table:symbol,reason answer.md
+  md.extract --contract command:prompt
   md.extract --list answer.md
 """
 
@@ -914,7 +1330,19 @@ KINDS
   table        GFM tables (header + delimiter row)
   section      a heading and everything under it (--no-subsections to stop)
   frontmatter  the leading --- / +++ block
-  any          all of the above
+  command      a code block viewed as the command on its first line
+  any          the four source kinds above (commands are opt-in)
+
+SELECTORS
+  --select SPEC, --items SPEC and --contract SPEC share one grammar:
+  kind[:qualifier][@N]. `table:symbol,reason` projects those columns (tab
+  separated); `code:cpp` filters by language; `section:Usage` by heading;
+  `command:prompt` keeps code blocks whose first command is `prompt`;
+  `@2` is the second match. `any` means the four source kinds, `auto` picks
+  the only table, code block or section, and `none` asks an AI for prose.
+  --items prints a JSON array of items (table rows become objects keyed by
+  their columns), and --contract prints the response instruction for an AI.
+  See --kinds for the current grammar.
 
 CONTEXT
   code, table and frontmatter blocks carry the nearest enclosing heading path
@@ -970,7 +1398,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--kind",
         action=CommaList,
         metavar="KINDS",
-        help="code, table, section, frontmatter or any (default: code)",
+        help="code, table, section, frontmatter, command or any (default: code)",
     )
     selection.add_argument(
         "--lang",
@@ -1021,6 +1449,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="a section stops at its first subheading",
     )
+    selection.add_argument(
+        "--select",
+        metavar="SPEC",
+        help="selector grammar: kind[:qualifier][@N] (table:col, code:lang, "
+        "section:heading, command:program, any, auto); see --kinds",
+    )
 
     output = parser.add_argument_group("output")
     output.add_argument(
@@ -1037,6 +1471,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     output.add_argument("--json", action="store_true", help="print matching blocks as JSON")
     output.add_argument("--jsonl", action="store_true", help="print one JSON object per block")
+    output.add_argument("--items", metavar="SPEC", help="print the selector's items as JSON (for `.each`)")
+    output.add_argument("--contract", metavar="SPEC", help="print the AI instruction for a selector")
+    output.add_argument("--kinds", action="store_true", help="list the selector kinds and exit")
+    output.add_argument("--no-header", action="store_true", help="table projections: omit the header row")
 
     writing = parser.add_argument_group("writing")
     writing.add_argument(
@@ -1059,14 +1497,29 @@ def read_file(path: str) -> str:
 
 
 def run(args: argparse.Namespace) -> int:
+    # Offline modes: no input is read, so `.expect` can call --contract in a
+    # chain where stdin is a terminal (or already spent).
+    if args.kinds:
+        print(render_kinds())
+        return 0
+    if args.contract is not None:
+        sys.stdout.write(contract_for(parse_selector(args.contract)))
+        return 0
+
+    selector = parse_selector(args.select) if args.select is not None else None
+
     kinds = set(args.kind or ["code"])
     if "any" in kinds or "all" in kinds:
-        kinds = set(KINDS)
+        kinds = set(SOURCE_KINDS)
     unknown = kinds - set(KINDS)
     if unknown:
         raise UsageError(
             f"unknown kind {', '.join(sorted(unknown))} (use {', '.join(KINDS)} or any)"
         )
+    if selector is not None:
+        if selector.kind == "none":
+            raise SoftError("the 'none' selector has no blocks")
+        kinds = selector_kinds(selector)
 
     index_values: list[int] | None = None
     if args.index is not None:
@@ -1079,6 +1532,8 @@ def run(args: argparse.Namespace) -> int:
         index_values = [1]
     if args.last:
         index_values = [-1]
+    if selector is not None and index_values:
+        raise UsageError("--select has its own @N position; drop --index/--first/--last")
 
     if args.dry_run and not (args.output or args.out_dir):
         raise UsageError("--dry-run needs -o/--output or --out-dir")
@@ -1116,9 +1571,23 @@ def run(args: argparse.Namespace) -> int:
                 include_subsections=not args.no_subsections,
             )
         )
+    # `command` is a view of a code block; derive it for every document so
+    # auto-detection can see it, even when the caller did not name the kind.
+    blocks.extend(derive_commands(blocks))
     assign_indices(blocks)
 
-    selected = select_blocks(blocks, query, index_values)
+    if args.items is not None:
+        items_selector = parse_selector(args.items)
+        items = selector_items(blocks, items_selector, args.guess)
+        if not items:
+            raise SoftError(f"selector {args.items!r} produced no items")
+        print(json.dumps(items, indent=2, ensure_ascii=False))
+        return 0
+
+    if selector is not None:
+        selected = select_selector(blocks, selector)
+    else:
+        selected = select_blocks(blocks, query, index_values)
     for position, block in enumerate(selected, 1):
         block.index = position
 
@@ -1135,8 +1604,11 @@ def run(args: argparse.Namespace) -> int:
         return 0 if selected else 1
 
     if not selected:
+        kind_names = (
+            ", ".join(sorted(selector_kinds(selector))) if selector is not None else ", ".join(sorted(kinds))
+        )
         raise SoftError(
-            f"no matching {', '.join(sorted(kinds))} blocks"
+            f"no matching {kind_names} blocks"
             " (try --list, --kind any, or --guess)"
         )
 
@@ -1146,13 +1618,6 @@ def run(args: argparse.Namespace) -> int:
 
     if args.pick:
         selected = pick_block(selected, args.guess)
-
-    if args.output == "-":
-        sys.stdout.write(render_many(selected, args))
-        return 0
-    if args.output or args.out_dir:
-        write_blocks(selected, args)
-        return 0
 
     if args.json:
         print(
@@ -1166,6 +1631,23 @@ def run(args: argparse.Namespace) -> int:
     if args.jsonl:
         for block in selected:
             print(json.dumps(block_record(block, args.guess), ensure_ascii=False))
+        return 0
+
+    if selector is not None:
+        if args.out_dir:
+            raise UsageError("--select cannot be combined with --out-dir")
+        rendered = render_selection(selected, selector, args)
+        if args.output and args.output != "-":
+            Path(args.output).write_text(rendered, encoding="utf-8")
+        else:
+            sys.stdout.write(rendered)
+        return 0
+
+    if args.output == "-":
+        sys.stdout.write(render_many(selected, args))
+        return 0
+    if args.output or args.out_dir:
+        write_blocks(selected, args)
         return 0
 
     sys.stdout.write(render_many(selected, args))

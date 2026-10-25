@@ -57,6 +57,9 @@ struct view {
     std::span<std::string_view const> args;
     // The accumulated chain text before this segment (the sink barrier).
     std::string_view text;
+    // The verbatim tokens of a body-taking prompt (`.each`), empty otherwise.
+    // NOLINTNEXTLINE(readability-redundant-member-init) — keep `view{...}` aggregates warning-free.
+    std::span<std::string_view const> body{};
     // Declarations for this batch plus the artifacts of completed segments.
     facts const& prior;
     environment const& env;

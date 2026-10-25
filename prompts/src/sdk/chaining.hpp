@@ -11,11 +11,17 @@ namespace prompt {
 
 struct prompt_invocation {
     std::string_view name;
+    // Arguments before the body (a body-taking prompt's flags and selector).
     std::vector<std::string_view> args;
+    // The raw tokens between the body opener and its matching `.end`, kept
+    // verbatim so a loop body is an ordinary chain the child parses itself.
+    // Empty for every prompt that does not take a body.
+    std::vector<std::string_view> body;
 };
 
 struct chain_result {
     std::vector<prompt_invocation> invocations;
+    std::string error; // non-empty: the chain cannot be parsed (bad .end, missing .end)
 };
 
 // No fixed limits: the arguments are views into argv, so an arbitrary chain

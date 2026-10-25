@@ -92,6 +92,8 @@ add_library(prompt_lib OBJECT
     src/sdk/embed.cpp
     src/sdk/args.cpp
     src/sdk/sink.cpp
+    src/sdk/agent.cpp
+    src/sdk/policy.cpp
     ${PROMPT_SRCS}
 )
 target_sources(prompt_lib PRIVATE ${PROMPT_ASSET_HPP})

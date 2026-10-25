@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <functional>
@@ -30,6 +31,11 @@
 // no in-process interpreter here, so no ASan suppressions are needed.
 
 namespace {
+
+// A `.each` body runs as a child `prompt` (PROMPT_INNER=1): the parent already
+// owns the clipboard and prints one redaction legend for the whole chain, so a
+// loop of N items must not copy N times or repeat the legend N times.
+bool inner_process = false;
 
 std::string_view trim_trailing_newlines(std::string_view text) {
     while (!text.empty() && text.back() == '\n') text.remove_suffix(1);
@@ -91,7 +97,7 @@ class output_emitter {
         if (output.empty()) return;
         if (!first_stdout_) std::print(std::cout, "\n");
         first_stdout_ = false;
-        if (redacted && !stdout_legend_) {
+        if (redacted && !stdout_legend_ && !inner_process) {
             std::println(std::cout, "{}", prompt::sanitize::kRedactionLegend);
             stdout_legend_ = true;
         }
@@ -126,7 +132,7 @@ class output_emitter {
         if (!first_clipboard_) clipboard_ += '\n';
         first_clipboard_ = false;
         if (output.empty()) return;
-        if (redacted && !clipboard_legend_) {
+        if (redacted && !clipboard_legend_ && !inner_process) {
             clipboard_ = std::string(prompt::sanitize::kRedactionLegend) + "\n" + clipboard_;
             clipboard_legend_ = true;
         }
@@ -181,7 +187,16 @@ bool wants_help(std::span<std::string_view const> args) {
     return std::ranges::any_of(args, [](std::string_view arg) { return arg == "--help" || arg == "-h"; });
 }
 
-bool invocation_wants_help(prompt::prompt_invocation const& inv) { return wants_help(inv.args); }
+bool invocation_wants_help(prompt::prompt_invocation const& inv) {
+    // `.exec -- COMMAND ...` owns the rest of argv, so a command's own `-h`
+    // (e.g. `shutdown -h now`) must not turn into this prompt's help request.
+    auto args = std::span<std::string_view const>(inv.args);
+    if (inv.name == "exec") {
+        if (auto const it = std::ranges::find(args, std::string_view{"--"}); it != args.end())
+            args = args.first(static_cast<std::size_t>(it - args.begin()));
+    }
+    return wants_help(args);
+}
 
 prompt::segment_outcome render_help_result(prompt::prompt_descriptor const& desc) {
     prompt::segment_outcome outcome;
@@ -207,6 +222,7 @@ struct segment {
     prompt::prompt_descriptor const* desc = nullptr;
     std::string_view name;
     std::vector<std::string_view> args;
+    std::span<std::string_view const> body;
 };
 
 void write_segment(int fd, prompt::segment_outcome const& outcome) {
@@ -395,8 +411,12 @@ Notes:
         }
     }
 
+    // A `.each` body runs as an inner child: the parent owns the clipboard and
+    // the redaction legend, so the child does neither.
+    inner_process = std::getenv("PROMPT_INNER") != nullptr;
+
     // Initialize clipboard
-    prompt::clipboard::init();
+    if (!inner_process) prompt::clipboard::init();
 
     // The process-wide environment: built once, never written again.
     prompt::environment env = prompt::make_environment();
@@ -417,10 +437,14 @@ Notes:
     // Parse chained prompts
     std::span<char const* const> argv_span(argv, static_cast<std::size_t>(argc));
     auto chain = prompt::parse_chain(argv_span, prompt::get_all_prompts());
+    if (!chain.error.empty()) {
+        std::println(std::cerr, "{}", chain.error);
+        return 2;
+    }
 
     // If no prompts found, default to "auto"
     if (chain.invocations.empty()) {
-        chain.invocations.push_back(prompt::prompt_invocation{.name = "auto", .args = {}});
+        chain.invocations.push_back(prompt::prompt_invocation{.name = "auto", .args = {}, .body = {}});
     }
 
     std::size_t const count = chain.invocations.size();
@@ -442,6 +466,7 @@ Notes:
         segments[i].desc = desc;
         segments[i].name = inv.name;
         segments[i].args = inv.args;
+        segments[i].body = inv.body;
 
         if (desc->role != prompt::chain_role::sink) continue;
         has_sink = true;
@@ -467,7 +492,7 @@ Notes:
         if (segments[i].desc->role == prompt::chain_role::sink && invocation_wants_help(chain.invocations[i])) {
             auto outcome = render_help_result(*segments[i].desc);
             std::print(std::cout, "{}", outcome.out);
-            if (!outcome.out.empty()) prompt::clipboard::copy(outcome.out);
+            if (!inner_process && !outcome.out.empty()) prompt::clipboard::copy(outcome.out);
             return 0;
         }
     }
@@ -502,8 +527,17 @@ Notes:
 
     // One helper builds the read-only view, so preflights, parallel children and
     // sequential segments all see exactly the same shape.
-    auto make_view = [&](std::string_view name, std::span<std::string_view const> args, prompt::facts const& prior) {
-        return prompt::view{.name = name, .args = args, .text = {}, .prior = prior, .env = env, .in = stdin};
+    auto make_view = [&](std::string_view name, std::span<std::string_view const> args,
+                         std::span<std::string_view const> body, prompt::facts const& prior) {
+        return prompt::view{
+            .name = name,
+            .args = args,
+            .text = {},
+            .body = body,
+            .prior = prior,
+            .env = env,
+            .in = stdin,
+        };
     };
 
     // Descriptor preflights run after chain/sink parsing but before any prompt
@@ -514,7 +548,8 @@ Notes:
 
         auto prior = prior_for_batch();
         try {
-            segments[i].desc->preflight(make_view(chain.invocations[i].name, segments[i].args, prior));
+            segments[i].desc->preflight(
+                make_view(chain.invocations[i].name, segments[i].args, segments[i].body, prior));
         } catch (prompt::prompt_error const& err) {
             if (!err.partial_output().empty()) std::print(std::cout, "{}", err.partial_output());
             std::print(std::cerr, "{}", err.what());
@@ -531,8 +566,8 @@ Notes:
         bool const parallel = count > 1 && !stdin.available();
         if (parallel) {
             auto declarations = prior_for_batch();
-            outcomes =
-                run_parallel(segments, [&](segment const& seg) { return make_view(seg.name, seg.args, declarations); });
+            outcomes = run_parallel(
+                segments, [&](segment const& seg) { return make_view(seg.name, seg.args, seg.body, declarations); });
         } else {
             // Sequential: each segment sees the facts the finished ones
             // published (last writer wins), exactly like the sink path.
@@ -544,7 +579,8 @@ Notes:
                     continue;
                 }
                 auto prior = merge_prior(artifacts);
-                outcomes[i] = run_prompt(make_view(inv.name, segments[i].args, prior), *segments[i].desc);
+                outcomes[i] =
+                    run_prompt(make_view(inv.name, segments[i].args, segments[i].body, prior), *segments[i].desc);
                 if (!outcomes[i].failed) artifacts.merge(outcomes[i].published, true);
                 if (outcomes[i].stdin_consumed) stdin.spend();
             }
@@ -565,16 +601,16 @@ Notes:
         }
 
         std::string final_output = std::move(accumulator.text);
-        if (redacted && !final_output.empty()) {
+        if (redacted && !final_output.empty() && !inner_process) {
             final_output = std::string(prompt::sanitize::kRedactionLegend) + "\n" + final_output;
         }
         std::print(std::cout, "{}", final_output);
 
         std::string clip = std::move(accumulator.clipboard);
-        if (redacted && !clip.empty()) {
+        if (redacted && !clip.empty() && !inner_process) {
             clip = std::string(prompt::sanitize::kRedactionLegend) + "\n" + clip;
         }
-        if (!clip.empty()) prompt::clipboard::copy(clip);
+        if (!inner_process && !clip.empty()) prompt::clipboard::copy(clip);
 
         return exit_code;
     }
@@ -598,6 +634,7 @@ Notes:
             .name = seg.name,
             .args = seg.args,
             .text = text,
+            .body = seg.body,
             .prior = prior,
             .env = env,
             .in = stdin,
@@ -607,7 +644,7 @@ Notes:
 
     auto run_normal_batch = [&](std::size_t run_index, prompt::chain_run const& run) {
         std::string batch_context = state.text;
-        if (state.redacted && !batch_context.empty()) {
+        if (state.redacted && !batch_context.empty() && !inner_process) {
             batch_context = prepend_block(prompt::sanitize::kRedactionLegend, batch_context);
         }
         auto declarations = merge_prior(state.known);
@@ -667,7 +704,7 @@ Notes:
         }
         auto const& opts = sink_args[i]->options;
         if (opts.head_lines) input = std::string(prompt::trim_context_lines(input, *opts.head_lines));
-        if (state.redacted && !input.empty()) {
+        if (state.redacted && !input.empty() && !inner_process) {
             std::string with_legend = std::string(prompt::sanitize::kRedactionLegend);
             with_legend += "\n\n";
             with_legend += input;
@@ -796,6 +833,6 @@ Notes:
     }
 
     auto clip = emitter.clipboard();
-    if (!clip.empty()) prompt::clipboard::copy(clip);
+    if (!inner_process && !clip.empty()) prompt::clipboard::copy(clip);
     return exit_code;
 }

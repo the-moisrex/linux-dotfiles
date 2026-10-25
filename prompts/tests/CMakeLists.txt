@@ -156,3 +156,66 @@ set_tests_properties(length_shape PROPERTIES PASS_REGULAR_EXPRESSION "blog post"
 
 add_test(NAME length_conflict COMMAND $<TARGET_FILE:prompt> length --max --min 5)
 set_tests_properties(length_conflict PROPERTIES WILL_FAIL TRUE)
+
+# The agentic layer: the response contract, extraction, command printing, loop
+# item listing/printing, and one real parallel loop. No network.
+add_test(NAME agent_expect_contract COMMAND $<TARGET_FILE:prompt> .expect command:prompt)
+set_tests_properties(agent_expect_contract PROPERTIES PASS_REGULAR_EXPRESSION "single `prompt` command")
+
+add_test(NAME agent_extract
+    COMMAND $<TARGET_FILE:prompt> .note [=[```sh
+prompt .length 5
+```]=] .expect command:prompt .extract)
+set_tests_properties(agent_extract PROPERTIES PASS_REGULAR_EXPRESSION "prompt \\.length 5")
+
+add_test(NAME agent_exec_print COMMAND $<TARGET_FILE:prompt> .exec --print git status)
+set_tests_properties(agent_exec_print PROPERTIES PASS_REGULAR_EXPRESSION "git status")
+
+add_test(NAME agent_exec_args COMMAND $<TARGET_FILE:prompt> .exec --print -- echo "a b")
+set_tests_properties(agent_exec_args PROPERTIES PASS_REGULAR_EXPRESSION "echo 'a b'")
+
+# `--` hands the rest of argv to the command: its own `-h` is not prompt's.
+add_test(NAME agent_exec_help_arg COMMAND $<TARGET_FILE:prompt> .exec --print -- echo -h)
+set_tests_properties(agent_exec_help_arg PROPERTIES PASS_REGULAR_EXPRESSION "echo -h")
+
+add_test(NAME agent_exec_chain_print COMMAND $<TARGET_FILE:prompt> .exec --print -- prompt .note hi)
+set_tests_properties(agent_exec_chain_print PROPERTIES PASS_REGULAR_EXPRESSION "prompt \\.note hi")
+
+add_test(NAME agent_exec_chain_run COMMAND $<TARGET_FILE:prompt> .exec --yes -- prompt .note hi)
+set_tests_properties(agent_exec_chain_run PROPERTIES PASS_REGULAR_EXPRESSION "hi")
+
+add_test(NAME agent_exec_allowed
+    COMMAND ${CMAKE_COMMAND} -E env PROMPT_POLICY_ALLOW=echo $<TARGET_FILE:prompt> .exec echo hi)
+set_tests_properties(agent_exec_allowed PROPERTIES PASS_REGULAR_EXPRESSION "hi")
+
+add_test(NAME agent_exec_denied COMMAND $<TARGET_FILE:prompt> .exec sudo ls)
+set_tests_properties(agent_exec_denied PROPERTIES WILL_FAIL TRUE)
+
+add_test(NAME agent_each_print
+    COMMAND $<TARGET_FILE:prompt> .note [=[| symbol |
+| --- |
+| a |
+| b |]=] .each --print .tse {symbol} .end)
+set_tests_properties(agent_each_print PROPERTIES PASS_REGULAR_EXPRESSION "prompt .tse b")
+
+add_test(NAME agent_each_run
+    COMMAND $<TARGET_FILE:prompt> .note [=[| symbol |
+| --- |
+| a |
+| b |]=] .each .length 10 .end)
+set_tests_properties(agent_each_run PROPERTIES PASS_REGULAR_EXPRESSION "## b")
+
+add_test(NAME agent_each_list
+    COMMAND $<TARGET_FILE:prompt> .note [=[| symbol |
+| --- |
+| a |
+| b |]=] .each --list .length 10 .end)
+set_tests_properties(agent_each_list PROPERTIES PASS_REGULAR_EXPRESSION "2 items")
+
+# A body `.exec` is pre-approved once by the parent and runs in each child.
+add_test(NAME agent_each_exec
+    COMMAND $<TARGET_FILE:prompt> .note [=[| symbol |
+| --- |
+| a |
+| b |]=] .each --yes table:symbol .exec -- echo {symbol} .end)
+set_tests_properties(agent_each_exec PROPERTIES PASS_REGULAR_EXPRESSION "## b")

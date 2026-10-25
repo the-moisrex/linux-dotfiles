@@ -17,6 +17,11 @@ namespace keys {
 // The basename stem a later `.save` should derive its filename from.
 inline constexpr std::string_view save_stem = "save.stem";
 
+// The response shape the AI was asked for, as a selector (`table:symbol`,
+// `command:prompt`, `none`, …). Published by `.expect` and `.delegate`, read by
+// `.extract`, `.each` and `.exec` when they are given no selector.
+inline constexpr std::string_view expect = "prompt.expect";
+
 // The resolved TSE instrument, published once per chain by whichever `tse*`
 // prompt resolved it first.
 inline constexpr std::string_view tse_symbol = "tse.instrument.symbol";
