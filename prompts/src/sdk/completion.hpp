@@ -106,4 +106,31 @@ inline void write_help_flags(std::ostream& os, std::string_view prefix, std::str
 }
 
 } // namespace completion
+
+// A name to offer in the line mode: a prompt or a function visible at this
+// point in the chain, with the description shown beside it.
+struct name_candidate {
+    std::string name;
+    std::string description;
+};
+
+// A prompt's candidates: the flags derived from its own help plus its optional
+// complete_fn. Shared by `prompt <name> --complete …` and the whole-line mode
+// below, so both answer from exactly the same place.
+struct prompt_descriptor; // prompt_registry.hpp — forward-declared so the two
+                          // headers never include each other
+void write_prompt_candidates(prompt_descriptor const& desc, std::string_view prefix,
+                             std::span<std::string_view const> prior_args, std::ostream& out);
+
+// Every registered prompt plus the extra `candidates` (the functions visible at
+// this point in the chain), merged into the catalog's locale-aware order, each
+// in the three spellings the chain accepts (`name`, `.name`, `-name`), filtered
+// by `prefix` and described by its own summary or signature.
+void write_step_names(std::ostream& out, std::string_view prefix, std::span<name_candidate const> candidates = {});
+
+// Every registered prompt, in the catalog's locale-aware order, in all three
+// spellings the chain accepts (`name`, `.name`, `-name`), each described by its
+// help summary.
+void write_prompt_names(std::ostream& out, std::string_view prefix);
+
 } // namespace prompt

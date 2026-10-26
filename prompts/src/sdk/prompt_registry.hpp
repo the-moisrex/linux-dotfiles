@@ -47,6 +47,9 @@ struct prompt_descriptor {
     // to the matching `.end`, which `parse_chain` stores in body instead of
     // parsing them at this level.
     bool takes_body = false;
+    // False for the `.history*` family: browsing the store must not append to
+    // it, or `prompt .history` would make itself the newest run.
+    bool record = true;
 };
 
 std::span<prompt_descriptor const> get_all_prompts();
@@ -76,7 +79,7 @@ inline constexpr std::size_t prompt_registry_capacity = 128;
 bool register_prompt(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
                      chain_role role = chain_role::normal, bool stream_output = true, preflight_fn preflight = nullptr,
-                     declare_fn declare = nullptr, bool takes_body = false) noexcept;
+                     declare_fn declare = nullptr, bool takes_body = false, bool record = true) noexcept;
 
 // Register a sink: the same registry entry with role=sink. Sink flags
 // (--on-error/--with-context/--show-context/--head) are handled by the
@@ -85,7 +88,7 @@ bool register_prompt(std::string_view name, std::string_view help_summary, exec_
 bool register_sink(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                    void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
                    bool stream_output = true, preflight_fn preflight = nullptr, declare_fn declare = nullptr,
-                   bool takes_body = false) noexcept;
+                   bool takes_body = false, bool record = true) noexcept;
 
 // Captures a prompt's own `render_help_*` output into a string, for prompts
 // that append it to a failure message (cli, man, tse.analyze, tse.intraday)

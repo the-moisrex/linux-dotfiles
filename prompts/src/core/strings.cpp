@@ -9,6 +9,24 @@ std::string rstrip_newlines(std::string_view s) {
     return std::string(s);
 }
 
+std::string_view strip_newlines(std::string_view s) {
+    while (!s.empty() && s.front() == '\n') s.remove_prefix(1);
+    while (!s.empty() && s.back() == '\n') s.remove_suffix(1);
+    return s;
+}
+
+bool append_block(std::string& text, std::string_view block) {
+    block = strip_newlines(block);
+    if (block.empty()) return false;
+    if (!text.empty()) {
+        while (!text.empty() && text.back() == '\n') text.pop_back();
+        text += "\n\n";
+    }
+    text.append(block);
+    text += '\n';
+    return true;
+}
+
 std::string rstrip(std::string_view s, char c) {
     while (!s.empty() && s.back() == c) s.remove_suffix(1);
     return std::string(s);

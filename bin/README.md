@@ -582,6 +582,55 @@ cat big.diff | ai.chatgpt --no-prompt-file       # force inline (site's limit)
 ai.chatgpt --prompt-file "small but as a file"   # force the file path
 ```
 
+### `ai.lms` / `ai.openai`
+
+Talk to any OpenAI-compatible endpoint instead of a website session: **LM Studio**
+running locally (no key, no cloud) and the hosted **OpenAI API** (or OpenRouter,
+Groq, vLLM, … through `OPENAI_BASE_URL`). Same engine, same flags and the same
+output as the web providers, minus everything that needs a browser:
+
+```bash
+ai.lms "explain this stack trace"                # a local LM Studio server
+ai.lms --list                                    # the models it currently serves
+ai.lms -m gemma-4-e4b-it-qat "summarise this"
+ai.lms --print-session                           # endpoint + model + reachability
+ai.lms -f diagram.png "what does this show?"     # images become data URLs
+ai.lms --param temperature=0.2 --param max_tokens=512 "be terse"
+ai.openai -m gpt-4o-mini "summarise this"        # $OPENAI_API_KEY
+cat diff.patch | OPENAI_MODEL=gpt-4o ai.openai   # any compatible endpoint
+OPENAI_BASE_URL=http://localhost:8000/v1 ai.openai -m my-vllm-model "hi"
+```
+
+- **Endpoint discovery** (`ai.lms`): `--base-url`, then `$LMS_BASE_URL`, then the
+  cached endpoint under `$XDG_STATE_HOME/ai/lms-endpoint.json`, then the usual
+  local ports (`1234`, `1337`, `8080`, `8000`, `11434` on `127.0.0.1`/`localhost`,
+  probing `/v1/models` with a short timeout), then `lms status` as the last
+  resort. The winner is cached, so later runs skip the probe; `--print-session`
+  shows what was picked and why it is (not) reachable.
+- **Model choice**: `-m/--model`, else `$LMS_MODEL` / `$OPENAI_MODEL`; `ai.lms`
+  falls back to the first chat model the server lists (via `/api/v0/models`,
+  which also marks the loaded one and hides embedding models), while `ai.openai`
+  requires an explicit model rather than guessing one. A missing model is
+  reported with the alternatives.
+- **No upload endpoint**: `-f/--file` inlines the file into the message (text as
+  a fenced block with a `File: <name>` header, images as `image_url` data URLs,
+  anything else refused) and `--prompt-file` is rejected with that remedy, so an
+  oversized prompt is simply sent inline.
+- **Stateless**: the API has no server-side chat, so `-c`/`--continue` and `-i`
+  replay the saved transcript (`$XDG_STATE_HOME/ai/<provider>.json`, capped) as
+  the request's `messages` instead of resuming an id.
+- `--param KEY=VALUE` passes any extra inference parameter straight through
+  (`temperature`, `max_tokens`, `top_p`, …), and `$OPENAI_API_KEY` /
+  `$LMS_API_KEY` (or `--api-key`) set the bearer token — optional for a local
+  server, required by `api.openai.com`.
+- Both are also native `prompt` sinks: `.ai.lms` and `.ai.openai`.
+
+The engine is `bin/ai/providers/openai_compat.py` (one SSE mapping for text,
+`reasoning_content`, tool calls and usage; `bin/ai/net.py` streams and keeps the
+error body so a failure reads `HTTP 500: …` plus the server's own message),
+with `bin/ai/providers/lms.py` and `bin/ai/providers/openai.py` supplying only
+discovery, model resolution and error hints.
+
 ### `ai.debate`
 
 Ask two or more AIs the same question and let them check each other. The first
@@ -604,7 +653,9 @@ ai.debate grok dseek --print-prompt "…"              # offline dry run
 ```
 
 The leading positionals are providers (`chatgpt`, `grok`, `deepseek`/`dseek`,
-`gap`, `kimi`), the rest is the question. `--rounds N` (default 2) counts full
+`gap`, `kimi`, plus the API providers `lms`/`lmstudio` and `openai`/`oai`), the
+rest is the question. `--base-url`, `--api-key` and `--param` reach those API
+providers; the web ones use the browser session as usual. `--rounds N` (default 2) counts full
 passes through the panel, so two providers and two rounds make four calls.
 `--until-agree` appends a `VERDICT: AGREE|DISAGREE` request and stops after a
 pass in which everyone still agrees (the answer must contain the line; a
@@ -621,7 +672,7 @@ new question is a follow-up in those threads; `--new` forgets that state and
 starts clean. The panel is saved after every successful turn, and a provider with
 no saved chat simply starts one.
 
-The same five providers (plus `.ai.debate`) are native `prompt` **sinks**, so
+The same providers (plus `.ai.debate`) are native `prompt` **sinks**, so
 they can sit anywhere in a prompt chain: everything before the sink is sent as
 context and the answer becomes the context for what follows. They render exactly
 like a direct run — prompt passes `--tty` when its own stdout is a terminal —
@@ -634,6 +685,7 @@ prompt .note "list the risks" .files a.cpp .ai.dseek .note "rank them" .ai.grok
 prompt .note "compare" .files old.cpp new.cpp .ai.dseek --with-context .note "summarise" .ai.kimi
 prompt .note "review this" .files a.cpp .save review.md .ai.dseek
 prompt .note "review this" .files a.cpp .ai.dseek --print-prompt   # offline dry run
+prompt .note "review this offline" .files a.cpp .ai.lms -m gemma-4-e4b-it-qat
 prompt .note "is this migration safe?" .files db/schema.sql .ai.debate grok dseek
 prompt .note "audit this" .files app.py .ai.debate grok dseek --rounds 3 --until-agree
 prompt .note "now check the rollback" .ai.debate grok dseek -c   # continue those chats
@@ -689,10 +741,10 @@ renderer and `websocket-client` for Grok and GapGPT; a free account's own rate l
 still apply.
 
 - __ai-find-skills__ — cross-registry (skills.sh + clawhub.ai + GitHub) AI agent-skill finder with security scan
-- __ai.save__ — local, git-backed Markdown store for AI conversations across ChatGPT, DeepSeek, Grok, GapGPT and Kimi. Uses the browser's signed-in session (via `browser.session`, no `auth.json`), writes one file per chat under `topics/<topic>/<YYYY-MM>/<date>_<title>.md` with JSON frontmatter and invisible per-message markers, and regenerates a committed `months/<YYYY-MM>/<topic>` symlink view. `sync` is incremental (list/summary then fetch only new or changed chats; `--full`, `--limit`, `--jobs`, `--retries`, `--retry-delay`, `--dry-run`, `--provider`, `--force`), categorises by ordered rules in `.ai/config.json` (topic patterns, code-block thresholds, GapGPT projects) and keeps manual categories/tags. `last` answers "what was the newest saved message?" by scanning frontmatter (current year plus older month dirs touched this month; `--all`, `--by saved`, `--role`, `--kind` (defaults to `text`), `--chat`, `--json`), `list`/`show` browse, and `add`/`reply` save prompts/responses from files or stdin (`add --chat` = `reply`, appends to the body and marks local edits so sync won't overwrite them). Also `categorize`, `tag`/`untag`, `recategorize`, `categories`, `rename-category`, `remove`, `reload`, `verify`, `migrate` (imports the old `ai-save` cache and markdown), `relink`, `providers` and `config`. Every mutation commits to git (`--no-commit` opts out); no database or index — Markdown/frontmatter is the source of truth. `--provider` takes the registry keys (`chatgpt`, `grok`, `deepseek`, `gap`, `kimi`) plus aliases (`gapgpt`/`gap-gpt` → `gap`, `dseek` → `deepseek`, `openai` → `chatgpt`); unknown names are rejected for `sync`, `list` and `last`. A stalled GapGPT project/page is retried in place and then skipped (reported in the sync JSON under `incomplete`) rather than failing the whole listing.
+- __ai.save__ — local, git-backed Markdown store for AI conversations across ChatGPT, DeepSeek, Grok, GapGPT and Kimi. Uses the browser's signed-in session (via `browser.session`, no `auth.json`), writes one file per chat under `topics/<topic>/<YYYY-MM>/<date>_<title>.md` with JSON frontmatter and invisible per-message markers, and regenerates a committed `months/<YYYY-MM>/<topic>` symlink view. `sync` is incremental (list/summary then fetch only new or changed chats; `--full`, `--limit`, `--jobs`, `--retries`, `--retry-delay`, `--dry-run`, `--provider`, `--force`), categorises by ordered rules in `.ai/config.json` (topic patterns, code-block thresholds, GapGPT projects) and keeps manual categories/tags. `last` answers "what was the newest saved message?" by scanning frontmatter (current year plus older month dirs touched this month; `--all`, `--by saved`, `--role`, `--kind` (defaults to `text`), `--chat`, `--json`), `list`/`show` browse, and `add`/`reply` save prompts/responses from files or stdin (`add --chat` = `reply`, appends to the body and marks local edits so sync won't overwrite them). Also `categorize`, `tag`/`untag`, `recategorize`, `categories`, `rename-category`, `remove`, `reload`, `verify`, `migrate` (imports the old `ai-save` cache and markdown), `relink`, `providers` and `config`. Every mutation commits to git (`--no-commit` opts out); no database or index — Markdown/frontmatter is the source of truth. `--provider` takes the registry keys (`chatgpt`, `grok`, `deepseek`, `gap`, `kimi`) plus aliases (`gapgpt`/`gap-gpt` → `gap`, `dseek` → `deepseek`); unknown names are rejected for `sync`, `list` and `last`, and the keyless API providers (`lms`, `openai`) are refused — there is no site session to record. A stalled GapGPT project/page is retried in place and then skipped (reported in the sync JSON under `incomplete`) rather than failing the whole listing.
 - __commit__ — suggest/format git commit messages from staged diffs, issue context and templates
 - __content__ — fetch news/article URLs and extract clean, filtered article text (pandoc) — a content feed for prompts/AI
-- __prompt__ — native prompt dispatcher (C++ source in `prompts/`, installed here): `prompt <name> [args]` with chained prompts (`.note`, `.cli`, `.files`; independent segments run in parallel and are appended in argv order), prompt **sinks** (`.ai.chatgpt`/`.ai.dseek`/`.ai.gap`/`.ai.grok`/`.ai.kimi` wait for the preceding chain, send it to the site, and continue with the answer; shared `--with-context`/`--show-context`/`--on-error`/`--head` flags and `--print-prompt`, plus the passthrough `.save [FILE|DIR]` sink that writes the same context to disk — deriving `tse-<symbol>.md`, the snapshot stem or the first `.files` stem when no target is given, treating an existing directory, trailing `/`, or extensionless target as a directory (created automatically) and a name with an extension as the exact file (`--dir`/`--file` override), preflighting the destination before any prompt runs, refusing overwrites unless `--force`, and leaving the chain unchanged for a later sink; `.flush [FILE|DIR]` is that same save followed by `.clear`, and `.clear` resets the accumulated context — including the derived filename hint and any source-batch failure taint — so one chain can run several independent sections while already-printed output and the clipboard are kept), `prompt list` (short descriptions), `prompt list-prompts` (full help), stdin piped to a prompt. It ships a fixed prompt set and never scans for prompt files
+- __prompt__ — native prompt dispatcher (C++ source in `prompts/`, installed here): `prompt <name> [args]` with chained prompts (`.note`, `.cli`, `.files`; independent segments run in parallel and are appended in argv order), prompt **sinks** (`.ai.chatgpt`/`.ai.dseek`/`.ai.gap`/`.ai.grok`/`.ai.kimi` wait for the preceding chain, send it to the site, and continue with the answer, and `.ai.lms`/`.ai.openai` do the same through a local LM Studio server or any OpenAI-compatible API; shared `--with-context`/`--show-context`/`--on-error`/`--head` flags and `--print-prompt`, plus the passthrough `.save [FILE|DIR]` sink that writes the same context to disk — deriving `tse-<symbol>.md`, the snapshot stem or the first `.files` stem when no target is given, treating an existing directory, trailing `/`, or extensionless target as a directory (created automatically) and a name with an extension as the exact file (`--dir`/`--file` override), preflighting the destination before any prompt runs, refusing overwrites unless `--force`, and leaving the chain unchanged for a later sink; `.flush [FILE|DIR]` is that same save followed by `.clear`, and `.clear` resets the accumulated context — including the derived filename hint and any source-batch failure taint — so one chain can run several independent sections while already-printed output and the clipboard are kept, and `.c.c` is a passthrough sink that copies the accumulated context to the system clipboard — its paste counterparts `.clipboard`/`.c.p` are ordinary sources, since a source never receives the chain context), `prompt list` (short descriptions), `prompt list-prompts` (full help), stdin piped to a prompt. It ships a fixed prompt set and never scans for prompt files
 - __prompt-compiler__ — autocomplete/compile prompts: slash-commands, `{{env}}`/`${var}` expansion, snippets
 - __tse.resolve__ — resolve Persian, finglish or fuzzy instrument names to TSETMC identifiers (symbol, ISIN, insCode, market/board) so every `tse.*` tool shares one lookup path: `tse.resolve فولاد`, `tse.resolve foolad`/`khodro` (Latin is reverse-transliterated through `bin/finglish` and matched against the forward finglish forms baked into the cache, including phonetic spellings like `mobin` for the literal key `mbin`), a company-name fragment, an ISIN, an insCode, a URL, or a composite `فولاد-IRO1FOLD0001` token (`-`, `:`, `(…)`, `@` and whitespace separators are all accepted). Exact → finglish → fuzzy (`rapidfuzz`, `difflib` fallback); candidates are ranked by market tier so a duplicated symbol picks the traded/main-market instrument (`فنفت` resolves to `بازار دوم` over `بازار پایه`) and only a real tie is reported as ambiguous. The active-instrument index comes from the bulk market watch, cached at `${XDG_CACHE_HOME:-~/.cache}/tse/instruments.json` for one week (`--refresh`/`--clear`/`--no-cache`/`--ttl`/`--cache`), with a live instrument-search backfill for anything it misses (`--offline` disables the network). `--json`/`--jsonl`/`--token`/`--best` for scripting, `--complete PREFIX` for shell completion (Latin input completes to `finglish-ISIN`, and a partial `-IRO1F` completes the ISIN), `--type`/`--market` filters. Every `tse*` tool resolves identifiers through it (`tse`, `tse.codal`, `tse.intraday`, `tse.snapshot`, `tse.find --watchlist`), and `shell/completions.fish` completes `tse`, `tse.codal`, `tse.intraday`, `tse.resolve` and `prompt tse|tse.codal|tse.intraday` arguments with the readable `SYMBOL-ISIN` token (`finglish-ISIN` for Latin input).
 - __tse.codal__ — the only Codal.ir route, and the opt-in companion to `tse` (announcements, financial statements, fund portfolio reports, and ratios derived from the extracted statement rows): searches `search.codal.ir` and, because that host answers HTTP 429 until Codal's DDoS captcha is solved, runs the same flow the codal.ir web app uses (`begin` → captcha JPEG → OCR → `end`, then the `X-Captcha-Token` header, re-solved about every 3 minutes and after a repeat 429) with a cookie session, which Codal requires — without it searches silently return zero rows instead of failing. Statement tables are pulled from `www.codal.ir/Reports/Decision.aspx` pages, which need no captcha, and are spaced at least 4 seconds per host. Subcommands: `tse.codal search <symbol>` (`--letter-type`, `--category`, `--limit`, `--raw`), `tse.codal statements <symbol>`, `tse.codal snapshot <symbol> [--top N] [--fund] [--markdown]`, and `tse.codal cache path|list|clear`. Identifiers are resolved through `tse.resolve` (Persian/finglish/fuzzy names, ISIN, insCode, easytrader/tsetmc/codal URL, composite tokens), and `snapshot --markdown` renders the prompt-ready dataset used by `prompt tse.codal` (symbol header, Codal block, `codal.derived_ratios`). Requires Python 3.9+, `tesseract` with English traineddata (pacman: `tesseract tesseract-data-eng`, apt: `tesseract-ocr tesseract-ocr-eng`) and an Iranian IP. Codal's edge resets connections (ECONNRESET, errno 104) and tarpits requests at random, so every request — captcha `begin`/`Captcha`/`end`, searches and report pages — is retried with jittered backoff inside a wall-clock budget (`CODAL_RETRIES` attempts, default 5; `CODAL_TIMEOUT` per attempt, 30s; `CODAL_DEADLINE` per request, 60s), on fresh sockets but the same cookie session, with 5xx/408/425 treated as retryable and a per-host cooldown after a failure. Successful artifacts are cached under `${XDG_CACHE_HOME:-~/.cache}/tse/codal` (`CODAL_CACHE_DIR` overrides): an entry younger than `CODAL_MAX_AGE` (default 6h, `--max-age DURATION`) is served from the cache, an older one is refetched but still used as a fallback when the live fetch keeps failing; those results carry a `cache` note (`cached`, `fetched_at` Jalali, `age`, `stale`, `live_error`) and the Markdown prints the fetch time above its Codal block. `--refresh` forces a live fetch, `--cache-only` never touches the network. Dates are Jalali (Shamsi): the announcements'/statements' `published_at`/`sent_at` come from Codal already Jalali (Persian digits), and the snapshot's `retrieved_at` is a Jalali stamp.

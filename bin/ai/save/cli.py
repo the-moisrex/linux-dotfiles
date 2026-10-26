@@ -56,7 +56,6 @@ PROVIDER_ALIASES = {
     "gapgpt": "gap",
     "gap-gpt": "gap",
     "dseek": "deepseek",
-    "openai": "chatgpt",
 }
 
 
@@ -65,10 +64,15 @@ def _canonical_provider(name):
     return PROVIDER_ALIASES.get(key.casefold(), key)
 
 
+def _recordable(provider):
+    """Whether the store can sync *provider* (an API provider has no chat list)."""
+    return getattr(provider, "recordable", True)
+
+
 def _providers(requested):
     registry = all_providers()
     if not requested:
-        return list(registry)
+        return [name for name, cls in registry.items() if _recordable(cls)]
     names = []
     for item in requested:
         for part in item.split(","):
@@ -78,6 +82,10 @@ def _providers(requested):
             if name not in registry:
                 raise LookupError(
                     f"unknown provider {name!r} (known: {', '.join(registry)})")
+            if not _recordable(registry[name]):
+                raise LookupError(
+                    f"{name} is a stateless API provider with no chat list to "
+                    f"sync; save prompts and answers with `ai.save add` instead")
             if name not in names:
                 names.append(name)
     return names
@@ -125,6 +133,9 @@ def _check_provider_filter(args):
         if name not in registry:
             return _fail(f"unknown provider {name!r} "
                          f"(known: {', '.join(registry)})")
+        if not _recordable(registry[name]):
+            return _fail(f"{name} is a stateless API provider with no chat "
+                         f"history to save")
     return None
 
 
@@ -770,6 +781,8 @@ def cmd_providers(args):
     registry = all_providers()
     rows = []
     for name, cls in registry.items():
+        if not _recordable(cls):
+            continue
         rows.append({
             "name": name,
             "label": cls.label,

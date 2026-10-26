@@ -1,20 +1,24 @@
--- This is an example Hyprland Lua config file.
--- Refer to the wiki for more information.
--- https://wiki.hypr.land/Configuring/Start/
-
--- Please note not all available settings / options are set here.
--- For a full list, see the wiki
-
--- You can (and should!!) split this configuration into multiple files
--- Create your files separately and then require them like this:
--- require("myColors")
-
+-- Hyprland Lua config — Niri-style scrolling layout with dual independent desktops
+-- HDMI-A-2: workspaces 1–10  |  DP-1: workspaces 11–20
 
 ------------------
 ---- MONITORS ----
 ------------------
 
--- See https://wiki.hypr.land/Configuring/Basics/Monitors/
+hl.monitor({
+    output   = "HDMI-A-2",
+    mode     = "1600x900",
+    position = "0x0",
+    scale    = 1,
+})
+
+hl.monitor({
+    output   = "DP-1",
+    mode     = "2560x1440@74.971",
+    position = "1600x0",
+    scale    = 1,
+})
+
 hl.monitor({
     output   = "",
     mode     = "preferred",
@@ -23,30 +27,131 @@ hl.monitor({
 })
 
 
----------------------
----- MY PROGRAMS ----
----------------------
+-----------------------------------------
+---- PER-MONITOR WORKSPACES (niri) ----
+-----------------------------------------
 
--- Set programs that you use
-local terminal    = "alacritty"
-local fileManager = "dolphin"
-local ipc         = "noctalia msg"
+local WS_PER_MON = 10
+
+-- HDMI-A-2 → 1..10
+for i = 1, WS_PER_MON do
+    hl.workspace_rule({
+        workspace  = tostring(i),
+        monitor    = "HDMI-A-2",
+        default    = (i == 1),
+        persistent = true,
+    })
+end
+
+-- DP-1 → 11..20
+for i = 1, WS_PER_MON do
+    hl.workspace_rule({
+        workspace  = tostring(WS_PER_MON + i),
+        monitor    = "DP-1",
+        default    = (i == 1),
+        persistent = true,
+    })
+end
+
+-- Map monitor name → base offset (0 for first, 10 for second)
+local function mon_base()
+    local mon = hl.get_active_monitor()
+    if not mon then return 0 end
+    if mon.name == "DP-1" then return WS_PER_MON end
+    return 0 -- HDMI-A-2 and anything else
+end
+
+local function local_ws_id(n)
+    return mon_base() + n
+end
+
+local function focus_local(n)
+    return function()
+        hl.dispatch(hl.dsp.focus({ workspace = local_ws_id(n) }))
+    end
+end
+
+local function move_local(n)
+    return function()
+        hl.dispatch(hl.dsp.window.move({
+            workspace = local_ws_id(n),
+            follow    = true,
+        }))
+    end
+end
+
+-- Relative local workspace (no wrap)
+local function focus_local_rel(delta)
+    return function()
+        local ws = hl.get_active_workspace()
+        if not ws then return end
+        local base  = mon_base()
+        local local_i = ws.id - base
+        if local_i < 1 then local_i = 1 end
+        if local_i > WS_PER_MON then local_i = WS_PER_MON end
+        local next_i = local_i + delta
+        if next_i < 1 or next_i > WS_PER_MON then return end -- no wrap
+        hl.dispatch(hl.dsp.focus({ workspace = base + next_i }))
+    end
+end
+
+local function move_local_rel(delta)
+    return function()
+        local ws = hl.get_active_workspace()
+        if not ws then return end
+        local base  = mon_base()
+        local local_i = ws.id - base
+        if local_i < 1 then local_i = 1 end
+        if local_i > WS_PER_MON then local_i = WS_PER_MON end
+        local next_i = local_i + delta
+        if next_i < 1 or next_i > WS_PER_MON then return end
+        hl.dispatch(hl.dsp.window.move({
+            workspace = base + next_i,
+            follow    = true,
+        }))
+    end
+end
+
+-- Focus window/column in direction; if at edge → prev/next local workspace
+local function focus_or_workspace(dir, ws_delta)
+    return function()
+        local before = hl.get_active_window()
+        local addr   = before and before.address
+
+        if dir == "l" or dir == "r" then
+            hl.dispatch(hl.dsp.layout("focus " .. dir))
+        else
+            hl.dispatch(hl.dsp.focus({ direction = dir }))
+        end
+
+        local after = hl.get_active_window()
+        local addr2 = after and after.address
+
+        if addr == addr2 then
+            local ws = hl.get_active_workspace()
+            if not ws then return end
+            local base    = mon_base()
+            local local_i = ws.id - base
+            if local_i < 1 then local_i = 1 end
+            if local_i > WS_PER_MON then local_i = WS_PER_MON end
+            local next_i = local_i + ws_delta
+            if next_i < 1 or next_i > WS_PER_MON then return end
+            hl.dispatch(hl.dsp.focus({ workspace = base + next_i }))
+        end
+    end
+end
 
 
 -------------------
 ---- AUTOSTART ----
 -------------------
 
--- See https://wiki.hypr.land/Configuring/Basics/Autostart/
-
-require("monitors")
-
--- Autostart necessary processes (like notifications daemons, status bars, etc.)
 hl.on("hyprland.start", function()
     hl.exec_cmd("systemctl --user start hyprpolkitagent")
     hl.exec_cmd("noctalia")
     hl.exec_cmd("hyprpaper")
     hl.exec_cmd("nm-applet")
+    hl.exec_cmd("mkdir -p \"$HOME/Pictures/Screenshots\"")
 end)
 
 
@@ -54,162 +159,8 @@ end)
 ---- ENVIRONMENT VARIABLES ----
 -------------------------------
 
--- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Environment-variables/
-
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
-
-
------------------------
------ PERMISSIONS -----
------------------------
-
--- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Permissions/
--- Please note permission changes here require a Hyprland restart and are not applied on-the-fly
--- for security reasons
-
--- hl.config({
---   ecosystem = {
---     enforce_permissions = true,
---   },
--- })
-
--- hl.permission("/usr/(bin|local/bin)/grim", "screencopy", "allow")
--- hl.permission("/usr/(lib|libexec|lib64)/xdg-desktop-portal-hyprland", "screencopy", "allow")
--- hl.permission("/usr/(bin|local/bin)/hyprpm", "plugin", "allow")
-
-
------------------------
----- LOOK AND FEEL ----
------------------------
-
--- Refer to https://wiki.hypr.land/Configuring/Basics/Variables/
-hl.config({
-    general = {
-        gaps_in  = 5,
-        gaps_out = 20,
-
-        border_size = 2,
-
-        col = {
-            active_border   = { colors = {"rgba(33ccffee)", "rgba(00ff99ee)"}, angle = 45 },
-            inactive_border = "rgba(595959aa)",
-        },
-
-        -- Set to true to enable resizing windows by clicking and dragging on borders and gaps
-        resize_on_border = false,
-
-        -- Please see https://wiki.hypr.land/Configuring/Advanced-and-Cool/Tearing/ before you turn this on
-        allow_tearing = false,
-
-        layout = "dwindle",
-    },
-
-    decoration = {
-        rounding       = 10,
-        rounding_power = 2,
-
-        -- Change transparency of focused and unfocused windows
-        active_opacity   = 1.0,
-        inactive_opacity = 1.0,
-
-        shadow = {
-            enabled      = true,
-            range        = 4,
-            render_power = 3,
-            color        = 0xee1a1a1a,
-        },
-
-        blur = {
-            enabled   = true,
-            size      = 3,
-            passes    = 1,
-            vibrancy  = 0.1696,
-        },
-    },
-
-    animations = {
-        enabled = true,
-    },
-})
-
--- Default curves and animations, see https://wiki.hypr.land/Configuring/Advanced-and-Cool/Animations/
-hl.curve("easeOutQuint",   { type = "bezier", points = { {0.23, 1},    {0.32, 1}    } })
-hl.curve("easeInOutCubic", { type = "bezier", points = { {0.65, 0.05}, {0.36, 1}    } })
-hl.curve("linear",         { type = "bezier", points = { {0, 0},       {1, 1}       } })
-hl.curve("almostLinear",   { type = "bezier", points = { {0.5, 0.5},   {0.75, 1}    } })
-hl.curve("quick",          { type = "bezier", points = { {0.15, 0},    {0.1, 1}     } })
-
--- Default springs
-hl.curve("easy",           { type = "spring", mass = 1, stiffness = 238.1191, dampening = 24.21279333 })
-
-hl.animation({ leaf = "global",        enabled = true,  speed = 10,   bezier = "default" })
-hl.animation({ leaf = "border",        enabled = true,  speed = 5.39, bezier = "easeOutQuint" })
-hl.animation({ leaf = "windows",       enabled = true,  speed = 4.79, spring = "easy" })
-hl.animation({ leaf = "windowsIn",     enabled = true,  speed = 4.1,  spring = "easy",         style = "popin 87%" })
-hl.animation({ leaf = "windowsOut",    enabled = true,  speed = 1.49, bezier = "linear",       style = "popin 87%" })
-hl.animation({ leaf = "fadeIn",        enabled = true,  speed = 1.73, bezier = "almostLinear" })
-hl.animation({ leaf = "fadeOut",       enabled = true,  speed = 1.46, bezier = "almostLinear" })
-hl.animation({ leaf = "fade",          enabled = true,  speed = 3.03, bezier = "quick" })
-hl.animation({ leaf = "layers",        enabled = true,  speed = 3.81, bezier = "easeOutQuint" })
-hl.animation({ leaf = "layersIn",      enabled = true,  speed = 4,    bezier = "easeOutQuint", style = "fade" })
-hl.animation({ leaf = "layersOut",     enabled = true,  speed = 1.5,  bezier = "linear",       style = "fade" })
-hl.animation({ leaf = "fadeLayersIn",  enabled = true,  speed = 1.79, bezier = "almostLinear" })
-hl.animation({ leaf = "fadeLayersOut", enabled = true,  speed = 1.39, bezier = "almostLinear" })
-hl.animation({ leaf = "workspaces",    enabled = true,  speed = 1.94, bezier = "almostLinear", style = "fade" })
-hl.animation({ leaf = "workspacesIn",  enabled = true,  speed = 1.21, bezier = "almostLinear", style = "fade" })
-hl.animation({ leaf = "workspacesOut", enabled = true,  speed = 1.94, bezier = "almostLinear", style = "fade" })
-hl.animation({ leaf = "zoomFactor",    enabled = true,  speed = 7,    bezier = "quick" })
-
--- Ref https://wiki.hypr.land/Configuring/Basics/Workspace-Rules/
--- "Smart gaps" / "No gaps when only"
--- uncomment all if you wish to use that.
--- hl.workspace_rule({ workspace = "w[tv1]", gaps_out = 0, gaps_in = 0 })
--- hl.workspace_rule({ workspace = "f[1]",   gaps_out = 0, gaps_in = 0 })
--- hl.window_rule({
---     name  = "no-gaps-wtv1",
---     match = { float = false, workspace = "w[tv1]" },
---     border_size = 0,
---     rounding    = 0,
--- })
--- hl.window_rule({
---     name  = "no-gaps-f1",
---     match = { float = false, workspace = "f[1]" },
---     border_size = 0,
---     rounding    = 0,
--- })
-
--- See https://wiki.hypr.land/Configuring/Layouts/Dwindle-Layout/ for more
-hl.config({
-    dwindle = {
-        preserve_split = true, -- You probably want this
-    },
-})
-
--- See https://wiki.hypr.land/Configuring/Layouts/Master-Layout/ for more
-hl.config({
-    master = {
-        new_status = "master",
-    },
-})
-
--- See https://wiki.hypr.land/Configuring/Layouts/Scrolling-Layout/ for more
-hl.config({
-    scrolling = {
-        fullscreen_on_one_column = true,
-    },
-})
-
-----------------
-----  MISC  ----
-----------------
-
-hl.config({
-    misc = {
-        force_default_wallpaper = -1,    -- Set to 0 or 1 to disable the anime mascot wallpapers
-        disable_hyprland_logo   = false, -- If true disables the random hyprland logo / anime girl background. :(
-    },
-})
 
 
 ---------------
@@ -218,120 +169,190 @@ hl.config({
 
 hl.config({
     input = {
-        kb_layout  = "us,ir",
-        kb_variant = ",",
-        kb_model   = "",
-        kb_options = "grp:win_space_toggle",
-        kb_rules   = "",
-
-        follow_mouse = 1,
-
-        sensitivity = 0, -- -1.0 - 1.0, 0 means no modification.
+        kb_layout          = "us,ir",
+        kb_options         = "grp:win_space_toggle",
+        numlock_by_default = true,
+        follow_mouse       = 1,
+        sensitivity        = 0,
 
         touchpad = {
-            natural_scroll = false,
+            tap_to_click   = true,
+            natural_scroll = true,
         },
+    },
+
+    general = {
+        no_focus_fallback = true,
+    },
+
+    binds = {
+        window_direction_monitor_fallback = false,
+        workspace_back_and_forth          = true,
     },
 })
 
 hl.gesture({
-    fingers = 3,
+    fingers   = 3,
     direction = "horizontal",
-    action = "workspace"
-})
-
--- Example per-device config
--- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Devices/ for more
-hl.device({
-    name        = "epic-mouse-v1",
-    sensitivity = -0.5,
+    action    = "workspace",
 })
 
 
----------------------
----- KEYBINDINGS ----
----------------------
+-----------------------
+---- LOOK AND FEEL ----
+-----------------------
 
-local mainMod = "SUPER" -- Sets "Windows" key as main modifier
+hl.config({
+    general = {
+        gaps_in      = 8,
+        gaps_out     = 8,
+        border_size  = 2,
+        col = {
+            active_border   = "rgba(f38ba8ff)",
+            inactive_border = "rgba(45475aff)",
+        },
+        layout           = "scrolling",
+        resize_on_border = false,
+        allow_tearing    = false,
+        no_focus_fallback = true,
+    },
 
--- Example binds, see https://wiki.hypr.land/Configuring/Basics/Binds/ for more
-hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
-hl.bind("CTRL + SHIFT + Return", hl.dsp.exec_cmd("firefox-developer-edition --new-window"))
-hl.bind(mainMod .. " + Pause", hl.dsp.exec_cmd("$HOME/cmd/bin/sig-gui.py"))
-hl.bind(mainMod .. " + ALT + Return", hl.dsp.exec_cmd("gnome-text-editor --new-window"))
-local closeWindowBind = hl.bind(mainMod .. " + C", hl.dsp.window.close())
--- closeWindowBind:set_enabled(false)
-hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
-hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
-hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(ipc .. " panel-toggle launcher"))
-hl.bind(mainMod .. " + grave",    hl.dsp.exec_cmd(ipc .. " panel-toggle control-center"))
-hl.bind(mainMod .. " + comma",     hl.dsp.exec_cmd(ipc .. " settings-toggle"))
-hl.bind("ALT + Tab",              hl.dsp.exec_cmd(ipc .. " window-switcher"))
-hl.bind("PRINT",                  hl.dsp.exec_cmd(ipc .. " screenshot-region"))
-hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
-hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))    -- dwindle only
+    decoration = {
+        rounding         = 0,
+        active_opacity   = 1.0,
+        inactive_opacity = 1.0,
 
--- Move focus with mainMod + arrow keys
-hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
-hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
-hl.bind(mainMod .. " + up",    hl.dsp.focus({ direction = "up" }))
-hl.bind(mainMod .. " + down",  hl.dsp.focus({ direction = "down" }))
+        blur = {
+            enabled = true,
+            size    = 3,
+            passes  = 1,
+        },
 
--- Switch workspaces with mainMod + [0-9]
--- Move active window to a workspace with mainMod + SHIFT + [0-9]
-for i = 1, 10 do
-    local key = i % 10 -- 10 maps to key 0
-    hl.bind(mainMod .. " + " .. key,             hl.dsp.focus({ workspace = i}))
-    hl.bind(mainMod .. " + SHIFT + " .. key,     hl.dsp.window.move({ workspace = i }))
-end
+        shadow = {
+            enabled      = true,
+            range        = 4,
+            render_power = 3,
+            color        = "rgba(1a1a1aee)",
+        },
+    },
 
--- Noctalia scratchpad (using Noctalia's special workspace)
-hl.bind(mainMod .. " + S",         hl.dsp.workspace.toggle_special("magic"))
-hl.bind(mainMod .. " + SHIFT + S", hl.dsp.window.move({ workspace = "special:magic" }))
+    scrolling = {
+        column_width             = 0.5,
+        fullscreen_on_one_column = false,
+        follow_focus             = true,
+        focus_fit_method         = 1,
+        wrap_focus               = false,
+        wrap_swapcol             = false,
+        direction                = "right",
+    },
 
--- Scroll through existing workspaces with mainMod + scroll
-hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
-hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
+    misc = {
+        force_default_wallpaper = -1,
+        disable_hyprland_logo   = true,
+    },
+})
 
--- Move/resize windows with mainMod + LMB/RMB and dragging
-hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
-hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 
--- Media keys via Noctalia IPC
-hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd(ipc .. " volume-up"))
-hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd(ipc .. " volume-down"))
-hl.bind("XF86AudioMute",        hl.dsp.exec_cmd(ipc .. " volume-mute"))
-hl.bind("XF86MonBrightnessUp",  hl.dsp.exec_cmd(ipc .. " brightness-up"))
-hl.bind("XF86MonBrightnessDown",hl.dsp.exec_cmd(ipc .. " brightness-down"))
+--------------------------------
+---- ANIMATIONS (FASTER) ----
+--------------------------------
 
--- Requires playerctl
-hl.bind("XF86AudioNext",  hl.dsp.exec_cmd("playerctl next"),       { locked = true })
-hl.bind("XF86AudioPause", hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
-hl.bind("XF86AudioPlay",  hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
-hl.bind("XF86AudioPrev",  hl.dsp.exec_cmd("playerctl previous"),   { locked = true })
+-- Define a snappy, fast Bézier curve for responsive motion
+hl.curve("fast", {
+    type   = "bezier",
+    points = {
+        { 0.41, 0.6 },
+        { 0.02, 0.93 },
+    },
+})
+
+hl.config({
+    animations = {
+        enabled = true,
+    },
+})
+
+-- Global: slightly faster than default for overall snappiness
+hl.animation({
+    leaf    = "global",
+    enabled = true,
+    speed   = 3,
+    bezier  = "default", -- Changed from curve
+})
+
+-- Windows: instant feel for opening/closing
+hl.animation({
+    leaf    = "windows",
+    enabled = true,
+    speed   = 1,
+    bezier  = "fast", -- Changed from curve
+    style   = "slide",
+})
+
+-- windowsMove: governs layout scrolling and window movement — make it very fast
+hl.animation({
+    leaf    = "windowsMove",
+    enabled = true,
+    speed   = 1,
+    bezier  = "fast", -- Changed from curve
+    style   = "slide",
+})
+
+-- Workspaces: fast switching between desktops
+hl.animation({
+    leaf    = "workspaces",
+    enabled = true,
+    speed   = 1,
+    bezier  = "fast", -- Changed from curve
+    style   = "slide",
+})
+
+-- Borders and fades: keep consistent with the fast feel
+hl.animation({
+    leaf    = "border",
+    enabled = true,
+    speed   = 1,
+    bezier  = "default", -- Changed from curve
+})
+
+hl.animation({
+    leaf    = "fade",
+    enabled = true,
+    speed   = 1,
+    bezier  = "default", -- Changed from curve
+})
+
+-- Disable the special workspace animation to avoid any perceived lag
+hl.animation({
+    leaf    = "specialWorkspace",
+    enabled = false,
+})
 
 
 --------------------------------
 ---- WINDOWS AND WORKSPACES ----
 --------------------------------
 
--- See https://wiki.hypr.land/Configuring/Basics/Window-Rules/
--- and https://wiki.hypr.land/Configuring/Basics/Workspace-Rules/
-
--- Example window rules that are useful
-
-local suppressMaximizeRule = hl.window_rule({
-    -- Ignore maximize requests from all apps. You'll probably like this.
-    name  = "suppress-maximize-events",
-    match = { class = ".*" },
-
-    suppress_event = "maximize",
+hl.window_rule({
+    name  = "firefox-pip-float",
+    match = { class = "firefox", title = "^Picture-in-Picture$" },
+    float = true,
+    pin   = true,
 })
--- suppressMaximizeRule:set_enabled(false)
 
 hl.window_rule({
-    -- Fix some dragging issues with XWayland
+    name  = "noctalia-float",
+    match = { class = "dev.noctalia.Noctalia" },
+    float = true,
+})
+
+hl.window_rule({
+    name           = "suppress-maximize-events",
+    match          = { class = ".*" },
+    suppress_event = "maximize",
+})
+
+hl.window_rule({
     name  = "fix-xwayland-drags",
     match = {
         class      = "^$",
@@ -341,40 +362,200 @@ hl.window_rule({
         fullscreen = false,
         pin        = false,
     },
-
     no_focus = true,
 })
 
--- Layer rules also return a handle.
--- local overlayLayerRule = hl.layer_rule({
---     name  = "no-anim-overlay",
---     match = { namespace = "^my-overlay$" },
---     no_anim = true,
--- })
--- overlayLayerRule:set_enabled(false)
 
--- Hyprland-run windowrule
-hl.window_rule({
-    name  = "move-hyprland-run",
-    match = { class = "hyprland-run" },
+---------------------
+---- KEYBINDINGS ----
+---------------------
 
-    move  = "20 monitor_h-120",
-    float = true,
-})
+local mainMod = "SUPER"
 
--- Noctalia blur for bar, panels, dock, notifications
-hl.layer_rule({
-    name  = "noctalia",
-    match = { namespace = "^noctalia-(bar-.+|notification|dock|panel|attached-panel|osd|window-switcher)$" },
-    no_anim     = true,
-    ignore_alpha = 0.5,
-    blur        = true,
-    blur_popups = true,
-})
+-- Programs
+hl.bind(mainMod .. " + Return",       hl.dsp.exec_cmd("kitty"),
+    { description = "Terminal" })
+hl.bind("CTRL + SHIFT + Return",      hl.dsp.exec_cmd("firefox-developer-edition --new-window"),
+    { description = "Firefox (new window)" })
+hl.bind(mainMod .. " + Pause",        hl.dsp.exec_cmd("sh -c \"$HOME/cmd/bin/sig-gui.py\""),
+    { description = "Signal GUI" })
+hl.bind(mainMod .. " + ALT + Return", hl.dsp.exec_cmd("gnome-text-editor --new-window"),
+    { description = "Text editor" })
+hl.bind(mainMod .. " + E",            hl.dsp.exec_cmd("dolphin"),
+    { description = "File manager" })
 
--- Noctalia settings window
-hl.window_rule({
-    match = { class = "dev.noctalia.Noctalia" },
-    float = true,
-    size  = { 1080, 920 },
-})
+-- Noctalia
+hl.bind(mainMod .. " + grave",          hl.dsp.exec_cmd("noctalia msg panel-toggle control-center"))
+hl.bind(mainMod .. " + SHIFT + period", hl.dsp.exec_cmd("noctalia msg settings-toggle"))
+hl.bind(mainMod .. " + D",              hl.dsp.exec_cmd("noctalia msg panel-toggle launcher"),
+    { description = "Launcher" })
+
+-- Window actions
+hl.bind(mainMod .. " + Q", hl.dsp.window.close(),
+    { description = "Close window" })
+
+hl.bind(mainMod .. " + V", function()
+    hl.dispatch(hl.dsp.window.float({ action = "toggle" }))
+end, { description = "Toggle float" })
+
+hl.bind(mainMod .. " + S", hl.dsp.window.pseudo(),
+    { description = "Toggle pseudo" })
+
+-- ── Focus: arrows / hjkl ──────────────────────────────────
+-- Left/Right: focus column, or prev/next local workspace at edge
+hl.bind(mainMod .. " + left",  focus_or_workspace("l", -1))
+hl.bind(mainMod .. " + right", focus_or_workspace("r",  1))
+-- Up/Down: focus windows vertically within a column (moved to ALT to free SUPER for workspaces)
+hl.bind("ALT + up",    hl.dsp.focus({ direction = "u" }))
+hl.bind("ALT + down",  hl.dsp.focus({ direction = "d" }))
+
+hl.bind(mainMod .. " + H", focus_or_workspace("l", -1))
+hl.bind(mainMod .. " + L", focus_or_workspace("r",  1))
+hl.bind("ALT + K", hl.dsp.focus({ direction = "u" }))
+hl.bind("ALT + J", hl.dsp.focus({ direction = "d" }))
+
+-- ── Move windows between columns (scrolling-native) ──────
+hl.bind(mainMod .. " + CTRL + left",  hl.dsp.layout("swapcol l"))
+hl.bind(mainMod .. " + CTRL + right", hl.dsp.layout("swapcol r"))
+hl.bind(mainMod .. " + CTRL + up",    hl.dsp.window.move({ direction = "u" }))
+hl.bind(mainMod .. " + CTRL + down",  hl.dsp.window.move({ direction = "d" }))
+
+hl.bind(mainMod .. " + CTRL + H", hl.dsp.layout("swapcol l"))
+hl.bind(mainMod .. " + CTRL + L", hl.dsp.layout("swapcol r"))
+hl.bind(mainMod .. " + CTRL + K", hl.dsp.window.move({ direction = "u" }))
+hl.bind(mainMod .. " + CTRL + J", hl.dsp.window.move({ direction = "d" }))
+
+-- ── Move entire column to workspace above/below (Niri-style) ──
+hl.bind(mainMod .. " + SHIFT + up",   hl.dsp.layout("movecoltoworkspace +1"))
+hl.bind(mainMod .. " + SHIFT + down", hl.dsp.layout("movecoltoworkspace -1"))
+hl.bind(mainMod .. " + SHIFT + K",    hl.dsp.layout("movecoltoworkspace +1"))
+hl.bind(mainMod .. " + SHIFT + J",    hl.dsp.layout("movecoltoworkspace -1"))
+
+-- Monitor focus (explicit cross-monitor)
+hl.bind(mainMod .. " + SHIFT + left",  hl.dsp.focus({ monitor = "l" }))
+hl.bind(mainMod .. " + SHIFT + right", hl.dsp.focus({ monitor = "r" }))
+hl.bind(mainMod .. " + SHIFT + up",    hl.dsp.focus({ monitor = "u" }))
+hl.bind(mainMod .. " + SHIFT + down",  hl.dsp.focus({ monitor = "d" }))
+
+hl.bind(mainMod .. " + SHIFT + H", hl.dsp.focus({ monitor = "l" }))
+hl.bind(mainMod .. " + SHIFT + L", hl.dsp.focus({ monitor = "r" }))
+hl.bind(mainMod .. " + SHIFT + K", hl.dsp.focus({ monitor = "u" }))
+hl.bind(mainMod .. " + SHIFT + J", hl.dsp.focus({ monitor = "d" }))
+
+-- Move window to other monitor
+hl.bind(mainMod .. " + SHIFT + CTRL + left",  hl.dsp.window.move({ monitor = "l" }))
+hl.bind(mainMod .. " + SHIFT + CTRL + right", hl.dsp.window.move({ monitor = "r" }))
+hl.bind(mainMod .. " + SHIFT + CTRL + up",    hl.dsp.window.move({ monitor = "u" }))
+hl.bind(mainMod .. " + SHIFT + CTRL + down",  hl.dsp.window.move({ monitor = "d" }))
+
+hl.bind(mainMod .. " + SHIFT + CTRL + H", hl.dsp.window.move({ monitor = "l" }))
+hl.bind(mainMod .. " + SHIFT + CTRL + L", hl.dsp.window.move({ monitor = "r" }))
+hl.bind(mainMod .. " + SHIFT + CTRL + K", hl.dsp.window.move({ monitor = "u" }))
+hl.bind(mainMod .. " + SHIFT + CTRL + J", hl.dsp.window.move({ monitor = "d" }))
+
+-- Relative local workspaces (Page/U/I)
+hl.bind(mainMod .. " + Page_Down",        focus_local_rel(1))
+hl.bind(mainMod .. " + Page_Up",          focus_local_rel(-1))
+hl.bind(mainMod .. " + U",                focus_local_rel(1))
+hl.bind(mainMod .. " + I",                focus_local_rel(-1))
+
+hl.bind(mainMod .. " + CTRL + Page_Down", move_local_rel(1))
+hl.bind(mainMod .. " + CTRL + Page_Up",   move_local_rel(-1))
+hl.bind(mainMod .. " + CTRL + U",         move_local_rel(1))
+hl.bind(mainMod .. " + CTRL + I",         move_local_rel(-1))
+
+-- Local workspace numbers (1–9, 0 = 10) on CURRENT monitor
+for i = 1, 9 do
+    hl.bind(mainMod .. " + " .. i,        focus_local(i))
+    hl.bind(mainMod .. " + CTRL + " .. i, move_local(i))
+end
+hl.bind(mainMod .. " + 0",        focus_local(10))
+hl.bind(mainMod .. " + CTRL + 0", move_local(10))
+
+-- Scratchpad
+hl.bind(mainMod .. " + SHIFT + S", hl.dsp.workspace.toggle_special("scratch"),
+    { description = "Toggle scratchpad" })
+hl.bind(mainMod .. " + ALT + S",   hl.dsp.window.move({ workspace = "special:scratch" }),
+    { description = "Move to scratchpad" })
+
+-- Mouse wheel → local workspaces
+hl.bind(mainMod .. " + mouse_down",        focus_local_rel(1))
+hl.bind(mainMod .. " + mouse_up",          focus_local_rel(-1))
+hl.bind(mainMod .. " + CTRL + mouse_down", move_local_rel(1))
+hl.bind(mainMod .. " + CTRL + mouse_up",   move_local_rel(-1))
+
+-- Column resize (scrolling-native)
+hl.bind(mainMod .. " + bracketleft",  hl.dsp.layout("colresize -conf"))
+hl.bind(mainMod .. " + bracketright", hl.dsp.layout("colresize +conf"))
+
+hl.bind(mainMod .. " + minus",         hl.dsp.layout("colresize -0.1"))
+hl.bind(mainMod .. " + equal",         hl.dsp.layout("colresize +0.1"))
+hl.bind(mainMod .. " + SHIFT + minus", hl.dsp.window.resize({ x = 0, y = -40, relative = true }))
+hl.bind(mainMod .. " + SHIFT + equal", hl.dsp.window.resize({ x = 0, y =  40, relative = true }))
+
+-- Maximize / fullscreen / center
+hl.bind(mainMod .. " + F",         hl.dsp.window.fullscreen({ mode = "maximized" }),
+    { description = "Maximize" })
+hl.bind(mainMod .. " + SHIFT + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }),
+    { description = "Fullscreen" })
+hl.bind(mainMod .. " + M",         hl.dsp.window.fullscreen({ mode = "maximized" }))
+hl.bind(mainMod .. " + C",         hl.dsp.window.center({}),
+    { description = "Center window" })
+
+-- Screenshots
+local shotDir = "$HOME/Pictures/Screenshots"
+local function shotName()
+    return "\"Screenshot from $(date +'%Y-%m-%d %H-%M-%S').png\""
+end
+
+hl.bind("Print", hl.dsp.exec_cmd(
+    "grim -g \"$(slurp)\" " .. shotDir .. "/" .. shotName()
+), { description = "Screenshot region" })
+
+hl.bind("CTRL + Print", hl.dsp.exec_cmd(
+    "grim " .. shotDir .. "/" .. shotName()
+), { description = "Screenshot full" })
+
+hl.bind("ALT + Print", hl.dsp.exec_cmd(
+    "grim -g \"$(hyprctl activewindow -j | jq -r '\"\\(.at[0]),\\(.at[1]) \\(.size[0])x\\(.size[1])\"')\" "
+    .. shotDir .. "/" .. shotName()
+), { description = "Screenshot active window" })
+
+hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd("noctalia msg screenshot-annotate"),
+    { description = "Annotate screenshot" })
+
+-- Session
+hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd(
+    "command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"
+), { description = "Exit Hyprland" })
+
+hl.bind("CTRL + ALT + Delete", hl.dsp.exec_cmd(
+    "command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"
+))
+
+hl.bind(mainMod .. " + SHIFT + P", function()
+    hl.timer(function()
+        hl.dispatch(hl.dsp.dpms({ action = "off" }))
+    end, { timeout = 300, type = "oneshot" })
+end, { description = "Turn off displays" })
+
+-- Media / brightness
+local mediaFlags = { locked = true }
+
+hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("noctalia msg volume-up"),        mediaFlags)
+hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd("noctalia msg volume-down"),      mediaFlags)
+hl.bind("XF86AudioMute",         hl.dsp.exec_cmd("noctalia msg volume-mute"),      mediaFlags)
+hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd("noctalia msg mic-mute"),         mediaFlags)
+hl.bind("XF86AudioPlay",         hl.dsp.exec_cmd("noctalia msg media play-pause"), mediaFlags)
+hl.bind("XF86AudioPause",        hl.dsp.exec_cmd("noctalia msg media play-pause"), mediaFlags)
+hl.bind("XF86AudioStop",         hl.dsp.exec_cmd("noctalia msg media stop"),       mediaFlags)
+hl.bind("XF86AudioPrev",         hl.dsp.exec_cmd("noctalia msg media previous"),   mediaFlags)
+hl.bind("XF86AudioNext",         hl.dsp.exec_cmd("noctalia msg media next"),       mediaFlags)
+hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("noctalia msg brightness-up"),    mediaFlags)
+hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("noctalia msg brightness-down"),  mediaFlags)
+
+-- Mouse drag / resize
+hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag({}),
+    { mouse = true })
+hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize({ keep_aspect_ratio = false }),
+    { mouse = true })

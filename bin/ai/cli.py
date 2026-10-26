@@ -38,6 +38,7 @@ from . import session as session_mod
 from . import state
 from .events import ERROR, DONE, TEXT
 from .providers import all_providers
+from .providers.openai_compat import ApiError
 from .render import Renderer
 
 BIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -76,25 +77,42 @@ def open_context_file(path):
 
 
 def build_parser(provider):
-    models = ", ".join(provider.models)
+    api = not getattr(provider, "needs_session", True)
+    discovers = getattr(provider, "discovers_model", False)
+    if api:
+        description = (f"Chat with {provider.label} from a prompt or interactively "
+                       f"over its OpenAI-compatible API (no browser session).")
+        if discovers:
+            model_help = (f"model id (default: ${provider.model_env}, else the model "
+                          f"the server has loaded; `--list` shows them)")
+        else:
+            model_help = (f"model id (default: ${provider.model_env}; required when "
+                          f"that is unset, since there is no default)")
+        file_help = ("attach a local file to the first message: text files inline, "
+                     "images as data URLs (repeatable)")
+        prompt_file_help = ("not used: this provider has no upload endpoint and "
+                            "always sends the prompt inline")
+    else:
+        models = ", ".join(provider.models)
+        description = (f"Chat with {provider.label} from a prompt or interactively "
+                       f"(replays the signed-in web session; no API key).")
+        model_help = f"model (default: {provider.default_model}; one of {models})"
+        file_help = ("upload and attach a local file to the first message "
+                     "(repeatable)")
+        prompt_file_help = ("upload a prompt as a text file: automatic when it is "
+                            "too large for one message (the default); "
+                            "--no-prompt-file always sends it inline")
     p = argparse.ArgumentParser(
-        prog=f"ai.{provider.name}",
-        description=f"Chat with {provider.label} from a prompt or interactively "
-                    f"(replays the signed-in web session; no API key).")
+        prog=f"ai.{provider.name}", description=description)
     p.add_argument("prompt", nargs="*", help="prompt text (or pipe it on stdin)")
     p.add_argument("-f", "--file", action="append", default=[], metavar="PATH",
-                   help="upload and attach a local file to the first message "
-                        "(repeatable)")
+                   help=file_help)
     p.add_argument("--prompt-file", action=argparse.BooleanOptionalAction,
-                   default=None,
-                   help="upload a prompt as a text file: automatic when it is too "
-                        "large for one message (the default); --no-prompt-file "
-                        "always sends it inline")
+                   default=None, help=prompt_file_help)
     p.add_argument("--prompt-limit", type=int, default=None, metavar="BYTES",
                    help="override the provider's automatic prompt-file threshold "
                         f"(default: {promptfile.human_size(provider.inline_limit)})")
-    p.add_argument("-m", "--model", default=None,
-                   help=f"model (default: {provider.default_model}; one of {models})")
+    p.add_argument("-m", "--model", default=None, help=model_help)
     p.add_argument("-s", "--system", default=None, help="system / custom instructions")
     p.add_argument("-i", "--interactive", action="store_true",
                    help="keep the conversation open and prompt in a loop")
@@ -114,14 +132,26 @@ def build_parser(provider):
     p.add_argument("--no-color", action="store_true", help="disable colours")
     p.add_argument("--debug", action="store_true", help="print raw stream lines to stderr")
     p.add_argument("--timeout", type=float, default=600, help="request timeout in seconds")
-    p.add_argument("--browser", action="append", default=[],
-                   help="restrict the session to a browser id (repeatable)")
-    p.add_argument("--profile", default=None, help="restrict the session to a profile")
-    p.add_argument("--family", choices=["chromium", "firefox"], default=None)
-    p.add_argument("--open-only", action="store_true",
-                   help="only use browsers/profiles that are currently running")
-    p.add_argument("--exact", action="store_true",
-                   help="match the session host exactly")
+    if api:
+        p.add_argument("--base-url", default=None, metavar="URL",
+                       help="API root (default: "
+                            + (provider.default_base_url or "discovered locally")
+                            + f"; env {provider.base_url_env})")
+        p.add_argument("--api-key", default=None, metavar="KEY",
+                       help=f"API key (default: ${provider.key_env} or none)")
+        p.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
+                       help="extra request parameter, e.g. temperature=0.2 "
+                            "(repeatable)")
+    if not api:
+        p.add_argument("--browser", action="append", default=[],
+                       help="restrict the session to a browser id (repeatable)")
+        p.add_argument("--profile", default=None,
+                       help="restrict the session to a profile")
+        p.add_argument("--family", choices=["chromium", "firefox"], default=None)
+        p.add_argument("--open-only", action="store_true",
+                       help="only use browsers/profiles that are currently running")
+        p.add_argument("--exact", action="store_true",
+                       help="match the session host exactly")
     p.add_argument("--print-session", action="store_true",
                    help="show which session would be used and exit")
     p.add_argument("--print-prompt", action="store_true",
@@ -190,6 +220,19 @@ def make_renderer(args):
                     force_tty=args.tty, width=args.width, height=args.height)
 
 
+def _send_events(conversation, message, files):
+    """The turn's events, with an API failure reported like any other error.
+
+    The web providers report their own failures as ``error`` events; the API
+    engine raises ``ApiError`` instead (the HTTP status, the endpoint, the model
+    hint), so it is turned into the same event here and annotated by the caller.
+    """
+    try:
+        yield from conversation.send(message, files=files or None)
+    except ApiError as exc:
+        yield ev.error(str(exc))
+
+
 def run_turn(conversation, prompt, args, renderer, provider, fields=None):
     """Stream one turn; return ``(status, answer)``.
 
@@ -201,6 +244,10 @@ def run_turn(conversation, prompt, args, renderer, provider, fields=None):
     # --file attaches to the first message only; the site keeps it in context.
     files = list(args.file) if not conversation.turns else []
     mode = args.prompt_file
+    # A provider without an upload endpoint cannot turn an oversized prompt into
+    # a file, so it always sends the prompt inline.
+    if not getattr(provider, "prompt_file_upload", True):
+        mode = False
     attach = promptfile.should_attach(prompt, provider, mode, args.prompt_limit)
     temp = None
     message = prompt
@@ -228,7 +275,7 @@ def run_turn(conversation, prompt, args, renderer, provider, fields=None):
                   f"{os.path.basename(temp)}", file=sys.stderr)
     context = open_context_file(args.context_file)
     try:
-        for event in conversation.send(message, files=files or None):
+        for event in _send_events(conversation, message, files):
             if event.kind == ERROR:
                 event = ev.error(promptfile.annotate_error(
                     event.text, provider, prompt, used_file=attach,
@@ -259,12 +306,30 @@ def save_conversation(provider_name, conversation, model):
                conversation.history, conversation.resume)
 
 
+def api_options(args):
+    """The endpoint configuration an API provider takes from the command line."""
+    return {
+        "base_url": getattr(args, "base_url", None),
+        "api_key": getattr(args, "api_key", None),
+        "params": list(getattr(args, "param", []) or []),
+    }
+
+
+def session_report(provider, match, options=None):
+    """What ``--print-session`` shows: the browser session or the API endpoint."""
+    if getattr(provider, "api", False):
+        return provider.session_descriptor(options)
+    return _session_summary(match)
+
+
 def _open(instance, match, model, args, resume):
-    return instance.open_conversation(
-        match, model, system=args.system, debug=args.debug, timeout=args.timeout,
-        conversation_id=(resume or {}).get("conversation_id"),
-        history=(resume or {}).get("history"),
-        resume=(resume or {}).get("resume"))
+    kwargs = dict(system=args.system, debug=args.debug, timeout=args.timeout,
+                  conversation_id=(resume or {}).get("conversation_id"),
+                  history=(resume or {}).get("history"),
+                  resume=(resume or {}).get("resume"))
+    if getattr(instance, "api", False):
+        kwargs["options"] = api_options(args)
+    return instance.open_conversation(match, model, **kwargs)
 
 
 def run_once(conversation, prompt, args, provider_name, model, provider):
@@ -315,8 +380,13 @@ def run_repl(conversation, instance, match, model, args, provider_name, provider
         if text in _QUIT_WORDS:
             break
         if text in _NEW_WORDS:
+            try:
+                fresh = _open(instance, match, model, args, None)
+            except ApiError as exc:
+                print(f"ai.{provider_name}: {exc}", file=sys.stderr)
+                continue
             conversation.close()
-            conversation = _open(instance, match, model, args, None)
+            conversation = fresh
             continue
 
         renderer = make_renderer(args)
@@ -356,9 +426,21 @@ def main(provider_name, argv=None):
     args = build_parser(provider).parse_args(argv)
 
     if args.list:
-        for name, prov in providers.items():
-            print(f"{name:<10} {prov.label:<10} {', '.join(prov.models)}")
+        for name, prov_cls in providers.items():
+            prov = prov_cls()
+            if getattr(prov, "api", False):
+                models = ", ".join(prov.available_models())
+            else:
+                models = ", ".join(prov.models)
+            print(f"{name:<10} {prov.label:<10} {models}")
         return 0
+
+    if args.prompt_file and not getattr(provider, "prompt_file_upload", True):
+        print(f"ai.{provider_name}: --prompt-file is not supported: "
+              f"{provider.label} has no upload endpoint, so the prompt is always "
+              f"sent inline; raise the model's context length instead",
+              file=sys.stderr)
+        return 2
 
     if args.stdin_only and args.prompt:
         print(f"ai.{provider_name}: positional prompt text is not supported in a "
@@ -384,22 +466,27 @@ def main(provider_name, argv=None):
                   file=sys.stderr)
             return 2
 
-    try:
-        match = session_mod.load(
-            provider.session_target, browser=args.browser or None,
-            profile=args.profile, family=args.family,
-            open_only=args.open_only, exact=args.exact)
-    except session_mod.SessionError as exc:
-        print(f"ai.{provider_name}: {exc}", file=sys.stderr)
-        return 1
-    if not match:
-        print(f"ai.{provider_name}: no signed-in session found for "
-              f"{provider.session_target}; open {provider.origin} in a browser once",
-              file=sys.stderr)
-        return 1
+    if getattr(provider, "needs_session", True):
+        try:
+            match = session_mod.load(
+                provider.session_target, browser=args.browser or None,
+                profile=args.profile, family=args.family,
+                open_only=args.open_only, exact=args.exact)
+        except session_mod.SessionError as exc:
+            print(f"ai.{provider_name}: {exc}", file=sys.stderr)
+            return 1
+        if not match:
+            print(f"ai.{provider_name}: no signed-in session found for "
+                  f"{provider.session_target}; open {provider.origin} in a browser once",
+                  file=sys.stderr)
+            return 1
+    else:
+        # An API provider has no browser session; the endpoint is the transport.
+        match = {}
 
     if args.print_session:
-        print(json.dumps(_session_summary(match), indent=2))
+        print(json.dumps(session_report(provider(), match, api_options(args)),
+                         indent=2))
         return 0
 
     for path in args.file:
@@ -429,7 +516,14 @@ def main(provider_name, argv=None):
 
     model = provider.chosen_model(args.model or (resume or {}).get("model"))
     instance = provider()
-    conversation = _open(instance, match, model, args, resume)
+    try:
+        conversation = _open(instance, match, model, args, resume)
+    except ApiError as exc:
+        print(f"ai.{provider_name}: {exc}", file=sys.stderr)
+        return 1
+    # An API provider resolves the model against the server, so the open
+    # conversation is the authority on what is actually being asked.
+    model = conversation.model
 
     if args.interactive:
         return run_repl(conversation, instance, match, model, args, provider_name,

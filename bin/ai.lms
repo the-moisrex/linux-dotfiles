@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""ai.lms — chat with a local LM Studio server from a prompt or stdin.
+
+Speaks the OpenAI-compatible API of LM Studio's Local Server (discovered on
+``--base-url``/``LMS_BASE_URL``, a cached endpoint, or the usual local ports);
+no browser session and no API key.  See ``ai.lms --help``.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from ai.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main("lms"))

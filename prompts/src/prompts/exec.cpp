@@ -131,7 +131,7 @@ static void execute_exec(view const& v, result& r) {
     } else {
         std::string selector = spec.selector;
         if (selector.empty()) {
-            if (auto expected = v.prior.get(keys::expect)) selector = *expected;
+            if (auto expected = v.prior.get(keys::expect)) selector = agent::primary_selector(*expected);
         }
         if (selector.empty()) selector = "auto";
         if (v.text.empty()) throw soft_error{"prompt exec: no accumulated context to extract a command from\n"};
@@ -164,6 +164,8 @@ static void execute_exec(view const& v, result& r) {
             policy_engine.require_chain(tokens);
             argv.front() = v.env.exe_path.string();
             extra_env = {"PROMPT_INNER=1", "PROMPT_INNER_DEPTH=" + child_depth()};
+            if (char const* current = std::getenv("PROMPT_HISTORY_CURRENT"); current != nullptr && *current != '\0')
+                extra_env.push_back(std::format("PROMPT_HISTORY_PARENT={}", current));
         } else {
             policy_engine.require(argv);
         }

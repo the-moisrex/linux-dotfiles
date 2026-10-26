@@ -21,10 +21,11 @@ from pathlib import Path
 
 PROG = "md.extract"
 
-# `command` is a derived view of a code block, so it is opt-in (`--kind
-# command`/`--select command…`) and `any` means the four source kinds.
+# `command` is a derived view of a code block and `field` a derived view of a
+# labelled line, so both are opt-in (`--kind command`/`--select command…`) and
+# `any` means the four source kinds.
 SOURCE_KINDS = ("code", "table", "section", "frontmatter")
-KINDS = SOURCE_KINDS + ("command",)
+KINDS = SOURCE_KINDS + ("command", "field")
 KIND_ORDER = {kind: i for i, kind in enumerate(KINDS)}
 
 # --- Markdown grammar -------------------------------------------------------
@@ -871,6 +872,55 @@ def derive_commands(blocks: list[Block]) -> list[Block]:
     return derived
 
 
+# A labelled line, e.g. `filename: fix-parser.prompt`, `filename = x`, or
+# `- **filename**: x`. The label may not contain `:`/`=`, so the first colon or
+# equals is the separator.
+FIELD_LINE = re.compile(
+    r"^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?P<label>[^:*=\n]+?)(?:\*\*)?[ \t]*[:=][ \t]*(?P<value>.+?)[ \t]*$"
+)
+
+
+def clean_field_value(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'`":
+        value = value[1:-1].strip()
+    return value
+
+
+def find_fields(text: str, label: str) -> list[tuple[str, int]]:
+    """Every `label: value` line (case-insensitive), as a list of (value, line number)."""
+    wanted = label.strip().lower()
+    found: list[tuple[str, int]] = []
+    for lineno, line in enumerate(text.split("\n"), 1):
+        match = FIELD_LINE.match(line)
+        if not match or match["label"].strip().lower() != wanted:
+            continue
+        value = clean_field_value(match["value"])
+        if value:
+            found.append((value, lineno))
+    return found
+
+
+def field_blocks(texts: list[tuple[str, str]], label: str) -> list[Block]:
+    """Synthetic field blocks, so the selector pipeline can render/position them."""
+    if not label:
+        raise UsageError("the field selector needs a label: field:filename")
+    blocks: list[Block] = []
+    for file_order, (name, text) in enumerate(texts):
+        for value, lineno in find_fields(text, label):
+            blocks.append(
+                Block(
+                    kind="field",
+                    file=name,
+                    file_order=file_order,
+                    start_line=lineno,
+                    end_line=lineno,
+                    body=value,
+                )
+            )
+    return blocks
+
+
 def selector_kinds(selector: Selector) -> set[str]:
     if selector.kind == "auto":
         return set(SOURCE_KINDS)
@@ -1099,12 +1149,56 @@ def contract_for(selector: Selector) -> str:
         return (
             "Begin the response with a YAML frontmatter block delimited by `---` lines, then the answer.\n"
         )
+    if kind == "field":
+        label = qualifier or "value"
+        return (
+            f"Also include a line `{label}: <value>` carrying the requested value, on a line of its own.\n"
+        )
     if kind == "any":
         return "Return only the requested block or blocks, with no surrounding commentary.\n"
     return (
         "Return only the requested result (a table, code block, section or command), "
         "with no surrounding commentary.\n"
     )
+
+
+def describe_selector(selector: Selector) -> str:
+    """One line of a combined multi-part contract, without the trailing period."""
+    kind = selector.kind
+    qualifier = selector.qualifier
+    if kind == "field":
+        return f"a line `{qualifier or 'value'}: <value>` carrying the requested value"
+    if kind == "table":
+        if qualifier:
+            columns = ", ".join(f"`{column.strip()}`" for column in qualifier.split(",") if column.strip())
+            return f"one Markdown table with a header row and these columns: {columns}"
+        return "one Markdown table with a header row"
+    if kind == "code":
+        language = f" tagged `{qualifier}`" if qualifier else ""
+        return f"one fenced code block{language} containing only the code"
+    if kind == "command":
+        program = f" `{qualifier}`" if qualifier else ""
+        return f"one fenced `sh` code block containing a single{program} command line"
+    if kind == "section":
+        return f"a Markdown section headed `{qualifier or 'Answer'}` containing the answer"
+    if kind == "frontmatter":
+        return "a leading YAML frontmatter block"
+    if kind == "none":
+        return "plain prose"
+    return "the requested result"
+
+
+def combined_contract(selectors: list[Selector]) -> str:
+    """One coherent instruction for several selectors (a `.expect` plan)."""
+    lines = ["Return one answer containing all of the following, and nothing else:"]
+    for position, selector in enumerate(selectors, 1):
+        lines.append(f"{position}. {describe_selector(selector)}.")
+    if any(selector.kind == "field" for selector in selectors):
+        lines.append(
+            "Put every `name: <value>` line in one block so it is easy to read, "
+            "and use the exact label shown."
+        )
+    return "\n".join(lines) + "\n"
 
 
 def render_kinds() -> str:
@@ -1116,7 +1210,8 @@ def render_kinds() -> str:
             "frontmatter  the leading --- / +++ block",
             "command      a code block viewed as the command on its first line;",
             "             command:program filters by that program's basename",
-            "any          the four source kinds above (commands are opt-in)",
+            "field        a `label: value` line; field:label reads that value",
+            "any          the four source kinds above (commands and fields are opt-in)",
             "auto         the only table, code block or section in the document",
         )
     )
@@ -1319,6 +1414,7 @@ Default output is the block body alone, so the tool composes:
   md.extract --lang cpp --one answer.md > parser.cpp
   md.extract --select table:symbol answer.md
   md.extract --select command:prompt answer.md | sh
+  md.extract --select field:filename answer.md
   md.extract --items table:symbol,reason answer.md
   md.extract --contract command:prompt
   md.extract --list answer.md
@@ -1331,6 +1427,7 @@ KINDS
   section      a heading and everything under it (--no-subsections to stop)
   frontmatter  the leading --- / +++ block
   command      a code block viewed as the command on its first line
+  field        a `label: value` line viewed as its value (field:label)
   any          the four source kinds above (commands are opt-in)
 
 SELECTORS
@@ -1338,11 +1435,12 @@ SELECTORS
   kind[:qualifier][@N]. `table:symbol,reason` projects those columns (tab
   separated); `code:cpp` filters by language; `section:Usage` by heading;
   `command:prompt` keeps code blocks whose first command is `prompt`;
-  `@2` is the second match. `any` means the four source kinds, `auto` picks
-  the only table, code block or section, and `none` asks an AI for prose.
-  --items prints a JSON array of items (table rows become objects keyed by
-  their columns), and --contract prints the response instruction for an AI.
-  See --kinds for the current grammar.
+  `field:filename` reads the value of a `filename:` line; `@2` is the second
+  match. `any` means the four source kinds, `auto` picks the only table, code
+  block or section, and `none` asks an AI for prose. --items prints a JSON
+  array of items (table rows become objects keyed by their columns), and
+  --contract prints the response instruction for an AI (repeat --contract for a
+  combined multi-part contract). See --kinds for the current grammar.
 
 CONTEXT
   code, table and frontmatter blocks carry the nearest enclosing heading path
@@ -1472,7 +1570,12 @@ def build_parser() -> argparse.ArgumentParser:
     output.add_argument("--json", action="store_true", help="print matching blocks as JSON")
     output.add_argument("--jsonl", action="store_true", help="print one JSON object per block")
     output.add_argument("--items", metavar="SPEC", help="print the selector's items as JSON (for `.each`)")
-    output.add_argument("--contract", metavar="SPEC", help="print the AI instruction for a selector")
+    output.add_argument(
+        "--contract",
+        action="append",
+        metavar="SPEC",
+        help="print the AI instruction for a selector; repeat for a combined multi-part contract",
+    )
     output.add_argument("--kinds", action="store_true", help="list the selector kinds and exit")
     output.add_argument("--no-header", action="store_true", help="table projections: omit the header row")
 
@@ -1502,8 +1605,12 @@ def run(args: argparse.Namespace) -> int:
     if args.kinds:
         print(render_kinds())
         return 0
-    if args.contract is not None:
-        sys.stdout.write(contract_for(parse_selector(args.contract)))
+    if args.contract:
+        selectors = [parse_selector(spec) for spec in args.contract]
+        if len(selectors) == 1:
+            sys.stdout.write(contract_for(selectors[0]))
+        else:
+            sys.stdout.write(combined_contract(selectors))
         return 0
 
     selector = parse_selector(args.select) if args.select is not None else None
@@ -1511,6 +1618,8 @@ def run(args: argparse.Namespace) -> int:
     kinds = set(args.kind or ["code"])
     if "any" in kinds or "all" in kinds:
         kinds = set(SOURCE_KINDS)
+    if "field" in kinds and selector is None:
+        raise UsageError("the field kind needs a label: use --select field:LABEL")
     unknown = kinds - set(KINDS)
     if unknown:
         raise UsageError(
@@ -1560,8 +1669,10 @@ def run(args: argparse.Namespace) -> int:
         sources = ["-"]
 
     blocks: list[Block] = []
+    texts: list[tuple[str, str]] = []
     for file_order, source in enumerate(sources):
         text = sys.stdin.read() if source == "-" else read_file(source)
+        texts.append((source, text))
         blocks.extend(
             parse_document(
                 text,
@@ -1574,6 +1685,9 @@ def run(args: argparse.Namespace) -> int:
     # `command` is a view of a code block; derive it for every document so
     # auto-detection can see it, even when the caller did not name the kind.
     blocks.extend(derive_commands(blocks))
+    # `field` is a view of a labelled line; only the selector names its label.
+    if selector is not None and selector.kind == "field":
+        blocks.extend(field_blocks(texts, selector.qualifier))
     assign_indices(blocks)
 
     if args.items is not None:

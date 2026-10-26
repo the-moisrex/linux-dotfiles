@@ -184,13 +184,14 @@ class ContextWriterTest(unittest.TestCase):
 
 
 class FakeConversation:
-    def __init__(self, name, replies, conversation_id=""):
+    def __init__(self, name, replies, conversation_id="", model=""):
         self.name = name
         self.replies = list(replies)
         self.turns = 0
         self.prompts = []
         self.closed = False
         self.conversation_id = conversation_id
+        self.model = model
         self.history = []
         self.resume = {}
 

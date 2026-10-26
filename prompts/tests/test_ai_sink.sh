@@ -49,6 +49,8 @@ STUB
 
 make_stub ai.dseek
 make_stub ai.grok
+make_stub ai.lms
+make_stub ai.openai
 
 # Everything runs from $tmp so the copied binary's own directory holds the stubs.
 run() {
@@ -109,5 +111,14 @@ grep -q -- '--height=40' "$tmp/tty.args" || fail "terminal sink got no --height"
 # --- dry runs take no side channel --------------------------------------
 AI_SINK_ARGS="$tmp/dry.args" bash -c 'cd "$1" && ./prompt .note hi .ai.dseek --print-prompt' _ "$tmp" >/dev/null 2>&1
 grep -q -- '--context-file=' "$tmp/dry.args" && fail "--print-prompt was given --context-file"
+
+# --- the API providers use the same plumbing ----------------------------
+# `.ai.lms` and `.ai.openai` are ordinary sinks: the executor, --tty/_width
+# and the --context-file side channel are shared with the web providers.
+for provider in ai.lms ai.openai; do
+    AI_SINK_ARGS="$tmp/$provider.args" bash -c 'cd "$1" && ./prompt .note hi ".$2"' _ "$tmp" "$provider" >/dev/null
+    grep -q -- "--context-file=" "$tmp/$provider.args" || fail ".$provider got no --context-file"
+    grep -q -- "--tty" "$tmp/$provider.args" && fail "piped .$provider was given --tty"
+done
 
 echo "test_ai_sink: ok"

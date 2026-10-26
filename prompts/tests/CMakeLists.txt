@@ -8,6 +8,16 @@ target_link_libraries(test_errors PRIVATE prompt_lib)
 target_include_directories(test_errors PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME errors COMMAND test_errors)
 
+add_executable(test_prompt_file test_prompt_file.cpp)
+target_link_libraries(test_prompt_file PRIVATE prompt_lib)
+target_include_directories(test_prompt_file PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME prompt_file COMMAND test_prompt_file)
+
+add_executable(test_function test_function.cpp)
+target_link_libraries(test_function PRIVATE prompt_lib)
+target_include_directories(test_function PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME function COMMAND test_function)
+
 add_executable(test_fs test_fs.cpp)
 target_link_libraries(test_fs PRIVATE prompt_lib)
 target_include_directories(test_fs PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -35,8 +45,22 @@ target_link_libraries(test_clipboard PRIVATE prompt_lib)
 target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME clipboard_identifier COMMAND test_clipboard)
 
+# End-to-end `.clipboard`/`.c.p` (paste) and `.c.c` (copy) against a stubbed
+# xclip backend, so the paste/copy roles, --head caps and passthrough are
+# exercised without a real session clipboard.
+add_test(NAME clipboard_prompt
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_clipboard_prompt.sh $<TARGET_FILE:prompt>)
+
 add_test(NAME ai_help COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
 set_tests_properties(ai_help PROPERTIES PASS_REGULAR_EXPRESSION "--with-context")
+
+# The API providers (a local LM Studio server / the OpenAI-compatible API)
+# advertise their endpoint flags instead of a browser session.
+add_test(NAME ai_lms_help COMMAND $<TARGET_FILE:prompt> .ai.lms --help)
+set_tests_properties(ai_lms_help PROPERTIES PASS_REGULAR_EXPRESSION "--base-url")
+
+add_test(NAME ai_openai_help COMMAND $<TARGET_FILE:prompt> .ai.openai --help)
+set_tests_properties(ai_openai_help PROPERTIES PASS_REGULAR_EXPRESSION "--api-key")
 
 add_test(NAME ai_debate_help COMMAND $<TARGET_FILE:prompt> .ai.debate --help)
 set_tests_properties(ai_debate_help PROPERTIES PASS_REGULAR_EXPRESSION "--rounds")
@@ -63,6 +87,14 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME ai_debate_unit
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_debate.py)
+    # The API engine against a threaded HTTP stub: SSE mapping, discovery,
+    # model defaulting, --param, inline attachments, -c replay, refusals.
+    add_test(NAME ai_lms_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_lms.py)
+    # The GapGPT poll fallback: bearer-token headers and a transport
+    # failure that must not abort a quiet (tool-running) turn.
+    add_test(NAME ai_gap_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_gap.py)
 endif()
 
 add_test(NAME ai_help_tty COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
@@ -97,6 +129,18 @@ add_test(NAME save_roundtrip
 add_test(NAME clear_roundtrip
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_clear.sh $<TARGET_FILE:prompt>)
 
+# The history store: the marker format, the byte framing (a body that contains
+# a fake marker), the chain replay, truncation and the retention pass.
+add_executable(test_history test_history.cpp)
+target_link_libraries(test_history PRIVATE prompt_lib)
+target_include_directories(test_history PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME history COMMAND test_history)
+
+# End-to-end recording: `.history` reproduces stdout, list/find/purge, the env
+# knobs, inner-run tagging and completion.
+add_test(NAME history_roundtrip
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_history.sh $<TARGET_FILE:prompt>)
+
 # `tse_data::run_tool`: a timeout, a non-zero exit and an empty dataset each
 # produce a message instead of the old silent empty soft_error.
 add_executable(test_tse_tool test_tse_tool.cpp)
@@ -108,6 +152,18 @@ add_executable(test_embed test_embed.cpp)
 target_link_libraries(test_embed PRIVATE prompt_lib)
 target_include_directories(test_embed PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME embed COMMAND test_embed)
+
+# The one text-fold rule (`append_block`/`strip_newlines`) shared by the chain
+# context, the stdout accumulator, the clipboard builder and the history replay.
+add_executable(test_strings test_strings.cpp)
+target_link_libraries(test_strings PRIVATE prompt_lib)
+target_include_directories(test_strings PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME strings COMMAND test_strings)
+
+# End-to-end smoke: the dispatcher trims every emitted segment on both sides,
+# separates blocks with one blank line and skips an empty segment.
+add_test(NAME output_fold
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_output.sh $<TARGET_FILE:prompt>)
 
 add_executable(test_completion test_completion.cpp)
 target_link_libraries(test_completion PRIVATE prompt_lib)
@@ -127,6 +183,33 @@ set_tests_properties(complete_flags PROPERTIES PASS_REGULAR_EXPRESSION "--format
 
 add_test(NAME complete_values COMMAND $<TARGET_FILE:prompt> diagram --complete "" --type)
 set_tests_properties(complete_values PROPERTIES PASS_REGULAR_EXPRESSION "mermaid")
+
+# End-to-end smoke: the whole-line mode (what shell/completions.fish calls)
+# classifies the position itself — prompt names at the head, a `.name`/`-name`
+# step boundary after a prompt, the open prompt's own values, and the
+# `*.prompt` files that can be inlined next to the cwd.
+add_test(NAME complete_line_head COMMAND $<TARGET_FILE:prompt> --complete-line "")
+set_tests_properties(complete_line_head PROPERTIES PASS_REGULAR_EXPRESSION "--no-prompt-files")
+
+add_test(NAME complete_line_step COMMAND $<TARGET_FILE:prompt> --complete-line ".met" .note hi)
+set_tests_properties(complete_line_step PROPERTIES PASS_REGULAR_EXPRESSION "\\.metadata")
+
+add_test(NAME complete_line_values COMMAND $<TARGET_FILE:prompt> --complete-line "" .diagram --type)
+set_tests_properties(complete_line_values PROPERTIES PASS_REGULAR_EXPRESSION "mermaid")
+
+add_test(NAME complete_line_prompt_file COMMAND $<TARGET_FILE:prompt> --complete-line "hel")
+set_tests_properties(complete_line_prompt_file PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
+    PASS_REGULAR_EXPRESSION "hello\\.prompt")
+
+# Functions in the line mode: `.func` is a keyword at a step boundary, and an
+# inline `.func NAME … .end` makes `.NAME` a step candidate.
+add_test(NAME complete_line_func COMMAND $<TARGET_FILE:prompt> --complete-line ".f" .note hi)
+set_tests_properties(complete_line_func PROPERTIES PASS_REGULAR_EXPRESSION "\\.func")
+
+add_test(NAME complete_line_inline_func
+    COMMAND $<TARGET_FILE:prompt> --complete-line ".o" .func one .note test .end)
+set_tests_properties(complete_line_inline_func PROPERTIES PASS_REGULAR_EXPRESSION "\\.one")
 
 # End-to-end smoke: `tse.analyze` is instructions only — it takes no arguments,
 # fetches nothing and needs no bin/ tool, so it can run without the network.
@@ -162,11 +245,34 @@ set_tests_properties(length_conflict PROPERTIES WILL_FAIL TRUE)
 add_test(NAME agent_expect_contract COMMAND $<TARGET_FILE:prompt> .expect command:prompt)
 set_tests_properties(agent_expect_contract PROPERTIES PASS_REGULAR_EXPRESSION "single `prompt` command")
 
+# A multi-entry plan: the unnamed primary plus a named binding, rendered as one
+# combined contract.
+add_test(NAME agent_expect_plan
+    COMMAND $<TARGET_FILE:prompt> .expect command:prompt save.stem=field:filename)
+set_tests_properties(agent_expect_plan PROPERTIES
+    PASS_REGULAR_EXPRESSION "filename: <value>"
+    FAIL_REGULAR_EXPRESSION "expected exactly one selector")
+
 add_test(NAME agent_extract
     COMMAND $<TARGET_FILE:prompt> .note [=[```sh
 prompt .length 5
 ```]=] .expect command:prompt .extract)
 set_tests_properties(agent_extract PROPERTIES PASS_REGULAR_EXPRESSION "prompt \\.length 5")
+
+# The `field` selector: a labelled value, positional and bound as a fact.
+add_test(NAME agent_extract_field
+    COMMAND $<TARGET_FILE:prompt> .note [=[filename: fix-parser.prompt]=] .extract field:filename)
+set_tests_properties(agent_extract_field PROPERTIES PASS_REGULAR_EXPRESSION "fix-parser\\.prompt")
+
+add_test(NAME agent_extract_bind
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_extract_bind.sh $<TARGET_FILE:prompt>)
+
+# `md.extract`'s field parsing and the combined contract, as a unit test.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME md_extract_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_md_extract.py
+                ${CMAKE_SOURCE_DIR}/../bin/md.extract)
+endif()
 
 add_test(NAME agent_exec_print COMMAND $<TARGET_FILE:prompt> .exec --print git status)
 set_tests_properties(agent_exec_print PROPERTIES PASS_REGULAR_EXPRESSION "git status")
@@ -219,3 +325,31 @@ add_test(NAME agent_each_exec
 | a |
 | b |]=] .each --yes table:symbol .exec -- echo {symbol} .end)
 set_tests_properties(agent_each_exec PROPERTIES PASS_REGULAR_EXPRESSION "## b")
+
+# Prompt files: a `*.prompt` argument is inlined as the chain it holds.
+add_test(NAME prompt_file_run COMMAND $<TARGET_FILE:prompt> ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/hello.prompt)
+set_tests_properties(prompt_file_run PROPERTIES PASS_REGULAR_EXPRESSION "hello from a prompt file")
+
+# A `*.prompt` token in the first position that resolves to nothing is an error.
+add_test(NAME prompt_file_missing COMMAND $<TARGET_FILE:prompt> no-such-file.prompt)
+set_tests_properties(prompt_file_missing PROPERTIES PASS_REGULAR_EXPRESSION "cannot find prompt file")
+
+# Functions: `.func NAME(params) … .end` defines a step and `.name` calls it.
+add_test(NAME function_inline COMMAND $<TARGET_FILE:prompt> .func hi .note hello .end .hi)
+set_tests_properties(function_inline PROPERTIES PASS_REGULAR_EXPRESSION "hello")
+
+add_test(NAME function_params
+    COMMAND $<TARGET_FILE:prompt> .func "greet(who,ai=dseek)" .note "hello {who} {ai}" .end .greet world)
+set_tests_properties(function_params PROPERTIES PASS_REGULAR_EXPRESSION "hello world dseek")
+
+add_test(NAME function_shadow COMMAND $<TARGET_FILE:prompt> .func note .note x .end)
+set_tests_properties(function_shadow PROPERTIES WILL_FAIL TRUE)
+
+# `prompt` records every invocation under $XDG_STATE_HOME: point the whole
+# suite at a scratch directory so tests never touch the user's real history
+# store (the history test sets its own per-case directory on top of this).
+get_property(_prompt_tests DIRECTORY PROPERTY TESTS)
+if(_prompt_tests)
+    set_tests_properties(${_prompt_tests} PROPERTIES
+        ENVIRONMENT "PROMPT_HISTORY_DIR=${CMAKE_CURRENT_BINARY_DIR}/history;PROMPT_FUNCS=")
+endif()

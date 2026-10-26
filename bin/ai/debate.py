@@ -27,14 +27,16 @@ from . import session as session_mod
 from . import state
 from .cli import (
     _open,
-    _session_summary,
+    api_options,
     copy_answer,
     make_renderer,
     open_context_file,
     read_prompt,
     run_turn,
+    session_report,
 )
 from .providers import all_providers
+from .providers.openai_compat import ApiError
 
 #: The default request appended to every verification turn.
 DEFAULT_INSTRUCTION = (
@@ -51,7 +53,7 @@ VERDICT_SUFFIX = (
 )
 
 #: Command spellings that are not the provider registry keys.
-ALIASES = {"dseek": "deepseek", "gapgpt": "gap"}
+ALIASES = {"dseek": "deepseek", "gapgpt": "gap", "lmstudio": "lms", "oai": "openai"}
 
 _VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(AGREE|DISAGREE)\b")
 
@@ -250,8 +252,10 @@ def build_parser(providers):
         allow_abbrev=False,
         description="Ask two or more AIs the same question, then let each "
                     "verify the other's answer, round after round (replays the "
-                    "signed-in web sessions; no API key).",
-        epilog=f"providers: {names} (dseek is accepted for deepseek)")
+                    "signed-in web sessions, or calls the local/hosted "
+                    "OpenAI-compatible API providers without a browser).",
+        epilog=f"providers: {names} (dseek = deepseek, lmstudio = lms, "
+               f"oai = openai)")
     p.add_argument("words", nargs="*", metavar="PROVIDER|QUESTION",
                    help="providers first (two or more), then the question; "
                         "with no question the prompt is read from stdin")
@@ -308,6 +312,13 @@ def build_parser(providers):
                    help="print raw stream lines to stderr")
     p.add_argument("--timeout", type=float, default=600,
                    help="per-request timeout in seconds")
+    p.add_argument("--base-url", default=None, metavar="URL",
+                   help="API root for the API providers (lms/openai); "
+                        "overrides their environment variable")
+    p.add_argument("--api-key", default=None, metavar="KEY",
+                   help="API key for the API providers")
+    p.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
+                   help="extra request parameter for the API providers (repeatable)")
     p.add_argument("--browser", action="append", default=[],
                    help="restrict the sessions to a browser id (repeatable)")
     p.add_argument("--profile", default=None,
@@ -387,6 +398,10 @@ def load_sessions(names, providers, args):
     matches = {}
     for name in names:
         provider = providers[name]
+        if not getattr(provider, "needs_session", True):
+            # An API provider is configured, not signed in.
+            matches[name] = {}
+            continue
         try:
             match = session_mod.load(
                 provider.session_target, browser=args.browser or None,
@@ -447,9 +462,14 @@ def open_participants(names, providers, matches, models, args, saved=None):
             model = provider.chosen_model(
                 models.get(name) or (resume or {}).get("model"))
             instance = provider()
-            conversation = _open(instance, matches[name], model, args, resume)
+            try:
+                conversation = _open(instance, matches[name], model, args, resume)
+            except ApiError as exc:
+                raise DebateError(str(exc)) from exc
+            # An API provider resolves its model against the server.
             participants.append(
-                Participant(name, provider, model, conversation, args, save_all))
+                Participant(name, provider, conversation.model, conversation,
+                            args, save_all))
     except BaseException:
         for participant in participants:
             participant.close()
@@ -482,7 +502,8 @@ def main(argv=None):
 
     if args.list:
         for name, provider in providers.items():
-            print(f"{name:<10} {provider.label:<10} {', '.join(provider.models)}")
+            print(f"{name:<10} {provider.label:<10} "
+                  f"{', '.join(provider.models) or '-'}")
         return 0
 
     try:
@@ -525,8 +546,12 @@ def main(argv=None):
         return 1
 
     if args.print_session:
-        print(json.dumps({name: _session_summary(matches[name]) for name in names},
-                         indent=2))
+        reports = {}
+        for name in names:
+            instance = providers[name]()
+            reports[name] = session_report(instance, matches[name],
+                                           api_options(args))
+        print(json.dumps(reports, indent=2))
         return 0
 
     try:
@@ -546,8 +571,12 @@ def main(argv=None):
                            "all" if args.transcript else args.context, question)
     status = 0
     try:
-        participants = open_participants(names, providers, matches, models,
-                                         turn_args, saved)
+        try:
+            participants = open_participants(names, providers, matches, models,
+                                             turn_args, saved)
+        except DebateError as exc:
+            print(f"ai.debate: {exc}", file=sys.stderr)
+            return 1
         try:
             result = run_panel(
                 participants, question, rounds=args.rounds,

@@ -11,6 +11,16 @@ namespace prompt::text {
 // substitution. 15 prompt files carried a private copy of this.
 std::string rstrip_newlines(std::string_view s);
 
+// Trim leading and trailing newlines — a block boundary. Spaces and tabs are
+// left alone (leading indentation in a code block is content, not padding).
+std::string_view strip_newlines(std::string_view s);
+
+// The one text-fold rule shared by the chain context, the stdout accumulator,
+// the clipboard builder and the history replay: trim both sides, skip an empty
+// block, separate consecutive blocks with exactly one blank line and terminate
+// the buffer with exactly one newline. Returns whether it added anything.
+bool append_block(std::string& text, std::string_view block);
+
 // Strip trailing occurrences of `c` (default space).
 std::string rstrip(std::string_view s, char c = ' ');
 

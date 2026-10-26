@@ -103,10 +103,80 @@ bool is_selector_token(std::string_view token) {
         "auto", "any", "all", "none", "code", "table", "section", "command", "frontmatter",
     };
     if (std::ranges::any_of(bare, [&](std::string_view kind) { return token == kind; })) return true;
-    static constexpr std::array<std::string_view, 5> prefixes = {
-        "code:", "table:", "section:", "command:", "frontmatter:",
+    static constexpr std::array<std::string_view, 6> prefixes = {
+        "code:", "table:", "section:", "command:", "frontmatter:", "field:",
     };
     return std::ranges::any_of(prefixes, [&](std::string_view prefix) { return token.starts_with(prefix); });
+}
+
+namespace {
+
+// A binding name must look like a fact key; anything else before `=` stays part
+// of the selector (so `section:a=b` is a heading, not a binding).
+bool valid_fact_key(std::string_view name) {
+    if (name.empty()) return false;
+    auto const first = static_cast<unsigned char>(name.front());
+    if (std::isalpha(first) == 0 && name.front() != '_') return false;
+    return std::ranges::all_of(name, [](char c) {
+        auto const uc = static_cast<unsigned char>(c);
+        return std::isalnum(uc) != 0 || c == '_' || c == '.' || c == '-';
+    });
+}
+
+std::string_view trim(std::string_view text) {
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0) text.remove_prefix(1);
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0) text.remove_suffix(1);
+    return text;
+}
+
+} // namespace
+
+std::vector<expect_entry> parse_expect_plan(std::string_view plan) {
+    std::vector<expect_entry> entries;
+    if (plan.empty()) return entries;
+    std::size_t begin = 0;
+    while (begin <= plan.size()) {
+        auto const end = plan.find('\n', begin);
+        std::string_view line =
+            trim(std::string_view{plan.data() + begin, (end == std::string_view::npos ? plan.size() : end) - begin});
+        if (!line.empty()) {
+            expect_entry entry;
+            auto const equals = line.find('=');
+            auto const name = equals == std::string_view::npos ? std::string_view{} : trim(line.substr(0, equals));
+            if (valid_fact_key(name)) {
+                entry.name = std::string(name);
+                entry.selector = std::string(trim(line.substr(equals + 1)));
+            } else {
+                entry.selector = std::string(line);
+            }
+            if (!entry.selector.empty()) entries.push_back(std::move(entry));
+        }
+        if (end == std::string_view::npos) break;
+        begin = end + 1;
+    }
+    return entries;
+}
+
+std::string format_expect_plan(std::span<expect_entry const> entries) {
+    std::string out;
+    for (auto const& entry : entries) {
+        if (!out.empty()) out += '\n';
+        if (!entry.name.empty()) {
+            out += entry.name;
+            out += '=';
+        }
+        out += entry.selector;
+    }
+    return out;
+}
+
+std::string primary_selector(std::string_view plan) {
+    auto const entries = parse_expect_plan(plan);
+    for (auto const& entry : entries) {
+        if (entry.name.empty()) return entry.selector;
+    }
+    if (entries.size() == 1) return entries.front().selector;
+    throw usage_error{"prompt: the expect plan has no primary selector (an unnamed `[name=]selector` entry)\n"};
 }
 
 std::vector<std::string> split_command(std::string_view line) {

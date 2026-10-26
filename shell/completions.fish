@@ -55,48 +55,28 @@ complete -c telegram.links -f -l list-ids -d "List the stored Telegram IDs"
 complete -c telegram.links -f -a "(telegram.links --list-ids)" -d "Telegram Channel ID"
 
 # prompt
-function __fish_prompt_needs_name
-    set -l tokens (commandline -opc)
-    test (count $tokens) -le 1
-end
-
-function __fish_prompt_has_name
-    set -l tokens (commandline -opc)
-    test (count $tokens) -ge 2
-end
-
-# Check if the current token looks like a prompt name (. or - prefix, but not a
-# long option such as --head). A bare `.` counts; a bare `-` is left to the
-# flag completion.
-function __fish_prompt_token_is_shorthand
-    set -l token (commandline -ct)
-    string match -qr '^\.|^-[^-]' -- "$token"
-end
-
-# All per-prompt argument completion lives in the native dispatcher: it answers
-# `prompt <name> --complete <prefix> [args typed before it...]` with
-# `value<TAB>description` lines, deriving flags from the prompt's own help and
-# positional/value candidates from the prompt's own code. Passing the tokens
-# already typed (`$tokens[3..-1]`) lets it complete values such as `--format <TAB>`
-# and detect which operand the user is on.
+# Every candidate — prompt names in all three spellings, the `*.prompt` files
+# that can be inlined, and the open prompt's own flags and values — comes from
+# the dispatcher itself: `prompt --complete-line <current> <tokens...>` works out
+# whether the token is a name, the start of the next `.`/`-` step or an argument
+# of the prompt already open, so this script only forwards the command line.
 function __fish_prompt_complete
     set -l tokens (commandline -opc)
-    test (count $tokens) -ge 2; or return
     set -l current (commandline -ct)
-    prompt $tokens[2] --complete "$current" $tokens[3..-1] 2>/dev/null
+    prompt --complete-line "$current" $tokens[2..-1] 2>/dev/null
 end
 
-complete -c prompt -f -n __fish_prompt_needs_name -s h -l help -d "Show help message"
-complete -c prompt -f -n __fish_prompt_needs_name -xa list -d "List available prompts"
-complete -c prompt -f -n __fish_prompt_needs_name -xa list-prompts -d "Print full help of every prompt"
-# Complete prompt names for the first argument and for subsequent . or - prefixed tokens.
-# Include .name and -name shorthands (expanded by prompt-compiler).
-# -f suppresses fish's default file completion so . and - prefixes match prompt names.
-complete -c prompt -f -n __fish_prompt_needs_name -xa '(prompt list --names 2>/dev/null | awk \'{print $0; print "."$0; print "-"$0}\')' -d "Prompt name"
-complete -c prompt -f -n __fish_prompt_token_is_shorthand -xa '(prompt list --names 2>/dev/null | awk \'{print "."$0; print "-"$0}\')' -d "Prompt name"
-# Prompt arguments: flags, identifiers, subcommands and enumerations. No -f, so
-# fish's default file completion still offers paths for prompts that embed files.
-complete -c prompt -n __fish_prompt_has_name -a '(__fish_prompt_complete)'
+# A `.name`/`-name` token starts the next chain step (never a path, and never a
+# long option like --head), so fish's own file completion must not fight it.
+function __fish_prompt_token_is_shorthand
+    string match -qr '^\.|^-[^-]' -- (commandline -ct)
+end
+
+# The name position and every step boundary: the dispatcher's candidates only.
+complete -c prompt -f -n 'test (count (commandline -opc)) -le 1; or __fish_prompt_token_is_shorthand' -a '(__fish_prompt_complete)'
+# A prompt's arguments: the dispatcher's candidates on top of fish's own path
+# completion, so `.files src/ma<TAB>` still lists files.
+complete -c prompt -n 'test (count (commandline -opc)) -ge 2; and not __fish_prompt_token_is_shorthand' -a '(__fish_prompt_complete)'
 
 # fish completion for detatch
 

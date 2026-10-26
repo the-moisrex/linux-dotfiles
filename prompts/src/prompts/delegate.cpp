@@ -3,7 +3,8 @@
 
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
-#include <set>
+#include <algorithm>
+#include <array>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -16,13 +17,13 @@ namespace {
 // Prompts the local AI can handle itself, or meta prompts: no need to ask the
 // bigger AI about these. Mirrors the awk `$1 !~ excl` exclusion where the
 // pattern is fully anchored, i.e. an exact-name set.
-bool is_excluded(std::string const& name) {
-    static const std::set<std::string> excluded = {
-        "english", "farsi", "auto",         "summarize", "metadata", "tweets", "diagram",
-        "explain", "list",  "list-prompts", "delegate",  "ai-said",  "yt",     "save",
-        "flush",   "clear", "each",         "exec",      "extract",  "expect",
-    };
-    return excluded.contains(name);
+bool is_excluded(std::string_view name) {
+    static constexpr auto excluded = std::to_array<std::string_view>({
+        "english", "farsi",        "auto",     "summarize", "metadata", "tweets", "diagram", "explain",
+        "list",    "list-prompts", "delegate", "ai-said",   "yt",       "save",   "flush",   "clear",
+        "each",    "exec",         "extract",  "expect",    "c.c",      "c.p",
+    });
+    return std::ranges::any_of(excluded, [name](std::string_view entry) { return entry == name; });
 }
 
 // Builds the "- `name` — desc" catalog from the native registry, sorted with
@@ -37,7 +38,7 @@ std::string build_prompt_list() {
 
     std::string out;
     for (auto const* desc : sorted) {
-        if (is_excluded(std::string(desc->name))) continue;
+        if (is_excluded(desc->name)) continue;
         out += "- `";
         out += std::string(desc->name);
         out += "` \xE2\x80\x94 ";
@@ -53,6 +54,10 @@ static void execute_delegate(view const& v, result& r) {
     auto head_lines = head_lines_or_throw(v);
     (void)head_lines; // the command-construction prompt embeds no head-capped files
 
+    // `.save` without an explicit target declares that it needs a derived file
+    // name, so this prompt asks the AI to supply one and publishes the binding.
+    bool const want_name = v.prior.get(keys::save_wants_name).has_value();
+
     std::string out;
 
     out += "# Available context-gathering prompts\n\nUse these with the shorthand syntax to compose your command:\n  "
@@ -61,7 +66,8 @@ static void execute_delegate(view const& v, result& r) {
            "embed its output\n  .files file1 file2  Embed file contents as fenced code blocks\n  .agents             "
            "Embed agent instruction files (AGENTS.md, etc.)\n  .git-dirty          Show uncommitted changes in the "
            "repo\n  .repo               Show the repository file structure\n  .clipboard          Embed clipboard "
-           "content\n  .save [file]        Save the accumulated context to a file\n\nExample command:\n  prompt .note "
+           "content (alias: .c.p)\n  .c.c                Copy the accumulated context to the clipboard\n  .save "
+           "[file]        Save the accumulated context to a file\n\nExample command:\n  prompt .note "
            "\"WIP: fixing parser bug\" .files parser.h parser.cpp .cli "
            "\"make test 2>&1\"\n\n# Other available prompts\n\nBesides the shorthand above, every prompt below can "
            "also be chained into\nthe command (prefix it with '.', e.g. '.man ls') to add more context:\n\n";
@@ -119,8 +125,28 @@ static void execute_delegate(view const& v, result& r) {
            "\n";
 
     // The delegate contract is exactly one sh block containing a prompt
-    // command, so the extraction stage needs no `.expect` of its own.
-    r.published.set(keys::expect, "command:prompt");
+    // command, so the extraction stage needs no `.expect` of its own. When a
+    // `.save` wants a name, the contract also asks for a `filename:` line and
+    // the plan binds it to `.save`'s filename fact.
+    if (want_name) {
+        out += "\n# File name\n\n"
+               "Also name the file. Put a YAML frontmatter block at the very top of your answer,\n"
+               "before the code block, with a single `filename` entry:\n"
+               "\n"
+               "```\n"
+               "---\n"
+               "filename: <short-kebab-case-name>.prompt\n"
+               "---\n"
+               "```\n"
+               "\n"
+               "Use the `.prompt` extension so the saved file can be run again with\n"
+               "`prompt <name>.prompt`. Keep the name short and descriptive, and use the exact\n"
+               "`filename:` label.\n";
+        r.published.set(keys::expect,
+                        std::string("command:prompt\n") + std::string(keys::save_stem) + "=field:filename");
+    } else {
+        r.published.set(keys::expect, "command:prompt");
+    }
 
     // No clipboard opt-out: delegate's own output copies like every other
     // prompt's.

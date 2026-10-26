@@ -56,7 +56,8 @@ std::vector<std::string_view> list_prompt_names() {
 
 bool register_prompt(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn, chain_role role,
-                     bool stream_output, preflight_fn preflight, declare_fn declare, bool takes_body) noexcept {
+                     bool stream_output, preflight_fn preflight, declare_fn declare, bool takes_body,
+                     bool record) noexcept {
     if (prompts_count >= prompts_storage.size()) {
         // Static-init registration cannot report an error to anyone: aborts with
         // a message a developer can act on.
@@ -74,15 +75,16 @@ bool register_prompt(std::string_view name, std::string_view help_summary, exec_
         .preflight = preflight,
         .declare = declare,
         .takes_body = takes_body,
+        .record = record,
     };
     return true;
 }
 
 bool register_sink(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                    void (*render_help_fn)(std::ostream&), completion_fn complete_fn, bool stream_output,
-                   preflight_fn preflight, declare_fn declare, bool takes_body) noexcept {
+                   preflight_fn preflight, declare_fn declare, bool takes_body, bool record) noexcept {
     return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, stream_output,
-                           preflight, declare, takes_body);
+                           preflight, declare, takes_body, record);
 }
 
 } // namespace prompt

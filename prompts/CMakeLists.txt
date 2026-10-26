@@ -89,11 +89,17 @@ add_library(prompt_lib OBJECT
     src/sdk/wire.cpp
     src/sdk/prompt_registry.cpp
     src/sdk/chaining.cpp
+    src/sdk/prompt_file.cpp
+    src/sdk/completion.cpp
+    src/sdk/line_completion.cpp
+    src/sdk/function.cpp
     src/sdk/embed.cpp
     src/sdk/args.cpp
     src/sdk/sink.cpp
     src/sdk/agent.cpp
     src/sdk/policy.cpp
+    src/sdk/history.cpp
+    src/sdk/terminal.cpp
     ${PROMPT_SRCS}
 )
 target_sources(prompt_lib PRIVATE ${PROMPT_ASSET_HPP})

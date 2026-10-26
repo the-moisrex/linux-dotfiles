@@ -411,10 +411,10 @@ class _Conversation(Conversation):
         super().__init__(match, model, system, debug, timeout,
                          conversation_id, history, resume)
         self.provider = provider
-        self.headers = session_mod.build_headers(match, {
-            "Accept": "application/json, text/plain, */*",
-            "Referer": provider.origin + "/",
-        })
+        # The REST history/poll endpoints need the accessToken bearer, exactly
+        # like the upload path; cookie-only headers get HTTP 401, which would
+        # leave the poll fallback (``_poll``) permanently blind.
+        self.headers = provider.history_headers(match)
         self.socket = None
         self.turn_token = ""
         self.title = self.resume.get("title") or ""
@@ -565,7 +565,15 @@ class _Conversation(Conversation):
                     yield ev.error("GapGPT never acknowledged the message")
                     return False
                 if acked and now - last_seen >= POLL_AFTER:
-                    snapshot, done = self._poll()
+                    # A poll must never abort the turn: the socket is the
+                    # primary path, and a failed poll just means "try again
+                    # after the next quiet slice".
+                    try:
+                        snapshot, done = self._poll()
+                    except Exception as exc:  # noqa: BLE001 - never fatal
+                        if self.debug:
+                            print(f"[gap] poll failed: {exc}", file=sys.stderr)
+                        snapshot, done = None, False
                     last_seen = now
                     if snapshot is not None:
                         for event in self._apply(snapshot, answer):
@@ -654,7 +662,9 @@ class _Conversation(Conversation):
             data = net.request_json(
                 self.provider.origin + CHAT_PATH.format(token=self.conversation_id),
                 headers=self.headers, timeout=30)
-        except net.StreamError:
+        except Exception as exc:  # noqa: BLE001 - the socket is the primary path
+            if self.debug:
+                print(f"[gap] poll failed: {exc}", file=sys.stderr)
             return None, False
         messages = (data or {}).get("messages") or []
         chosen = None

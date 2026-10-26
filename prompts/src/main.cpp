@@ -1,12 +1,19 @@
 #include "core/clipboard.hpp"
+#include "core/fs.hpp"
 #include "core/sanitize.hpp"
+#include "core/strings.hpp"
 #include "environment.hpp"
 #include "sdk/chain_state.hpp"
 #include "sdk/chaining.hpp"
 #include "sdk/completion.hpp"
+#include "sdk/function.hpp"
+#include "sdk/history.hpp"
+#include "sdk/line_completion.hpp"
+#include "sdk/prompt_file.hpp"
 #include "sdk/prompt_registry.hpp"
 #include "sdk/sink.hpp"
 #include "sdk/stage.hpp"
+#include "sdk/terminal.hpp"
 #include "sdk/wire.hpp"
 #include <algorithm>
 #include <array>
@@ -14,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <optional>
@@ -37,20 +45,10 @@ namespace {
 // loop of N items must not copy N times or repeat the legend N times.
 bool inner_process = false;
 
-std::string_view trim_trailing_newlines(std::string_view text) {
-    while (!text.empty() && text.back() == '\n') text.remove_suffix(1);
-    return text;
-}
-
-std::string_view trim_block(std::string_view text) {
-    while (!text.empty() && text.front() == '\n') text.remove_prefix(1);
-    while (!text.empty() && text.back() == '\n') text.remove_suffix(1);
-    return text;
-}
-
+// Join two blocks with one blank line, trimming their trailing newlines first.
 std::string prepend_block(std::string_view prefix, std::string_view body) {
-    prefix = trim_trailing_newlines(prefix);
-    body = trim_trailing_newlines(body);
+    while (!prefix.empty() && prefix.back() == '\n') prefix.remove_suffix(1);
+    while (!body.empty() && body.back() == '\n') body.remove_suffix(1);
     if (prefix.empty()) return std::string(body);
     if (body.empty()) return std::string(prefix);
     std::string out(prefix);
@@ -59,31 +57,18 @@ std::string prepend_block(std::string_view prefix, std::string_view body) {
     return out;
 }
 
-// The historical no-sink byte rule, kept so the output of a plain
-// `prompt .note x .note y` chain is unchanged: each segment's output is
-// trimmed of trailing newlines and re-terminated with exactly one, and a
-// separator is printed even when a segment produced nothing (the old bash
-// implementation captured each prompt with `$(...)` and printed with
-// `printf '%s\n'`).
+// Every emitted segment goes through `text::append_block`, the same rule the
+// chain context uses: trim the block on both sides, skip an empty segment, and
+// separate consecutive blocks with exactly one blank line. So stdout, the
+// clipboard and the context a sink receives all have the same shape.
 struct output_accumulator {
     std::string text;
     std::string clipboard;
-    bool first_prompt = true;
-    bool first_clipboard = true;
 
     void add(std::string_view output, bool no_clipboard) {
-        std::string_view const trimmed = trim_trailing_newlines(output);
-        if (!first_prompt) text += '\n';
-        first_prompt = false;
-        if (trimmed.empty()) return;
-        text.append(trimmed);
-        text += '\n';
-
+        prompt::text::append_block(text, output);
         if (no_clipboard) return;
-        if (!first_clipboard) clipboard += '\n';
-        clipboard.append(trimmed);
-        clipboard += '\n';
-        first_clipboard = false;
+        prompt::text::append_block(clipboard, output);
     }
 };
 
@@ -93,7 +78,7 @@ struct output_accumulator {
 class output_emitter {
   public:
     void emit(std::string_view output, bool no_clipboard, bool redacted) {
-        output = trim_trailing_newlines(output);
+        output = prompt::text::strip_newlines(output);
         if (output.empty()) return;
         if (!first_stdout_) std::print(std::cout, "\n");
         first_stdout_ = false;
@@ -109,7 +94,7 @@ class output_emitter {
     void streamed(std::string_view output, bool no_clipboard, bool redacted) {
         if (!output.empty() && output.back() != '\n') std::print(std::cout, "\n");
         std::cout.flush();
-        output = trim_trailing_newlines(output);
+        output = prompt::text::strip_newlines(output);
         if (output.empty()) return;
         first_stdout_ = false;
         add_clipboard(output, no_clipboard, redacted);
@@ -129,19 +114,16 @@ class output_emitter {
   private:
     void add_clipboard(std::string_view output, bool no_clipboard, bool redacted) {
         if (no_clipboard) return;
-        if (!first_clipboard_) clipboard_ += '\n';
-        first_clipboard_ = false;
-        if (output.empty()) return;
+        if (!prompt::text::append_block(clipboard_, output)) return;
         if (redacted && !clipboard_legend_ && !inner_process) {
+            // A one-line header, so it sits directly above the first redacted
+            // block with no blank line between them.
             clipboard_ = std::string(prompt::sanitize::kRedactionLegend) + "\n" + clipboard_;
             clipboard_legend_ = true;
         }
-        clipboard_.append(output);
-        clipboard_ += '\n';
     }
 
     bool first_stdout_ = true;
-    bool first_clipboard_ = true;
     bool stdout_legend_ = false;
     bool clipboard_legend_ = false;
     std::string clipboard_;
@@ -214,6 +196,21 @@ prompt::segment_outcome failure_result(std::string message) {
     outcome.failed = true;
     outcome.exit_code = 1;
     return outcome;
+}
+
+// The history recorder wants owned strings: argv is a span of C strings, and
+// the store outlives this call.
+std::vector<std::string> argv_strings(std::span<char const* const> argv) {
+    std::vector<std::string> out;
+    out.reserve(argv.size());
+    for (char const* arg : argv) out.emplace_back(arg == nullptr ? "" : arg);
+    return out;
+}
+
+std::filesystem::path current_directory() {
+    std::error_code ec;
+    auto path = std::filesystem::current_path(ec);
+    return ec ? std::filesystem::path{} : path;
 }
 
 // What the dispatcher knows about one chain position: its descriptor and the
@@ -314,6 +311,17 @@ std::vector<prompt::segment_outcome> run_parallel(std::span<segment const> segs,
 // format strings are literals and main has no recovery path.
 // NOLINTNEXTLINE(bugprone-exception-escape)
 int main(int argc, char** argv) {
+    // `--no-prompt-files` turns `*.prompt` inlining off for this invocation. It
+    // is a dispatcher flag, not a prompt argument: consume it here (the only
+    // place it is honoured) so help, completion, chain parsing and history
+    // never see it.
+    bool expand_prompt_files_flag = true;
+    if (argc > 1 && std::string_view(argv[1]) == "--no-prompt-files") {
+        expand_prompt_files_flag = false;
+        for (int i = 1; i + 1 < argc; ++i) argv[i] = argv[i + 1];
+        --argc;
+    }
+
     // Handle --help and --version early (only as first argument)
     if (argc > 1) {
         std::string_view arg(argv[1]);
@@ -336,6 +344,39 @@ Shorthand (chain multiple prompts with args):
   The first argument is also checked as a prompt name when no prompts have been
   matched yet.
 
+Prompt files (the same shorthand, kept in a file):
+  prompt debug.prompt
+  prompt .note "context" debug.prompt .length short
+
+  A token ending in .prompt that names a readable file is replaced, in place,
+  by the tokens that file holds (the file is the chain after `prompt`, without
+  the word `prompt` itself). Tokens are split on spaces and newlines; a `#` at
+  the start of a token comments out the rest of its line; "..." and '...' quote
+  (inside "..." only \" and \\ are escapes); nothing else is expanded (no $VAR,
+  no globbing, no command substitution). A name is looked up next to the file
+  that named it (the current directory at the top level), then
+  <git-root>/.prompt/, then $XDG_CONFIG_HOME/prompt/prompts (default
+  ~/.config/prompt/prompts). Files may include other files (8 levels deep,
+  cycles rejected), a leading `prompt` token is ignored, and every token after
+  `--` is copied verbatim. `prompt --no-prompt-files ...` as the first argument
+  turns the pass off.
+
+Functions (named, parameterized chains):
+  prompt .func triage(task, ai=dseek) .note "{task}" .ai.{ai} .end .triage "tidy it"
+  prompt .func hi .note hello .end .hi
+
+  A `.func NAME(params) ... .end` block defines a function and `.name` calls it,
+  exactly like a prompt. The signature is one token: `NAME` or
+  `NAME(p, p=default)` (no spaces inside the parens). A call fills the declared
+  params by position or with `--name value`/`--name=value`; in the body
+  `{name}` is a value, `{@}` (as a whole token) the positionals past the
+  declared ones, `{0}` the function name and `{N}` the Nth argument. A
+  `{placeholder}` that is not a parameter is left alone for `.each`.
+  Definitions live in the command, in a `.prompt` file, or in funcs files
+  (<git-root>/.prompt/funcs, $XDG_CONFIG_HOME/prompt/funcs; project overrides
+  user). A function may not shadow a built-in prompt or sink, and a bad
+  definition is an error.
+
 Examples:
   cat file.cpp | prompt cpp-debug
   prompt cpp-debug --flag value
@@ -344,13 +385,17 @@ Examples:
   prompt .note "review this" .files src/main.cpp .ai.dseek
 
 Notes:
-  - Ships a fixed set of built-in prompts; it does not scan for prompt files.
+  - Ships a fixed set of built-in prompts; it never scans for prompt scripts.
   - Sinks (.ai.chatgpt/.ai.dseek/.ai.gap/.ai.grok/.ai.kimi) wait for the
     preceding chain, send its text to the site, and continue with the answer.
     They share --with-context, --show-context, --on-error and --head.
   - 'prompt <name> --complete <prefix> [args...]' prints shell-completion
     candidates for the prompt (used by shell/completions.fish), one
     value<TAB>description per line, without running it.
+  - 'prompt --complete-line <current> [args...]' answers for a whole command
+    line: the dispatcher decides whether the token is a prompt name, the start
+    of the next .name/-name step or an argument of the open prompt, and adds
+    the *.prompt files it can inline. shell/completions.fish forwards here.
   - 'prompt list' lists available prompts with the first paragraph of each
     prompt's help as the description (--names for bare names only).
   - 'prompt list-prompts' prints the full help text of every available prompt.
@@ -363,14 +408,33 @@ Notes:
         }
     }
 
-    // Shell completion: `prompt <name> --complete <prefix> [prior args...]`
-    // (alias: `prompt --complete <name> [prefix] ...`). Answered here, before
-    // the clipboard is initialized and before stdin is read: completion must
-    // not consume the pipe, copy anything to the clipboard, or run the prompt.
-    // Flags come from each prompt's own help; positional/value candidates come
-    // from its optional complete_fn.
+    // Shell completion. Two forms, both answered here, before the clipboard is
+    // initialized and before stdin is read: completion must not consume the
+    // pipe, copy anything to the clipboard, or run the prompt.
+    //
+    //   prompt --complete-line <current> [prior args...]   a whole command line
+    //   prompt <name> --complete <prefix> [prior args...]  one prompt's own
+    //     (alias: `prompt --complete <name> [prefix] ...`)
+    //
+    // Both take their candidates from the same place: the prompt's own help for
+    // its flags and its optional complete_fn for everything else.
     {
         auto arg = [&](int i) { return std::string_view(argv[static_cast<std::size_t>(i)]); };
+
+        // Whole-line mode: the shell forwards `commandline -ct` and the tokens
+        // typed after `prompt`, and the dispatcher works out whether that token
+        // is a prompt name, the start of the next `.`/`-` step, or an argument
+        // of the open prompt — adding the `*.prompt` files it can inline.
+        if (argc > 1 && arg(1) == "--complete-line") {
+            std::string_view const current = argc > 2 ? arg(2) : std::string_view{};
+            std::vector<std::string_view> line;
+            for (int i = 3; i < argc; ++i) line.push_back(arg(i));
+            std::ostringstream out;
+            prompt::complete_line(current, line, prompt::fs::find_git_root().value_or(std::filesystem::path{}), out);
+            std::print(std::cout, "{}", out.str());
+            return 0;
+        }
+
         std::string_view complete_name;
         std::string_view prefix;
         std::vector<std::string_view> prior;
@@ -397,14 +461,7 @@ Notes:
             }
             if (auto const* desc = prompt::find_prompt(complete_name); desc != nullptr) {
                 std::ostringstream out;
-                if (desc->render_help_fn != nullptr) {
-                    std::ostringstream help;
-                    desc->render_help_fn(help);
-                    prompt::completion::write_help_flags(out, prefix, help.str());
-                }
-                if (desc->complete_fn != nullptr) {
-                    desc->complete_fn(prompt::completion_request{.prefix = prefix, .prior_args = prior}, out);
-                }
+                prompt::write_prompt_candidates(*desc, prefix, prior, out);
                 std::print(std::cout, "{}", out.str());
             }
             return 0;
@@ -434,8 +491,35 @@ Notes:
         stdin.load(std::move(content));
     }
 
-    // Parse chained prompts
+    // Prompt files: a `*.prompt` token is replaced, in place, by the tokens the
+    // file holds, so chain parsing, sinks, `.each` bodies and the history store
+    // below only ever see an ordinary argv (see sdk/prompt_file.hpp).
     std::span<char const* const> argv_span(argv, static_cast<std::size_t>(argc));
+    prompt::expanded_argv expanded = prompt::expand_prompt_files(argv_span, env.git_root, expand_prompt_files_flag);
+    if (!expanded.error.empty()) {
+        std::println(std::cerr, "{}", expanded.error);
+        return 2;
+    }
+
+    // Functions: a `.func NAME(params) … .end` block defines a named,
+    // parameterized chain template and `.name` calls it (see sdk/function.hpp).
+    // They expand to ordinary tokens after prompt files and before chain
+    // parsing, so sinks, `.each` bodies and the history store below only ever
+    // see a normal argv.
+    prompt::function_table functions;
+    if (std::string function_error; !prompt::load_function_files(functions, env.git_root, function_error)) {
+        std::println(std::cerr, "{}", function_error);
+        return 2;
+    }
+    expanded = prompt::expand_functions(expanded.storage, functions, true);
+    if (!expanded.error.empty()) {
+        std::println(std::cerr, "{}", expanded.error);
+        return 2;
+    }
+    std::vector<char const*> const argv_pointers = expanded.argv();
+    argv_span = std::span<char const* const>(argv_pointers.data(), argv_pointers.size());
+
+    // Parse chained prompts
     auto chain = prompt::parse_chain(argv_span, prompt::get_all_prompts());
     if (!chain.error.empty()) {
         std::println(std::cerr, "{}", chain.error);
@@ -496,6 +580,49 @@ Notes:
             return 0;
         }
     }
+
+    // The history store: one append-only record of this invocation. It stays
+    // dormant until the first recordable segment, so help requests and the
+    // `.history*` family never create a run of their own. Every write is best
+    // effort: an unwritable store can never fail a prompt run.
+    prompt::history::recorder history{prompt::history::recorder::info{
+        .argv = argv_strings(argv_span),
+        .cwd = current_directory(),
+        .git_root = env.git_root,
+        .terminal = prompt::terminal::current(),
+        .tty = ::isatty(STDOUT_FILENO) != 0,
+        .inner = inner_process,
+        .parent =
+            [] {
+                char const* raw = std::getenv("PROMPT_HISTORY_PARENT");
+                return raw == nullptr ? std::string{} : std::string(raw);
+            }(),
+    }};
+
+    // `.history.purge` protects the run that is being written right now.
+    if (history.enabled() && !history.id().empty()) ::setenv("PROMPT_HISTORY_CURRENT", history.id().c_str(), 1);
+
+    auto record_segment = [&](std::size_t i, prompt::segment_outcome const& outcome, std::string_view merge,
+                              std::string_view status, bool emitted, std::string_view input = {}) {
+        if (!segments[i].desc->record) return;
+        auto const& inv = chain.invocations[i];
+        history.segment(
+            prompt::history::stored_segment{
+                .index = i + 1,
+                .name = std::string(inv.name),
+                .role = segments[i].desc->role == prompt::chain_role::sink ? "sink" : "prompt",
+                .args = std::vector<std::string>(inv.args.begin(), inv.args.end()),
+                .body = std::vector<std::string>(inv.body.begin(), inv.body.end()),
+                .merge = std::string(merge),
+                .status = std::string(status),
+                .text = outcome.out,
+                .input = {},
+                .emitted = emitted,
+                .redacted = outcome.redacted,
+                .original_bytes = 0,
+            },
+            input);
+    };
 
     // Cheap declarations run in this (parent) process before any batch forks,
     // so parallel siblings can agree on argv-derived identity. A failing
@@ -591,9 +718,11 @@ Notes:
         output_accumulator accumulator;
         int exit_code = 0;
         bool redacted = false;
-        for (auto const& outcome : outcomes) {
+        for (std::size_t i = 0; i < outcomes.size(); ++i) {
+            auto const& outcome = outcomes[i];
             redacted = redacted || outcome.redacted;
             accumulator.add(outcome.out, outcome.no_clipboard);
+            record_segment(i, outcome, "append", outcome.failed ? "failed" : "ok", true);
             if (!outcome.err.empty()) std::print(std::cerr, "{}", outcome.err);
             if (!outcome.stderr_streamed && !outcome.stderr_buffer.empty())
                 std::print(std::cerr, "{}", outcome.stderr_buffer);
@@ -612,6 +741,7 @@ Notes:
         }
         if (!inner_process && !clip.empty()) prompt::clipboard::copy(clip);
 
+        history.finish(exit_code, false);
         return exit_code;
     }
 
@@ -674,7 +804,9 @@ Notes:
         }
 
         bool const emit_sources = show_context || run_index + 1 == plan.runs.size();
-        for (auto& outcome : batch) {
+        for (std::size_t k = 0; k < batch.size(); ++k) {
+            std::size_t const i = run.begin + k;
+            auto& outcome = batch[k];
             report_result(outcome);
             if (!outcome.failed) state.known.merge(outcome.published, true);
             if (outcome.failed) {
@@ -687,6 +819,7 @@ Notes:
             }
             state.append(outcome.out, outcome.redacted);
             if (emit_sources) emitter.emit(outcome.out, outcome.no_clipboard, outcome.redacted);
+            record_segment(i, outcome, "append", outcome.failed ? "failed" : "ok", emit_sources);
         }
     };
 
@@ -741,20 +874,26 @@ Notes:
         }
     };
 
-    auto update_from_sink = [&](std::size_t i, prompt::segment_outcome const& outcome) {
+    auto update_from_sink = [&](std::size_t i, prompt::segment_outcome const& outcome, std::string_view& merge) {
         auto const& opts = sink_args[i]->options;
-        bool const has_output = !trim_block(outcome.out).empty();
+        bool const has_output = !prompt::text::strip_newlines(outcome.out).empty();
         if (outcome.failed) {
+            merge = "abort";
             if (opts.failure == prompt::sink_failure::abort) return true;
+            merge = "skip";
             if (opts.failure == prompt::sink_failure::skip) return false;
             if (has_output) {
                 if (opts.with_context) {
+                    merge = "append";
                     state.append(outcome.out, outcome.redacted);
                 } else {
-                    state.text = std::string(trim_block(outcome.out));
+                    merge = "replace";
+                    state.text = std::string(prompt::text::strip_newlines(outcome.out));
                     if (!state.text.empty()) state.text += '\n';
                     state.redacted = outcome.redacted;
                 }
+            } else {
+                merge = "skip";
             }
             state.incomplete = true;
             return false;
@@ -764,6 +903,7 @@ Notes:
         // accumulated text and facts, redaction flag and failure taint. Already
         // emitted output, the clipboard and the exit status are unaffected.
         if (outcome.clear) {
+            merge = "clear";
             state.clear();
             return false;
         }
@@ -771,11 +911,15 @@ Notes:
         // A silent sink (`.save`) is a tap: it observes the context without
         // producing an answer. Keep both the context and any existing failure
         // taint so later sinks still apply their own --on-error policy.
-        if (!has_output) return false;
+        if (!has_output) {
+            merge = "passthrough";
+            return false;
+        }
+        merge = opts.with_context ? "append" : "replace";
         if (opts.with_context) {
             state.append(outcome.out, outcome.redacted);
         } else {
-            state.text = std::string(trim_block(outcome.out));
+            state.text = std::string(prompt::text::strip_newlines(outcome.out));
             if (!state.text.empty()) state.text += '\n';
             state.redacted = outcome.redacted;
         }
@@ -798,6 +942,9 @@ Notes:
     };
 
     bool chain_aborted = false;
+    // A sink the policy never ran still needs a record entry; this is the
+    // outcome it would have had (empty, complete, no output).
+    prompt::segment_outcome const skipped_outcome{};
     for (std::size_t run_index = 0; run_index < plan.runs.size() && !chain_aborted; ++run_index) {
         auto const& run = plan.runs[run_index];
         if (!run.sink) {
@@ -810,11 +957,13 @@ Notes:
             if (state.incomplete) {
                 if (opts.failure == prompt::sink_failure::abort) {
                     note_skipped_sink(i, opts.failure);
+                    record_segment(i, skipped_outcome, "skip", "skipped", false);
                     chain_aborted = true;
                     break;
                 }
                 if (opts.failure == prompt::sink_failure::skip) {
                     note_skipped_sink(i, opts.failure);
+                    record_segment(i, skipped_outcome, "skip", "skipped", false);
                     continue;
                 }
             }
@@ -825,7 +974,11 @@ Notes:
             report_result(outcome);
             emit_sink(outcome);
             if (outcome.failed && exit_code == 0) exit_code = outcome.exit_code;
-            if (update_from_sink(i, outcome)) {
+            std::string_view merge = "replace";
+            bool const abort = update_from_sink(i, outcome, merge);
+            record_segment(i, outcome, merge, outcome.failed ? "failed" : "ok",
+                           !prompt::text::strip_newlines(outcome.out).empty(), input);
+            if (abort) {
                 chain_aborted = true;
                 break;
             }
@@ -834,5 +987,6 @@ Notes:
 
     auto clip = emitter.clipboard();
     if (!inner_process && !clip.empty()) prompt::clipboard::copy(clip);
+    history.finish(exit_code, state.incomplete);
     return exit_code;
 }

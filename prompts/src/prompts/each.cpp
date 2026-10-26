@@ -565,7 +565,7 @@ static void execute_each(view const& v, result& r) {
 
     std::string selector = opts.selector;
     if (selector.empty()) {
-        if (auto expected = v.prior.get(keys::expect)) selector = *expected;
+        if (auto expected = v.prior.get(keys::expect)) selector = agent::primary_selector(*expected);
     }
     // `--list` is the inventory path: show every candidate instead of making
     // the ambiguous `auto` choice.
@@ -676,6 +676,10 @@ static void execute_each(view const& v, result& r) {
     };
     if (!grants.empty()) child_env.push_back("PROMPT_INNER_ALLOW=" + join_strings(grants, ","));
     if (opts.yes) child_env.emplace_back("PROMPT_INNER_YES=1");
+    // Tag every child run with the parent's history id, so `.history.list` can
+    // show which invocation a loop item belongs to.
+    if (char const* current = std::getenv("PROMPT_HISTORY_CURRENT"); current != nullptr && *current != '\0')
+        child_env.push_back(std::format("PROMPT_HISTORY_PARENT={}", current));
 
     std::size_t const jobs = std::min<std::size_t>(opts.jobs != 0 ? opts.jobs : std::min<std::size_t>(total, 8), 64);
     auto const results = run_jobs(argvs, v.env.exe_path.string(), jobs, opts.timeout, child_env,

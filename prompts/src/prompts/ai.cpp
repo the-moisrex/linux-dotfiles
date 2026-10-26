@@ -28,6 +28,14 @@ using namespace prompt;
 struct ai_provider {
     std::string_view name;
     std::string_view label;
+    //: Speaks the OpenAI-compatible HTTP API instead of replaying a web session.
+    bool api = false;
+    //: A local server the tool discovers on its own (LM Studio).
+    bool local = false;
+    std::string_view base_url; // default API root, empty = discovered
+    std::string_view base_url_env;
+    std::string_view key_env;
+    std::string_view model_env;
 };
 
 // The provider writes to a pipe when it runs as a sink, so its stdout is
@@ -105,8 +113,9 @@ void render_help_ai_debate(std::ostream& out) {
         << "combined text to the panel as the question, and (by default) replaces the\n"
         << "running context with the last answer. Sinks may appear anywhere in a chain.\n"
         << "\n"
-        << "Providers: chatgpt, grok, deepseek (dseek), gap, kimi — in the order they\n"
-        << "should speak.\n"
+        << "Providers: chatgpt, grok, deepseek (dseek), gap, kimi — plus the API providers\n"
+        << "lms (lmstudio, a local LM Studio server) and openai (oai, OPENAI_API_KEY) — in\n"
+        << "the order they should speak.\n"
         << "\n";
     render_sink_help(out);
     out << "\n"
@@ -125,6 +134,9 @@ void render_help_ai_debate(std::ostream& out) {
         << "  --prompt-file               Force uploading the prompt as a text file\n"
         << "  --no-prompt-file            Never upload the prompt as a text file\n"
         << "  --prompt-limit BYTES        Override each provider's prompt-file threshold\n"
+        << "  --base-url URL              API root for the lms/openai providers\n"
+        << "  --api-key KEY               API key for the lms/openai providers\n"
+        << "  --param KEY=VALUE           Extra request parameter for them (repeatable)\n"
         << "  --show-thinking             Show the models' reasoning on stderr\n"
         << "  --no-thinking               Hide the models' reasoning\n"
         << "  --json                      Emit one JSON event per line (provider/round tags)\n"
@@ -140,7 +152,8 @@ void render_help_ai_debate(std::ostream& out) {
         << "Notes:\n"
         << "  - Use a preceding .note (or --system) for instructions; positional prompt text\n"
         << "    is rejected because stdin carries the question.\n"
-        << "  - Every provider must have a signed-in browser session; sessions are loaded\n"
+        << "  - Every web provider needs a signed-in browser session; the API providers\n"
+        << "    (lms, openai) need their local server / API key instead. Sessions are loaded\n"
         << "    up front, before the first turn.\n"
         << "  - The final answer (or --context all) becomes the chain context and clipboard.\n"
         << "    Chain .save after the sink to keep it, or .ai.kimi to summarise the debate.\n"
@@ -150,7 +163,7 @@ void render_help_ai_debate(std::ostream& out) {
 
 void complete_ai_debate(prompt::completion_request const& request, std::ostream& out) {
     using prompt::completion::item;
-    static constexpr std::array<item, 6> kProviders = {
+    static constexpr std::array<item, 10> kProviders = {
         {
             {.value = "chatgpt", .description = "ChatGPT"},
             {.value = "grok", .description = "Grok"},
@@ -158,6 +171,10 @@ void complete_ai_debate(prompt::completion_request const& request, std::ostream&
             {.value = "dseek", .description = "DeepSeek (alias)"},
             {.value = "gap", .description = "GapGPT"},
             {.value = "kimi", .description = "Kimi"},
+            {.value = "lms", .description = "LM Studio (local)"},
+            {.value = "lmstudio", .description = "LM Studio (alias)"},
+            {.value = "openai", .description = "OpenAI API"},
+            {.value = "oai", .description = "OpenAI API (alias)"},
         },
     };
     // -m/--model takes PROVIDER=MODEL, so complete the provider half there.
@@ -226,6 +243,62 @@ void execute_ai(view const& v, result& r, std::string_view provider) {
     }
 }
 
+// The API providers speak an OpenAI-compatible HTTP API, so they have no
+// browser session, no upload endpoint and no prompt-file fallback: the flags
+// are the endpoint, the key and the raw inference parameters.
+void render_api_provider_options(std::ostream& out, ai_provider const& provider) {
+    out << "Provider options (passed to ai." << provider.name << "):\n"
+        << "  -f, --file PATH             Attach a local file to the first message: text is\n"
+        << "                              inlined, images become data URLs (repeatable)\n"
+        << "  -m, --model NAME            Model id (default: $" << provider.model_env;
+    if (provider.local) out << ", else the first chat model the server lists";
+    out << ")\n"
+        << "  -s, --system TEXT           System / custom instructions\n"
+        << "  -c, --continue              Continue the last conversation with this provider\n"
+        << "  --new                       Start a fresh conversation\n"
+        << "  --base-url URL              API root (default: $" << provider.base_url_env;
+    if (provider.local) {
+        out << ", then the cached\n"
+            << "                              endpoint, then the usual local ports)\n";
+    } else {
+        out << ", then\n"
+            << "                              " << provider.base_url << ")\n";
+    }
+    out << "  --api-key KEY               API key (default: $" << provider.key_env << ")\n"
+        << "  --param KEY=VALUE           Extra request parameter, e.g. temperature=0.2 (repeatable)\n"
+        << "  --show-thinking             Show the model's reasoning on stderr\n"
+        << "  --no-thinking               Hide the model's reasoning\n"
+        << "  --json                      Emit one JSON event per line\n"
+        << "  --raw                       Print only the answer text\n"
+        << "  --tty                       Render as if stdout/stderr were terminals (pipe-friendly)\n"
+        << "  --copy                      Copy the answer to the clipboard\n"
+        << "  --timeout SECONDS           Request timeout (default: 600)\n"
+        << "  --print-prompt              Print the prompt that would be sent and exit\n"
+        << "  --print-session             Show the endpoint, model and reachability, then exit\n"
+        << "  --list                      List the available providers and models, then exit\n"
+        << "  -h, --help                  Show this help message\n"
+        << "\n"
+        << "Notes:\n"
+        << "  - Use a preceding .note (or --system) for instructions; positional prompt text\n"
+        << "    is rejected because stdin carries the chain context.\n"
+        << "  - The model's reasoning stays on stderr and is never part of the chain context.\n"
+        << "  - There is no browser session and no upload endpoint: -f files are inlined\n"
+        << "    into the message, --prompt-file is refused, and an oversized prompt is sent\n"
+        << "    inline (raise the model's context length instead).\n";
+    if (provider.local) {
+        out << "  - LM Studio must be running its local server (`lms server start`, or\n"
+            << "    Developer → Local Server). The endpoint comes from --base-url, $" << provider.base_url_env
+            << ", the\n"
+            << "    cached one, then the usual local ports, then `lms status`.\n";
+    } else {
+        out << "  - Any OpenAI-compatible endpoint works (OpenRouter, Groq, vLLM): set $" << provider.base_url_env
+            << "\n"
+            << "    to its API root and $OPENAI_MODEL to its model id.\n";
+    }
+    out << "  - --show-context prints the source prompts in the final output; --print-prompt\n"
+        << "    prints exactly what this sink receives.\n";
+}
+
 void render_help_ai(std::ostream& out, ai_provider const& provider) {
     out << "Usage: prompt <other prompts...> .ai." << provider.name << " [SINK-OPTIONS] [PROVIDER-OPTIONS]\n"
         << "       prompt .ai." << provider.name << " [SINK-OPTIONS] [PROVIDER-OPTIONS]\n"
@@ -238,8 +311,12 @@ void render_help_ai(std::ostream& out, ai_provider const& provider) {
         << "context with its answer. Sinks may appear anywhere in a chain.\n"
         << "\n";
     render_sink_help(out);
-    out << "\n"
-        << "Provider options (passed to ai." << provider.name << "):\n"
+    out << "\n";
+    if (provider.api) {
+        render_api_provider_options(out, provider);
+        return;
+    }
+    out << "Provider options (passed to ai." << provider.name << "):\n"
         << "  -f, --file PATH             Upload and attach a local file (repeatable)\n"
         << "  --prompt-file               Force uploading the prompt as a text file\n"
         << "  --no-prompt-file            Never upload the prompt as a text file\n"
@@ -273,6 +350,24 @@ constexpr ai_provider kDseek{.name = "dseek", .label = "DeepSeek"};
 constexpr ai_provider kGap{.name = "gap", .label = "GapGPT"};
 constexpr ai_provider kGrok{.name = "grok", .label = "Grok"};
 constexpr ai_provider kKimi{.name = "kimi", .label = "Kimi"};
+constexpr ai_provider kLms{
+    .name = "lms",
+    .label = "a local LM Studio server",
+    .api = true,
+    .local = true,
+    .base_url_env = "LMS_BASE_URL",
+    .key_env = "LMS_API_KEY",
+    .model_env = "LMS_MODEL",
+};
+constexpr ai_provider kOpenai{
+    .name = "openai",
+    .label = "the OpenAI API",
+    .api = true,
+    .base_url = "https://api.openai.com/v1",
+    .base_url_env = "OPENAI_BASE_URL",
+    .key_env = "OPENAI_API_KEY",
+    .model_env = "OPENAI_MODEL",
+};
 constexpr ai_provider kDebate{.name = "debate", .label = "a panel of AIs"};
 
 void execute_ai_chatgpt(view const& v, result& r) { execute_ai(v, r, kChatgpt.name); }
@@ -280,6 +375,8 @@ void execute_ai_dseek(view const& v, result& r) { execute_ai(v, r, kDseek.name);
 void execute_ai_gap(view const& v, result& r) { execute_ai(v, r, kGap.name); }
 void execute_ai_grok(view const& v, result& r) { execute_ai(v, r, kGrok.name); }
 void execute_ai_kimi(view const& v, result& r) { execute_ai(v, r, kKimi.name); }
+void execute_ai_lms(view const& v, result& r) { execute_ai(v, r, kLms.name); }
+void execute_ai_openai(view const& v, result& r) { execute_ai(v, r, kOpenai.name); }
 void execute_ai_debate(view const& v, result& r) { execute_ai(v, r, kDebate.name); }
 
 void render_help_ai_chatgpt(std::ostream& out) { render_help_ai(out, kChatgpt); }
@@ -287,6 +384,8 @@ void render_help_ai_dseek(std::ostream& out) { render_help_ai(out, kDseek); }
 void render_help_ai_gap(std::ostream& out) { render_help_ai(out, kGap); }
 void render_help_ai_grok(std::ostream& out) { render_help_ai(out, kGrok); }
 void render_help_ai_kimi(std::ostream& out) { render_help_ai(out, kKimi); }
+void render_help_ai_lms(std::ostream& out) { render_help_ai(out, kLms); }
+void render_help_ai_openai(std::ostream& out) { render_help_ai(out, kOpenai); }
 
 } // namespace
 
@@ -311,6 +410,16 @@ bool const registered_ai_grok = prompt::register_sink(
 bool const registered_ai_kimi = prompt::register_sink(
     "ai.kimi", "Send the accumulated chain context to Kimi and use its answer as the next context.", &execute_ai_kimi,
     &render_help_ai_kimi);
+
+bool const registered_ai_lms = prompt::register_sink(
+    "ai.lms", "Send the accumulated chain context to a local LM Studio model and use its answer as the next context.",
+    &execute_ai_lms, &render_help_ai_lms);
+
+bool const registered_ai_openai = prompt::register_sink(
+    "ai.openai",
+    "Send the accumulated chain context to the OpenAI API (or any OpenAI-compatible endpoint) and use its answer as "
+    "the next context.",
+    &execute_ai_openai, &render_help_ai_openai);
 
 bool const registered_ai_debate = prompt::register_sink(
     "ai.debate", "Ask two or more AIs the same question and let them verify each other's answers, round after round.",

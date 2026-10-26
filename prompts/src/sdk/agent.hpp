@@ -16,6 +16,30 @@ namespace prompt::agent {
 // treats it as a command, so a section selector there needs `section:`.
 [[nodiscard]] bool is_selector_token(std::string_view token);
 
+// One selection in an expect plan. `name` is empty for the primary (the entry
+// whose result replaces the chain context); a named entry is published as that
+// fact key by `.extract` (e.g. `save.stem=field:filename`).
+struct expect_entry {
+    std::string name;
+    std::string selector;
+};
+
+// The plan grammar shared by `.expect` and `.extract`: entries separated by
+// newlines, each `[name=]selector`. `name` must look like a fact key
+// (`^[A-Za-z_][A-Za-z0-9_.-]*$`); anything else is part of the selector, so a
+// selector containing `=`, `:` or spaces stays intact. Empty lines are
+// ignored. A single bare selector parses as one unnamed entry.
+[[nodiscard]] std::vector<expect_entry> parse_expect_plan(std::string_view plan);
+
+// Serialize entries back to a plan string (newline-joined, no trailing newline).
+[[nodiscard]] std::string format_expect_plan(std::span<expect_entry const> entries);
+
+// The unnamed primary selector of a plan, for `.each`/`.exec`, which extract a
+// single value. A plan with no unnamed entry uses its only entry when there is
+// exactly one; otherwise there is no unambiguous primary and this throws
+// usage_error.
+[[nodiscard]] std::string primary_selector(std::string_view plan);
+
 // Split a command line into argv without a shell: single quotes, double quotes
 // and backslash work; expansions and compound syntax (| & ; < > ` $( ) are
 // refused, so a command extracted from an AI can never become a shell script.

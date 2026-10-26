@@ -142,7 +142,13 @@ def annotate_error(message, provider, prompt, used_file=False, disabled=False,
     count = size(prompt)
     budget = limit_for(provider, limit)
     lines = [message.rstrip()]
-    if used_file:
+    if not getattr(provider, "prompt_file_upload", True):
+        lines.append(
+            f"[ai] The prompt is {human_size(count)} and was sent inline: "
+            f"{getattr(provider, 'label', 'this provider')} has no upload "
+            f"endpoint. Raise the model's context length in the server, or trim "
+            f"the prompt (a prompt's --head option helps).")
+    elif used_file:
         lines.append(
             f"[ai] The prompt was already uploaded as a text file "
             f"({human_size(count)}), but the site still refused it. Split it "

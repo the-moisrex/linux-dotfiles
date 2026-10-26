@@ -49,6 +49,10 @@ whole tree must stay clang-format clean.
 - A **sink** uses `prompt::register_sink(...)` instead (see "Sinks" below). It
   needs only its executor, help renderer and stream flag; the dispatcher owns
   the shared flags and the barrier ordering.
+- `record` (the last `register_prompt`/`register_sink` argument, default `true`)
+  opts a prompt out of the history store; the `.history*` family sets it to
+  `false`, since browsing the store must not append to it. `takes_body` sits just
+  before it, so a non-body prompt that must not be recorded passes `false, false`.
 
 ## Prompt contract
 
@@ -104,8 +108,11 @@ points, with two merge rules:
 One agreement rides on this today: `tse_data::declare_identifier` publishes
 `keys::tse_symbol` once per chain, so `.tse foolad .tse.codal` and the reverse
 order resolve the same instrument. `.delegate` and `.expect` publish
-`keys::expect` (a selector) so `.extract`, `.exec` and `.each` need no selector
-of their own. `.files` needs no fact for a sibling file prompt — its output
+`keys::expect` (a newline-separated plan of `[NAME=]SELECTOR` entries) so
+`.extract`, `.exec` and `.each` need no selector of their own; `.save` declares
+`keys::save_wants_name` (a presence-only marker, with no target of its own) so
+`.delegate` can ask the AI to name the file. `.files` needs no fact for a
+sibling file prompt — its output
 already carries the embedded files into the chain, and re-embedding them would
 duplicate the content. Facts are deliberately opt-in: add a key when two prompts
 genuinely cannot work it out from their own arguments, not as a general channel.
@@ -114,6 +121,89 @@ The fork wire (`sdk/wire.hpp`) carries a `segment_outcome` — stdout, stderr, t
 separate stderr buffer, the published facts, the output flags and the exit
 status — as one length-prefixed blob per child; `drain_all()` polls every child
 pipe at once instead of draining them in turn.
+
+## Prompt files (`prompt debug.prompt`)
+
+`*.prompt` files hold the chain DSL that otherwise goes on the command line:
+`prompt debug.prompt` behaves exactly as if the file's tokens had been typed
+after `prompt`. `sdk/prompt_file.{hpp,cpp}` is a lexical pre-pass over argv that
+runs in `main.cpp` before `parse_chain`, so chain parsing, sinks, `.each` bodies,
+`.exec` ownership, the clipboard and the history store only ever see an ordinary
+argv (the history records the *effective* tokens, which is what a replay wants).
+
+- **Splicing:** any argument token ending in `.prompt` that resolves to a
+  readable file is replaced, in place, by the file's tokens, so
+  `prompt .note "context" debug.prompt .length short` works. A `*.prompt` token
+  that does not resolve is an error only in the first argv position (where the
+  `auto` fallback would silently eat it); elsewhere it stays an ordinary
+  argument, so `.files missing.prompt` keeps the prompt's own warning. `--`
+  stops the pass for the rest of that token sequence, which is what keeps
+  `.exec -- command x.prompt` untouched, and `--no-prompt-files` as the first
+  argument copies argv unchanged.
+- **Tokenizer:** spaces and newlines separate; `#` at the start of a token
+  comments out the rest of its line (`a#b` stays one token); `"..."` honours
+  `\"` and `\\`, `'...'` is literal, and a backslash outside quotes escapes the
+  next character. Nothing is expanded (no `$VAR`, globbing or command
+  substitution). An unterminated quote is `prompt: <file>:<line>: unterminated "`
+  and exits 2.
+- **Resolution:** a name is looked up next to the file that named it (the
+  current directory at the top level, so a nested `inner.prompt` means the one
+  beside its includer), then `<git-root>/.prompt/`, then
+  `$XDG_CONFIG_HOME/prompt/prompts` (`~/.config/prompt/prompts`). Files may
+  include other files up to `kMaxPromptFileDepth` (8) deep; cycles are rejected
+  on canonical paths and a file whose first token is `prompt` may keep it.
+- The recursion (`expander::sequence` ↔ `expander::file`) is bounded by the
+  depth cap and the cycle check, which is why both carry a
+  `misc-no-recursion` suppression.
+
+Tests: `tests/test_prompt_file.cpp` (tokenizer, inlining, nesting, cycle, depth,
+lookup order, `--`, `--no-prompt-files`) and the `prompt_file_run`/
+`prompt_file_missing` ctests over `tests/fixtures/hello.prompt`.
+
+## Functions (`.func NAME(params) … .end`, called as `.name`)
+
+A **function** is the third kind of step, next to a prompt and a sink: a named,
+parameterized chain template the user defines and invokes exactly like a prompt.
+`sdk/function.{hpp,cpp}` is a lexical pre-pass in `main.cpp` that runs
+immediately after the `*.prompt` pass and before `parse_chain`, so sinks,
+`.each` bodies, `.exec` ownership, the clipboard and the history store only ever
+see an ordinary argv.
+
+- **Definition.** `.func NAME(params) STEPS… .end`. The name and signature are a
+  single token (`NAME` or `NAME(p, p=default)`, no spaces inside the parens), so
+  a body may start with a bare token without ambiguity. The body ends at the
+  matching `.end`, counting compiled body-taking steps (`.each` … `.end`) so
+  theirs does not close the definition. Definitions may sit in the command, in a
+  `*.prompt` file, or in a `funcs` file; several may appear in one source.
+- **Invocation.** `.name args…` (a bare first token that names a function also
+  works). A call binds declared params by position, or by `--name value` /
+  `--name=value`; positionals past the declared params are `{@}`. In the body
+  `{name}` is a value (embedded substitution inside a token is allowed), `{0}`
+  is the function name and `{N}` the Nth argument. A `{placeholder}` that is not
+  a declared param is left untouched, so `tse`/`.each` fields (`{symbol}`,
+  `{item}`, …) compose. A function call's arguments stop at the next step, and
+  the whole body is a normal chain.
+- **Global sources.** `<git-root>/.prompt/funcs`, then
+  `$XDG_CONFIG_HOME/prompt/funcs` (project over user per name). `$PROMPT_FUNCS`
+  (colon-separated) replaces the list; an empty value disables global functions.
+  A `funcs` file holds only `.func` blocks (a stray token is an error) and uses
+  the same tokenizer as `*.prompt` files.
+- **Errors are hard (exit 2).** A function may not shadow a compiled prompt or
+  sink, nor use a reserved name (`func`, `end`, `prompt`); a duplicate in one
+  source, a bad signature/name, a missing/unexpected `.end`, a missing required
+  argument, an unknown `--param`, and recursion (direct or through another
+  function, capped by `kMaxFunctionDepth`) are all failures. `.func` is top
+  level only.
+- **Composition with bodies.** A `.func` body may contain `.each … .end` and
+  `.exec -- …`; the expander tracks compiled body depth and copies everything
+  after `--` verbatim, and a function called inside an `.each` body is expanded
+  by the parent so inline definitions stay visible to the child processes.
+
+Tests: `tests/test_function.cpp` (definition/call, params/defaults/named flags/
+`{@}`/`{0}`/`{N}`, nesting, `.each`-body and `--` preservation, every error
+case, `funcs`-file loading and override) plus the
+`function_inline`/`function_params`/`function_shadow` ctests. The suite's global
+`ENVIRONMENT` sets `PROMPT_FUNCS=` so a developer's own funcs never leak in.
 
 ## Sinks
 
@@ -173,26 +263,43 @@ become the context later segments see.
   sinks; a prompt with no preferred name simply publishes nothing. `.save`
   (`src/prompts/save.cpp`) is the reference passthrough sink: it writes the same
   context an AI sink receives, refuses to overwrite unless `--force`, sanitizes
-  the hint and appends `.md` to derived names. `tse`, `tse.codal`,
+  the hint and appends `.md` to derived names. With no explicit `FILE`/`DIR` its
+  `declare_` hook additionally publishes `keys::save_wants_name`, which is what
+  makes a preceding `.delegate` ask the AI for a `filename:` (the plan's
+  `save.stem=field:filename` binding then names the file); an explicit target
+  suppresses the request. `tse`, `tse.codal`,
   `tse.intraday` and `files` provide hints. `.flush` shares `.save`'s parser,
-  preflight and writer, with its own command name in messages.
-- `ai.*` (`src/prompts/ai.cpp`) is the reference family: five provider
+  preflight and writer, with its own command name in messages. `.c.c`
+  (`src/prompts/clipboard.cpp`) is the clipboard passthrough: it copies the
+  context to the system clipboard and leaves it unchanged, so it can sit before
+  another sink. Its paste counterparts `.clipboard` and `.c.p` are ordinary
+  source prompts — a source never receives the chain context, which is exactly
+  why copying has to be a sink.
+- `ai.*` (`src/prompts/ai.cpp`) is the reference family: five web provider
   registrations plus the `ai.debate` relay, one shared executor,
   `--print-prompt` passed through to `bin/ai`, and `--stdin-only` so positional
-  prompt text cannot silently replace the chain. `.ai.debate` is a thin wrapper
-  over `bin/ai.debate` (the five providers passed as leading arguments); the
+  prompt text cannot silently replace the chain. Two more registrations
+  (`.ai.lms`, `.ai.openai`) reuse that executor for the OpenAI-compatible HTTP
+  providers; the `ai_provider` struct carries an `api` flag (and `local` for the
+  local server), which switches the help's provider-options block — endpoint
+  (`--base-url`/`--api-key`/`--param`) and inline attachments instead of a
+  browser session and `--prompt-file` — while the sink plumbing is untouched.
+  `.ai.debate` is a thin wrapper
+  over `bin/ai.debate` (the providers passed as leading arguments, API ones
+  included); the
   relay loop, framing and context-file writing live in `bin/ai/debate.py`,
   which reuses `bin/ai/cli.py`'s turn/renderer/context helpers. `-c`/`--new`
   are forwarded too; the panel state is stored by `bin/ai/state.py` under
   `$XDG_STATE_HOME/ai/debate-<providers>.json`. Its completion
-  callback (`complete_ai_debate`) offers the provider names, and `PROVIDER=`
-  after `-m`/`--model`.
+  callback (`complete_ai_debate`) offers the provider names (aliases included),
+  and `PROVIDER=` after `-m`/`--model`.
 
 Tests: `tests/test_sink.cpp` (flag parsing, streaming/tee, timeout), the
 `plan_chain`/`ai.*`/`save` registration and `tse` declaration cases in
 `tests/test_chaining.cpp`, `tests/test_facts.cpp` (the fact store and its two
 merge rules, the wire codec, `segment_outcome` round-trip), `tests/test_clipboard.cpp`
-(the pasted-text → instrument policy),
+(the pasted-text → instrument policy), `tests/test_clipboard_prompt.sh`
+(end-to-end `.clipboard`/`.c.p` paste and `.c.c` copy through a stubbed xclip),
 `tests/test_ai_sink.sh` (end-to-end `--tty`/`--width`/`--height` and
 `--context-file` plumbing through stub providers), `tests/test_ai_debate_sink.sh`
 (the same plumbing for `.ai.debate`, plus provider/flag forwarding),
@@ -201,7 +308,14 @@ no-clobber and sanitized names), and `tests/test_clear.sh` (context reset betwee
 sections, piped stdin, hint and failure-taint reset, `.flush` == `.save` +
 `.clear`, preflight); `tests/test_ai_debate.py` exercises the relay
 loop offline (turn order, framing, `--rounds`/`--until-agree`, context
-selection, failure), and the `ai_help`/`ai_print_prompt`/`ai_debate_help`/
+selection, failure), `tests/test_ai_lms.py` drives the API providers against a
+threaded `http.server` stub (SSE mapping, discovery + caching, model defaulting,
+`--param` forwarding, inline attachments, `-c` transcript replay, the
+`--prompt-file` refusal and the error remedies), `tests/test_ai_gap.py` checks
+the GapGPT turn-recovery path offline (the poll fallback carries the
+`accessToken` bearer and reads the turn, a transport error or a `StreamError`
+is non-fatal, and `_read_turn` survives a raising poll), and the
+`ai_help`/`ai_lms_help`/`ai_openai_help`/`ai_print_prompt`/`ai_debate_help`/
 `ai_debate_print_prompt` ctest smokes exercise an offline sink chain.
 
 ## Agentic chain layer (`.expect`, `.extract`, `.exec`, `.each`)
@@ -210,20 +324,26 @@ Four prompts turn a chain into an extract/act loop; `bin/md.extract` owns the
 selector grammar and the response contracts, so the native prompts only shell
 out to it.
 
-- **`.expect SELECTOR`** asks `md.extract --contract`, appends that instruction
-  to the context (the next AI sink sees it) and publishes `keys::expect`.
+- **`.expect [NAME=]SELECTOR…`** asks `md.extract --contract` for every entry,
+  appends the combined instruction to the context (the next AI sink sees it) and
+  publishes `keys::expect` as a **plan**: one newline-separated `[NAME=]SELECTOR`
+  entry per argument, exactly one of them unnamed (the primary). A single
+  unnamed selector is the degenerate plan.
 - **`.extract [SELECTOR]`** is a sink that replaces the context with the
-  selection (`md.extract --select`). No selector means `keys::expect`, then
-  `auto`. `--list` leaves the context alone and prints candidates on stderr;
-  `--json` and `--pick` pass through.
+  selection (`md.extract --select`). No selector means the `keys::expect` plan,
+  then `auto`. Each **named** plan entry runs `md.extract --select --one` and
+  publishes its value as that fact (so `save.stem=field:filename` names the next
+  `.save`), then the primary replaces the context. `--list` leaves the context
+  alone and prints candidates on stderr; `--json` and `--pick` pass through.
 - **`.exec [SELECTOR] [--] COMMAND…`** is a sink that runs one command and
   replaces the context with its output. With no command it extracts one from
-  the context (selector → fact → `auto`); a context that is exactly one
-  `prompt …` line is run directly, which is what makes
+  the context (selector → the plan's primary → `auto`); a context that is
+  exactly one `prompt …` line is run directly, which is what makes
   `… .extract .exec` work. A child `prompt` chain runs with the normal chain
   semantics.
 - **`.each [SELECTOR] [loop flags] BODY .end`** is a sink that loops `BODY` over
-  `md.extract --items` items, one child `prompt` per item, in parallel.
+  `md.extract --items` items, one child `prompt` per item, in parallel. A
+  selector omitted here means the plan's primary (`agent::primary_selector`).
 
 ### Bodies and the parser
 
@@ -246,10 +366,11 @@ backslashes only. Compound shell syntax (`| & ; < > \`` and `$(`) is refused.
 ### Contracts and item substitution
 
 The shared grammar is `kind[:qualifier][@N]` — `table[:col1,col2]`,
-`code[:lang]`, `section[:heading]`, `command[:program]`, `frontmatter`, `any`,
-`auto`, `none`, or a bare heading. `@N` selects the Nth match. `.delegate`
-publishes `command:prompt` itself, so its output feeds `.extract`/`.exec`
-without an explicit `.expect`.
+`code[:lang]`, `section[:heading]`, `command[:program]`, `field[:label]`
+(a `label: value` line), `frontmatter`, `any`, `auto`, `none`, or a bare
+heading. `@N` selects the Nth match. `.delegate` publishes `command:prompt`
+itself (plus a `save.stem=field:filename` binding when `.save` has no explicit
+target), so its output feeds `.extract`/`.exec` without an explicit `.expect`.
 
 `.each` substitutes `{field}` (any table column or item key), `{item}`,
 `{body}`, `{index}`, `{n}` and `{file}` (a temporary file holding the item, for
@@ -284,9 +405,89 @@ whole and approved through `require_chain`. `.each` pre-approves the static
 `--on-item-error stop|skip|keep`, `--timeout SEC` (600), `--yes`. `--print`
 prints the substituted body commands without running them.
 
-Tests: the `agent_*` ctests (`expect`, `extract`, `exec` print/allowed/denied/
-`--` chain/verbatim args, `each` print/run/list) plus the body and `--` cases in
-`tests/test_chaining.cpp`.
+Tests: the `agent_*` ctests (`expect` and its `plan`, `extract`, its `field`
+selector and the `test_extract_bind.sh` binding/save round-trip, `exec`
+print/allowed/denied/`--` chain/verbatim args, `each` print/run/list) plus the
+body and `--` cases in `tests/test_chaining.cpp` and the offline
+`md_extract_unit` (`tests/test_md_extract.py`: the `field` selector and the
+combined contract).
+
+## History store (`sdk/history.{hpp,cpp}`, `src/prompts/history*.cpp`)
+
+The dispatcher records **every invocation** under
+`${PROMPT_HISTORY_DIR:-${XDG_STATE_HOME:-~/.local/state}/prompt/runs/}`, so an
+answer (e.g. from `prompt .verify .ai.dseek`) can be retrieved later. `main.cpp`
+owns the lifecycle: it builds a `history::recorder` (with the effective argv,
+cwd, git root, tty flag and the terminal identity from `terminal::current()`),
+sets `PROMPT_HISTORY_CURRENT` to the run id, calls
+`record_segment(...)` for each segment (in the no-sink accumulator loop and in
+`run_normal_batch`, and for skipped sinks and `update_from_sink` merges) and
+finishes with `history.finish(exit_code, incomplete)`. Recording is best-effort:
+a write failure is swallowed and can never fail a prompt run.
+
+- **One file per run**, append-only Markdown named
+  `<YYYYMMDD-HHMMSS-t<mm>-<xxxx>>.md` (the id is sortable to the millisecond and
+  deliberately never matches the sanitizer's phone-number pattern). The body is
+  framed by `<!-- history:run {json} -->`, one `<!-- history:segment {json} -->`
+  per segment and a closing `<!-- history:end {json} -->` (the run marker also
+  stores the terminal identity); each marker carries an
+  exact `bytes` (and `input_bytes`) count, so a segment body that contains a
+  look-alike marker can never corrupt the parse (a truncated file loads
+  partially and is marked `incomplete`).
+- **Deltas, not the whole context.** A segment stores its own output
+  (`text`), not the growing chain; `merge` records how it folded
+  (`append`/`replace`/`skip`/`clear`/`abort`/`failed`). A sink additionally stores
+  `input` only when the context it received differs from the one replayed from
+  the recorded merges — `history::barrier_input(run, index)` returns the stored
+  input when present, otherwise replays the merges exactly as
+  `chain_state::append` does.
+- **Replay.** `history::final_output(run)` reproduces what the dispatcher printed:
+  the emitted segments joined by the one text-fold rule (`text::append_block`, the
+  same rule `chain_state::append`, `output_accumulator` and the clipboard use) —
+  trim both sides, one blank line between blocks, one trailing newline — with the
+  redaction legend first when any emitted segment was redacted. `.history` prints
+  exactly that, so `prompt .history` byte-matches the original stdout.
+- **API.** `run_files`/`run_ids` (newest first), `load`/`load_all`,
+  `find_by_id` (an id or prefix) and `find_by_rank` (1 = newest), the
+  terminal-scoped `in_terminal`/`find_last_in`/`find_rank_in` (what `.last` and
+  `--here` use; only the run marker is read while scanning), `final_output`,
+  `barrier_input`, `parse_duration`/
+  `parse_size`/`human_bytes`, `keep_runs`/`keep_bytes`/`auto_prune`, `prune`
+  (oldest first, never the run passed as protected), and `display_path` (a path
+  relative to the cwd when possible, so `$HOME` redaction does not corrupt a
+  printed path).
+- **Prompts.** `src/prompts/history.cpp` registers `.history` (default emitted
+  text; `--segment`, `--input`, `--all`, `--meta`, `--head`, `--here`; publishes
+  `keys::save_stem` = the run id), `.last`/`.history.last` (the terminal-scoped
+  newest run, `--any` for the global view; the shared `resolve_run` reads a
+  digits-only key as a rank when `1..count` and otherwise as an id prefix),
+  `.history.list` (`--limit`, `--since`,
+  `--paths`, `--json`, `--head`, `--here`) and `.history.dir`;
+  `src/prompts/history_find.cpp` registers `.history.find` (QUERY, `--regex`,
+  `--case-sensitive`, `--name`, `--since`, `--limit`, `--context`, `--paths`,
+  `--json`, `--here`; exit 1 via `soft_error` on no match);
+  `src/prompts/history_purge.cpp` registers `.history.purge` (`--older-than`,
+  `--keep`, `--max-size`, `--all`, `--dry-run`; protects `--keep` newest runs and
+  `PROMPT_HISTORY_CURRENT`; `no_clipboard`). All seven register with
+  `record = false`.
+- **Child runs.** An `.each` item (and a `.exec` child `prompt` chain) records its
+  own run; `each.cpp`/`exec.cpp` pass `PROMPT_HISTORY_PARENT=<current run id>` so
+  the child is tagged `parent`. `PROMPT_HISTORY_INNER=0` silences children.
+- **Knobs.** `PROMPT_HISTORY` (0/off disables recording), `PROMPT_HISTORY_DIR`,
+  `PROMPT_HISTORY_MAX_BYTES` (4 MiB per file, over-long writes are truncated),
+  `PROMPT_HISTORY_KEEP` (1000), `PROMPT_HISTORY_SIZE` (256M),
+  `PROMPT_HISTORY_INNER`, `PROMPT_HISTORY_PRUNE` (0 = no automatic pass),
+  `PROMPT_HISTORY_CURRENT`, plus the terminal identity overrides
+  `PROMPT_TERMINAL_SID`/`PROMPT_TERMINAL_TTY`/`PROMPT_TERMINAL_KEY` (see
+  `terminal.hpp` below).
+- **Tests.** `tests/test_history.cpp` (marker framing, a fake marker inside a
+  body, truncation, replay, ordering/ranks, the terminal identity and scoping,
+  prune) and
+  `tests/test_history.sh` (end-to-end: `.history` == stdout for plain and sink
+  chains, list/find/purge, `.last`/`--here`/`--any` and the fallback note, the
+  env knobs, inner-run tagging, completion). The
+  tests `ENVIRONMENT` every ctest in `tests/CMakeLists.txt` onto a scratch
+  `PROMPT_HISTORY_DIR` so the suite never touches the real store.
 
 ## SDK helpers (`src/sdk/`)
 
@@ -329,6 +530,14 @@ Use these instead of re-open-coding the same loops:
   `encode_outcome`/`decode_outcome`, `drain_all`; `chain_state.hpp`: the
   dispatcher's accumulated text plus known facts and the redaction/incomplete
   flags.
+- `terminal.hpp`: `terminal::id {sid, tty, key}`, `current()` (the
+  `PROMPT_TERMINAL_SID`/`PROMPT_TERMINAL_TTY`/`PROMPT_TERMINAL_KEY` overrides
+  first, then `getsid(0)` and the controlling tty), `same()` (the identity
+  comparison: an opaque key wins when both sides carry one, otherwise the
+  session ids must agree and a differing tty rejects a recycled pid) and
+  `describe()`. The history store is its first user (`.last`, `--here`), but it
+  is deliberately history-agnostic so any future per-terminal feature can share
+  the same "a place, not a global" identity.
 - `agent.hpp`: the agentic layer's shared pieces — `is_selector_token`,
   `split_command` (quotes/backslashes, compound-syntax refusal), `join_argv`,
   `parse_exec_args` (`.exec`'s own flags plus command/selector split),
@@ -349,18 +558,29 @@ Use these instead of re-open-coding the same loops:
   `src/core/fs.hpp::bin_tool` locates sibling `bin/` tools (exe dir → git root →
   cwd → `$PATH`).
 
-## Shell completion (`--complete`)
+## Shell completion (`--complete`, `--complete-line`)
 
-`prompt <name> --complete <prefix> [args typed before it...]` prints the
-prompt's completion candidates — one `value<TAB>description` per line — and
-exits 0 without running the prompt, reading stdin or touching the clipboard.
-`main.cpp` handles it early (before clipboard init and stdin), and
-`../shell/completions.fish` (`__fish_prompt_complete`) is the caller.
+Every candidate a shell offers comes from the binary: `../shell/completions.fish`
+forwards the command line and prints what it gets back, so the completion logic
+lives next to the chain semantics it mirrors instead of in the shell script.
+Both entry points print `value<TAB>description` lines and both are answered
+early in `main.cpp` (before the clipboard is initialized and before stdin is
+read), so completion never runs a prompt, consumes the pipe or copies anything.
+
+- `prompt <name> --complete <prefix> [args typed before it...]` — one prompt's
+  own candidates (alias `prompt --complete <name> [prefix] ...`).
+- `prompt --complete-line <current> [tokens after `prompt`]` — a whole command
+  line (`sdk/line_completion.cpp`), which fish calls:
+  `prompt --complete-line "$current" $tokens[2..-1]`, under two conditions only
+  (name position/step boundary with `-f` so no file noise, every argument
+  position without it so fish's own path completion still applies).
 
 - **Flags are automatic.** `completion::write_help_flags` parses the `Options:`
   block of the prompt's own `render_help_fn` output, so every prompt completes
   `--head`, `--num`, `--days`, `--format`, … with no per-file code; both
-  spellings of `--type, -t` are emitted.
+  spellings of `--type, -t` are emitted. `write_prompt_candidates` (the shared
+  `sdk/completion.cpp` renderer) is what both forms call, so a prompt answers
+  identically either way.
 - **Positional/value candidates** come from the prompt's optional
   `completion_fn` — the fifth, defaulted `register_prompt` argument
   (`sdk/completion.hpp`, embedded by `new`). Put the callback next to the
@@ -370,20 +590,57 @@ exits 0 without running the prompt, reading stdin or touching the clipboard.
   `tse_data::complete_instrument` delegates the `tse`/`tse.intraday`
   identifier lookup to `bin/tse.resolve --complete`; `skill`, `run`, `diagram`,
   `metadata`, `opportunities` and `overengineering` have small callbacks.
+- **The line mode** replays just enough of `parse_chain` to know what the
+  current token is being completed against: a bare token opens a step only while
+  none matched (the head), a `.name`/`-name` token naming a prompt **or a
+  function** opens the next one, later tokens are that step's arguments
+  (`write_step_names` covers the head and the boundaries with the catalog plus
+  the visible functions, in all three spellings, merged into one locale-aware
+  order). A `--` tail and an open `.each` body are opaque and produce nothing.
+  A half-typed chain is normal input, so the scan never calls `parse_chain`.
+- **Functions** are completed from the same place the expander resolves them:
+  the line is first run through the `*.prompt` pass
+  (`expand_prompt_file_tokens`, so a definition living in an inlined file is
+  found), then the global `funcs` files and the inline `.func … .end` blocks
+  (`collect_inline_functions`) supply the names. The `.func` keyword is offered
+  at the top level, `.end` inside a `.func` body, and the body itself completes
+  as a chain. `.func` is not offered inside a body and the signature token is
+  left alone.
+- **`*.prompt` candidates** live with the resolver they mirror,
+  `write_prompt_file_candidates` in `sdk/prompt_file.cpp`: the same three
+  sources, nearest first, each candidate naming its source (`prompt file`,
+  `prompt file (project)`, `prompt file (config)`) and a shared name emitted
+  once; a token containing `/` lists that directory instead, offering its
+  `*.prompt` files and its subdirectories so the user can descend. They are
+  offered at the head, and at an argument position only for a deliberate
+  `.prompt`/path token (a plain word stays a word, which is what keeps
+  `.files src/ma<TAB>` on fish's path completion). `--no-prompt-files` anywhere
+  in the tokens suppresses them.
 - `prompt_descriptor::complete_fn` stays `nullptr` when a prompt registers no
   callback (flags only). Tests: `tests/test_completion.cpp` plus the
-  `complete_flags`/`complete_values` ctest smokes.
+  `complete_flags`/`complete_values`/`complete_line_*` ctest smokes.
 
 ## Output bytes
 
 The dispatcher's output is the contract the tests and the AI-facing prose rely
-on; there is no other implementation to stay compatible with. Two behaviours are
-deliberate and worth keeping in mind:
+on; there is no other implementation to stay compatible with. Three behaviours
+are deliberate and worth keeping in mind:
 
+- **One text-fold rule.** Every emitted segment goes through
+  `text::append_block` (`src/core/strings.{hpp,cpp}`): the block is trimmed of
+  leading and trailing newlines, an empty segment contributes nothing (no stray
+  separator), consecutive blocks are separated by exactly one blank line, and the
+  buffer ends with exactly one newline. The chain context (`chain_state::append`),
+  the stdout accumulator, the clipboard builder (`output_emitter`) and the history
+  replay (`history::final_output`) all share it, so stdout, the clipboard and the
+  context a sink receives have the same shape. Prompts therefore never trim their
+  own output for presentation — except `.c.p`, which normalizes before its own
+  `--head N` so the cap counts real content lines.
 - The dispatcher prepends a one-line **redaction legend**
   (`sanitize::kRedactionLegend`) whenever `clean_privacy` rewrites personal data
   (`HOME`, `USER`, `HOSTNAME`, `IP_ADDRESS`, `MAC_ADDRESS`, `EMAIL_ADDRESS`,
-  `PHONE_NUMBER`, `SSN`).
+  `PHONE_NUMBER`, `SSN`). It is a one-line header, so it sits directly above the
+  first redacted block with no blank line between them.
 - Prompts such as `tse`, `tse.rigor` and `tse.times` and the `--num`/`--numbered`
   options are specific to this dispatcher; the shared help helpers standardise
   the usage lines across prompts.

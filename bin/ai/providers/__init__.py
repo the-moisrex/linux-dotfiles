@@ -7,6 +7,10 @@ to know which site is behind them.  A conversation can be continued later by
 opening it again with a saved ``conversation_id``/``resume`` (see
 :mod:`ai.state`); a provider that cannot reattach to an id replays the stored
 transcript instead.  ``Provider.stream`` is the one-turn convenience wrapper.
+
+The web sites replay a signed-in browser session; ``lms`` and ``openai`` are
+stateless HTTP APIs instead (see :mod:`ai.providers.openai_compat`) and have
+``needs_session = False``, so the CLI skips ``browser.session`` for them.
 """
 
 from __future__ import annotations
@@ -65,6 +69,18 @@ class Provider:
     #: by default (see :mod:`ai.promptfile`).  The sites cap a single message
     #: by *tokens*, so the byte budget is conservative enough for CJK too.
     inline_limit = 64 * 1024
+    #: Whether the provider replays a signed-in browser session (the web sites)
+    #: or talks to an HTTP API (``lms``/``openai``, see ``openai_compat``).
+    needs_session = True
+    #: Whether ``ai.save`` can sync it: an API provider exposes no chat list.
+    recordable = True
+    #: Whether an oversized prompt can be uploaded as a text file. Providers
+    #: without an upload endpoint send the prompt inline instead.
+    prompt_file_upload = True
+
+    def available_models(self):
+        """Model ids for a listing command (a static tuple for the web sites)."""
+        return list(self.models)
 
     def open_conversation(self, match, model, system="", debug=False,
                           timeout=600, conversation_id=None, history=None,
@@ -92,4 +108,6 @@ def all_providers():
     from .deepseek import DeepSeek
     from .gap import Gap
     from .kimi import Kimi
-    return {p.name: p for p in (ChatGPT, Grok, DeepSeek, Gap, Kimi)}
+    from .lms import Lms
+    from .openai import OpenAI
+    return {p.name: p for p in (ChatGPT, Grok, DeepSeek, Gap, Kimi, Lms, OpenAI)}

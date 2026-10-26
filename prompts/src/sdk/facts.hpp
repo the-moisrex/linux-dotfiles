@@ -17,10 +17,17 @@ namespace keys {
 // The basename stem a later `.save` should derive its filename from.
 inline constexpr std::string_view save_stem = "save.stem";
 
-// The response shape the AI was asked for, as a selector (`table:symbol`,
-// `command:prompt`, `none`, …). Published by `.expect` and `.delegate`, read by
-// `.extract`, `.each` and `.exec` when they are given no selector.
+// The response shape the AI was asked for, as a plan: newline-separated
+// `[name=]selector` entries (`command:prompt`, `save.stem=field:filename`).
+// Published by `.expect` and `.delegate`, read by `.extract` (all entries) and
+// by `.each`/`.exec` (the unnamed primary entry only) when they are given no
+// selector of their own. See `sdk/agent.hpp`'s `parse_expect_plan`.
 inline constexpr std::string_view expect = "prompt.expect";
+
+// Declared by `.save` (when it has no explicit target) so `.delegate` knows to
+// ask the AI for a file name and publish the `save.stem` binding for it. The
+// value is a marker ("1"); presence is what matters.
+inline constexpr std::string_view save_wants_name = "save.want_name";
 
 // The resolved TSE instrument, published once per chain by whichever `tse*`
 // prompt resolved it first.

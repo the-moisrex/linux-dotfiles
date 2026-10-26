@@ -140,8 +140,31 @@ void test_tse_identifier_declaration() {
     check(!snapshot.get(keys::tse_symbol), "tse declare: a .stock snapshot is not borrowed as a symbol");
 }
 
+void test_clipboard_prompts_registered() {
+    // Paste stays a source; `.c.p` is its alias with the same role.
+    for (std::string_view name : {"clipboard", "c.p"}) {
+        auto const* desc = find_prompt(name);
+        std::string msg = "paste prompt registered: " + std::string(name);
+        check(desc != nullptr, msg.c_str());
+        if (desc != nullptr) {
+            check(desc->role == chain_role::normal, "paste prompt role");
+            check(desc->stream_output, "paste prompt emits its output");
+        }
+    }
+
+    // Copy is the passthrough sink: it reads the chain context and writes the
+    // clipboard without emitting stdout.
+    auto const* cc = find_prompt("c.c");
+    check(cc != nullptr, "c.c sink registered");
+    if (cc != nullptr) {
+        check(cc->role == chain_role::sink, "c.c sink role");
+        check(!cc->stream_output, "c.c sink is silent");
+        check(cc->preflight == nullptr, "c.c needs no preflight");
+    }
+}
+
 void test_ai_sinks_registered() {
-    for (std::string_view name : {"ai.chatgpt", "ai.dseek", "ai.gap", "ai.grok", "ai.kimi"}) {
+    for (std::string_view name : {"ai.chatgpt", "ai.dseek", "ai.gap", "ai.grok", "ai.kimi", "ai.lms", "ai.openai"}) {
         auto const* desc = find_prompt(name);
         std::string msg = "ai sink registered: " + std::string(name);
         check(desc != nullptr, msg.c_str());
@@ -339,6 +362,7 @@ int main() {
     test_unknown_defaults_to_auto();
     test_tse_identifier_declaration();
     test_all_prompts_registered();
+    test_clipboard_prompts_registered();
     test_ai_sinks_registered();
     test_save_sink_registered();
     test_clear_sinks_registered();

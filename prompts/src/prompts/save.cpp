@@ -249,6 +249,32 @@ void preflight_impl(view const& v, command_info const& cmd) {
 void preflight_save(view const& v) { preflight_impl(v, kSave); }
 void preflight_flush(view const& v) { preflight_impl(v, kFlush); }
 
+// Whether the arguments name an explicit file/directory. `--dir`/`--file` take
+// no value, and no other save option does, so the first non-option token is the
+// target.
+bool has_positional_target(std::span<std::string_view const> args) {
+    bool options = true;
+    for (auto const arg : args) {
+        if (options && arg == "--") {
+            options = false;
+            continue;
+        }
+        if (options &&
+            (arg == "--force" || arg == "--allow-empty" || arg == "--dir" || arg == "--directory" || arg == "--file"))
+            continue;
+        if (options && arg.starts_with('-')) continue;
+        return true;
+    }
+    return false;
+}
+
+// The cheap pre-pass: `.save` with no explicit target wants a derived name, so
+// `.delegate` (a later-executed prompt that already sees every declaration) can
+// ask the AI for one and publish it as `keys::save_stem`.
+void declare_save(declaration& d) {
+    if (!has_positional_target(d.args)) d.declared.set(keys::save_wants_name, "1");
+}
+
 void run_save(view const& v, result& r, command_info const& cmd) {
     save_config const cfg = parse_args(v, cmd);
     std::string const content(v.text);
@@ -388,7 +414,7 @@ Examples:
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_sink(
     "save", "Save the accumulated chain context to a file, then pass the context through unchanged to later sinks.",
-    &execute_save, &render_help_save, nullptr, false, &preflight_save);
+    &execute_save, &render_help_save, nullptr, false, &preflight_save, &declare_save);
 
 // `.flush` shares this file because it is the same write path plus the
 // context reset declared through result::clear.
@@ -396,6 +422,6 @@ bool const registered_flush = prompt::register_sink(
     "flush",
     "Save the accumulated chain context to a file, then clear it so later prompts and sinks start a new, "
     "independent section.",
-    &execute_flush, &render_help_flush, nullptr, false, &preflight_flush);
+    &execute_flush, &render_help_flush, nullptr, false, &preflight_flush, &declare_save);
 
 } // namespace prompt::prompts

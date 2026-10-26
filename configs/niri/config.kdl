@@ -96,7 +96,7 @@ binds {
     Mod+Shift+Slash { show-hotkey-overlay; }
 
     // Programs
-    Mod+Return hotkey-overlay-title="Open a Terminal" { spawn "alacritty"; }
+    Mod+Return hotkey-overlay-title="Open a Terminal" { spawn "kitty"; }
     Ctrl+Shift+Return { spawn "firefox-developer-edition" "--new-window"; }
     Mod+Pause { spawn "sh" "-c" "$HOME/cmd/bin/sig-gui.py"; }
     Mod+Alt+Return { spawn "gnome-text-editor" "--new-window"; }

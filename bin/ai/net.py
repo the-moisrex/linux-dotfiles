@@ -88,7 +88,16 @@ def stream_lines(url, method="POST", headers=None, json_body=None, data=None,
     if kind == "curl_cffi":
         response = module.request(method, url, **kwargs)
         if response.status_code >= 400:
-            raise StreamError(_http_error(response.status_code, response.content))
+            # A streaming response has no body until it is read, and the real
+            # reason (which model is missing, why the prompt was refused, …) is
+            # in that body, not in the status line.
+            body = response.content
+            if not body:
+                try:
+                    body = b"".join(response.iter_content())
+                except Exception:  # noqa: BLE001 - report the status at least
+                    body = b""
+            raise StreamError(_http_error(response.status_code, body))
         for line in response.iter_lines():
             text = _decode(line)
             if debug:
@@ -121,7 +130,13 @@ def stream_chunks(url, method="POST", headers=None, json_body=None, data=None,
     if kind == "curl_cffi":
         response = module.request(method, url, **kwargs)
         if response.status_code >= 400:
-            raise StreamError(_http_error(response.status_code, response.content))
+            body = response.content
+            if not body:
+                try:
+                    body = b"".join(response.iter_content())
+                except Exception:  # noqa: BLE001 - report the status at least
+                    body = b""
+            raise StreamError(_http_error(response.status_code, body))
         for chunk in response.iter_content(chunk_size=8192):
             if not chunk:
                 continue

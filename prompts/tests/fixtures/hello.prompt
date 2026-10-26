@@ -1,0 +1,4 @@
+# A prompt file used by the prompt_file ctest smoke.
+# The file is the chain after `prompt`, without the word `prompt` itself.
+.note "hello from a prompt file"
+.length short
