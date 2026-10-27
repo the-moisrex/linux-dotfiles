@@ -5,6 +5,18 @@ prompt is a `src/prompts/<name>.cpp` that registers itself. There is no scriptin
 runtime and no prompt-file scanning; the repo-wide guide is `../AGENTS.md`, and
 this file is the working guide for this subtree.
 
+## Chain parsing
+
+`parse_chain` (`src/sdk/chaining.cpp`) turns argv into invocations. A `.name`
+or `-name` shorthand (or a bare head token) is looked up as a prompt name. In
+the head position (nothing has matched yet) an unresolved shorthand is a hard
+error (exit 2), so a typo like `prompt .dfsgfdsgfdgfds` is never silently
+swallowed by the `auto` fallback. A path-like token containing `/`
+(`prompt ./build.log`) is kept as an ordinary argument, and after the first
+prompt has matched every `.foo` token is that prompt's argument
+(`prompt .files .env`), so post-match scope is unchanged. Bare words still
+fall through to `auto` — that is how leading file/identifier args reach it.
+
 ## Build, test, lint
 
 ```bash
@@ -96,7 +108,7 @@ wire, so any content (newlines, UTF-8) survives. There are exactly two write
 points, with two merge rules:
 
 - **Declarations** — `register_prompt`'s last argument, a
-  `void declare_<name>(declaration& d)`. They run in the parent *before* any
+  `void declare_<name>(declaration& d)`. They run in the parent _before_ any
   batch forks and keep the **first** writer, so parallel siblings agree on
   identity derived purely from `d.args`/`d.env` (cheap: no I/O, no fzf, no
   network; a failing declaration is swallowed and the segment falls back to its
@@ -129,7 +141,7 @@ pipe at once instead of draining them in turn.
 after `prompt`. `sdk/prompt_file.{hpp,cpp}` is a lexical pre-pass over argv that
 runs in `main.cpp` before `parse_chain`, so chain parsing, sinks, `.each` bodies,
 `.exec` ownership, the clipboard and the history store only ever see an ordinary
-argv (the history records the *effective* tokens, which is what a replay wants).
+argv (the history records the _effective_ tokens, which is what a replay wants).
 
 - **Splicing:** any argument token ending in `.prompt` that resolves to a
   readable file is replaced, in place, by the file's tokens, so
@@ -243,7 +255,7 @@ become the context later segments see.
   applies the sink's `--on-error` policy, and keeps a failed source batch tainted
   so each later sink can decide again. A sink that is not run because the source
   batch failed is named on stderr (`prompt: .save not run: an earlier prompt
-  failed; pass --on-error continue …`), so a skipped sink is never silent.
+failed; pass --on-error continue …`), so a skipped sink is never silent.
   Fan-out sinks are captured and emitted in argv order (no interleaved live
   streams); chained sinks stream as they run.
 - **Passthrough, clearing and save hints:** a successful sink that emits no
@@ -259,7 +271,7 @@ become the context later segments see.
   `.flush` (`src/prompts/save.cpp`) does it after a completed write, so a failed
   save keeps the context. A prompt that knows a good filename publishes the
   basename stem as the `keys::save_stem` fact (`r.published.set(keys::save_stem,
-  stem)`), which the dispatcher carries through parallel children to later
+stem)`), which the dispatcher carries through parallel children to later
   sinks; a prompt with no preferred name simply publishes nothing. `.save`
   (`src/prompts/save.cpp`) is the reference passthrough sink: it writes the same
   context an AI sink receives, refuses to overwrite unless `--force`, sanitizes
@@ -612,21 +624,21 @@ a write failure is swallowed and can never fail a prompt run.
 Use these instead of re-open-coding the same loops:
 
 - `args.hpp`:
-  - `parse_head_option(args, head_lines, strict)` — the raw `--head` validator.
-  - `head_lines_or_throw(v, strict = true)` — the parser plus the
-    `throw usage_error{...}` preamble, for prompts that only cap output.
-  - `file_options_or_throw(v, strict = true)` — the file prompts' whole CLI:
-    the validated `--head N` cap plus the value-less `--num`/`--numbered` flag,
-    returned as a `file_options {head_lines, numbered}` (built on
-    `is_number_flag(arg)`, whose spellings live in `kNumberFlags`).
-  - `positional_args(v)` / `collect_file_args(v)` — the FILE arguments with
-    the `--head <value>` pair and the `--num`/`--numbered` flags removed.
-    `collect_file_args` splits them into `files` (regular files) and `missing`;
-    embed the first list and warn about the second. A sibling `.files` embeds
-    its own list, so a file prompt never re-embeds a sibling's files.
-  - `file_usage_help(name, tail, pipe, prefix)` and
-    `file_options_help(what, show_help)` — the shared usage lines and the
-    `--head`/`--num` Options block, so every file prompt's help stays identical.
+    - `parse_head_option(args, head_lines, strict)` — the raw `--head` validator.
+    - `head_lines_or_throw(v, strict = true)` — the parser plus the
+      `throw usage_error{...}` preamble, for prompts that only cap output.
+    - `file_options_or_throw(v, strict = true)` — the file prompts' whole CLI:
+      the validated `--head N` cap plus the value-less `--num`/`--numbered` flag,
+      returned as a `file_options {head_lines, numbered}` (built on
+      `is_number_flag(arg)`, whose spellings live in `kNumberFlags`).
+    - `positional_args(v)` / `collect_file_args(v)` — the FILE arguments with
+      the `--head <value>` pair and the `--num`/`--numbered` flags removed.
+      `collect_file_args` splits them into `files` (regular files) and `missing`;
+      embed the first list and warn about the second. A sibling `.files` embeds
+      its own list, so a file prompt never re-embeds a sibling's files.
+    - `file_usage_help(name, tail, pipe, prefix)` and
+      `file_options_help(what, show_help)` — the shared usage lines and the
+      `--head`/`--num` Options block, so every file prompt's help stays identical.
 - `embed.hpp`: `infer_lang` (`std::string_view`), `trim_context`,
   `trim_context_nl`, `head_output`, `read_file`, `number_lines(text, numbered)`
   (the `N | line` prefixing `--num` enables), `embed_file`,
@@ -675,7 +687,7 @@ Use these instead of re-open-coding the same loops:
   `render_sink_help`, `trim_context_lines`, `write_stdout`, `write_stderr` and
   `run_sink_tool` (see "Sinks").
 - `src/core/process.hpp`: `process::command` / `run_command(argv, stdin, env,
-  timeout)` — fork/exec, no shell, no quoting. `on_stdout`/`on_stderr` tee each
+timeout)` — fork/exec, no shell, no quoting. `on_stdout`/`on_stderr` tee each
   chunk while still accumulating it, and the poll loop enforces the timeout
   while reading. `run_command` defaults to 30 s, so a long fetch passes its own
   timeout (`tse_data::run_tool` allows 10 min and turns a timeout, non-zero exit

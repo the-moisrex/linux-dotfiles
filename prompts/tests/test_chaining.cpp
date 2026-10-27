@@ -56,6 +56,62 @@ void test_unknown_defaults_to_auto() {
     check(chain.invocations.size() == 1 && chain.invocations[0].name == "auto", "empty argv: defaults to auto");
 }
 
+void test_unknown_shorthand_at_head_errors() {
+    // `.dfsgfdsgfdgfds` has no owning prompt: the head must be a hard error so
+    // the typo never falls through to auto's argument list.
+    std::array<char const*, 2> argv = {"prompt", ".dfsgfdsgfdgfds"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
+    check(!chain.error.empty(), "unknown shorthand: error is set");
+    check(chain.invocations.empty(), "unknown shorthand: no invocation was built");
+}
+
+void test_unknown_dash_shorthand_at_head_errors() {
+    // The single-dash form is the same documented shorthand, so it gets the
+    // same head-of-chain diagnostic.
+    std::array<char const*, 2> argv = {"prompt", "-dfsgfdsgfdgfds"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
+    check(!chain.error.empty(), "unknown dash shorthand: error is set");
+    check(chain.invocations.empty(), "unknown dash shorthand: no invocation was built");
+}
+
+void test_unknown_bare_word_defaults_to_auto() {
+    // A bare word that is not a prompt name still reaches `auto`: that is how a
+    // leading file/identifier argument gets there.
+    std::array<char const*, 2> argv = {"prompt", "somefile.txt"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
+    check(chain.error.empty(), "unknown bare word: no error");
+    check(chain.invocations.size() == 1, "unknown bare word: one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "auto", "unknown bare word: defaults to auto");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args.size() == 1 &&
+              chain.invocations[0].args[0] == "somefile.txt",
+          "unknown bare word: the word is an auto argument");
+}
+
+void test_post_match_dot_is_argument() {
+    // After a prompt has matched, `.env` is a legitimate argument; the head
+    // guard must not fire.
+    std::array<char const*, 3> argv = {"prompt", ".files", ".env"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
+    check(chain.error.empty(), "post-match dot: no error");
+    check(chain.invocations.size() == 1, "post-match dot: one invocation");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "files", "post-match dot: files matched");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args.size() == 1 &&
+              chain.invocations[0].args[0] == ".env",
+          "post-match dot: .env is an argument of files");
+}
+
+void test_leading_relative_path_is_argument() {
+    // `./build.log` is path-like (`/`): the head guard must let it through to
+    // auto, otherwise a common invocation would suddenly error.
+    std::array<char const*, 2> argv = {"prompt", "./build.log"};
+    auto chain = parse_chain(std::span<char const* const>(argv.data(), argv.size()), get_all_prompts());
+    check(chain.error.empty(), "leading path: no error");
+    check(chain.invocations.size() == 1 && chain.invocations[0].name == "auto", "leading path: auto owns the path");
+    check(chain.invocations.size() == 1 && chain.invocations[0].args.size() == 1 &&
+              chain.invocations[0].args[0] == "./build.log",
+          "leading path: the path is kept verbatim");
+}
+
 void test_all_prompts_registered() {
     // Every prompt the command ships must be a native, executable prompt in
     // this build (there is no script fallback).
@@ -360,6 +416,11 @@ int main() {
     test_prompt_with_args();
     test_chain_two_prompts();
     test_unknown_defaults_to_auto();
+    test_unknown_shorthand_at_head_errors();
+    test_unknown_dash_shorthand_at_head_errors();
+    test_unknown_bare_word_defaults_to_auto();
+    test_post_match_dot_is_argument();
+    test_leading_relative_path_is_argument();
     test_tse_identifier_declaration();
     test_all_prompts_registered();
     test_clipboard_prompts_registered();

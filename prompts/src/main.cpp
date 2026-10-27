@@ -340,9 +340,12 @@ Shorthand (chain multiple prompts with args):
   prompt .agents .git-dirty .commit
 
   Tokens starting with '.' or '-' that match a known prompt name are treated
-  as prompt invocations. Bare words between them become that prompt's arguments.
-  The first argument is also checked as a prompt name when no prompts have been
-  matched yet.
+  as prompt invocations. An unmatched '.'/'-' token in the head position is a
+  hard error (exit 2), so a typo is never silently swallowed by the auto
+  fallback; a path-like token containing '/' is still kept as an argument, and
+  after a prompt has matched a '.foo' token is that prompt's argument. Bare
+  words between them become that prompt's arguments. The first argument is
+  also checked as a prompt name when no prompts have been matched yet.
 
 Prompt files (the same shorthand, kept in a file):
   prompt debug.prompt

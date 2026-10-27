@@ -98,9 +98,11 @@ chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_des
         }
 
         std::string_view prompt_name;
+        bool shorthand = false;
         if (arg.starts_with('.') || (arg.starts_with('-') && arg.size() > 1 && !arg.starts_with("--") &&
                                      (std::isalnum(static_cast<unsigned char>(arg[1])) != 0))) {
             prompt_name = arg.substr(1);
+            shorthand = true;
         } else if (matched_names == 0 && !arg.empty() && std::isalnum(static_cast<unsigned char>(arg[0])) != 0) {
             // Only the first bare token can name a prompt; later bare words
             // are arguments.
@@ -119,6 +121,16 @@ chain_result parse_chain(std::span<char const* const> argv, std::span<prompt_des
         }
         if (arg == ".end") {
             result.error = "prompt: unexpected .end";
+            return result;
+        }
+        // An unmatched `.name`/`-name` shorthand in the head position (nothing
+        // has matched yet) is a hard error: otherwise the `auto` fallback
+        // silently eats a typo like `.dfsgfdsgfdgfds`. A path-like token
+        // (`prompt ./build.log`) is kept as an ordinary argument, and after the
+        // first prompt has matched a `.foo` token is that prompt's argument
+        // (`.files .env`), so the guards stay narrow.
+        if (shorthand && matched_names == 0 && !arg.contains('/')) [[unlikely]] {
+            result.error = "prompt: unknown prompt '" + std::string(prompt_name) + "' (see 'prompt list')";
             return result;
         }
         current_args.push_back(arg);
