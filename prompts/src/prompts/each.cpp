@@ -1,7 +1,7 @@
-#include "../core/fs.hpp"
-#include "../core/process.hpp"
+#include "../extract/render.hpp"
 #include "../sdk/agent.hpp"
 #include "../sdk/errors.hpp"
+#include "../sdk/extract.hpp"
 #include "../sdk/facts.hpp"
 #include "../sdk/policy.hpp"
 #include "../sdk/prompt_registry.hpp"
@@ -36,11 +36,6 @@ namespace prompt::prompts {
 static void render_help_each(std::ostream& os);
 
 namespace {
-
-[[nodiscard]] std::optional<std::filesystem::path> git_root_of(view const& v) {
-    if (v.env.git_root.empty()) return std::nullopt;
-    return v.env.git_root;
-}
 
 struct each_options {
     std::size_t jobs = 0;
@@ -124,7 +119,7 @@ struct each_options {
     return out;
 }
 
-[[nodiscard]] std::string json_text(nlohmann::json const& value) {
+[[nodiscard]] std::string json_text(nlohmann::ordered_json const& value) {
     if (value.is_string()) return value.get<std::string>();
     return value.dump();
 }
@@ -138,7 +133,7 @@ struct each_options {
     return std::ranges::all_of(name, valid);
 }
 
-[[nodiscard]] std::string substitute(std::string_view token, nlohmann::json const& item, std::size_t index,
+[[nodiscard]] std::string substitute(std::string_view token, nlohmann::ordered_json const& item, std::size_t index,
                                      std::size_t total, std::string const& file) {
     std::string out;
     out.reserve(token.size());
@@ -200,7 +195,7 @@ struct each_options {
     return out;
 }
 
-[[nodiscard]] std::string label_for(nlohmann::json const& item, std::size_t index) {
+[[nodiscard]] std::string label_for(nlohmann::ordered_json const& item, std::size_t index) {
     if (item.contains("kind") && item.at("kind") == "command" && item.contains("command")) {
         auto command = json_text(item.at("command"));
         if (!command.empty()) return command;
@@ -516,7 +511,7 @@ void drain_fd(int& fd, bool& done, std::string& text) {
     return results;
 }
 
-[[nodiscard]] std::string item_text(nlohmann::json const& item) {
+[[nodiscard]] std::string item_text(nlohmann::ordered_json const& item) {
     if (item.contains("kind") && item.at("kind") == "command" && item.contains("command"))
         return json_text(item.at("command"));
     if (item.contains("body")) return json_text(item.at("body"));
@@ -563,41 +558,25 @@ static void execute_each(view const& v, result& r) {
         throw usage_error{"prompt each: --print needs a body\n" + help_text(render_help_each)};
     }
 
-    std::string selector = opts.selector;
-    if (selector.empty()) {
-        if (auto expected = v.prior.get(keys::expect)) selector = agent::primary_selector(*expected);
-    }
+    std::optional<extract::selection> sel;
+    if (!opts.selector.empty()) sel = extract::parse_selection(opts.selector);
+    else if (auto expected = v.prior.get(keys::expect))
+        sel = extract::primary(*expected);
     // `--list` is the inventory path: show every candidate instead of making
     // the ambiguous `auto` choice.
-    if (selector.empty()) selector = opts.list ? "any" : "auto";
+    if (!sel.has_value()) sel = extract::parse_selection(opts.list ? "any" : "auto");
     if (v.text.empty()) throw soft_error{"prompt each: no accumulated context to take items from\n"};
 
-    auto const tool = fs::bin_tool("md.extract", v.env.exe_path, git_root_of(v));
-    std::vector<std::string> extract_argv{"python3", tool.string(), "--items", selector};
-    auto const extracted = process::command{extract_argv}
-                               .stdin_data(std::string(v.text))
-                               .capture_stderr()
-                               .timeout(std::chrono::minutes(5))
-                               .run();
-    if (extracted.exit_code != 0) {
-        std::string message = extracted.stderr_data;
-        if (message.empty()) message = std::format("prompt each: md.extract failed for {}\n", selector);
-        if (extracted.exit_code == 2) throw usage_error{std::move(message)};
-        throw soft_error{std::move(message)};
-    }
-
-    nlohmann::json items;
-    try {
-        items = nlohmann::json::parse(extracted.stdout_data);
-    } catch (nlohmann::json::exception const& error) {
-        throw soft_error{std::format("prompt each: md.extract returned invalid JSON: {}\n", error.what())};
-    }
-    if (!items.is_array()) throw soft_error{"prompt each: md.extract --items did not return an array\n"};
+    auto const matches = extract::run(v.text, *sel);
+    nlohmann::ordered_json items = extract::items_to_json(matches, false);
     if (opts.limit != 0 && items.size() > opts.limit) {
-        items.erase(items.begin() + static_cast<nlohmann::json::difference_type>(opts.limit), items.end());
+        items.erase(items.begin() + static_cast<nlohmann::ordered_json::difference_type>(opts.limit), items.end());
     }
     std::size_t const total = items.size();
-    if (total == 0) throw soft_error{std::format("prompt each: selector {} produced no items\n", selector)};
+    if (total == 0) {
+        throw soft_error{std::format("prompt each: selector {} produced no items\n",
+                                     extract::format_plan(std::span<extract::selection const>(&*sel, 1)))};
+    }
 
     if (opts.list) {
         r.err += std::format("{}\n", total == 1 ? "1 item:" : std::format("{} items:", total));
@@ -798,6 +777,6 @@ bool const registered = prompt::register_sink(
     "each",
     "Loop a chain body over the rows of a table, code block or section, running each item as a child prompt in "
     "parallel.",
-    &execute_each, &render_help_each, nullptr, true, nullptr, nullptr, true);
+    &execute_each, &render_help_each, &extract::complete_selector, true, nullptr, nullptr, true);
 
 } // namespace prompt::prompts

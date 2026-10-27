@@ -1,14 +1,11 @@
-#include "../core/fs.hpp"
-#include "../core/process.hpp"
-#include "../core/strings.hpp"
-#include "../sdk/agent.hpp"
+#include "../sdk/extract.hpp"
+#include "../extract/render.hpp"
 #include "../sdk/errors.hpp"
 #include "../sdk/facts.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include "../sdk/sink.hpp"
 #include "../sdk/stage.hpp"
 #include <algorithm>
-#include <chrono>
 #include <format>
 #include <ostream>
 #include <string>
@@ -22,43 +19,28 @@ static void render_help_extract(std::ostream& os);
 
 namespace {
 
-[[nodiscard]] std::optional<std::filesystem::path> git_root_of(view const& v) {
-    if (v.env.git_root.empty()) return std::nullopt;
-    return v.env.git_root;
-}
-
 struct select_flags {
     bool json = false;
     bool list = false;
     bool pick = false;
 };
 
-// One `md.extract --select <selector>` run over the chain context. Extra flags
-// carry the sink's own `--json`/`--list`/`--pick` for the primary, and `--one`
-// for a named binding (so a name is unambiguous).
-[[nodiscard]] process::command_result run_select(view const& v, std::string_view selector,
-                                                 std::vector<std::string> const& extra) {
-    auto const tool = fs::bin_tool("md.extract", v.env.exe_path, git_root_of(v));
-    std::vector<std::string> argv{"python3", tool.string(), "--select", std::string(selector)};
-    for (auto const& flag : extra) argv.push_back(flag);
-    return process::command{argv}
-        .stdin_data(std::string(v.text))
-        .capture_stderr()
-        .timeout(std::chrono::minutes(5))
-        .run();
+// A published binding value never carries a trailing newline (the shape the
+// former `md.extract --select --one` output had).
+[[nodiscard]] std::string rstrip_newlines(std::string_view text) {
+    while (!text.empty() && text.back() == '\n') text.remove_suffix(1);
+    return std::string(text);
 }
 
-void throw_tool_error(process::command_result const& result, std::string_view selector) {
-    std::string message = result.stderr_data;
-    if (message.empty()) message = std::format("prompt extract: md.extract failed for {}\n", selector);
-    if (result.exit_code == 2) throw usage_error{std::move(message)};
-    throw soft_error{std::move(message)};
+[[noreturn]] void throw_no_match(extract::selection const& sel) {
+    throw soft_error{std::format("prompt extract: no matching {} blocks (try --list, --kind any, or --guess)\n",
+                                 extract::selector_kind_names(sel))};
 }
 
 } // namespace
 
 static void execute_extract(view const& v, result& r) {
-    std::vector<agent::expect_entry> entries;
+    std::vector<extract::selection> entries;
     select_flags flags;
     bool options = true;
     for (auto arg : v.args) {
@@ -82,17 +64,17 @@ static void execute_extract(view const& v, result& r) {
             throw usage_error{
                 std::format("prompt extract: unknown option {}\n{}", arg, help_text(render_help_extract))};
         }
-        for (auto& entry : agent::parse_expect_plan(arg)) entries.push_back(std::move(entry));
+        for (auto& entry : extract::parse_plan(arg)) entries.push_back(std::move(entry));
     }
     if (entries.empty()) {
-        if (auto expected = v.prior.get(keys::expect)) entries = agent::parse_expect_plan(*expected);
+        if (auto expected = v.prior.get(keys::expect)) entries = extract::parse_plan(*expected);
     }
     // `--list` is the inventory path: show every candidate instead of making
     // the ambiguous `auto` choice.
-    if (entries.empty()) entries.push_back(agent::expect_entry{.selector = flags.list ? "any" : "auto"});
+    if (entries.empty()) entries.push_back(extract::parse_selection(flags.list ? "any" : "auto"));
 
     auto const primaries = std::count_if(entries.begin(), entries.end(),
-                                         [](agent::expect_entry const& entry) { return entry.name.empty(); });
+                                         [](extract::selection const& entry) { return entry.bind.empty(); });
     if (primaries == 0 && entries.size() > 1) {
         throw usage_error{"prompt extract: the plan needs an unnamed (primary) selector\n" +
                           help_text(render_help_extract)};
@@ -100,41 +82,48 @@ static void execute_extract(view const& v, result& r) {
 
     if (v.text.empty()) throw soft_error{"prompt extract: no accumulated context to extract from\n"};
 
-    std::vector<std::string> primary_flags;
-    if (flags.json) primary_flags.emplace_back("--json");
-    if (flags.list) primary_flags.emplace_back("--list");
-    if (flags.pick) primary_flags.emplace_back("--pick");
-
+    // Named entries are extracted first, each requiring exactly one match, and
+    // published as their fact.
     for (auto const& entry : entries) {
-        if (entry.name.empty()) continue;
-        auto const result = run_select(v, entry.selector, {"--one"});
-        if (result.exit_code != 0) throw_tool_error(result, entry.selector);
-        r.published.set(entry.name, prompt::text::rstrip_newlines(result.stdout_data));
+        if (entry.bind.empty()) continue;
+        auto const matches = extract::run(v.text, entry);
+        if (matches.size() != 1) {
+            if (matches.empty()) throw soft_error{"prompt extract: no block matches --one\n"};
+            throw usage_error{std::format(
+                "prompt extract: --one needs exactly one block, got {} (narrow the selection or drop --one)\n",
+                matches.size())};
+        }
+        r.published.set(entry.bind, rstrip_newlines(extract::render_selection(matches, entry, false, {})));
     }
 
     // The primary entry replaces the chain context (a named-only single entry
     // acts as the primary too, matching `.expect`).
-    std::string_view const primary =
+    extract::selection const& primary =
         primaries == 1
-            ? std::ranges::find_if(entries, [](agent::expect_entry const& entry) { return entry.name.empty(); })
-                  ->selector
-            : entries.front().selector;
-    auto const result = run_select(v, primary, primary_flags);
+            ? *std::ranges::find_if(entries, [](extract::selection const& entry) { return entry.bind.empty(); })
+            : entries.front();
+    auto matches = extract::run(v.text, primary);
 
     if (flags.list) {
         // Inventory only: show the candidates on stderr and leave the chain
         // context untouched (an empty sink output is a passthrough).
-        r.err = result.stderr_data + result.stdout_data;
+        if (matches.empty()) throw_no_match(primary);
+        r.err = extract::render_list(matches, false);
         r.no_clipboard = true;
-        if (result.exit_code != 0) {
-            if (result.exit_code == 2) throw usage_error{result.stderr_data};
-            throw soft_error{result.stderr_data};
-        }
         return;
     }
 
-    if (result.exit_code != 0) throw_tool_error(result, primary);
-    r.out = result.stdout_data;
+    if (matches.empty()) throw_no_match(primary);
+    if (flags.pick) matches = extract::pick(matches, false);
+
+    if (flags.json) {
+        auto array = nlohmann::ordered_json::array();
+        for (auto const& m : matches) array.push_back(extract::block_record(m, false));
+        r.out = array.dump(2) + "\n";
+        return;
+    }
+
+    r.out = extract::render_selection(matches, primary, false, {});
 }
 
 static void render_help_extract(std::ostream& os) {
@@ -173,6 +162,6 @@ bool const registered = prompt::register_sink(
     "extract",
     "Take tables, code blocks, sections, commands or labelled values out of the chain context, using the shape the AI "
     "was asked for.",
-    &execute_extract, &render_help_extract);
+    &execute_extract, &render_help_extract, &extract::complete_selector);
 
 } // namespace prompt::prompts

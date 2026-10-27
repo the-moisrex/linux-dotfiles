@@ -33,6 +33,27 @@ inline constexpr std::string_view save_wants_name = "save.want_name";
 // prompt resolved it first.
 inline constexpr std::string_view tse_symbol = "tse.instrument.symbol";
 
+// The chain's intent, published as an artifact by `.fix`/`.debug`/`.run` (and
+// overridable with `.compress --for`). Read by `.compress` so the same input
+// compresses differently when it is being repaired rather than merely read.
+// Values are `general`, `fix`, `debug`, `review` (`prompt::signals::intent`).
+inline constexpr std::string_view mode = "prompt.mode";
+
+// What the chain is *about*: newline-separated focal items — failed Google Test
+// cases, `path:line` error sites, or the files under repair. `.compress` never
+// compresses a focal region and its `gtest.units` compressor keeps the focal
+// test bodies while sampling the rest.
+inline constexpr std::string_view focus = "prompt.focus";
+
+// The detected project shape, published by `.project` and re-derived on demand
+// by `.compress` through `prompt::project::detect`. `build_dir` is a path, the
+// rest are `prompt::project` enum names.
+inline constexpr std::string_view project_language = "project.language";
+inline constexpr std::string_view project_build = "project.build";
+inline constexpr std::string_view project_build_dir = "project.build_dir";
+inline constexpr std::string_view project_package = "project.package";
+inline constexpr std::string_view project_tests = "project.tests";
+
 } // namespace keys
 
 // The only inter-prompt channel. Ordered key/value pairs of strings; a value

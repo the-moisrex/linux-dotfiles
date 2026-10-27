@@ -3,7 +3,9 @@
 #include "../core/sanitize.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
+#include "../sdk/facts.hpp"
 #include "../sdk/prompt_registry.hpp"
+#include "../sdk/signals.hpp"
 #include <array>
 #include <regex>
 #include <string>
@@ -46,6 +48,14 @@ std::vector<std::string> extract_failed_gtests(std::string_view text) {
 // newline (a missing trailing newline in the input is preserved as-is).
 std::string head_n(std::string_view text, std::size_t n) { return head_output(text, n); }
 
+// `.run` always builds a debugging prompt, so the intent is a constant and can
+// be declared from argv before the batch forks (a sibling `.compress` reads it
+// without a sink barrier). The *focus* needs the run output, so it is published
+// as an artifact instead — visible to a later batch.
+void declare_run(declaration& d) {
+    if (!d.prior.get(keys::mode)) d.declared.set(keys::mode, signals::to_string(signals::intent::debug));
+}
+
 } // namespace
 
 static void execute_run(view const& v, result& r) {
@@ -77,14 +87,23 @@ static void execute_run(view const& v, result& r) {
         std::vector<std::string> storage = {"bash", "-c", R"("$0" "$@" 2>&1)", run_path};
         for (std::size_t i = 1; i < cmd.size(); ++i) storage.push_back(cmd[i]);
 
-        auto result = prompt::process::run_command(storage, v.in.text());
+        bool const had_stdin = v.in.available();
+        std::string const piped(v.in.text());
+
+        auto result = prompt::process::run_command(storage, piped);
+        if (had_stdin) v.in.spend();
         run_output = prompt::sanitize::strip_osc(result.stdout_data);
         while (!run_output.empty() && run_output.back() == '\n') run_output.pop_back();
         status_text = std::to_string(result.exit_code);
         description = "the `run` command";
+    } else if (v.in.available()) {
+        // Piped input is the run output: `make test 2>&1 | prompt run`.
+        run_output = std::string(v.in.text());
+        v.in.spend();
+        while (!run_output.empty() && run_output.back() == '\n') run_output.pop_back();
+        status_text = "unknown";
+        description = "the piped `run` output";
     } else {
-        // Only the stdin buffer matters here and run never fills it, so piped
-        // input is ignored.
         status_text = "unknown";
         description = "the piped `run` output";
     }
@@ -93,6 +112,11 @@ static void execute_run(view const& v, result& r) {
     if (head_lines) {
         run_output = head_n(run_output, *head_lines);
     }
+
+    // The failed tests and error sites are the chain's focus: `.compress` keeps
+    // those regions whole. Published as an artifact because it needs the output.
+    auto const focus = prompt::signals::extract_focus(search_output);
+    if (!focus.empty()) r.published.set(keys::focus, prompt::signals::join_focus(focus));
 
     std::string output;
     std::string error;
@@ -177,6 +201,6 @@ bool const registered = prompt::register_prompt(
     "run",
     "Runs `bin/run` with the provided arguments and builds a debugging prompt from its output. If "
     "stdin is piped in, it debugs the piped run output instead.",
-    &execute_run, &render_help_run, &complete_run);
+    &execute_run, &render_help_run, &complete_run, chain_role::normal, true, nullptr, &declare_run);
 
 } // namespace prompt::prompts

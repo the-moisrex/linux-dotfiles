@@ -1,12 +1,9 @@
-#include "../core/fs.hpp"
-#include "../core/process.hpp"
-#include "../sdk/agent.hpp"
 #include "../sdk/errors.hpp"
+#include "../sdk/extract.hpp"
 #include "../sdk/facts.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include "../sdk/stage.hpp"
 #include <algorithm>
-#include <chrono>
 #include <format>
 #include <ostream>
 #include <string>
@@ -17,22 +14,13 @@ namespace prompt::prompts {
 
 static void render_help_expect(std::ostream& os);
 
-namespace {
-
-[[nodiscard]] std::optional<std::filesystem::path> git_root_of(view const& v) {
-    if (v.env.git_root.empty()) return std::nullopt;
-    return v.env.git_root;
-}
-
-} // namespace
-
 static void execute_expect(view const& v, result& r) {
-    std::vector<agent::expect_entry> entries;
+    std::vector<extract::selection> entries;
     for (auto arg : v.args) {
         if (arg.starts_with('-')) {
             throw usage_error{std::format("prompt expect: unknown option {}\n{}", arg, help_text(render_help_expect))};
         }
-        auto parsed = agent::parse_expect_plan(arg);
+        auto parsed = extract::parse_plan(arg);
         if (parsed.empty()) {
             throw usage_error{std::format("prompt expect: empty selector {}\n{}", arg, help_text(render_help_expect))};
         }
@@ -45,32 +33,17 @@ static void execute_expect(view const& v, result& r) {
     // The primary (unnamed) entry is the shape that replaces the context; the
     // named entries are extra values `.extract` publishes as facts.
     auto const primaries = std::count_if(entries.begin(), entries.end(),
-                                         [](agent::expect_entry const& entry) { return entry.name.empty(); });
+                                         [](extract::selection const& entry) { return entry.bind.empty(); });
     if (primaries != 1) {
         throw usage_error{"prompt expect: the plan needs exactly one unnamed (primary) selector\n" +
                           help_text(render_help_expect)};
     }
-    std::stable_sort(entries.begin(), entries.end(), [](agent::expect_entry const& a, agent::expect_entry const& b) {
-        return a.name.empty() && !b.name.empty();
+    std::stable_sort(entries.begin(), entries.end(), [](extract::selection const& a, extract::selection const& b) {
+        return a.bind.empty() && !b.bind.empty();
     });
 
-    auto const tool = fs::bin_tool("md.extract", v.env.exe_path, git_root_of(v));
-    std::vector<std::string> argv{"python3", tool.string()};
-    for (auto const& entry : entries) {
-        argv.emplace_back("--contract");
-        argv.push_back(entry.selector);
-    }
-    auto const result = process::command{argv}.capture_stderr().timeout(std::chrono::seconds(30)).run();
-    if (result.exit_code != 0) {
-        std::string message = result.stderr_data;
-        if (message.empty())
-            message = std::format("prompt expect: md.extract failed for {}\n", entries.front().selector);
-        if (result.exit_code == 2) throw usage_error{std::move(message)};
-        throw soft_error{std::move(message)};
-    }
-
-    r.out = result.stdout_data;
-    r.published.set(keys::expect, agent::format_expect_plan(entries));
+    r.out = entries.size() == 1 ? extract::contract_for(entries.front()) : extract::combined_contract(entries);
+    r.published.set(keys::expect, extract::format_plan(entries));
 }
 
 static void render_help_expect(std::ostream& os) {
@@ -114,6 +87,6 @@ bool const registered =
     prompt::register_prompt("expect",
                             "State the exact response shape the AI should return and publish it for the following "
                             "extraction stage.",
-                            &execute_expect, &render_help_expect);
+                            &execute_expect, &render_help_expect, &extract::complete_selector);
 
 } // namespace prompt::prompts

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace prompt {
@@ -32,6 +33,8 @@ std::string_view infer_lang(std::filesystem::path const& file) {
     if (ext == ".md") return "markdown";
     if (ext == ".txt" || ext == ".log") return "text";
     if (ext == ".sql") return "sql";
+    if (ext == ".csv") return "csv";
+    if (ext == ".tsv") return "tsv";
     if (ext == ".html" || ext == ".htm") return "html";
     if (ext == ".css") return "css";
     if (ext == ".dockerfile" || file.filename() == "Dockerfile") return "dockerfile";
@@ -99,6 +102,10 @@ std::string head_output(std::string_view text, std::size_t n) {
 }
 
 std::string read_file(std::filesystem::path const& path) {
+    // A directory opens successfully but throws from the stream on read
+    // (`basic_filebuf::underflow: Is a directory`), so gate on a regular file.
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) return "";
     std::ifstream file(path, std::ios::binary);
     if (!file) return "";
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};

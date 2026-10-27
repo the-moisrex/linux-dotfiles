@@ -38,6 +38,18 @@ target_link_libraries(test_facts PRIVATE prompt_lib)
 target_include_directories(test_facts PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME facts COMMAND test_facts)
 
+add_executable(test_compress test_compress.cpp)
+target_link_libraries(test_compress PRIVATE prompt_lib)
+target_include_directories(test_compress PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME compress COMMAND test_compress)
+
+# A directory argument is a clean usage error, not the stream exception
+# (`basic_filebuf::underflow: Is a directory`) that used to abort the process.
+add_test(NAME compress_directory
+    COMMAND $<TARGET_FILE:prompt> .compress ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(compress_directory PROPERTIES
+    PASS_REGULAR_EXPRESSION "is a directory")
+
 # The pasted-text → instrument policy, now next to the clipboard instead of
 # inline in the dispatcher's environment initializer.
 add_executable(test_clipboard test_clipboard.cpp)
@@ -271,7 +283,7 @@ add_test(NAME agent_extract_bind
 if(Python3_Interpreter_FOUND)
     add_test(NAME md_extract_unit
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_md_extract.py
-                ${CMAKE_SOURCE_DIR}/../bin/md.extract)
+                $<TARGET_FILE:md.extract>)
 endif()
 
 add_test(NAME agent_exec_print COMMAND $<TARGET_FILE:prompt> .exec --print git status)

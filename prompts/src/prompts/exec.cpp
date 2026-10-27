@@ -1,8 +1,9 @@
-#include "../core/fs.hpp"
 #include "../core/process.hpp"
+#include "../extract/render.hpp"
 #include "../sdk/agent.hpp"
 #include "../sdk/chaining.hpp"
 #include "../sdk/errors.hpp"
+#include "../sdk/extract.hpp"
 #include "../sdk/facts.hpp"
 #include "../sdk/policy.hpp"
 #include "../sdk/prompt_registry.hpp"
@@ -23,23 +24,11 @@ static void render_help_exec(std::ostream& os);
 
 namespace {
 
-[[nodiscard]] std::optional<std::filesystem::path> git_root_of(view const& v) {
-    if (v.env.git_root.empty()) return std::nullopt;
-    return v.env.git_root;
-}
-
-[[nodiscard]] std::string extract_text(view const& v, std::string_view selector) {
-    auto const tool = fs::bin_tool("md.extract", v.env.exe_path, git_root_of(v));
-    std::vector<std::string> argv{"python3", tool.string(), "--select", std::string(selector)};
-    auto const result =
-        process::command{argv}.stdin_data(std::string(v.text)).capture_stderr().timeout(std::chrono::minutes(5)).run();
-    if (result.exit_code != 0) {
-        std::string message = result.stderr_data;
-        if (message.empty()) message = std::format("prompt exec: md.extract failed for {}\n", selector);
-        if (result.exit_code == 2) throw usage_error{std::move(message)};
-        throw soft_error{std::move(message)};
-    }
-    return result.stdout_data;
+// The text a selector takes out of the chain context, rendered exactly as
+// `md.extract --select` would (a command is its command line).
+[[nodiscard]] std::string extract_text(view const& v, extract::selection const& sel) {
+    auto const matches = extract::run(v.text, sel);
+    return extract::render_selection(matches, sel, false, {});
 }
 
 [[nodiscard]] std::vector<std::string> command_lines(std::string const& text) {
@@ -129,13 +118,13 @@ static void execute_exec(view const& v, result& r) {
     } else if (direct.has_value()) {
         commands.push_back(agent::split_command(*direct));
     } else {
-        std::string selector = spec.selector;
-        if (selector.empty()) {
-            if (auto expected = v.prior.get(keys::expect)) selector = agent::primary_selector(*expected);
-        }
-        if (selector.empty()) selector = "auto";
+        std::optional<extract::selection> sel;
+        if (!spec.selector.empty()) sel = extract::parse_selection(spec.selector);
+        else if (auto expected = v.prior.get(keys::expect))
+            sel = extract::primary(*expected);
+        if (!sel.has_value()) sel = extract::parse_selection("auto");
         if (v.text.empty()) throw soft_error{"prompt exec: no accumulated context to extract a command from\n"};
-        for (auto& line : command_lines(extract_text(v, selector))) commands.push_back(agent::split_command(line));
+        for (auto& line : command_lines(extract_text(v, *sel))) commands.push_back(agent::split_command(line));
         if (commands.empty()) throw soft_error{"prompt exec: no command in the extracted context\n"};
     }
 
@@ -231,6 +220,6 @@ Examples:
 
 bool const registered = prompt::register_sink(
     "exec", "Run a command or an AI-generated `prompt` chain and continue the chain with its output.", &execute_exec,
-    &render_help_exec);
+    &render_help_exec, &extract::complete_selector);
 
 } // namespace prompt::prompts

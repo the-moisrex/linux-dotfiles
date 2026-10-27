@@ -33,6 +33,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/import.cmake)
 
 file(GLOB PROMPT_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prompts/*.cpp")
+# One file per extractor (`src/extract/<name>.cpp`), each self-registering like
+# a prompt; the grammar, plan and runner live in `src/sdk/extract.{hpp,cpp}`.
+file(GLOB_RECURSE EXTRACT_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/extract/*.cpp")
+# One file per compressor (`src/compress/<name>.cpp`), each self-registering via
+# `compress::register_compressor`; the registry, the fenced-region scanner and
+# the planner live in `src/compress/compress.{hpp,cpp}`. Globbing keeps adding a
+# compressor to a single new file, like a prompt or an extractor.
+file(GLOB_RECURSE COMPRESS_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/compress/*.cpp")
 
 # The `new` prompt embeds the SDK headers and an example prompt so an AI can
 # write a consistent new one. They are baked into the binary as raw strings at
@@ -97,9 +105,14 @@ add_library(prompt_lib OBJECT
     src/sdk/args.cpp
     src/sdk/sink.cpp
     src/sdk/agent.cpp
+    src/sdk/extract.cpp
     src/sdk/policy.cpp
     src/sdk/history.cpp
     src/sdk/terminal.cpp
+    src/sdk/project.cpp
+    src/sdk/signals.cpp
+    ${EXTRACT_SRCS}
+    ${COMPRESS_SRCS}
     ${PROMPT_SRCS}
 )
 target_sources(prompt_lib PRIVATE ${PROMPT_ASSET_HPP})
@@ -117,6 +130,11 @@ add_executable(prompt src/main.cpp)
 target_link_libraries(prompt PRIVATE prompt_lib)
 target_compile_definitions(prompt PRIVATE PROMPT_VERSION="${PROMPT_VERSION}")
 
+# The extraction engine's standalone face. It shares `prompt_lib` (the parser,
+# the registry and the renderers), so `prompt` and `md.extract` can never drift.
+add_executable(md.extract src/md_extract_main.cpp)
+target_link_libraries(md.extract PRIVATE prompt_lib)
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     enable_testing()
     add_subdirectory(tests)
@@ -124,4 +142,4 @@ endif()
 
 # Component "prompt" keeps `cmake --install --component prompt` from also
 # installing the FetchContent'd dependencies (httplib/date) into the prefix.
-install(TARGETS prompt RUNTIME DESTINATION bin COMPONENT prompt)
+install(TARGETS prompt md.extract RUNTIME DESTINATION bin COMPONENT prompt)

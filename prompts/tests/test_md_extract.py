@@ -14,7 +14,7 @@ TOOL = sys.argv[1]
 
 def run(args, stdin=""):
     return subprocess.run(
-        [sys.executable, TOOL, *args],
+        [TOOL, *args],
         input=stdin,
         text=True,
         capture_output=True,
