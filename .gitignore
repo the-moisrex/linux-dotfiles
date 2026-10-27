@@ -4,3 +4,4 @@ prompts/build/
 prompts/build-asan/
 prompts/.cache/
 bin/prompt
+bin/md.extract
