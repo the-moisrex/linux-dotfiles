@@ -158,6 +158,13 @@ def annotate_error(message, provider, prompt, used_file=False, disabled=False,
             f"[ai] The prompt is {human_size(count)} and was sent inline "
             f"because of --no-prompt-file. Drop that flag (or add "
             f"--prompt-file) to upload it as a text file.")
+    elif not getattr(provider, "auto_attach_by_size", True):
+        lines.append(
+            f"[ai] The prompt is {human_size(count)}; "
+            f"{getattr(provider, 'label', 'the provider')} already tried "
+            f"the inline and file-upload paths. The server still refused "
+            f"it. Try a --model with a larger context window, or split the "
+            f"prompt.")
     elif count > budget:
         lines.append(
             f"[ai] The prompt is {human_size(count)}, above the automatic "

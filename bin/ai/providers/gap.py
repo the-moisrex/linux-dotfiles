@@ -37,6 +37,7 @@ import json
 import random
 import socket
 import sys
+import types
 import time
 import uuid
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -106,22 +107,38 @@ _FAILED_STATUS = ("error", "failed")
 
 
 def _upload_external(attachment) -> str:
-    """Upload large or problematic files to termbin via raw TCP socket and return the public URL."""
+    """Upload a file to termbin as a last-resort fallback; return its public URL."""
     payload = (
         attachment.data
         if isinstance(attachment.data, bytes)
         else str(attachment.data).encode("utf-8")
     )
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(20.0)
-    try:
-        sock.connect(("termbin.com", 9999))
-        sock.sendall(payload)
-        sock.shutdown(socket.SHUT_WR)
-        url = sock.recv(1024).decode("utf-8", "replace").strip()
-        return url
-    finally:
-        sock.close()
+    attempts = 3
+    last = None
+    for attempt in range(attempts):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(20.0)
+        try:
+            sock.connect(("termbin.com", 9999))
+            sock.sendall(payload)
+            sock.shutdown(socket.SHUT_WR)
+            chunks = []
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            url = b"".join(chunks).decode("utf-8", "replace").strip()
+            if not url.startswith(("http://", "https://")):
+                raise RuntimeError("termbin returned no URL: " + repr(url))
+            return url
+        except Exception as exc:
+            last = exc
+        finally:
+            sock.close()
+        if attempt + 1 < attempts:
+            time.sleep(0.5 * (attempt + 1))
+    raise RuntimeError("termbin upload failed after " + str(attempts) + " attempts: " + str(last))
 
 
 def _history_json(url, headers):
@@ -192,6 +209,11 @@ class Gap(Provider):
     #: ``A-GAP`` accepted 150 KB of ASCII but refused 200 KB, and 30 KB of CJK
     #: was accepted while 60 KB hit ``token_limit``.  The routed model's token
     #: window is the real limit; 24 KiB stays clear of it.
+    #: The CLI normally pre-uploads prompts larger than ``inline_limit`` as a
+    #: text-file attachment before the provider sees them.  GapGPT instead
+    #: tries the prompt inline first and falls back to upload on ``token_limit``,
+    #: so suppress the CLI's preemptive attach.
+    auto_attach_by_size = False
     inline_limit = 24 * 1024
 
     @classmethod
@@ -241,13 +263,23 @@ class Gap(Provider):
             ]
         )
         headers["Content-Type"] = content_type
-        data = net.request_json(
-            self.origin + UPLOAD_PATH,
-            method="POST",
-            headers=headers,
-            data=body,
-            timeout=300,
-        )
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                data = net.request_json(
+                    self.origin + UPLOAD_PATH,
+                    method="POST",
+                    headers=headers,
+                    data=body,
+                    timeout=300,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 - retry transient failures
+                if attempt + 1 >= attempts or not net.is_transient(exc):
+                    raise
+                wait = 0.5 * (attempt + 1)
+                print(f"gap: upload: retrying in {wait:.1f}s ({exc})", file=sys.stderr)
+                time.sleep(wait)
         file_token = (data or {}).get("file_token")
         if not file_token:
             raise net.StreamError(f"upload failed: {data}")
@@ -330,6 +362,8 @@ class Gap(Provider):
             self.list_skips.append(f"projects: {exc}")
         else:
             for project in (data or {}).get("results") or []:
+                if not isinstance(project, dict):
+                    continue
                 token = project.get("token")
                 if token:
                     projects[token] = project.get("name") or ""
@@ -349,6 +383,8 @@ class Gap(Provider):
                 self.list_skips.append(f"project:{token}")
                 continue
             for item in (data or {}).get("chats") or []:
+                if not isinstance(item, dict):
+                    continue
                 conversation_id = item.get("token")
                 if not conversation_id or conversation_id in seen:
                     continue
@@ -382,9 +418,13 @@ class Gap(Provider):
                 url = _chat_list_url(url, offset + page)
                 continue
             results = (data or {}).get("results") or []
+            if not isinstance(results, list):
+                break
             if not results:
                 break
             for item in results:
+                if not isinstance(item, dict):
+                    continue
                 conversation_id = item.get("token")
                 if not conversation_id or conversation_id in seen:
                     continue
@@ -400,14 +440,18 @@ class Gap(Provider):
     def fetch_chat(self, match, conversation_id):
         """Fetch one chat and normalise its user/assistant turns."""
         headers = self.history_headers(match)
-        data = (
-            net.request_json(
-                self.origin + CHAT_PATH.format(token=conversation_id),
-                headers=headers,
-                timeout=120,
-            )
-            or {}
-        )
+        url = self.origin + CHAT_PATH.format(token=conversation_id)
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                data = net.request_json(url, headers=headers, timeout=120) or {}
+                break
+            except Exception as exc:  # noqa: BLE001 - retry transient failures
+                if attempt + 1 >= attempts or not net.is_transient(exc):
+                    raise
+                wait = 0.5 * (attempt + 1)
+                print(f"gap: fetch_chat: retrying in {wait:.1f}s ({exc})", file=sys.stderr)
+                time.sleep(wait)
         created = data.get("created_at") or ""
         chat = history.Chat(
             provider=self.name,
@@ -419,6 +463,8 @@ class Gap(Provider):
             url=f"{self.origin}/chat/{conversation_id}",
         )
         for item in data.get("messages") or []:
+            if not isinstance(item, dict):
+                continue
             moment = item.get("created_at") or created
             text = item.get("text") or ""
             if text:
@@ -432,6 +478,8 @@ class Gap(Provider):
                     )
                 )
             for response in item.get("response") or []:
+                if not isinstance(response, dict):
+                    continue
                 content = response.get("content") or ""
                 if not content:
                     continue
@@ -547,6 +595,8 @@ class _Conversation(Conversation):
         try:
             frame = json.loads(raw)
         except ValueError:
+            if self.debug:
+                print(f"[gap] ignoring non-JSON frame: {raw[:200]!r}", file=sys.stderr)
             return {}
         return frame if isinstance(frame, dict) else {}
 
@@ -560,59 +610,8 @@ class _Conversation(Conversation):
 
     # -- streaming ---------------------------------------------------------
 
-    def send(self, prompt, files=None):
-        try:
-            import websocket  # noqa: F401  (websocket-client)
-        except ImportError:
-            yield ev.error(
-                "GapGPT needs the 'websocket-client' package "
-                "(pip install websocket-client)"
-            )
-            return
-        if not self.match.get("cookie_header"):
-            yield ev.error("no cookies in the GapGPT session; log in to gapgpt.app")
-            return
-        try:
-            attachments = self._attachments(files)
-        except files_mod.FileError as exc:
-            yield ev.error(str(exc))
-            return
-
-        file_tokens = []
-        external_urls = []
-        for attachment in attachments:
-            # Fallback to normal when termbin upload failed.
-            try:
-                ext_url = _upload_external(attachment)
-                external_urls.append((attachment.name, ext_url))
-                yield ev.tool_call(
-                    name="upload_external",
-                    status="done",
-                    args=f"{attachment.name} -> {ext_url}",
-                )
-            except Exception as exc:
-                yield ev.error(f"Upload failed: {exc}")
-                try:
-                    file_tokens.append(self.provider._upload(self.match, attachment))
-                    yield ev.tool_call(
-                        name="upload", status="done", args=attachment.name
-                    )
-                except Exception as ext_exc:
-                    yield ev.error(f"Upload failed: {exc}; fallback failed: {ext_exc}")
-                    return
-
-        # If files were uploaded via external fallback URL, inject them into prompt text
-        if external_urls:
-            ext_text = "\n".join(
-                f"Attached file '{name}': {url}" for name, url in external_urls
-            )
-            prompt = f"{prompt}\n\n{ext_text}"
-
-        text = (
-            f"{self.system}\n\n{prompt}"
-            if (self.system and self.turns == 0)
-            else prompt
-        )
+    def _attempt(self, text, file_tokens):
+        """Send one message; stream events; return (ok, reason, answer_chars)."""
         data = {
             "action": self.provider._action(
                 self.model, self.conversation_id, text, file_tokens
@@ -630,40 +629,242 @@ class _Conversation(Conversation):
                 self._ensure()
                 rid = self._send("new_message", data)
                 break
-            except Exception as exc:  # noqa: BLE001 - retried below
+            except Exception as exc:
                 failure = exc
                 self.close()
                 if self.debug:
                     print(
-                        f"[gap] connect attempt {attempt + 1}/{CONNECT_ATTEMPTS} "
-                        f"failed: {exc}",
+                        "[gap] connect attempt " + str(attempt + 1) + "/"
+                        + str(CONNECT_ATTEMPTS) + " failed: " + str(exc),
                         file=sys.stderr,
                     )
                 if attempt < CONNECT_ATTEMPTS - 1:
                     time.sleep(CONNECT_BACKOFF[attempt])
         if rid is None:
-            yield ev.error(f"could not open the GapGPT websocket: {failure}")
-            return
-
+            yield ev.error("could not open the GapGPT websocket: " + str(failure))
+            return False, "websocket", []
         self.blocks = {}
         answer = []
         try:
-            ok = yield from self._read_turn(rid, answer)
-        except Exception as exc:  # noqa: BLE001 - surface any stream failure
-            yield ev.error(f"GapGPT stream failed: {exc}")
+            ok, reason = yield from self._read_turn(rid, answer)
+        except Exception as exc:
+            yield ev.error("GapGPT stream failed: " + str(exc))
             self.close()
+            return False, "error", answer
+        return ok, reason, answer
+
+    def send(self, prompt, files=None):
+        try:
+            yield from self._send_impl(prompt, files)
+        except Exception as exc:
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+            yield ev.error(
+                "GapGPT send() internal error: " + type(exc).__name__ + ": "
+                + str(exc)
+            )
+
+    def _send_impl(self, prompt, files=None):
+        nl = chr(10)
+        try:
+            import websocket  # noqa: F401
+        except ImportError:
+            yield ev.error(
+                "GapGPT needs the 'websocket-client' package "
+                "(pip install websocket-client)"
+            )
             return
-        if not ok:
+        if not self.match.get("cookie_header"):
+            yield ev.error("no cookies in the GapGPT session; log in to gapgpt.app")
             return
+        try:
+            attachments = self._attachments(files)
+        except files_mod.FileError as exc:
+            yield ev.error(str(exc))
+            return
+
+        if self.system and self.turns == 0:
+            base_text = self.system + nl + nl + prompt
+        else:
+            base_text = prompt
+        attempts = []
+
+        # Attempt 1: inline everything.
+        inline_text = ""
+        inline_ok = True
+        for attachment in attachments:
+            data = attachment.data
+            if isinstance(data, bytes):
+                try:
+                    inline_text += nl + nl + data.decode("utf-8")
+                except UnicodeDecodeError:
+                    inline_ok = False
+                    break
+            else:
+                inline_text += nl + nl + str(data)
+        if inline_ok:
+            ok, reason, answer = yield from self._attempt(base_text + inline_text, [])
+            if ok:
+                self._finish_turn(prompt, answer)
+                yield ev.done()
+                return
+            if answer:
+                yield ev.error(
+                    "GapGPT stream failed after partial answer ("
+                    + str(reason or "error")
+                    + "); not retrying to avoid duplicating output"
+                )
+                return
+            attempts.append("inline: " + str(reason or "error"))
+
+        if not attachments:
+            if reason != "token_limit":
+                yield ev.error(
+                    "GapGPT inline attempt failed ("
+                    + str(reason or "error")
+                    + "); no attachments to upload as a fallback"
+                )
+                return
+            # No --file attachments; the prompt itself was too big for inline.
+            # Synthesize a text attachment, upload it, retry.
+            synth_body = (base_text + inline_text).encode("utf-8")
+            try:
+                synth = types.SimpleNamespace(
+                    name="prompt.txt",
+                    data=synth_body,
+                    mime="text/plain",
+                )
+                file_tokens = [self.provider._upload(self.match, synth)]
+                yield ev.tool_call(
+                    name="upload", status="done", args="prompt.txt (auto)"
+                )
+            except Exception as exc:
+                yield ev.error(
+                    "GapGPT rejected the prompt inline ("
+                    + "; ".join(attempts)
+                    + ") and could not upload it as a file: " + str(exc)
+                )
+                return
+            pointer = (
+                "The complete request is in the attached file `prompt.txt` ("
+                + str(len(synth_body))
+                + " bytes). Read it and respond to its contents exactly as "
+                + "if it were this message; this message is only a pointer to it."
+            )
+            ok, reason, answer = yield from self._attempt(pointer, file_tokens)
+            if ok:
+                self._finish_turn(prompt, answer)
+                yield ev.done()
+                return
+            if answer:
+                yield ev.error(
+                    "GapGPT stream failed after partial answer ("
+                    + str(reason or "error")
+                    + "); not retrying to avoid duplicating output"
+                )
+                return
+            if reason == "token_limit":
+                yield ev.error(
+                    "GapGPT could not fit the prompt in the model context "
+                    "window (inline and uploaded-file attempts both hit "
+                    "token_limit). Try a different --model with a larger "
+                    "context, or split the prompt."
+                )
+            else:
+                yield ev.error(
+                    "GapGPT rejected the prompt after inline + upload ("
+                    + "; ".join(attempts + ["upload: " + str(reason or "error")])
+                    + ")"
+                )
+            return
+
+        # Attempt 2: authenticated /api/v1/upload_file -> file_tokens.
+        file_tokens = []
+        upload_err = None
+        for attachment in attachments:
+            try:
+                file_tokens.append(self.provider._upload(self.match, attachment))
+                yield ev.tool_call(name="upload", status="done", args=attachment.name)
+            except Exception as exc:
+                upload_err = exc
+                yield ev.tool_call(
+                    name="upload", status="error",
+                    args=attachment.name + ": " + str(exc),
+                )
+                break
+        if upload_err is None and file_tokens:
+            ok, reason, answer = yield from self._attempt(base_text, file_tokens)
+            if ok:
+                self._finish_turn(prompt, answer)
+                yield ev.done()
+                return
+            if answer:
+                yield ev.error(
+                    "GapGPT stream failed after partial answer ("
+                    + str(reason or "error")
+                    + "); not retrying to avoid duplicating output"
+                )
+                return
+            attempts.append("upload: " + str(reason or "error"))
+        else:
+            attempts.append("upload: " + str(upload_err))
+
+        # Attempt 3: termbin public-URL fallback.
+        external_urls = []
+        external_err = None
+        for attachment in attachments:
+            try:
+                url = _upload_external(attachment)
+                external_urls.append((attachment.name, url))
+                yield ev.tool_call(
+                    name="upload_external", status="done",
+                    args=attachment.name + " -> " + url,
+                )
+            except Exception as exc:
+                external_err = exc
+                yield ev.tool_call(
+                    name="upload_external", status="error",
+                    args=attachment.name + ": " + str(exc),
+                )
+                break
+        if external_err is None and external_urls:
+            ext_text = nl.join(
+                "Attached file '" + name + "': " + url
+                for name, url in external_urls
+            )
+            ok, reason, answer = yield from self._attempt(
+                base_text + nl + nl + ext_text, []
+            )
+            if ok:
+                self._finish_turn(prompt, answer)
+                yield ev.done()
+                return
+            if answer:
+                yield ev.error(
+                    "GapGPT stream failed after partial answer ("
+                    + str(reason or "error")
+                    + "); not retrying to avoid duplicating output"
+                )
+                return
+            attempts.append("external: " + str(reason or "error"))
+        else:
+            attempts.append("external: " + str(external_err))
+
+        yield ev.error(
+            "GapGPT could not accept the prompt after all fallbacks: "
+            + "; ".join(attempts)
+        )
+
+    def _finish_turn(self, prompt, answer):
         self.turns += 1
         if self.title:
             self.resume["title"] = self.title
         self._record("user", prompt)
         self._record("assistant", "".join(answer))
-        yield ev.done()
 
     def _read_turn(self, rid, answer):
-        """Consume one turn's frames; return True when it completed cleanly."""
+        """Consume one turn's frames; return (ok, reason)."""
         started = time.time()
         deadline = started + self.timeout
         last_beat = started
@@ -676,18 +877,27 @@ class _Conversation(Conversation):
                     frame = self._receive()
                 except Exception as exc:  # noqa: BLE001 - timeout vs a dead socket
                     if not _timed_out(exc):
+                        if self.debug:
+                            print(f"[gap] socket read failed: {exc}", file=sys.stderr)
                         self.close()
             now = time.time()
             if frame is None:
+                if self.socket is None and not acked:
+                    yield ev.error(
+                        "GapGPT websocket dropped before the message was acknowledged"
+                    )
+                    return False, "dropped"
                 if self.socket is not None and now - last_beat >= HEARTBEAT:
                     try:
                         self._send("heartbeat", {})
-                    except Exception:  # noqa: BLE001
+                    except Exception as exc:  # noqa: BLE001
+                        if self.debug:
+                            print(f"[gap] heartbeat failed: {exc}", file=sys.stderr)
                         self.close()
                     last_beat = now
                 if not acked and now - started >= ACK_TIMEOUT:
                     yield ev.error("GapGPT never acknowledged the message")
-                    return False
+                    return False, "no_ack"
                 if acked and now - last_seen >= POLL_AFTER:
                     try:
                         snapshot, done = self._poll()
@@ -697,10 +907,20 @@ class _Conversation(Conversation):
                         snapshot, done = None, False
                     last_seen = now
                     if snapshot is not None:
+                        progressed = False
                         for event in self._apply(snapshot, answer):
                             yield event
+                            progressed = True
+                        if progressed:
+                            deadline = now + self.timeout
+                        if _failed(snapshot):
+                            yield ev.error(
+                                str(snapshot.get("error")
+                                    or "the model reported an error")[:300]
+                            )
+                            return False, "error"
                     if done:
-                        return True
+                        return True, ""
                 else:
                     time.sleep(0.1 if self.socket is not None else 0.3)
                 continue
@@ -714,35 +934,46 @@ class _Conversation(Conversation):
                 if event == "ack_new_message" and frame.get("rid") == rid:
                     status = data.get("status")
                     if status != "ok":
+                        if status == "token_limit":
+                            return False, "token_limit"
                         yield ev.error(self.provider._status_error(status, data))
-                        return False
+                        return False, "error"
                     self.conversation_id = (
                         data.get("conversation_id") or self.conversation_id
                     )
-                    self.turn_token = (data.get("message") or {}).get("token") or ""
+                    message = data.get("message")
+                    if not isinstance(message, dict):
+                        message = {}
+                    self.turn_token = message.get("token") or ""
                     acked = True
                     last_seen = time.time()
-                    for item in self._apply(data.get("message"), answer):
+                    for item in self._apply(message, answer):
                         yield item
                 elif event in ("error", "session.error"):
                     yield ev.error(str(data or event)[:300])
-                    return False
+                    return False, "error"
                 continue
 
             if event == "new_message":
-                message = data.get("message") or {}
+                message = data.get("message")
+                if not isinstance(message, dict):
+                    message = {}
                 if self.turn_token and message.get("token") != self.turn_token:
                     continue
                 last_seen = time.time()
+                progressed = False
                 for item in self._apply(message, answer):
                     yield item
+                    progressed = True
+                if progressed:
+                    deadline = last_seen + self.timeout
                 if _failed(message):
                     yield ev.error(
                         str(message.get("error") or "the model reported an error")[:300]
                     )
-                    return False
+                    return False, "error"
                 if _completed(message):
-                    return True
+                    return True, ""
             elif event == "chat_title_update":
                 if data.get("conversation_id") == self.conversation_id and data.get(
                     "title"
@@ -750,9 +981,27 @@ class _Conversation(Conversation):
                     self.title = str(data["title"])
             elif event in ("error", "session.error"):
                 yield ev.error(str(data or event)[:300])
-                return False
+                return False, "error"
+
+        # One last poll: the model may have finished while we were idle.
+        if acked:
+            try:
+                snapshot, done = self._poll()
+            except Exception:  # noqa: BLE001
+                snapshot, done = None, False
+            if snapshot is not None:
+                for event in self._apply(snapshot, answer):
+                    yield event
+                if _failed(snapshot):
+                    yield ev.error(
+                        str(snapshot.get("error")
+                            or "the model reported an error")[:300]
+                    )
+                    return False, "error"
+            if done:
+                return True, ""
         yield ev.error("GapGPT timed out waiting for the answer")
-        return False
+        return False, "timeout"
 
     def _apply(self, message, answer):
         """Diff one message snapshot's fragments into text/thinking/tool deltas."""
@@ -764,6 +1013,14 @@ class _Conversation(Conversation):
             kind = block.get("type") or ""
             content = block.get("content")
             if content is None or kind in _SKIP_TYPES:
+                continue
+            if not isinstance(content, str):
+                if self.debug:
+                    print(
+                        f"[gap] skipping non-text block {kind!r} "
+                        f"({type(content).__name__})",
+                        file=sys.stderr,
+                    )
                 continue
             identifier = block.get("block_id") or kind
             seen = self.blocks.get(identifier, 0)

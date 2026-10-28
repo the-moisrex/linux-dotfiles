@@ -248,7 +248,11 @@ def run_turn(conversation, prompt, args, renderer, provider, fields=None):
     # a file, so it always sends the prompt inline.
     if not getattr(provider, "prompt_file_upload", True):
         mode = False
-    attach = promptfile.should_attach(prompt, provider, mode, args.prompt_limit)
+    auto_size = getattr(provider, "auto_attach_by_size", True)
+    if mode is None and not args.prompt_limit and not auto_size:
+        attach = False
+    else:
+        attach = promptfile.should_attach(prompt, provider, mode, args.prompt_limit)
     temp = None
     message = prompt
     if attach:
@@ -340,6 +344,17 @@ def run_once(conversation, prompt, args, provider_name, model, provider):
         if not args.json:
             renderer.finish()
         return 130
+    except Exception as exc:
+        if not args.json:
+            renderer.finish()
+        if getattr(args, "debug", False):
+            import traceback
+            traceback.print_exc()
+        else:
+            print("ai." + provider_name + ": " + type(exc).__name__ + ": "
+                  + str(exc) + " (re-run with --debug for a traceback)",
+                  file=sys.stderr)
+        return 1
     if not args.json:
         if renderer.finish() and not status:
             status = 1
@@ -398,6 +413,18 @@ def run_repl(conversation, instance, match, model, args, provider_name, provider
                 renderer.finish()
             print(file=sys.stderr)
             status = status or 130
+            continue
+        except Exception as exc:
+            if not args.json:
+                renderer.finish()
+            if getattr(args, "debug", False):
+                import traceback
+                traceback.print_exc()
+            else:
+                print("ai." + provider_name + ": " + type(exc).__name__ + ": "
+                      + str(exc) + " (re-run with --debug for a traceback)",
+                      file=sys.stderr)
+            status = status or 1
             continue
         if not args.json:
             renderer.finish()
