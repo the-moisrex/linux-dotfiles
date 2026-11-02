@@ -7,7 +7,7 @@
 
 hl.monitor({
     output   = "HDMI-A-2",
-    mode     = "1600x900",
+    mode     = "preferred",
     position = "0x0",
     scale    = 1,
 })
@@ -112,6 +112,21 @@ local function move_local_rel(delta)
     end
 end
 
+local function move_column_local_rel(delta)
+    return function()
+        local ws = hl.get_active_workspace()
+        if not ws then return end
+        local base = mon_base()
+        local local_i = ws.id - base
+        if local_i < 1 or local_i > WS_PER_MON then return end
+        local target_i = local_i + delta
+        if target_i < 1 or target_i > WS_PER_MON then return end
+        hl.dispatch(hl.dsp.layout(
+            "movecoltoworkspace " .. tostring(base + target_i)
+        ))
+    end
+end
+
 -- Focus window/column in direction; if at edge → prev/next local workspace
 local function focus_or_workspace(dir, ws_delta)
     return function()
@@ -168,6 +183,10 @@ hl.env("HYPRCURSOR_SIZE", "24")
 ---------------
 
 hl.config({
+    render = {
+        direct_scanout = 0,
+    },
+
     input = {
         kb_layout          = "us,ir",
         kb_options         = "grp:win_space_toggle",
@@ -182,13 +201,58 @@ hl.config({
     },
 
     general = {
+        gaps_in           = 8,
+        gaps_out          = 8,
+        border_size       = 2,
+        col = {
+            active_border   = "rgba(f38ba8ff)",
+            inactive_border = "rgba(45475aff)",
+        },
+        layout            = "scrolling",
+        resize_on_border  = false,
+        allow_tearing     = false,
         no_focus_fallback = true,
+    },
+
+    decoration = {
+        rounding         = 0,
+        active_opacity   = 1.0,
+        inactive_opacity = 1.0,
+
+        blur = {
+            enabled = true,
+            size    = 3,
+            passes  = 1,
+        },
+
+        shadow = {
+            enabled      = true,
+            range        = 4,
+            render_power = 3,
+            color        = "rgba(1a1a1aee)",
+        },
+    },
+
+    scrolling = {
+        column_width             = 0.5,
+        fullscreen_on_one_column = false,
+        follow_focus             = true,
+        focus_fit_method         = 1,
+        wrap_focus               = false,
+        wrap_swapcol             = false,
+        direction                = "right",
     },
 
     binds = {
         window_direction_monitor_fallback = false,
         workspace_back_and_forth          = true,
     },
+
+    misc = {
+        force_default_wallpaper = -1,
+        disable_hyprland_logo   = true,
+        vrr                     = 0,
+    }
 })
 
 hl.gesture({
@@ -262,7 +326,7 @@ hl.curve("fast", {
     type   = "bezier",
     points = {
         { 0.41, 0.6 },
-        { 0.02, 0.93 },
+        { 0.98, 0.93 },
     },
 })
 
@@ -426,10 +490,10 @@ hl.bind(mainMod .. " + CTRL + K", hl.dsp.window.move({ direction = "u" }))
 hl.bind(mainMod .. " + CTRL + J", hl.dsp.window.move({ direction = "d" }))
 
 -- ── Move entire column to workspace above/below (Niri-style) ──
-hl.bind(mainMod .. " + SHIFT + up",   hl.dsp.layout("movecoltoworkspace +1"))
-hl.bind(mainMod .. " + SHIFT + down", hl.dsp.layout("movecoltoworkspace -1"))
-hl.bind(mainMod .. " + SHIFT + K",    hl.dsp.layout("movecoltoworkspace +1"))
-hl.bind(mainMod .. " + SHIFT + J",    hl.dsp.layout("movecoltoworkspace -1"))
+hl.bind(mainMod .. " + SHIFT + up",   move_column_local_rel(1))
+hl.bind(mainMod .. " + SHIFT + down", move_column_local_rel(-1))
+hl.bind(mainMod .. " + SHIFT + K",    move_column_local_rel(1))
+hl.bind(mainMod .. " + SHIFT + J",    move_column_local_rel(-1))
 
 -- Monitor focus (explicit cross-monitor)
 hl.bind(mainMod .. " + SHIFT + left",  hl.dsp.focus({ monitor = "l" }))
@@ -503,22 +567,21 @@ hl.bind(mainMod .. " + C",         hl.dsp.window.center({}),
     { description = "Center window" })
 
 -- Screenshots
-local shotDir = "$HOME/Pictures/Screenshots"
 local function shotName()
-    return "\"Screenshot from $(date +'%Y-%m-%d %H-%M-%S').png\""
+    return "\"$HOME/Pictures/Screenshots/Screenshot from $(date +'%Y-%m-%d %H-%M-%S').png\""
 end
 
 hl.bind("Print", hl.dsp.exec_cmd(
-    "grim -g \"$(slurp)\" " .. shotDir .. "/" .. shotName()
+    "grim -g \"$(slurp)\" " .. shotName()
 ), { description = "Screenshot region" })
 
 hl.bind("CTRL + Print", hl.dsp.exec_cmd(
-    "grim " .. shotDir .. "/" .. shotName()
+    "grim " ..  shotName()
 ), { description = "Screenshot full" })
 
 hl.bind("ALT + Print", hl.dsp.exec_cmd(
     "grim -g \"$(hyprctl activewindow -j | jq -r '\"\\(.at[0]),\\(.at[1]) \\(.size[0])x\\(.size[1])\"')\" "
-    .. shotDir .. "/" .. shotName()
+    .. shotName()
 ), { description = "Screenshot active window" })
 
 hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd("noctalia msg screenshot-annotate"),
@@ -526,11 +589,11 @@ hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd("noctalia msg screenshot-annotate
 
 -- Session
 hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd(
-    "command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"
+    "command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch exit"
 ), { description = "Exit Hyprland" })
 
 hl.bind("CTRL + ALT + Delete", hl.dsp.exec_cmd(
-    "command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"
+    "command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch exit"
 ))
 
 hl.bind(mainMod .. " + SHIFT + P", function()
@@ -555,7 +618,7 @@ hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("noctalia msg brightness-up"), 
 hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("noctalia msg brightness-down"),  mediaFlags)
 
 -- Mouse drag / resize
-hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag({}),
+hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),
     { mouse = true })
 hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize({ keep_aspect_ratio = false }),
     { mouse = true })
