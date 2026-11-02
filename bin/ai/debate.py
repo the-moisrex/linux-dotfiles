@@ -23,6 +23,7 @@ import signal
 import sys
 from dataclasses import dataclass, field
 
+from . import diagnostics
 from . import session as session_mod
 from . import state
 from .cli import (
@@ -167,7 +168,12 @@ class ContextWriter:
         self.mode = "all" if mode == "all" else "last"
         self.question = question.strip()
         self.turns = []
-        self.handle = open_context_file(path)
+        self.error = None
+        try:
+            self.handle = open_context_file(path)
+        except OSError as exc:
+            self.handle = None
+            self.error = exc
 
     def add(self, provider, round_no, answer):
         self.turns.append((provider, round_no, answer.strip()))
@@ -241,8 +247,8 @@ class Participant:
     def close(self):
         try:
             self.conversation.close()
-        except Exception:  # noqa: BLE001 - closing must never mask a result
-            pass
+        except Exception as exc:  # noqa: BLE001 - must not mask a result
+            diagnostics.note(f"closing {self.name}: {exc}", prefix="ai.debate")
 
 
 def build_parser(providers):
@@ -569,6 +575,10 @@ def main(argv=None):
     participants = []
     writer = ContextWriter(args.context_file,
                            "all" if args.transcript else args.context, question)
+    if writer.error is not None:
+        print(f"ai.debate: --context-file {args.context_file}: {writer.error}",
+              file=sys.stderr)
+        return 2
     status = 0
     try:
         try:

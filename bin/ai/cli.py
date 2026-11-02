@@ -32,6 +32,7 @@ import signal
 import subprocess
 import sys
 
+from . import diagnostics
 from . import events as ev
 from . import promptfile
 from . import session as session_mod
@@ -70,10 +71,8 @@ def open_context_file(path):
     """
     if not path:
         return None
-    try:
-        return open(path, "w", encoding="utf-8", buffering=1)
-    except OSError:
-        return None
+    # Raise on failure; run_turn turns this into an error event.
+    return open(path, "w", encoding="utf-8", buffering=1)
 
 
 def build_parser(provider):
@@ -204,11 +203,13 @@ def emit_json(event, fields=None):
 def copy_answer(text):
     exe = _bin_tool("clipboard")
     if not exe:
+        diagnostics.warn("--copy: no clipboard tool found")
         return False
     try:
         subprocess.run([exe, "copy"], input=text, text=True, check=False)
         return True
-    except OSError:
+    except OSError as exc:
+        diagnostics.warn(f"--copy failed: {exc}")
         return False
 
 
@@ -277,7 +278,15 @@ def run_turn(conversation, prompt, args, renderer, provider, fields=None):
                           f"{promptfile.human_size(budget)} inline budget")
             print(f"[ai] prompt {detail}; uploading it as "
                   f"{os.path.basename(temp)}", file=sys.stderr)
-    context = open_context_file(args.context_file)
+    try:
+        context = open_context_file(args.context_file)
+    except OSError as exc:
+        problem = ev.error(f"could not open --context-file {args.context_file}: {exc}")
+        if args.json:
+            emit_json(problem, fields)
+        else:
+            renderer.handle(problem)
+        return 1, ""
     try:
         for event in _send_events(conversation, message, files):
             if event.kind == ERROR:

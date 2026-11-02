@@ -33,6 +33,7 @@ import time
 import uuid
 from urllib.parse import urlencode
 
+from .. import diagnostics
 from .. import events as ev
 from .. import files as files_mod
 from .. import history
@@ -125,7 +126,7 @@ class DeepSeek(Provider):
                                  answer=answer,
                                  target_path=target_path)
 
-    def _upload(self, headers, attachment):
+    def _upload(self, headers, attachment, debug=False):
         """Upload one attachment and wait for it to become referenceable.
 
         Returns the server's file record; raises :class:`net.StreamError` when
@@ -144,9 +145,9 @@ class DeepSeek(Provider):
         record = self._biz(data)
         if not isinstance(record, dict) or not record.get("id"):
             raise net.StreamError(f"upload failed: {data}")
-        return self._await_file(request_headers, record)
+        return self._await_file(request_headers, record, debug=debug)
 
-    def _await_file(self, headers, record, timeout=120):
+    def _await_file(self, headers, record, timeout=120, debug=False):
         """Poll ``fetch_files`` until the file is parsed (or clearly dead)."""
         file_id = record.get("id")
         deadline = time.monotonic() + timeout
@@ -158,7 +159,11 @@ class DeepSeek(Provider):
                 data = net.request_json(
                     f"{self.origin}{FILES_PATH}?file_ids={file_id}",
                     headers=headers, timeout=60)
-            except net.StreamError:
+            except net.StreamError as exc:
+                diagnostics.note(
+                    f"could not poll file {file_id}: {exc}; "
+                    f"using its last known status {record.get('status')!r}",
+                    debug, "deepseek")
                 return record
             found = _find_file(self._biz(data), file_id)
             if not found:
@@ -369,7 +374,7 @@ class _Conversation(Conversation):
             return
         for attachment in attachments:
             try:
-                record = self.provider._upload(headers, attachment)
+                record = self.provider._upload(headers, attachment, self.debug)
             except (net.StreamError, files_mod.FileError) as exc:
                 yield ev.error(str(exc))
                 return

@@ -29,6 +29,7 @@ import mimetypes
 import os
 import re
 
+from .. import diagnostics
 from .. import events as ev
 from .. import files as files_mod
 from .. import net
@@ -386,7 +387,9 @@ class OpenAICompat(Provider):
         if model_problem and "model" in lowered:
             try:
                 names = ", ".join(model["id"] for model in self.chat_models(base, timeout=2))
-            except Exception:  # noqa: BLE001 - the hint is optional
+            except Exception as exc:  # noqa: BLE001
+                diagnostics.note(f"could not list models for the hint: {exc}",
+                                 prefix=self.name)
                 names = ""
             if names:
                 text += f"\nAvailable models: {names}"

@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import time
 
+from .. import diagnostics
 from .. import net
 from .. import state
 from .openai_compat import ApiError, OpenAICompat, normalise_base
@@ -107,7 +108,8 @@ class Lms(OpenAICompat):
                 try:
                     if futures[url].result():
                         return url
-                except Exception:  # noqa: BLE001 - a broken probe is a miss
+                except Exception as exc:  # noqa: BLE001
+                    diagnostics.note(f"probe {url}: {exc}", prefix="lms")
                     continue
         return None
 
@@ -120,7 +122,8 @@ class Lms(OpenAICompat):
         try:
             done = subprocess.run([executable, "status"], capture_output=True,
                                   text=True, timeout=10)
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as exc:
+            diagnostics.note(f"`lms status` failed: {exc}", prefix="lms")
             return ""
         match = _PORT.search(_ANSI.sub("", done.stdout + done.stderr))
         if not match:
@@ -142,7 +145,10 @@ class Lms(OpenAICompat):
             payload = net.request_json(root + V0_MODELS_PATH,
                                        headers=self.headers(), impersonate=None,
                                        timeout=timeout)
-        except Exception:  # noqa: BLE001 - fall back to the OpenAI list
+        except Exception as exc:  # noqa: BLE001
+            diagnostics.note(
+                f"the v0 model list failed ({exc}); using the OpenAI list",
+                prefix="lms")
             return super().list_models(base, timeout)
         records = []
         for item in (payload or {}).get("data") or ():
@@ -212,7 +218,10 @@ def _cached_endpoint():
     try:
         with open(state.path(CACHE_NAME), encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return ""
+    except (OSError, ValueError) as exc:
+        diagnostics.note(f"ignoring the endpoint cache: {exc}", prefix="lms")
         return ""
     if not isinstance(data, dict):
         return ""
@@ -228,5 +237,6 @@ def _remember_endpoint(base):
         with open(temporary, "w", encoding="utf-8") as handle:
             json.dump({"base_url": base, "updated": time.time()}, handle)
         os.replace(temporary, path)
-    except OSError:
-        pass
+    except OSError as exc:
+        diagnostics.warn(f"could not cache the LM Studio endpoint: {exc}",
+                         prefix="lms")

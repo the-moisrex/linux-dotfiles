@@ -42,6 +42,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from .. import diagnostics
 from .. import events as ev
 from .. import files as files_mod
 from .. import history, net
@@ -604,8 +605,8 @@ class _Conversation(Conversation):
         if self.socket is not None:
             try:
                 self.socket.close()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001
+                diagnostics.note(f"closing the socket: {exc}", self.debug, "gap")
             self.socket = None
 
     # -- streaming ---------------------------------------------------------

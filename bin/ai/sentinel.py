@@ -29,6 +29,8 @@ import time
 import uuid
 from datetime import datetime
 
+from . import diagnostics
+
 #: The proof-of-work hash the server currently verifies (``zvt`` is the client's
 #: minified name for the FNV-1a + murmur finaliser mix).
 PROOF_HASH = "zvt"
@@ -259,7 +261,9 @@ def solve_turnstile(dx, key):
     try:
         decoded = base64.b64decode(dx).decode()
         program = json.loads(_xor(decoded, key))
-    except Exception:  # noqa: BLE001 - a malformed dx simply yields no token
+    except Exception as exc:  # noqa: BLE001
+        diagnostics.note(f"turnstile: could not decode dx: {exc}",
+                         prefix="sentinel")
         return None
     if not isinstance(program, list):
         return None
@@ -368,4 +372,6 @@ def solve_turnstile(dx, key):
                 func(*token[1:])
             except Exception:  # noqa: BLE001 - one bad op must not abort the run
                 continue
+    if not result:
+        diagnostics.note("turnstile: dx produced no result", prefix="sentinel")
     return result or None

@@ -31,6 +31,7 @@ import sys
 import time
 import uuid
 
+from .. import diagnostics
 from .. import events as ev
 from .. import files as files_mod
 from .. import history
@@ -178,12 +179,15 @@ class ChatGPT(Provider):
             chat.updated = history.newest(m.created for m in chat.messages)
         return chat
 
-    def _bootstrap(self, headers):
+    def _bootstrap(self, headers, debug=False):
         """Return ``(script_source, data_build)`` from the app shell."""
         try:
             html = net.request_text(self.origin + "/", headers={
                 **headers, "Accept": "text/html,application/xhtml+xml"})
-        except net.StreamError:
+        except net.StreamError as exc:
+            diagnostics.note(
+                f"could not read the app shell for the sentinel fingerprint: {exc}",
+                debug, "chatgpt")
             return None, ""
         build = ""
         marker = "data-build="
@@ -431,7 +435,7 @@ class _Conversation(Conversation):
 
     def _prepare(self):
         self.provider._authorize(self.headers)
-        script, build = self.provider._bootstrap(self.headers)
+        script, build = self.provider._bootstrap(self.headers, self.debug)
         self.fingerprint = sentinel.build_fingerprint(
             self.headers.get("User-Agent", ""), script, build)
         self._ready = True

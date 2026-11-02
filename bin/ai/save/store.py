@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .. import diagnostics
 from .. import history
 from . import frontmatter, render, rules
 
@@ -334,7 +335,8 @@ class Store:
                     continue
                 try:
                     meta = frontmatter.read_meta(entry.path)
-                except OSError:
+                except OSError as exc:
+                    diagnostics.warn(f"{entry.path}: {exc}", prefix="ai.save")
                     continue
                 yield LocalChat(Path(entry.path), meta)
 
@@ -593,6 +595,9 @@ class Store:
             Path(path).unlink()
         except FileNotFoundError:
             return
+        except OSError as exc:
+            diagnostics.warn(f"could not remove {path}: {exc}", prefix="ai.save")
+            return
         parent = Path(path).parent
         while parent != self.root and parent != self.topics and parent.is_dir():
             try:
@@ -601,10 +606,14 @@ class Store:
             except StopIteration:
                 try:
                     parent.rmdir()
-                except OSError:
+                except OSError as exc:
+                    diagnostics.note(f"could not prune {parent}: {exc}",
+                                     prefix="ai.save")
                     break
                 parent = parent.parent
-            except OSError:
+            except OSError as exc:
+                diagnostics.note(f"could not read {parent}: {exc}",
+                                 prefix="ai.save")
                 break
 
     # -- month symlink view ---------------------------------------------
@@ -629,8 +638,9 @@ class Store:
                         removed += 1
                 try:
                     month_dir.rmdir()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    diagnostics.note(f"could not prune {month_dir}: {exc}",
+                                     prefix="ai.save")
         created = 0
         for (month_name, topic), target in desired.items():
             link_dir = self.months / month_name

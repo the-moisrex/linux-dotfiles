@@ -34,6 +34,7 @@ import sys
 import time
 import uuid
 
+from .. import diagnostics
 from .. import events as ev
 from .. import files as files_mod
 from .. import history
@@ -423,8 +424,8 @@ class _Conversation(Conversation):
         if self.socket is not None:
             try:
                 self.socket.close()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001
+                diagnostics.note(f"closing the socket: {exc}", self.debug, "grok")
             self.socket = None
 
 

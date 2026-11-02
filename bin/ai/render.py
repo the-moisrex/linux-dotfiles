@@ -23,6 +23,7 @@ import os
 import sys
 import time
 
+from . import diagnostics
 from . import events as ev
 
 try:
@@ -60,6 +61,7 @@ class Renderer:
         self._last_refresh = 0.0
         self._live = None
         self._console = None
+        self.stderr_failed = None
         self._rich = _RICH and self.interactive
         if self._rich:
             self._console = Console(file=self.out, highlight=False,
@@ -130,11 +132,14 @@ class Renderer:
             self._write_err((_DIM + note + _RESET + "\n") if style else (note + "\n"))
 
     def _write_err(self, text):
+        if self.stderr_failed is not None:
+            return
         try:
             self.err.write(text)
             self.err.flush()
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            # No second stderr to report to; remember it so finish() can decide.
+            self.stderr_failed = exc
 
     # -- rich live region --------------------------------------------------
 
@@ -170,8 +175,8 @@ class Renderer:
         if self._live is not None:
             try:
                 self._live.stop()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001
+                diagnostics.note(f"stopping the live region: {exc}", self.debug)
             self._live = None
             if self.show_thinking and self.thinking_parts:
                 self._console.print(Text(self.thinking, style="dim"))

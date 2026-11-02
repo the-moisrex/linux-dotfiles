@@ -17,7 +17,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .. import history, net, session
+from .. import diagnostics, history, net, session
 from ..providers import all_providers
 from . import frontmatter, migrate as migrate_mod, render, rules
 from .store import Store, month_of, safe_title
@@ -254,8 +254,9 @@ def cmd_sync(args):
 
         try:
             provider.history_headers(match)
-        except Exception:  # noqa: BLE001 - fetch will report it
-            pass
+        except Exception as exc:  # noqa: BLE001
+            diagnostics.note(f"{name}: history headers: {exc}", args.debug,
+                             "ai.save")
 
         counts = {"new": 0, "updated": 0, "skipped": 0, "failed": 0}
 
@@ -726,7 +727,8 @@ def cmd_verify(args):
             issues.append(f"{local.path}: expected {expected}")
         try:
             markers = len(store.messages(local))
-        except OSError:
+        except OSError as exc:
+            issues.append(f"{local.path}: could not read the body: {exc}")
             markers = 0
         if local.messages and markers != local.messages:
             issues.append(f"{local.path}: frontmatter says {local.messages} "

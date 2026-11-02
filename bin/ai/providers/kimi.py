@@ -42,6 +42,7 @@ import base64
 import json
 import time
 
+from .. import diagnostics
 from .. import events as ev
 from .. import files as files_mod
 from .. import history
@@ -411,7 +412,10 @@ class _Conversation(Conversation):
         try:
             return self.provider._message_status(
                 headers, self.conversation_id, message_id)
-        except net.StreamError:
+        except net.StreamError as exc:
+            diagnostics.note(
+                f"status lookup for message {message_id} failed: {exc}; "
+                f"not asking for a continuation", self.debug, "kimi")
             return ""
 
     def _continue(self, headers, message_id, answer):
@@ -478,7 +482,8 @@ class _Conversation(Conversation):
             return
         try:
             refreshed = self.provider._refresh(self.match)
-        except net.StreamError:
+        except net.StreamError as exc:
+            diagnostics.note(f"token refresh failed: {exc}", self.debug, "kimi")
             return
         if refreshed:
             self.token = refreshed

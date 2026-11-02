@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from .. import history
+from .. import diagnostics, history
 from . import rules
 
 DATE_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2})")
@@ -164,7 +164,8 @@ def os_scandir(path):
 
 def migrate(store, dry_run=False, keep_old=False):
     """Import the legacy cache; returns a stats dict."""
-    stats = {"chats": 0, "markdown": 0, "skipped": 0, "removed": 0}
+    stats = {"chats": 0, "markdown": 0, "skipped": 0, "removed": 0,
+             "cleanup_failures": []}
     projects = _projects(store)
     imported = set()
 
@@ -210,8 +211,8 @@ def migrate(store, dry_run=False, keep_old=False):
             try:
                 path.unlink()
                 stats["removed"] += 1
-            except OSError:
-                pass
+            except OSError as exc:
+                stats["cleanup_failures"].append(f"{path}: {exc}")
 
     if not dry_run:
         if not keep_old:
@@ -219,16 +220,23 @@ def migrate(store, dry_run=False, keep_old=False):
                 if directory.is_dir():
                     for child in directory.iterdir():
                         if child.is_file():
-                            child.unlink()
+                            try:
+                                child.unlink()
+                            except OSError as exc:
+                                stats["cleanup_failures"].append(
+                                    f"{child}: {exc}")
                     try:
                         directory.rmdir()
-                    except OSError:
-                        pass
+                    except OSError as exc:
+                        stats["cleanup_failures"].append(f"{directory}: {exc}")
             for name in ("projects.json", "auth.json"):
                 try:
                     (store.ai / name).unlink()
-                except OSError:
+                except FileNotFoundError:
                     pass
+                except OSError as exc:
+                    stats["cleanup_failures"].append(
+                        f"{store.ai / name}: {exc}")
         _drop_gitignore(store.root)
         store.relink()
     return stats
@@ -238,8 +246,15 @@ def _drop_gitignore(root):
     path = root / ".gitignore"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        diagnostics.note(f"could not read {path}: {exc}", prefix="ai.save")
         return
     kept = [line for line in lines if line.strip() != ".ai/auth.json"]
     if kept != lines:
-        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        try:
+            path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        except OSError as exc:
+            diagnostics.note(f"could not rewrite {path}: {exc}",
+                             prefix="ai.save")

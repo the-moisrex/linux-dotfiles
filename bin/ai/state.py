@@ -18,6 +18,8 @@ import json
 import os
 import time
 
+from . import diagnostics
+
 #: How many transcript entries to keep alongside the id.
 MAX_HISTORY = 20
 
@@ -65,7 +67,7 @@ def save(provider, conversation_id, model, history=None, resume=None):
 
 
 def _write(file_path, data):
-    """Atomically write *data* as JSON, ignoring I/O errors (best effort)."""
+    """Atomically write *data* as JSON; return ``True`` on success."""
     directory = os.path.dirname(file_path)
     try:
         os.makedirs(directory, exist_ok=True)
@@ -73,16 +75,22 @@ def _write(file_path, data):
         with open(temporary, "w", encoding="utf-8") as handle:
             json.dump(data, handle, ensure_ascii=False)
         os.replace(temporary, file_path)
-    except OSError:
-        pass
+        return True
+    except OSError as exc:
+        diagnostics.warn(
+            f"could not save {os.path.basename(file_path)}: {exc}; "
+            f"the conversation will not be available to -c/--continue")
+        return False
 
 
 def clear(provider):
     """Forget the stored conversation for *provider*."""
     try:
         os.remove(path(provider))
-    except OSError:
-        pass
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        diagnostics.warn(f"could not forget {provider}.json: {exc}")
 
 
 def debate_path(names):
@@ -143,5 +151,7 @@ def clear_debate(names):
     """Forget the last debate between *names*."""
     try:
         os.remove(debate_path(names))
-    except OSError:
-        pass
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        diagnostics.warn(f"could not forget the saved debate: {exc}")

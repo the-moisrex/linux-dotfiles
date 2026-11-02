@@ -20,6 +20,8 @@ from __future__ import annotations
 import os
 import tempfile
 
+from . import diagnostics
+
 #: Fallback inline budget for a provider that does not declare one.
 DEFAULT_LIMIT = 64 * 1024
 
@@ -108,13 +110,15 @@ def write(prompt):
 
 
 def remove(path):
-    """Delete a temporary prompt file (best effort)."""
+    """Delete a temporary prompt file (best effort, but reported)."""
     if not path:
         return
     try:
         os.unlink(path)
-    except OSError:
-        pass
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        diagnostics.note(f"could not remove {path}: {exc}")
 
 
 def reference(path, count):
