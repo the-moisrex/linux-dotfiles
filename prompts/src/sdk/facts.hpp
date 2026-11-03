@@ -29,9 +29,26 @@ inline constexpr std::string_view expect = "prompt.expect";
 // value is a marker ("1"); presence is what matters.
 inline constexpr std::string_view save_wants_name = "save.want_name";
 
+// What the chain is saving, so `.save` can pick a destination other than the
+// current directory. `.skill.gen` publishes `skill`, which makes a nameless
+// `.save` write `$XDG_DATA_HOME/agents/skills/<stem>/SKILL.md` (the layout the
+// `skill` prompt loads). The value is a short kind name; empty means a plain
+// file in the working directory.
+inline constexpr std::string_view save_kind = "save.kind";
+
 // The resolved TSE instrument, published once per chain by whichever `tse*`
 // prompt resolved it first.
 inline constexpr std::string_view tse_symbol = "tse.instrument.symbol";
+
+// The provider an AI sink just talked to (`gap`, `dseek`, …), so a later
+// `.ai.reply` in the same chain continues that chat without consulting the
+// on-disk terminal marker. `debate` when the sink was `.ai.debate`.
+inline constexpr std::string_view ai_provider = "ai.provider";
+
+// The plain answer the previous AI sink produced in this chain. `.ai.reply`
+// drops it from the context it sends: the continued chat already contains it,
+// so only the newly appended instruction should be re-sent.
+inline constexpr std::string_view ai_answer = "ai.answer";
 
 // The chain's intent, published as an artifact by `.fix`/`.debug`/`.run` (and
 // overridable with `.compress --for`). Read by `.compress` so the same input

@@ -49,8 +49,7 @@ Provide the commit message directly, without extra conversational text.
 Provide:
 1. A concise subject line.
 2. A short body explaining what changed and why.
-3. If helpful, an alternative subject line.
-Keep it specific and practical, not generic.
+Keep it specific and practical, not generic. Only return copyable commit message.
 
 
 ```diff

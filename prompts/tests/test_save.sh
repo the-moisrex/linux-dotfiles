@@ -134,4 +134,15 @@ printf 'safe\n' >"$tmp/bad name!.txt"
 "$prompt" save --complete -- | grep -q -- '--force' || fail "completion omits --force"
 "$prompt" save --complete -- | grep -q -- '--file' || fail "completion omits --file"
 
+# A `.skill.gen` chain makes a nameless `.save` write the loader's layout,
+# `$XDG_DATA_HOME/agents/skills/<name>/SKILL.md`, instead of the working
+# directory; the name comes from the save hint (here `.files`' stem).
+XDG_DATA_HOME="$tmp/data" "$prompt" .note hi .files "$fixture" .skill.gen .save >/dev/null 2>&1
+[ -f "$tmp/data/agents/skills/numbered/SKILL.md" ] || fail "skill save did not write the skills layout"
+grep -q 'SKILL.md' "$tmp/data/agents/skills/numbered/SKILL.md" || fail "skill save content"
+
+# An explicit target still wins over the skill layout.
+XDG_DATA_HOME="$tmp/data" "$prompt" .note hi .files "$fixture" .skill.gen .save "$tmp/explicit-skill.md" >/dev/null 2>&1
+[ -f "$tmp/explicit-skill.md" ] || fail "an explicit target should override the skill directory"
+
 echo "all save tests passed"

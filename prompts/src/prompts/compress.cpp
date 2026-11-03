@@ -10,6 +10,7 @@
 #include <array>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <ostream>
 #include <span>
 #include <string>
@@ -139,16 +140,22 @@ static void execute_compress(view const& v, result& r) {
         } else if (arg.size() > 1 && arg.front() == '-') {
             throw usage_error{"compress: unknown option " + std::string(arg)};
         } else {
-            std::filesystem::path const file(arg);
             std::error_code ec;
-            if (std::filesystem::is_directory(file, ec)) {
+            if (std::filesystem::is_directory(std::filesystem::path(arg), ec)) {
                 throw usage_error{"compress: " + std::string(arg) +
                                   " is a directory, not a file; pass the files, e.g. " + std::string(arg) + "/*.cpp"};
             }
-            if (!std::filesystem::is_regular_file(file, ec)) {
-                throw usage_error{"compress: no such file: " + std::string(arg)};
+            // Resolve a loose path the same way `.files` does: the exact path,
+            // then under the git root, then a fuzzy `git ls-files | fzf` match,
+            // so `prompt .compress history` finds `src/sdk/history.hpp`.
+            std::optional<std::filesystem::path> resolved;
+            if (v.env.resolve_input_file != nullptr) resolved = v.env.resolve_input_file(arg);
+            if (!resolved) {
+                std::filesystem::path const literal(arg);
+                if (std::filesystem::is_regular_file(literal, ec)) resolved = literal;
             }
-            files.push_back(file);
+            if (!resolved) throw usage_error{"compress: no such file: " + std::string(arg)};
+            files.push_back(*resolved);
         }
     }
 
@@ -187,6 +194,123 @@ static void execute_compress(view const& v, result& r) {
     compress::report const rep =
         files.empty() ? compress::compress_document(document, base, opt) : compress::compress_files(files, base, opt);
     r.out = rep.text;
+}
+
+// `.compress.delegate`: teach an AI *how* to compress the context. It runs the
+// same scanner/planner as `.compress` and hands the AI the project shape, the
+// per-region plan and the compressor catalog, then asks for one
+// `prompt .compress …` command. Because the command only tunes the
+// deterministic engine, the AI never sees or rewrites the content itself.
+static void execute_compress_delegate(view const& v, result& r) {
+    compress::options opt;
+    std::string mode_override;
+    std::vector<std::filesystem::path> files;
+
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        std::string_view const arg = v.args[i];
+        if (arg == "--for") {
+            if (++i >= v.args.size()) throw usage_error{"compress.delegate: --for needs a value"};
+            mode_override = std::string(v.args[i]);
+        } else if (arg == "--level") {
+            if (++i >= v.args.size()) throw usage_error{"compress.delegate: --level needs a value"};
+            opt.level = static_cast<int>(parse_size(v.args[i], "--level"));
+        } else if (arg == "--min-lines") {
+            if (++i >= v.args.size()) throw usage_error{"compress.delegate: --min-lines needs a value"};
+            opt.min_lines = parse_size(v.args[i], "--min-lines");
+        } else if (arg == "--only") {
+            if (++i >= v.args.size()) throw usage_error{"compress.delegate: --only needs a value"};
+            opt.only = split_list(v.args[i]);
+        } else if (arg == "--skip") {
+            if (++i >= v.args.size()) throw usage_error{"compress.delegate: --skip needs a value"};
+            opt.skip = split_list(v.args[i]);
+        } else if (arg.size() > 1 && arg.front() == '-') {
+            throw usage_error{"compress.delegate: unknown option " + std::string(arg)};
+        } else {
+            std::error_code ec;
+            if (std::filesystem::is_directory(std::filesystem::path(arg), ec)) {
+                throw usage_error{"compress.delegate: " + std::string(arg) + " is a directory, not a file"};
+            }
+            std::optional<std::filesystem::path> resolved;
+            if (v.env.resolve_input_file != nullptr) resolved = v.env.resolve_input_file(arg);
+            if (!resolved) {
+                std::filesystem::path const literal(arg);
+                if (std::filesystem::is_regular_file(literal, ec)) resolved = literal;
+            }
+            if (!resolved) throw usage_error{"compress.delegate: no such file: " + std::string(arg)};
+            files.push_back(*resolved);
+        }
+    }
+
+    compress::signals base = base_signals(v, mode_override);
+    base.project = project::detect(v.env.git_root, v.env);
+    publish_project(base.project, r);
+
+    bool const have_stdin = v.in.available();
+    if (files.empty() && !have_stdin) throw soft_error{"compress.delegate: no FILE arguments and no piped input"};
+
+    std::string document;
+    if (files.empty()) {
+        document = std::string(v.in.text());
+        v.in.spend();
+        if (!document.contains("```") && !document.contains("~~~")) {
+            std::string wrapped = "```" + guess_lang(document) + "\n";
+            wrapped += document;
+            if (wrapped.back() != '\n') wrapped.push_back('\n');
+            wrapped += "```\n";
+            document = std::move(wrapped);
+        }
+    } else {
+        document = files_markdown(files, base.project);
+    }
+
+    std::string out;
+    out += "# Project\n\n";
+    out += project::summary_line(base.project);
+    out += "\n\n# Regions\n\n";
+    auto const lines = compress::explain(document, base, opt);
+    if (lines.empty()) {
+        out += "(no fenced regions found)\n";
+    } else {
+        for (auto const& line : lines) {
+            out += "- ";
+            out += line;
+            out += '\n';
+        }
+    }
+
+    out += "\n# Available compressors\n\n";
+    for (auto const& unit : compress::get_all_compressors()) {
+        out += std::format("- `{}` — {}\n", unit.name, unit.summary);
+    }
+
+    if (!files.empty()) {
+        out += "\n# Files in the command\n\n";
+        for (auto const& file : files) {
+            auto const rel = fs::relative_path(file, base.project.root.empty()
+                                                         ? std::nullopt
+                                                         : std::optional<std::filesystem::path>(base.project.root));
+            out += "- ";
+            out += rel.string();
+            out += '\n';
+        }
+    }
+
+    out += "\n---\n\n"
+           "# Your task\n\n"
+           "You are a dumb agentic AI. Your ONLY job is to decide how the context above should be compressed and "
+           "emit ONE `prompt .compress` command line. Do not compress anything yourself and do not explain.\n\n"
+           "Rules:\n"
+           "- Output exactly one command in a ```sh code block, and nothing else.\n"
+           "- Add `--for general|fix|debug|review` when the intent is clear from the regions (failed tests, error "
+           "sites); otherwise omit it.\n"
+           "- Use `--skip NAME` to leave a region to a different compressor or to pass it through, and `--only "
+           "NAME` to restrict the set.\n"
+           "- Use `--level 1|2|3` to keep more or less (higher drops doc comments and macros).\n"
+           "- A region marked `keep (focal)` is the file under repair; never try to compress it.\n"
+           "- List the files exactly as they appear above, and always include the extension.\n";
+
+    r.published.set(keys::expect, "command:prompt");
+    r.out = std::move(out);
 }
 
 static void render_help_compress(std::ostream& os) {
@@ -276,6 +400,34 @@ Options:
 )EOF";
 }
 
+static void render_help_compress_delegate(std::ostream& os) {
+    os << R"EOF(Usage: prompt .compress.delegate [options] [FILE...]
+
+Ask an AI *how* to compress the given FILEs (or the piped context) and emit a
+ready-to-run `prompt .compress …` command. The prompt runs the same scanner and
+planner as `.compress`, then hands the AI the project shape, the per-region plan
+(which compressor would claim each region) and the compressor catalog, and asks
+for a single command that tunes `--for`, `--only`, `--skip` and `--level`.
+
+The output is the delegate prompt, so chain it into an AI sink and then extract
+and run the command:
+
+  prompt .compress.delegate src/a.cpp src/b.cpp .ai.dseek .extract .exec
+  prompt .files src/a.cpp src/b.cpp | prompt .compress.delegate .ai.dseek .extract .exec
+
+Options are the same subset as `.compress`:
+  --for MODE     Intent override: general, fix, debug or review
+  --level N      Compression level (1-3)
+  --min-lines N  Leave regions shorter than N lines alone (default 120)
+  --only NAMES   Restrict to these comma-separated compressor names
+  --skip NAMES   Disable these comma-separated compressor names
+  -h, --help     Show this help message
+
+See also: `.compress` (the command the AI composes), `.compress.list`, and
+`.delegate` (the same generate-a-command pattern).
+)EOF";
+}
+
 // `.compress` and its catalog lens `.compress.list` share one file: the lens is
 // the catalog face of the same subsystem.
 bool const registered_compress =
@@ -285,5 +437,10 @@ bool const registered_compress =
 bool const registered_compress_list = prompt::register_prompt(
     "compress.list", "List the project shape and every registered compressor with its one-line summary.",
     &execute_compress_list, &render_help_compress_list);
+
+bool const registered_compress_delegate = prompt::register_prompt(
+    "compress.delegate",
+    "Ask an AI how to compress the given files and emit a ready-to-run `prompt .compress` command.",
+    &execute_compress_delegate, &render_help_compress_delegate, &complete_compress);
 
 } // namespace prompt::prompts

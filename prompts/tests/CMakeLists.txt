@@ -43,6 +43,38 @@ target_link_libraries(test_compress PRIVATE prompt_lib)
 target_include_directories(test_compress PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME compress COMMAND test_compress)
 
+# The tool-schema layer: the factories, the help-derived fallback and the
+# renderers/completion a prompt builds from a schema.
+add_executable(test_schema test_schema.cpp)
+target_link_libraries(test_schema PRIVATE prompt_lib)
+target_include_directories(test_schema PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME schema COMMAND test_schema)
+
+# The ported opencode tools: `.glob` lists, `.grep` searches, and `.tools`
+# describes the catalog (markdown, JSON Schema, names).
+add_test(NAME glob_lists
+    COMMAND $<TARGET_FILE:prompt> glob --path ${CMAKE_CURRENT_SOURCE_DIR}/fixtures "*.txt")
+set_tests_properties(glob_lists PROPERTIES PASS_REGULAR_EXPRESSION "numbered\\.txt")
+
+add_test(NAME grep_finds
+    COMMAND $<TARGET_FILE:prompt> grep --include "*.txt" one ${CMAKE_CURRENT_SOURCE_DIR}/fixtures)
+set_tests_properties(grep_finds PROPERTIES PASS_REGULAR_EXPRESSION "numbered\\.txt:")
+
+add_test(NAME tools_names COMMAND $<TARGET_FILE:prompt> tools --names)
+set_tests_properties(tools_names PROPERTIES PASS_REGULAR_EXPRESSION "glob")
+
+add_test(NAME tools_json COMMAND $<TARGET_FILE:prompt> tools --json)
+set_tests_properties(tools_json PROPERTIES PASS_REGULAR_EXPRESSION "\"input\"")
+
+# `.skill.gen` teaches the SKILL.md shape and marks the chain as a skill save.
+add_test(NAME skill_gen_help COMMAND $<TARGET_FILE:prompt> .skill.gen)
+set_tests_properties(skill_gen_help PROPERTIES PASS_REGULAR_EXPRESSION "SKILL.md")
+
+# `.compress.delegate` hands an AI the region plan and the compressor catalog.
+add_test(NAME compress_delegate
+    COMMAND $<TARGET_FILE:prompt> .compress.delegate ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/numbered.txt)
+set_tests_properties(compress_delegate PROPERTIES PASS_REGULAR_EXPRESSION "Available compressors")
+
 # A directory argument is a clean usage error, not the stream exception
 # (`basic_filebuf::underflow: Is a directory`) that used to abort the process.
 add_test(NAME compress_directory
@@ -77,6 +109,10 @@ set_tests_properties(ai_openai_help PROPERTIES PASS_REGULAR_EXPRESSION "--api-ke
 add_test(NAME ai_debate_help COMMAND $<TARGET_FILE:prompt> .ai.debate --help)
 set_tests_properties(ai_debate_help PROPERTIES PASS_REGULAR_EXPRESSION "--rounds")
 
+# `.ai.reply` continues this terminal's last chat; --any is the global escape.
+add_test(NAME ai_reply_help COMMAND $<TARGET_FILE:prompt> .ai.reply --help)
+set_tests_properties(ai_reply_help PROPERTIES PASS_REGULAR_EXPRESSION "this terminal")
+
 add_test(NAME ai_debate_help_state COMMAND $<TARGET_FILE:prompt> .ai.debate --help)
 set_tests_properties(ai_debate_help_state PROPERTIES PASS_REGULAR_EXPRESSION "--continue")
 
@@ -107,6 +143,9 @@ if(Python3_Interpreter_FOUND)
     # failure that must not abort a quiet (tool-running) turn.
     add_test(NAME ai_gap_unit
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_gap.py)
+    # The terminal-scoped conversation mirror `.ai.reply` depends on.
+    add_test(NAME ai_reply_state
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_state.py)
 endif()
 
 add_test(NAME ai_help_tty COMMAND $<TARGET_FILE:prompt> .ai.dseek --help)
@@ -128,6 +167,11 @@ add_test(NAME ai_sink_roundtrip
 # forwarded provider names, the debate flags and stdin.
 add_test(NAME ai_debate_sink
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_debate_sink.sh $<TARGET_FILE:prompt>)
+
+# End-to-end `.ai.reply`: terminal-scoped provider selection, exact `--reply`
+# resumption, --any, explicit providers and the only-new-text rule.
+add_test(NAME ai_reply_sink
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_reply.sh $<TARGET_FILE:prompt>)
 
 # End-to-end `.save`: explicit/directory/derived targets, --dir/--file,
 # preflight fail-fast, passthrough into a sink, --head, no-clobber, sanitized

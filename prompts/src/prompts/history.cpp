@@ -5,6 +5,7 @@
 #include "../sdk/terminal.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <format>
@@ -30,6 +31,10 @@ struct get_options {
     bool all = false;
     bool meta = false;
     bool input = false;
+    // `.last.ai`/`.history.ai`: keep only a sink whose name matches this
+    // provider (`dseek` -> `ai.dseek`, `debate` -> `ai.debate`). Empty = the
+    // last sink of any kind.
+    std::string provider;
     // Scope the lookup to this terminal. `.last` defaults it on; `.history`
     // defaults it off and takes `--here`. `--any` turns it back off.
     bool here = false;
@@ -39,7 +44,7 @@ struct get_options {
 get_options parse_get(view const& v) {
     get_options opts;
     std::string const prefix = std::format("prompt .{}", v.name);
-    opts.here = v.name == "last" || v.name == "history.last";
+    opts.here = v.name == "last" || v.name == "history.last" || v.name == "last.ai" || v.name == "history.ai";
     opts.head = head_lines_or_throw(v);
     for (std::size_t i = 0; i < v.args.size(); ++i) {
         std::string_view const arg = v.args[i];
@@ -57,6 +62,11 @@ get_options parse_get(view const& v) {
         }
         if (arg == "--all") {
             opts.all = true;
+            continue;
+        }
+        if (arg == "--provider") {
+            if (i + 1 >= v.args.size()) throw usage_error{std::format("{}: --provider needs a name\n", prefix)};
+            opts.provider = std::string(v.args[++i]);
             continue;
         }
         if (arg == "--meta") {
@@ -164,6 +174,88 @@ std::string first_line(std::string_view text, std::size_t limit = 72) {
     return out;
 }
 
+// True when a run emitted no non-empty text at all (a failed no-op such as
+// `.extract` on an empty context). These runs are noise in a listing and in
+// the no-argument `.last`, so both skip them unless asked for everything.
+bool empty_run(history::stored_run const& run) {
+    return std::ranges::none_of(
+        run.segments, [](history::stored_segment const& segment) { return segment.emitted && !segment.text.empty(); });
+}
+
+// The first line of the last emitted, non-empty segment: the answer a reader
+// wants in a listing (the first segment is usually the least interesting).
+std::string output_preview(history::stored_run const& run) {
+    std::string preview;
+    for (auto const& segment : run.segments) {
+        if (!segment.emitted || segment.text.empty()) continue;
+        preview = first_line(segment.text);
+    }
+    return preview;
+}
+
+std::string command_preview(history::stored_run const& run, std::size_t limit = 72) {
+    std::string out;
+    for (std::size_t i = 0; i < run.argv.size(); ++i) {
+        if (i != 0) out += ' ';
+        out += run.argv[i];
+        if (out.size() > limit) {
+            out.resize(limit);
+            out += "…";
+            break;
+        }
+    }
+    return out;
+}
+
+// A filename-safe stem for a replayed run, from its command line (`.tse foolad`
+// -> `tse-foolad`), so `.history .save` names the file after what the run did
+// rather than after its timestamped id. Falls back to the id.
+std::string run_stem(history::stored_run const& run) {
+    std::string stem;
+    for (std::size_t i = 0; i < run.argv.size(); ++i) {
+        std::string_view const tok = run.argv[i];
+        if (tok.size() < 2 || (tok.front() != '.' && tok.front() != '-')) continue;
+        std::string_view const name = tok.substr(1);
+        if (find_prompt(name) == nullptr) continue;
+        stem = std::string(name);
+        if (i + 1 < run.argv.size()) {
+            std::string_view const next = run.argv[i + 1];
+            bool const next_is_prompt = next.size() >= 2 && (next.front() == '.' || next.front() == '-') &&
+                                        find_prompt(next.substr(1)) != nullptr;
+            if (!next.empty() && next.front() != '-' && !next_is_prompt && !next.contains(':')) {
+                stem += '-';
+                stem += std::string(next);
+            }
+        }
+        break;
+    }
+    if (stem.empty()) return run.id;
+
+    std::string out;
+    for (char const ch : stem) {
+        auto const c = static_cast<unsigned char>(ch);
+        if (std::isalnum(c) != 0 || c >= 0x80U || ch == '-' || ch == '_' || ch == '.') {
+            out.push_back(ch);
+        } else if (!out.empty() && out.back() != '-') {
+            out.push_back('-');
+        }
+    }
+    while (!out.empty() && (out.back() == '-' || out.back() == '.')) out.pop_back();
+    if (out.empty()) return run.id;
+    return out;
+}
+
+// `ai.dseek` matches provider "dseek"; the `.ai.` prefix is optional.
+bool provider_matches(std::string_view name, std::string_view provider) {
+    if (provider.empty()) return true;
+    if (name == provider) return true;
+    return name.starts_with("ai.") && name.substr(3) == provider;
+}
+
+constexpr std::array<std::string_view, 8> kAiProviders{
+    "chatgpt", "dseek", "gap", "grok", "kimi", "lms", "openai", "debate",
+};
+
 // The terminal of a run as JSON, for `--json` (an empty object when the run
 // predates the identity).
 json terminal_json(terminal::id const& who) {
@@ -240,11 +332,101 @@ void execute_history(view const& v, result& r) {
         out = history::final_output(*run);
     }
 
-    if (out.empty()) throw soft_error{std::format("{}: run {} produced no text\n", prefix, run->id)};
+    if (out.empty()) {
+        throw soft_error{
+            std::format("{}: run {} produced no text (it failed or emitted nothing; try --meta or .history.list)\n",
+                        prefix, run->id)};
+    }
     out = trim_context(out, opts.head);
     if (out.empty() || out.back() != '\n') out += '\n';
     r.out = std::move(out);
-    r.published.set(keys::save_stem, run->id);
+    r.published.set(keys::save_stem, run_stem(*run));
+}
+
+// The last emitted AI sink segment in `run` matching `provider` (empty = any).
+history::stored_segment const* find_ai_segment(history::stored_run const& run, std::string_view provider) {
+    for (auto const& segment : std::views::reverse(run.segments)) {
+        if (!segment.emitted || segment.text.empty()) continue;
+        if (segment.role != "sink") continue;
+        if (!provider_matches(segment.name, provider)) continue;
+        return &segment;
+    }
+    return nullptr;
+}
+
+// `.last.ai`: the newest AI answer (the last emitted AI sink segment) from this
+// terminal, so a later invocation can chain it without naming the run. It skips
+// runs that carry no AI answer at all, so an intervening failed `.extract` does
+// not hide the answer.
+void execute_last_ai(view const& v, result& r) {
+    get_options opts = parse_get(v);
+    std::string const prefix = std::format("prompt .{}", v.name);
+
+    // A bare provider name (`prompt .last.ai dseek`) is friendlier than
+    // `--provider`; only treat the key as a provider when it is a known one, so
+    // run ids and ranks still work.
+    if (opts.provider.empty() && !opts.key.empty()) {
+        std::string_view const key = opts.key;
+        bool const known = std::ranges::any_of(kAiProviders, [key](std::string_view name) { return name == key; });
+        if (known && key.find_first_not_of("0123456789") != std::string_view::npos) {
+            opts.provider = opts.key;
+            opts.key.clear();
+        }
+    }
+
+    bool fell_back = false;
+    std::string answer;
+    std::string run_id;
+
+    if (!opts.key.empty()) {
+        auto run = resolve_run(opts, fell_back);
+        if (!run) throw soft_error{std::format("{}: no run matches '{}'\n", prefix, opts.key)};
+        if (auto const* segment = find_ai_segment(*run, opts.provider)) answer = segment->text;
+        run_id = run->id;
+    } else {
+        bool const here = opts.here && !opts.any;
+        terminal::id const who = terminal::current();
+        auto const all = history::load_all();
+        if (here) {
+            for (auto const& candidate : all) {
+                if (!history::in_terminal(candidate, who)) continue;
+                if (auto const* segment = find_ai_segment(candidate, opts.provider)) {
+                    answer = segment->text;
+                    run_id = candidate.id;
+                    break;
+                }
+            }
+            if (answer.empty()) fell_back = true;
+        }
+        if (answer.empty()) {
+            for (auto const& candidate : all) {
+                if (auto const* segment = find_ai_segment(candidate, opts.provider)) {
+                    answer = segment->text;
+                    run_id = candidate.id;
+                    break;
+                }
+            }
+        }
+        if (answer.empty()) {
+            throw soft_error{std::format("{}: no recorded AI answer{}\n", prefix,
+                                         opts.provider.empty() ? "" : std::format(" for '{}'", opts.provider))};
+        }
+        if (fell_back) {
+            r.err = std::format(
+                "{}: no AI answer from this terminal; using the newest overall (add --here to require one)\n", prefix);
+        }
+    }
+
+    if (answer.empty()) {
+        throw soft_error{std::format("{}: run {} has no AI answer{}\n", prefix, run_id,
+                                     opts.provider.empty() ? "" : std::format(" for '{}'", opts.provider))};
+    }
+
+    std::string out = std::move(answer);
+    out = trim_context(out, opts.head);
+    if (out.empty() || out.back() != '\n') out += '\n';
+    r.out = std::move(out);
+    r.published.set(keys::save_stem, run_id + "-ai");
 }
 
 struct list_options {
@@ -254,6 +436,9 @@ struct list_options {
     bool json = false;
     bool paths = false;
     bool here = false;
+    // Include runs that emitted nothing (failed no-ops). Off by default: they
+    // are noise in a listing.
+    bool all = false;
 };
 
 list_options parse_list(view const& v) {
@@ -275,6 +460,10 @@ list_options parse_list(view const& v) {
         }
         if (arg == "--here") {
             opts.here = true;
+            continue;
+        }
+        if (arg == "--all" || arg == "--empty") {
+            opts.all = true;
             continue;
         }
         if (arg == "--limit" || arg == "--since") {
@@ -315,6 +504,9 @@ void execute_history_list(view const& v, result& r) {
             auto const started = std::chrono::system_clock::from_time_t(static_cast<std::time_t>(run.ts));
             if (run.ts != 0 && now - started > *opts.since) continue;
         }
+        // A run that emitted nothing is noise; `--all`/`--empty` include it.
+        bool const noisy = empty_run(run);
+        if (noisy && !opts.all) continue;
         ++shown;
         if (opts.paths) {
             out += history::display_path(run.path);
@@ -333,27 +525,18 @@ void execute_history_list(view const& v, result& r) {
                 {"incomplete", run.incomplete},
                 {"segments", run.segments.size()},
                 {"bytes", run.bytes},
+                {"empty", noisy},
                 {"terminal", terminal_json(run.terminal)},
             };
-            std::string preview;
-            for (auto const& segment : run.segments) {
-                if (!segment.emitted) continue;
-                preview = first_line(segment.text);
-                if (!preview.empty()) break;
-            }
-            entry["preview"] = preview;
+            entry["preview"] = output_preview(run);
             array.push_back(std::move(entry));
             continue;
         }
-        std::string preview;
-        for (auto const& segment : run.segments) {
-            if (!segment.emitted) continue;
-            preview = first_line(segment.text);
-            if (!preview.empty()) break;
-        }
+        std::string preview = output_preview(run);
+        if (preview.empty()) preview = "(no output) " + command_preview(run);
         out += std::format("{}  {}  exit {}  {} seg  {}  {}\n", run.id, run.started.empty() ? "-" : run.started,
                            run.finished ? run.exit_code : 0, run.segments.size(), history::human_bytes(run.bytes),
-                           preview.empty() ? "(no output)" : preview);
+                           preview);
     }
     if (opts.json) {
         out = array.dump(2);
@@ -386,6 +569,16 @@ constexpr std::array<std::string_view, 4> kDurations{"1d", "7d", "30d", "90d"};
 
 void complete_list(completion_request const& request, std::ostream& out) {
     if (completion::write_values_after_flag(out, request, "--since", kDurations)) return;
+}
+
+void complete_last_ai(completion_request const& request, std::ostream& out) {
+    if (completion::write_values_after_flag(out, request, "--provider", kAiProviders)) return;
+    for (auto const& provider : kAiProviders) {
+        if (completion::matches(request.prefix, provider)) completion::write_item(out, provider, "AI provider");
+    }
+    for (auto const& id : history::run_ids()) {
+        if (completion::matches(request.prefix, id)) completion::write_item(out, id, {});
+    }
 }
 
 void render_help_history(std::ostream& os) {
@@ -468,14 +661,17 @@ Set PROMPT_HISTORY=0 to skip recording one run.
 }
 
 void render_help_history_list(std::ostream& os) {
-    os << R"EOF(Usage: prompt .history.list [--limit N] [--since DUR] [--paths] [--json] [--head N] [--here]
+    os << R"EOF(Usage: prompt .history.list [--limit N] [--since DUR] [--all] [--paths] [--json] [--head N] [--here]
 
 List recorded runs, newest first: id, start time, exit status, segment count,
-size and the first line of output.
+size and the last line of output (or the command when the run emitted nothing).
+Runs that produced no output are skipped; `--all` (alias `--empty`) includes
+them.
 
 Options:
   --limit N    Show at most N runs (default: 20)
   --since DUR  Only runs newer than DUR (7d, 12h, 30m, 90s; a bare number is days)
+  --all        Include runs that emitted no output (alias: --empty)
   --paths      Print file paths only, one per line
   --json       Emit one JSON object per run (includes its terminal)
   --here       Only runs from this terminal
@@ -485,8 +681,41 @@ Options:
 Examples:
   prompt .history.list
   prompt .history.list --since 7d
-  prompt .history.list --here
+  prompt .history.list --all --here
   prompt .history.list --paths | xargs rg -n TODO
+
+)EOF";
+}
+
+void render_help_last_ai(std::ostream& os) {
+    os << R"EOF(Usage: prompt .last.ai [PROVIDER|N|ID] [--provider NAME] [--any] [--head N]
+
+Print the newest AI answer from THIS terminal — the last emitted `.ai.*` sink
+segment — so it can be chained, e.g. `prompt .last.ai .note "compare with the
+above" .ai.chatgpt`. This returns the answer, not the run's whole output, and
+skips segments that produced nothing.
+
+A bare PROVIDER (`dseek`, `grok`, `chatgpt`, `gap`, `kimi`, `lms`, `openai`,
+`debate`) picks that provider's last answer; `--provider` is the explicit
+spelling. A bare integer is the Nth newest run from this terminal (1 = the last
+one here), unless it matches the start of a run id. When this terminal has no
+recorded run, the globally newest one is used and a note is printed on stderr;
+`--any` always reads the globally newest.
+
+Options:
+  --provider NAME  Only this AI provider's answer (e.g. dseek, ai.dseek)
+  --any            Ignore this terminal and use the globally newest runs
+  --head N         Keep only the first N lines
+  -h, --help       Show this help message
+
+Examples:
+  prompt .last.ai
+  prompt .last.ai dseek .save answer.md
+  prompt .last.ai --provider grok .note "now expand on this" .ai.dseek
+  prompt .last.ai --any
+
+See also: `.last` (the whole run), `.history` (`--segment ai.dseek`), and
+`.history.find` (search). Set PROMPT_HISTORY=0 to skip recording one run.
 
 )EOF";
 }
@@ -509,6 +738,7 @@ static void execute_history_entry(view const& v, result& r) { execute_history(v,
 static void execute_history_last_entry(view const& v, result& r) { execute_history(v, r); }
 static void execute_history_list_entry(view const& v, result& r) { execute_history_list(v, r); }
 static void execute_history_dir_entry(view const& v, result& r) { execute_history_dir(v, r); }
+static void execute_last_ai_entry(view const& v, result& r) { execute_last_ai(v, r); }
 
 // This file is the prompt: it registers its entry points at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
@@ -535,4 +765,14 @@ bool const registered_history_list = prompt::register_prompt(
 bool const registered_history_dir = prompt::register_prompt(
     "history.dir", "Print the directory that holds the recorded prompt runs.", &execute_history_dir_entry,
     &render_help_history_dir, nullptr, chain_role::normal, true, nullptr, nullptr, false, false);
+
+bool const registered_last_ai = prompt::register_prompt(
+    "last.ai", "Print the newest AI answer from this terminal, to chain into a later invocation.",
+    &execute_last_ai_entry, &render_help_last_ai, &complete_last_ai, chain_role::normal, true, nullptr, nullptr, false,
+    false);
+
+bool const registered_history_ai = prompt::register_prompt(
+    "history.ai", "Print the newest AI answer from this terminal, to chain into a later invocation.",
+    &execute_last_ai_entry, &render_help_last_ai, &complete_last_ai, chain_role::normal, true, nullptr, nullptr, false,
+    false);
 } // namespace prompt::prompts

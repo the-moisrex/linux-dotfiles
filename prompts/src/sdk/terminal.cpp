@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <format>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 
 namespace prompt::terminal {
@@ -92,6 +93,43 @@ std::string describe(id const& value) {
         out += value.tty;
     }
     return out.empty() ? "unknown" : out;
+}
+
+namespace {
+
+// Keep the name shell- and path-safe, and identical to `state._slug` in
+// `bin/ai/state.py`: ASCII alphanumerics plus `.`, `_` and `-` survive, every
+// other byte becomes `-`, and the result is capped so a long override cannot
+// create an unusable path.
+std::string slug(std::string_view raw) {
+    constexpr std::size_t max_length = 120;
+    std::string out;
+    out.reserve(std::min(raw.size(), max_length));
+    for (char const ch : raw) {
+        if (out.size() >= max_length) break;
+        auto const c = static_cast<unsigned char>(ch);
+        bool const safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' ||
+                          c == '_' || c == '-';
+        out.push_back(safe ? ch : '-');
+    }
+    return out.empty() ? std::string{"unknown"} : out;
+}
+
+} // namespace
+
+std::string scope(id const& value) {
+    std::string raw;
+    if (!value.key.empty()) {
+        raw = "key-" + value.key;
+    } else {
+        if (value.sid != 0) raw = std::format("sid-{}", value.sid);
+        if (!value.tty.empty()) {
+            if (!raw.empty()) raw += '_';
+            raw += "tty-";
+            raw += value.tty;
+        }
+    }
+    return slug(raw);
 }
 
 } // namespace prompt::terminal

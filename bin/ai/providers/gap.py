@@ -286,7 +286,7 @@ class Gap(Provider):
             raise net.StreamError(f"upload failed: {data}")
         return file_token
 
-    def _action(self, model, conversation_id, text, file_tokens=()):
+    def _action(self, model, chat_token, text, file_tokens=()):
         """The ``text_message`` action the composer builds (captured shape)."""
         mode_extra = {}
         if model == "A-GAP":
@@ -301,7 +301,7 @@ class Gap(Provider):
             "message_token": "",
             "bot_name": model,
             "version": 4,
-            "conversation_id": conversation_id or "",
+            "chat_token": chat_token or "",
             "text": text,
             "file_tokens": list(file_tokens),
             "allow_downgrade": False,
@@ -617,7 +617,7 @@ class _Conversation(Conversation):
             "action": self.provider._action(
                 self.model, self.conversation_id, text, file_tokens
             ),
-            "conversation_id": self.conversation_id,
+            "chat_token": self.conversation_id,
             "chat_model": self.model,
             "message_token": "",
             "allow_downgrade": False,
@@ -940,7 +940,9 @@ class _Conversation(Conversation):
                         yield ev.error(self.provider._status_error(status, data))
                         return False, "error"
                     self.conversation_id = (
-                        data.get("conversation_id") or self.conversation_id
+                        data.get("chat_token")
+                        or data.get("conversation_id")
+                        or self.conversation_id
                     )
                     message = data.get("message")
                     if not isinstance(message, dict):
@@ -976,9 +978,8 @@ class _Conversation(Conversation):
                 if _completed(message):
                     return True, ""
             elif event == "chat_title_update":
-                if data.get("conversation_id") == self.conversation_id and data.get(
-                    "title"
-                ):
+                token = data.get("chat_token") or data.get("conversation_id")
+                if token == self.conversation_id and data.get("title"):
                     self.title = str(data["title"])
             elif event in ("error", "session.error"):
                 yield ev.error(str(data or event)[:300])

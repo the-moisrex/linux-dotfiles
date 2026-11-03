@@ -159,6 +159,9 @@ def build_parser(provider):
                    help=argparse.SUPPRESS)
     p.add_argument("--context-file", default=None, metavar="PATH",
                    help=argparse.SUPPRESS)
+    p.add_argument("--reply", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--terminal-scope", default=None, metavar="SCOPE",
+                   help=argparse.SUPPRESS)
     p.add_argument("--width", type=int, default=None, metavar="COLS",
                    help=argparse.SUPPRESS)
     p.add_argument("--height", type=int, default=None, metavar="ROWS",
@@ -222,16 +225,21 @@ def make_renderer(args):
 
 
 def _send_events(conversation, message, files):
-    """The turn's events, with an API failure reported like any other error.
+    """The turn's events, with any failure reported like any other error.
 
     The web providers report their own failures as ``error`` events; the API
     engine raises ``ApiError`` instead (the HTTP status, the endpoint, the model
     hint), so it is turned into the same event here and annotated by the caller.
+    Browser/websocket providers (DeepSeek, ChatGPT, Grok) can also raise
+    OSError/TimeoutError/websockets errors around session setup and streaming;
+    those are surfaced as events too instead of escaping the stream.
     """
     try:
         yield from conversation.send(message, files=files or None)
     except ApiError as exc:
         yield ev.error(str(exc))
+    except Exception as exc:
+        yield ev.error(f"{type(exc).__name__}: {exc}")
 
 
 def run_turn(conversation, prompt, args, renderer, provider, fields=None):
@@ -242,6 +250,7 @@ def run_turn(conversation, prompt, args, renderer, provider, fields=None):
     """
     status = 0
     parts = []
+    saw_terminal = False
     # --file attaches to the first message only; the site keeps it in context.
     files = list(args.file) if not conversation.turns else []
     mode = args.prompt_file
@@ -305,18 +314,30 @@ def run_turn(conversation, prompt, args, renderer, provider, fields=None):
                     context.flush()
             if event.kind == ERROR:
                 status = 1
+                saw_terminal = True
             elif event.kind == DONE:
+                saw_terminal = True
                 break
     finally:
         if context is not None:
             context.close()
-        promptfile.remove(temp)
+        try:
+            promptfile.remove(temp)
+        except OSError:
+            pass
+    if status == 0 and not saw_terminal:
+        problem = ev.error("stream ended before the model produced a reply")
+        if args.json:
+            emit_json(problem, fields)
+        else:
+            renderer.handle(problem)
+        status = 1
     return status, "".join(parts)
 
 
-def save_conversation(provider_name, conversation, model):
+def save_conversation(provider_name, conversation, model, scope=None):
     state.save(provider_name, conversation.conversation_id, model,
-               conversation.history, conversation.resume)
+               conversation.history, conversation.resume, scope=scope)
 
 
 def api_options(args):
@@ -345,7 +366,7 @@ def _open(instance, match, model, args, resume):
     return instance.open_conversation(match, model, **kwargs)
 
 
-def run_once(conversation, prompt, args, provider_name, model, provider):
+def run_once(conversation, prompt, args, provider_name, model, provider, scope=None):
     renderer = make_renderer(args)
     try:
         status, answer = run_turn(conversation, prompt, args, renderer, provider)
@@ -354,28 +375,41 @@ def run_once(conversation, prompt, args, provider_name, model, provider):
             renderer.finish()
         return 130
     except Exception as exc:
-        if not args.json:
-            renderer.finish()
-        if getattr(args, "debug", False):
-            import traceback
-            traceback.print_exc()
+        if args.json:
+            emit_json(ev.error(f"{type(exc).__name__}: {exc}"))
         else:
-            print("ai." + provider_name + ": " + type(exc).__name__ + ": "
-                  + str(exc) + " (re-run with --debug for a traceback)",
-                  file=sys.stderr)
+            renderer.finish()
+            if getattr(args, "debug", False):
+                import traceback
+                traceback.print_exc()
+            else:
+                print("ai." + provider_name + ": " + type(exc).__name__ + ": "
+                      + str(exc) + " (re-run with --debug for a traceback)",
+                      file=sys.stderr)
         return 1
     if not args.json:
         if renderer.finish() and not status:
             status = 1
     if args.copy:
-        copy_answer(answer or renderer.text)
+        try:
+            copy_answer(answer or renderer.text)
+        except Exception:
+            pass
     if status == 0:
-        save_conversation(provider_name, conversation, model)
-    conversation.close()
+        try:
+            save_conversation(provider_name, conversation, model, scope)
+        except Exception as exc:
+            print(f"ai.{provider_name}: could not save conversation: {exc}",
+                  file=sys.stderr)
+    try:
+        conversation.close()
+    except Exception:
+        pass
     return status
 
 
-def run_repl(conversation, instance, match, model, args, provider_name, provider):
+def run_repl(conversation, instance, match, model, args, provider_name, provider,
+             scope=None):
     """Prompt in a loop, one turn at a time, keeping the conversation open."""
     where = f"ai.{provider_name}: {model}"
     if conversation.history:
@@ -440,7 +474,7 @@ def run_repl(conversation, instance, match, model, args, provider_name, provider
         if args.copy:
             copy_answer(answer)
         if turn_status == 0:
-            save_conversation(provider_name, conversation, model)
+            save_conversation(provider_name, conversation, model, scope)
         else:
             status = status or turn_status
     conversation.close()
@@ -539,9 +573,17 @@ def main(provider_name, argv=None):
                   file=sys.stderr)
             return 1
 
+    scope = args.terminal_scope or state.terminal_scope()
     if args.new:
-        state.clear(provider_name)
+        state.clear(provider_name, scope)
         resume = None
+    elif args.reply:
+        resume = state.load_terminal(provider_name, scope)
+        if not resume:
+            print(f"ai.{provider_name}: no chat in this terminal to reply to; "
+                  f"start one with ai.{provider_name} (or run it without --reply)",
+                  file=sys.stderr)
+            return 1
     elif args.continue_:
         resume = state.load(provider_name)
         if not resume:
@@ -557,16 +599,25 @@ def main(provider_name, argv=None):
     except ApiError as exc:
         print(f"ai.{provider_name}: {exc}", file=sys.stderr)
         return 1
+    except Exception as exc:
+        if getattr(args, "debug", False):
+            import traceback
+            traceback.print_exc()
+        else:
+            print(f"ai.{provider_name}: {type(exc).__name__}: {exc} "
+                  f"(re-run with --debug for a traceback)", file=sys.stderr)
+        return 1
     # An API provider resolves the model against the server, so the open
     # conversation is the authority on what is actually being asked.
     model = conversation.model
 
     if args.interactive:
         return run_repl(conversation, instance, match, model, args, provider_name,
-                        provider)
+                        provider, scope)
 
     prompt = read_prompt(args.prompt)
     if not prompt:
         build_parser(provider).print_usage(sys.stderr)
         return 2
-    return run_once(conversation, prompt, args, provider_name, model, provider)
+    return run_once(conversation, prompt, args, provider_name, model, provider,
+                    scope)

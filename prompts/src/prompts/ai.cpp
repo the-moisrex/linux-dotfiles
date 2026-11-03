@@ -3,16 +3,20 @@
 #include "../sdk/completion.hpp"
 #include "../sdk/embed.hpp"
 #include "../sdk/errors.hpp"
+#include "../sdk/facts.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include "../sdk/sink.hpp"
 #include "../sdk/stage.hpp"
+#include "../sdk/terminal.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <ostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -32,10 +36,15 @@ struct ai_provider {
     bool api = false;
     //: A local server the tool discovers on its own (LM Studio).
     bool local = false;
-    std::string_view base_url; // default API root, empty = discovered
-    std::string_view base_url_env;
-    std::string_view key_env;
-    std::string_view model_env;
+    // GCC's -Wmissing-field-initializers wants a member initializer so the
+    // designators above stay warning-free; clang-tidy calls the empty ones
+    // redundant. Keep both quiet, as `stage.hpp` does.
+    // NOLINTBEGIN(readability-redundant-member-init)
+    std::string_view base_url{}; // default API root, empty = discovered
+    std::string_view base_url_env{};
+    std::string_view key_env{};
+    std::string_view model_env{};
+    // NOLINTEND(readability-redundant-member-init)
 };
 
 // The provider writes to a pipe when it runs as a sink, so its stdout is
@@ -93,8 +102,8 @@ void add_terminal_size(std::vector<std::string>& argv) {
 
 // --print-prompt, --print-session and --list answer on stdout without an
 // assistant turn, so there is no plain answer to read back.
-bool inspect_only(view const& v) {
-    return std::ranges::any_of(v.args, [](std::string_view arg) {
+bool inspect_only(std::span<std::string_view const> args) {
+    return std::ranges::any_of(args, [](std::string_view arg) {
         return arg == "--print-prompt" || arg == "--print-session" || arg == "--list";
     });
 }
@@ -190,9 +199,51 @@ void complete_ai_debate(prompt::completion_request const& request, std::ostream&
     prompt::completion::write_items(out, request.prefix, kProviders);
 }
 
-void execute_ai(view const& v, result& r, std::string_view provider) {
-    std::string_view const context = v.text;
+// The state directory `bin/ai/state.py` uses, so `.ai.reply` finds the same
+// per-terminal marker the provider just wrote.
+std::filesystem::path ai_state_directory() {
+    if (char const* xdg = std::getenv("XDG_STATE_HOME"); xdg != nullptr && *xdg != '\0') {
+        return std::filesystem::path(xdg) / "ai";
+    }
+    if (char const* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        return std::filesystem::path(home) / ".local" / "state" / "ai";
+    }
+    return {};
+}
 
+// The provider that talked most recently (this terminal, or globally).
+std::optional<std::string> last_ai_provider(bool global) {
+    auto dir = ai_state_directory();
+    if (dir.empty()) return std::nullopt;
+    if (!global) {
+        dir /= "terminals";
+        dir /= terminal::scope(terminal::current());
+    }
+    std::string text = read_file(dir / "last");
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' || text.back() == '\t')) {
+        text.pop_back();
+    }
+    if (text.empty()) return std::nullopt;
+    return text;
+}
+
+constexpr std::array<std::string_view, 7> kReplyProviders{
+    "chatgpt", "dseek", "gap", "grok", "kimi", "lms", "openai",
+};
+
+std::optional<std::string> canonical_provider(std::string_view name) {
+    if (name.starts_with("ai.")) name.remove_prefix(3);
+    if (name == "deepseek") return std::string{"dseek"};
+    if (name == "lmstudio") return std::string{"lms"};
+    if (name == "oai") return std::string{"openai"};
+    for (std::string_view const provider : kReplyProviders) {
+        if (name == provider) return std::string(provider);
+    }
+    return std::nullopt;
+}
+
+void execute_ai_argv(view const& v, result& r, std::string_view provider, std::span<std::string_view const> args,
+                     std::string_view context) {
     std::string const tool_name = "ai." + std::string(provider);
     auto const tool = fs::bin_tool(tool_name, v.env.exe_path, v.env.git_root);
     if (tool.empty() || !std::filesystem::exists(tool)) {
@@ -200,7 +251,7 @@ void execute_ai(view const& v, result& r, std::string_view provider) {
     }
 
     std::vector<std::string> argv;
-    argv.reserve(v.args.size() + 4);
+    argv.reserve(args.size() + 5);
     argv.push_back(tool.string());
     // The chain context is stdin. This flag makes bin/ai reject positional
     // prompt text instead of silently ignoring the context.
@@ -210,10 +261,16 @@ void execute_ai(view const& v, result& r, std::string_view provider) {
         argv.emplace_back("--tty");
         add_terminal_size(argv);
     }
-    bool const chainable = !inspect_only(v);
+    bool const chainable = !inspect_only(args);
     answer_file answer;
     if (chainable) argv.emplace_back("--context-file=" + answer.path().string());
-    for (std::string_view const arg : v.args) {
+    // Mirror every prompt-driven chat under its terminal, so `.ai.reply` can
+    // continue exactly the one this terminal used. The debate tool mirrors its
+    // participants itself and has no such flag.
+    if (provider != "debate") {
+        argv.emplace_back("--terminal-scope=" + terminal::scope(terminal::current()));
+    }
+    for (std::string_view const arg : args) {
         if (arg == "-i" || arg == "--interactive") {
             throw usage_error{"ai." + std::string(provider) +
                               ": -i/--interactive cannot be used in a prompt chain; run it directly\n"};
@@ -241,6 +298,110 @@ void execute_ai(view const& v, result& r, std::string_view provider) {
         }
         throw prompt_error{code, std::move(message), r.out, r.no_clipboard, v.in.piped()};
     }
+
+    if (chainable) {
+        // Facts for a later `.ai.reply` in the same chain: which provider just
+        // answered, and the answer it already holds.
+        r.published.set(keys::ai_provider, provider);
+        if (!r.out.empty()) r.published.set(keys::ai_answer, r.out);
+    }
+}
+
+void execute_ai(view const& v, result& r, std::string_view provider) {
+    execute_ai_argv(v, r, provider, v.args, v.text);
+}
+
+// `.ai.reply`: continue the chat this terminal talked to last (or the one the
+// previous AI sink in this chain started), sending only the newly appended
+// text. Provider options are forwarded unchanged; `-c` and `--reply` are ours.
+void execute_ai_reply(view const& v, result& r) {
+    std::string const prefix = "ai.reply: ";
+    std::string provider;
+    bool global = false;
+    std::vector<std::string_view> forward;
+
+    for (std::size_t i = 0; i < v.args.size(); ++i) {
+        std::string_view const arg = v.args[i];
+        if (arg == "--provider") {
+            if (i + 1 >= v.args.size()) throw usage_error{prefix + "--provider needs a name\n"};
+            provider = std::string(v.args[++i]);
+            continue;
+        }
+        if (arg.starts_with("--provider=")) {
+            provider = std::string(arg.substr(std::string_view{"--provider="}.size()));
+            continue;
+        }
+        if (arg == "--any" || arg == "--global") {
+            global = true;
+            continue;
+        }
+        if (arg == "--here") continue; // default
+        forward.push_back(arg);
+    }
+
+    // A leading bare provider (`prompt .ai.reply gap`) is friendlier than the
+    // explicit flag; anything else stays a provider option.
+    if (provider.empty() && !forward.empty()) {
+        if (auto const canonical = canonical_provider(forward.front())) {
+            provider = *canonical;
+            forward.erase(forward.begin());
+        }
+    }
+
+    if (provider.empty()) {
+        if (auto const prior = v.prior.get(keys::ai_provider)) {
+            if (*prior == "debate") {
+                throw usage_error{prefix + "the last AI here was a debate; name a provider, e.g. .ai.reply grok\n"};
+            }
+            if (auto const canonical = canonical_provider(*prior)) provider = *canonical;
+        }
+    }
+    if (provider.empty()) {
+        if (auto const last = last_ai_provider(global)) {
+            if (*last == "debate") {
+                throw usage_error{prefix +
+                                  "the last AI chat here was a debate; name a provider, e.g. .ai.reply grok\n"};
+            }
+            if (auto const canonical = canonical_provider(*last)) {
+                provider = *canonical;
+            } else {
+                throw soft_error{prefix + "unknown provider in the saved terminal state: " + *last + "\n"};
+            }
+        }
+    }
+    if (provider.empty()) {
+        throw soft_error{prefix + "no AI chat found" + (global ? " yet" : " in this terminal yet") +
+                         "; start one with .ai.<provider>, or name a provider\n"};
+    }
+
+    // The chat already holds the previous answer, so sending it again would
+    // duplicate it. Drop it when it is exactly the context prefix (the usual
+    // `<answer> + blank line + new instruction` shape) and send only the rest.
+    std::string_view context = v.text;
+    if (auto const previous = v.prior.get(keys::ai_answer)) {
+        std::string_view answer = *previous;
+        while (!answer.empty() && (answer.back() == '\n' || answer.back() == '\r')) answer.remove_suffix(1);
+        auto const is_space = [](char c) { return c == '\n' || c == '\r' || c == ' ' || c == '\t'; };
+        if (!answer.empty() && context.starts_with(answer)) {
+            std::string_view rest = context.substr(answer.size());
+            if (rest.empty() || is_space(rest.front())) {
+                while (!rest.empty() && is_space(rest.front())) rest.remove_prefix(1);
+                context = rest;
+            }
+        }
+    }
+    if (context.empty()) {
+        throw usage_error{prefix + "nothing new to send; put the reply in a .note before .ai.reply\n"};
+    }
+
+    std::vector<std::string_view> args;
+    args.reserve(forward.size() + 2);
+    args.emplace_back("-c");
+    // `--any` continues the globally newest chat, which a terminal mirror may
+    // not hold; the default continues this terminal's own chat.
+    if (!global) args.emplace_back("--reply");
+    args.insert(args.end(), forward.begin(), forward.end());
+    execute_ai_argv(v, r, provider, args, context);
 }
 
 // The API providers speak an OpenAI-compatible HTTP API, so they have no
@@ -297,6 +458,64 @@ void render_api_provider_options(std::ostream& out, ai_provider const& provider)
     }
     out << "  - --show-context prints the source prompts in the final output; --print-prompt\n"
         << "    prints exactly what this sink receives.\n";
+}
+
+void render_help_ai_reply(std::ostream& out) {
+    out << "Usage: prompt <other prompts...> .ai.reply [PROVIDER] [--provider NAME] [--any] [SINK-OPTIONS] "
+           "[PROVIDER-OPTIONS]\n"
+        << "       prompt .ai.reply [PROVIDER] [--provider NAME] [--any] [SINK-OPTIONS] [PROVIDER-OPTIONS]\n"
+        << "\n"
+        << "Reply in the AI chat this terminal talked to last and use its answer as the new\n"
+        << "chain context, e.g. after `.ai.gap`:\n"
+        << "  prompt .note \"implement it; switch to build mode\" .ai.reply\n"
+        << "\n"
+        << "The provider is inferred: an explicit PROVIDER/--provider, else the AI sink\n"
+        << "earlier in the same chain, else the chat this terminal sent last (read from the\n"
+        << "per-terminal state bin/ai keeps). `--any` reads the globally newest chat. Every\n"
+        << "provider option is forwarded as `.ai.<provider>` would receive it; the `-c` and\n"
+        << "`--reply` state flags are supplied for you.\n"
+        << "\n";
+    render_sink_help(out);
+    out << "\n"
+        << "Reply options:\n"
+        << "  PROVIDER, --provider NAME  Use this provider: chatgpt, dseek, gap, grok, kimi, lms, openai\n"
+        << "  --any, --global            Use the globally newest chat instead of this terminal's\n"
+        << "  --here                     Require this terminal (the default)\n"
+        << "  -h, --help                 Show this help message\n"
+        << "\n"
+        << "Notes:\n"
+        << "  - Chained right after an AI sink, the previous answer is dropped from the\n"
+        << "    message: only the text appended after it (usually a `.note`) is sent.\n"
+        << "  - All provider options are accepted (`-m`, `-s`, `-f`, `--new`, `--show-thinking`,\n"
+        << "    `--print-session`, …); see `.ai.<provider> --help`.\n"
+        << "  - This continues the single-provider chats. When the last chat here was a\n"
+        << "    debate, name a provider (`.ai.reply grok`) to continue its side.\n"
+        << "\n"
+        << "Examples:\n"
+        << "  prompt .note \"implement it\" .ai.reply\n"
+        << "  prompt ... .plan .ai.gap .note \"impl it; switch to build mode\" .ai.reply\n"
+        << "  prompt .note \"continue on a smaller model\" .ai.reply --provider dseek -m deepseek-chat\n"
+        << "  prompt .last.ai .note \"compare with the above\" .ai.reply\n";
+}
+
+void complete_ai_reply(prompt::completion_request const& request, std::ostream& out) {
+    using prompt::completion::item;
+    static constexpr std::array<item, 10> kProviders = {
+        {
+            {.value = "chatgpt", .description = "ChatGPT"},
+            {.value = "dseek", .description = "DeepSeek"},
+            {.value = "deepseek", .description = "DeepSeek (alias)"},
+            {.value = "gap", .description = "GapGPT"},
+            {.value = "grok", .description = "Grok"},
+            {.value = "kimi", .description = "Kimi"},
+            {.value = "lms", .description = "LM Studio (local)"},
+            {.value = "lmstudio", .description = "LM Studio (alias)"},
+            {.value = "openai", .description = "OpenAI API"},
+            {.value = "oai", .description = "OpenAI API (alias)"},
+        },
+    };
+    if (prompt::completion::write_values_after_flag(out, request, "--provider", kReplyProviders)) return;
+    prompt::completion::write_items(out, request.prefix, kProviders);
 }
 
 void render_help_ai(std::ostream& out, ai_provider const& provider) {
@@ -424,5 +643,9 @@ bool const registered_ai_openai = prompt::register_sink(
 bool const registered_ai_debate = prompt::register_sink(
     "ai.debate", "Ask two or more AIs the same question and let them verify each other's answers, round after round.",
     &execute_ai_debate, &render_help_ai_debate, &complete_ai_debate);
+
+bool const registered_ai_reply = prompt::register_sink(
+    "ai.reply", "Reply in the last AI chat from this terminal and use its answer as the next context.",
+    &execute_ai_reply, &render_help_ai_reply, &complete_ai_reply);
 
 } // namespace

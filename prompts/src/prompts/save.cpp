@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fcntl.h>
@@ -89,6 +90,28 @@ std::filesystem::path derived_name(view const& v) {
     std::filesystem::path name{safe_stem(hinted.filename().string())};
     if (name.extension().empty()) name += ".md";
     return name;
+}
+
+std::string xdg_data_home() {
+    if (char const* xdg = std::getenv("XDG_DATA_HOME"); xdg != nullptr && *xdg != '\0') return xdg;
+    if (char const* home = std::getenv("HOME"); home != nullptr && *home != '\0')
+        return std::string(home) + "/.local/share";
+    return {};
+}
+
+// The directory a `.skill.gen` chain saves into: the same layout the `skill`
+// prompt loads (`<XDG_DATA_HOME>/agents/skills/<name>/SKILL.md`). Nullopt when
+// the chain is not saving a skill or the home directory is unknown.
+std::optional<std::filesystem::path> skill_directory(view const& v) {
+    auto const kind = v.prior.get(keys::save_kind);
+    if (!kind || *kind != "skill") return std::nullopt;
+    std::string const base = xdg_data_home();
+    if (base.empty()) return std::nullopt;
+    std::string raw = std::string(v.prior.get(keys::save_stem).value_or(""));
+    if (raw.empty()) raw = "skill-" + now_stamp();
+    std::string stem = safe_stem(raw);
+    if (stem.ends_with(".md")) stem.resize(stem.size() - 3);
+    return std::filesystem::path(base) / "agents" / "skills" / stem;
 }
 
 // A target is a directory when it exists as one, ends in '/', or has no file
@@ -286,7 +309,21 @@ void run_save(view const& v, result& r, command_info const& cmd) {
     target_plan const plan = plan_target(cfg);
     ensure_directory(plan.directory, cmd);
 
-    std::filesystem::path const target = plan.file ? *plan.file : plan.directory / derived_name(v);
+    // An explicit target wins. A nameless `.save` in a `.skill.gen` chain writes
+    // the skill into the loader's directory instead of the working directory.
+    std::filesystem::path target;
+    if (plan.file) {
+        target = *plan.file;
+    } else if (!cfg.target) {
+        if (auto skill_dir = skill_directory(v)) {
+            ensure_directory(*skill_dir, cmd);
+            target = *skill_dir / "SKILL.md";
+        } else {
+            target = plan.directory / derived_name(v);
+        }
+    } else {
+        target = plan.directory / derived_name(v);
+    }
     std::error_code ec;
     if (std::filesystem::is_directory(target, ec)) {
         throw soft_error{std::format("{}{} is a directory\n", prefix(cmd), target.string())};

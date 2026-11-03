@@ -40,4 +40,11 @@ bool same(id const& a, id const& b);
 // "sid 12345 on /dev/pts/3" / "session <key>" — for `--meta` and `--json`.
 std::string describe(id const& value);
 
+// A filesystem-safe name for this identity: `key-…` when an opaque key is set,
+// otherwise `sid-<n>[_tty-<path>]` with every byte outside `[A-Za-z0-9._-]`
+// replaced by `-`. `bin/ai`'s `state.terminal_scope()` implements the same
+// encoding, so the Python provider state and the native `.ai.reply` look in
+// the same per-terminal directory.
+std::string scope(id const& value);
+
 } // namespace prompt::terminal

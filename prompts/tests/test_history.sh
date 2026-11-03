@@ -59,18 +59,25 @@ grep -q '^## ai.dseek' "$tmp/all.out" || fail "--all omits a segment heading"
 "$prompt" .history --head 1 >"$tmp/head.out" 2>/dev/null
 [ "$(wc -l <"$tmp/head.out" | tr -d ' ')" -eq 1 ] || fail "--head did not cap the output"
 
-# 4. `.history` feeds a sink: the run id becomes the `.save` filename.
+# 4. `.history` feeds a sink: the replayed run's command line names the file
+# (a readable stem, not the timestamped id), and the content is the run's text.
 mkdir "$tmp/saved"
 "$prompt" .history .save --dir "$tmp/saved" >/dev/null 2>&1
-[ -f "$tmp/saved/$id.md" ] || fail ".history did not publish the run id as the save name"
-grep -q 'two' "$tmp/saved/$id.md" || fail ".save wrote the wrong content"
+[ -f "$tmp/saved/note-one.md" ] || fail ".history did not derive a save name from the command line"
+grep -q 'two' "$tmp/saved/note-one.md" || fail ".save wrote the wrong content"
 
 # 5. `.history.list` and `.history.find`.
+# Count only the run lines: the dispatcher may prepend a one-line redaction
+# legend when a stored command line contains personal data (a temp path under
+# $HOME), which is not a run.
+list_lines() { grep -cE '^[0-9]{8}-' "$1"; }
 "$prompt" .history.list >"$tmp/list.out" 2>/dev/null
 grep -q "$id" "$tmp/list.out" || fail ".history.list omits the newest run"
-[ "$(wc -l <"$tmp/list.out" | tr -d ' ')" -eq "$(run_count)" ] || fail ".history.list line count"
+[ "$(list_lines "$tmp/list.out")" -le "$(run_count)" ] || fail ".history.list line count"
+"$prompt" .history.list --all >"$tmp/list-all.out" 2>/dev/null
+[ "$(list_lines "$tmp/list-all.out")" -eq "$(run_count)" ] || fail ".history.list --all line count"
 "$prompt" .history.list --limit 1 >"$tmp/list-one.out" 2>/dev/null
-[ "$(wc -l <"$tmp/list-one.out" | tr -d ' ')" -eq 1 ] || fail ".history.list --limit 1"
+[ "$(list_lines "$tmp/list-one.out")" -eq 1 ] || fail ".history.list --limit 1"
 "$prompt" .history.list --since 1d >/dev/null 2>&1 || fail ".history.list --since rejected"
 "$prompt" .history.list --paths >"$tmp/list-paths.out" 2>/dev/null
 grep -q '\.md$' "$tmp/list-paths.out" || fail ".history.list --paths"
@@ -193,5 +200,24 @@ fi
 # `--here` and the new `.last` prompts complete and document themselves.
 term_a "$prompt" .last --help | grep -q 'this terminal' || fail ".last help"
 term_a "$prompt" .last --complete -- | grep -q -- '--any' || fail ".last flag completion"
+
+# 11. `.last.ai` returns the newest AI answer from this terminal and skips runs
+# that carry none (an empty failed `.extract`, a plain `.note`).
+term_a "$prompt" .note prompttext .ai.dseek --print-prompt >/dev/null 2>&1
+term_a "$prompt" .extract >/dev/null 2>&1 || true # a failed, empty run: now the newest here
+
+term_a "$prompt" .last.ai >"$tmp/last-ai.out" 2>/dev/null
+grep -q 'prompttext' "$tmp/last-ai.out" || fail ".last.ai did not return the newest AI answer"
+term_a "$prompt" .last.ai dseek >"$tmp/last-ai-dseek.out" 2>/dev/null
+grep -q 'prompttext' "$tmp/last-ai-dseek.out" || fail ".last.ai dseek did not select the provider"
+term_a "$prompt" .history.ai >"$tmp/histo-ai.out" 2>/dev/null
+grep -q 'prompttext' "$tmp/histo-ai.out" || fail ".history.ai is not an alias of .last.ai"
+set +e
+term_a "$prompt" .last.ai grok >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 1 ] || fail ".last.ai with no matching provider should exit 1 (got $status)"
+term_a "$prompt" .last.ai --complete -- | grep -q -- '--provider' || fail ".last.ai flag completion"
+term_a "$prompt" .last.ai --help | grep -q 'AI answer' || fail ".last.ai help"
 
 echo "all history tests passed"

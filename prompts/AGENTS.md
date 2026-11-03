@@ -305,6 +305,20 @@ stem)`), which the dispatcher carries through parallel children to later
   `$XDG_STATE_HOME/ai/debate-<providers>.json`. Its completion
   callback (`complete_ai_debate`) offers the provider names (aliases included),
   and `PROVIDER=` after `-m`/`--model`.
+  `.ai.reply` (`execute_ai_reply`) continues the chat this terminal talked to
+  last: it resolves a provider (explicit `PROVIDER`/`--provider`, else the
+  `keys::ai_provider` fact an earlier AI sink in the same chain published, else
+  the per-terminal marker), forwards every provider option, and appends the
+  `-c`/`--reply` state flags itself. `--any` continues the globally newest chat
+  instead of this terminal's. Every AI sink publishes `keys::ai_provider` and
+  `keys::ai_answer`, so a chained `.ai.reply` drops the answer it would
+  otherwise re-send and keeps only the newly appended text. The state layout
+  lives in `bin/ai/state.py`: the plain `ai/<provider>.json` (for `-c`) is
+  mirrored per terminal under `ai/terminals/<scope>/<provider>.json` with a
+  `last` marker (and a global `ai/last`); `<scope>` is
+  `prompt::terminal::scope` (`src/sdk/terminal.cpp`), matched byte-for-byte by
+  `state.terminal_scope()`. `.ai.debate` mirrors each participant and sets
+  `last` to `debate`, so `.ai.reply <provider>` is required to continue one.
 
 Tests: `tests/test_sink.cpp` (flag parsing, streaming/tee, timeout), the
 `plan_chain`/`ai.*`/`save` registration and `tse` declaration cases in
@@ -318,17 +332,24 @@ merge rules, the wire codec, `segment_outcome` round-trip), `tests/test_clipboar
 `tests/test_save.sh` (end-to-end save targets, passthrough, `--head`,
 no-clobber and sanitized names), and `tests/test_clear.sh` (context reset between
 sections, piped stdin, hint and failure-taint reset, `.flush` == `.save` +
-`.clear`, preflight); `tests/test_ai_debate.py` exercises the relay
+`.clear`, preflight); `tests/test_ai_reply.sh` (end-to-end `.ai.reply` through
+stub providers: terminal-scoped provider selection, exact `--reply` resumption,
+`--any`, explicit providers and the only-new-text rule), `tests/test_ai_state.py`
+(the `ai.state` terminal scope, mirroring, `last` markers, expiry, clear and
+debate participant mirroring), `tests/test_ai_debate.py` exercises the relay
 loop offline (turn order, framing, `--rounds`/`--until-agree`, context
 selection, failure), `tests/test_ai_lms.py` drives the API providers against a
 threaded `http.server` stub (SSE mapping, discovery + caching, model defaulting,
 `--param` forwarding, inline attachments, `-c` transcript replay, the
 `--prompt-file` refusal and the error remedies), `tests/test_ai_gap.py` checks
-the GapGPT turn-recovery path offline (the poll fallback carries the
-`accessToken` bearer and reads the turn, a transport error or a `StreamError`
-is non-fatal, and `_read_turn` survives a raising poll), and the
+the GapGPT turn-recovery path offline (the ack's `chat_token` becomes the
+conversation id and a resumed send carries it back under `chat_token`, the poll
+fallback carries the `accessToken` bearer and reads
+the turn, a transport error or a `StreamError` is non-fatal, and `_read_turn`
+survives a raising poll), and the
 `ai_help`/`ai_lms_help`/`ai_openai_help`/`ai_print_prompt`/`ai_debate_help`/
-`ai_debate_print_prompt` ctest smokes exercise an offline sink chain.
+`ai_debate_print_prompt`/`ai_reply_help` ctest smokes exercise an offline sink
+chain.
 
 ## Agentic chain layer (`.expect`, `.extract`, `.exec`, `.each`)
 
@@ -518,11 +539,13 @@ network. The registry, the fenced-region scanner and the planner live in
 - **`.compress [FILE…]`** (`src/prompts/compress.cpp`) is an ordinary prompt:
   with FILEs it compresses those files, and with no FILE it compresses the piped
   input (a fence-less source file is wrapped in a fence with a guessed language;
-  a document already carrying fences is scanned for regions). Flags: `--for`,
-  `--level`, `--min-lines`, `--budget`, `--only`/`--skip`, `--project`,
-  `--force`/`-f` and `--explain`. It auto-detects the project (and publishes the
-  `project.*` facts) whenever the intent is not `general` or `--project` is
-  given.
+  a document already carrying fences is scanned for regions). A FILE argument is
+  resolved the way `.files` resolves one (`v.env.resolve_input_file`: exact path
+  → git root → `git ls-files | fzf`), so a loose `history.hpp` finds the file
+  anywhere in the tree. Flags: `--for`, `--level`, `--min-lines`, `--budget`,
+  `--only`/`--skip`, `--project`, `--force`/`-f` and `--explain`. It
+  auto-detects the project (and publishes the `project.*` facts) whenever the
+  intent is not `general` or `--project` is given.
 - **`.compress.list`** prints the project line and every registered compressor
   with its one-line summary — the catalog face of the subsystem, and the menu an
   AI reads to choose a unit. **`.project`** (`src/prompts/project.cpp`) detects
@@ -535,7 +558,13 @@ network. The registry, the fenced-region scanner and the planner live in
   is deliberately no `.compress --ai`: a chain that needs an AI to compress what
   no deterministic unit handles uses `.compress --explain` (or `.compress.list`)
   to see the regions and the catalog, then `.ai.*`, `.expect`/`.extract` and
-  `.each` to act on them.
+  `.each` to act on them. **`.compress.delegate [FILE…]`** packages that first
+  step: it emits the project summary, the `compress::explain` region plan, the
+  registered-compressor catalog, the file list and a one-command contract, then
+  publishes `keys::expect = command:prompt`, so `… .ai.dseek .extract .exec`
+  runs the model's chosen `prompt .compress …` command (the same
+  delegate/`.extract`/`.exec` pattern as `.delegate`). FILE arguments resolve
+  like `.compress`'s; with no FILE it reads the piped input.
 
 Tests: `tests/test_compress.cpp` (signals, `cpp.symbols`, `csv.sample` including
 sniffing and short input, `gtest.units` in general/fix/no-failure modes, the
@@ -588,18 +617,24 @@ a write failure is swallowed and can never fail a prompt run.
   printed path).
 - **Prompts.** `src/prompts/history.cpp` registers `.history` (default emitted
   text; `--segment`, `--input`, `--all`, `--meta`, `--head`, `--here`; publishes
-  `keys::save_stem` = the run id), `.last`/`.history.last` (the terminal-scoped
-  newest run, `--any` for the global view; the shared `resolve_run` reads a
-  digits-only key as a rank when `1..count` and otherwise as an id prefix),
-  `.history.list` (`--limit`, `--since`,
-  `--paths`, `--json`, `--head`, `--here`) and `.history.dir`;
+  `keys::save_stem`, the run's command-line slug such as `tse-foolad` or
+  `note-one`, falling back to the run id), `.last`/`.history.last` (the
+  terminal-scoped newest run, `--any` for the global view; the shared
+  `resolve_run` reads a digits-only key as a rank when `1..count` and otherwise
+  as an id prefix), `.last.ai`/`.history.ai` (the newest run **in this terminal
+  that has an emitted AI-sink segment**, skipping empty and non-AI runs; an
+  optional `--provider NAME` or a bare provider restricts the site, `--any`
+  forces the global view, `--head` trims; it publishes `<run-id>-ai` as the save
+  stem), `.history.list` (`--limit`, `--since`, `--paths`, `--json`, `--head`,
+  `--here`, and `--all`/`--empty`: by default it skips runs that emitted nothing
+  and previews a run with the first line of its last emitted segment) and
+  `.history.dir`;
   `src/prompts/history_find.cpp` registers `.history.find` (QUERY, `--regex`,
   `--case-sensitive`, `--name`, `--since`, `--limit`, `--context`, `--paths`,
   `--json`, `--here`; exit 1 via `soft_error` on no match);
   `src/prompts/history_purge.cpp` registers `.history.purge` (`--older-than`,
   `--keep`, `--max-size`, `--all`, `--dry-run`; protects `--keep` newest runs and
-  `PROMPT_HISTORY_CURRENT`; `no_clipboard`). All seven register with
-  `record = false`.
+  `PROMPT_HISTORY_CURRENT`; `no_clipboard`). All register with `record = false`.
 - **Child runs.** An `.each` item (and a `.exec` child `prompt` chain) records its
   own run; `each.cpp`/`exec.cpp` pass `PROMPT_HISTORY_PARENT=<current run id>` so
   the child is tagged `parent`. `PROMPT_HISTORY_INNER=0` silences children.
@@ -664,8 +699,11 @@ Use these instead of re-open-coding the same loops:
   `PROMPT_TERMINAL_SID`/`PROMPT_TERMINAL_TTY`/`PROMPT_TERMINAL_KEY` overrides
   first, then `getsid(0)` and the controlling tty), `same()` (the identity
   comparison: an opaque key wins when both sides carry one, otherwise the
-  session ids must agree and a differing tty rejects a recycled pid) and
-  `describe()`. The history store is its first user (`.last`, `--here`), but it
+  session ids must agree and a differing tty rejects a recycled pid),
+  `describe()` and `scope()` (the filesystem-safe `key-…` / `sid-…[_tty-…]`
+  name; `bin/ai`'s `state.terminal_scope()` keeps the same encoding, and
+  `.ai.reply` uses it to find the provider state this terminal wrote). The
+  history store is its first user (`.last`, `--here`), but it
   is deliberately history-agnostic so any future per-terminal feature can share
   the same "a place, not a global" identity.
 - `agent.hpp`: the agentic layer's shared pieces — `is_selector_token` (a thin
@@ -683,6 +721,11 @@ Use these instead of re-open-coding the same loops:
   "Markdown extractor engine" above.
 - `policy.hpp`: the permission engine — `engine::require(argv)`,
   `require_chain(tokens)`, `set_yes`, the rule sources and the `/dev/tty` ask.
+- `schema.hpp`: a prompt's optional typed tool declaration — `tool`, `parameter`,
+  `operand`, the `*_flag`/`argument`/`make_tool` factories, `register_tool`/
+  `find_tool`/`all_tools`, `from_help` (the best-effort schema from a prompt's
+  own `Options:` block), `to_json`/`to_markdown`/`render_options` and `complete`
+  (see "Tool schemas").
 - `sink.hpp` / `sink_types.hpp`: `register_sink` support — `parse_sink_args`,
   `render_sink_help`, `trim_context_lines`, `write_stdout`, `write_stderr` and
   `run_sink_tool` (see "Sinks").
@@ -756,6 +799,63 @@ read), so completion never runs a prompt, consumes the pipe or copies anything.
 - `prompt_descriptor::complete_fn` stays `nullptr` when a prompt registers no
   callback (flags only). Tests: `tests/test_completion.cpp` plus the
   `complete_flags`/`complete_values`/`complete_line_*` ctest smokes.
+
+## Tool schemas (`sdk/schema.*`, `.tools`, `.glob`, `.grep`)
+
+A prompt can describe itself as a typed *tool* — the shape an agent reads before
+composing a chain — instead of only as prose. `sdk/schema.hpp`/`.cpp` is a small
+registry (`prompt::schema`), parallel to the prompt/extractor/compressor ones: a
+fixed array (`tool_capacity`, 128) that aborts at startup on overflow.
+
+- **One declaration.** A `tool` is a name, a one-line summary, typed
+  `parameter`s (name, description, `type` boolean/string/integer, `takes_value`,
+  a value placeholder, optional `enum_values`, an optional short `alias`) and
+  required/variadic `operand`s. Build it with the factories — `bool_flag`,
+  `str_flag`, `int_flag`, `enum_flag`, `argument` `(name, description, required,
+  variadic)` and `make_tool(name, summary, parameters, operands)` — which set the
+  fields explicitly and so keep aggregate/designated-initialization warnings
+  quiet. Register it with a file-local
+  `bool const registered_<x>_schema = schema::register_tool(make_tool(…));` next
+  to the prompt's own registration; the schema's name matches the prompt's.
+  `register_tool` is `noexcept` and aborts on overflow; the static-init allocation
+  carries a `bugprone-throwing-static-initialization` NOLINT.
+- **A schema is optional.** A prompt with no declaration is described by
+  `from_help(name, summary, help)`, a best-effort parse of the prompt's own
+  `Options:` block: it reads the flag spellings on the left of the two-space
+  column (`-i,` is the short alias, `--ignore-case` the long name, a trailing
+  token such as `N`/`MODE`/`<file>` the value placeholder and the basis for the
+  integer/string kind) and turns unknown placeholders into a `takes_value`
+  string parameter. So `.tools` can describe every prompt without touching them,
+  and a prompt's declared schema simply overrides the guess.
+- **Renderers and completion.** `to_json` emits one JSON-Schema object
+  (`input.properties` keyed by parameter name with an `x-flag` of the primary
+  spelling, `required`, an `enum`, and an `operands` array); `to_markdown` and
+  `render_options` render the human/AI form (`### name`, the summary, an
+  `Options:` block); `complete(tool, request, out)` is the schema-derived
+  completion callback — flags from every parameter plus the value-list of an
+  `enum_flag` (used by `.glob`/`.grep`, whose `complete_fn` is a thin
+  `schema::complete(*schema::find_tool(name), req, os)`).
+- **`.tools [--markdown|--json|--names]`** (`src/prompts/tools.cpp`) is the
+  catalog face: it walks `get_all_prompts()`, keeps each prompt's declared schema
+  or derives one with `from_help`, orders the prompts with
+  `prompt_descriptor_less` and prints markdown (default), a JSON array or the
+  bare names. It is the machine-readable counterpart of `.list`/`.list-prompts`.
+- **The first opencode ports.** `prompt glob` (`src/prompts/glob.cpp`) lists
+  files matching a glob (`rg --files -g PATTERN`, `find` fallback; `--path DIR`,
+  `--head N`) and `prompt grep` (`src/prompts/grep.cpp`) searches file contents
+  (`rg -n` with `--include`/`-i`/`--max`, `grep -rnI` fallback; `PATTERN [PATH]`,
+  `--head N`), both registering a schema and a `schema::complete` callback.
+  Tests: `tests/test_schema.cpp` plus the `schema`/`glob_lists`/`grep_finds`/
+  `tools_names`/`tools_json` ctests.
+
+**`.skill.gen`** (`src/prompts/skill_gen.cpp`) builds on the same save-hint
+machinery as `.delegate`: it turns a task (an argument or stdin) into a request
+for a `SKILL.md`, appends the loader's format and an output contract, publishes
+`keys::expect = code:markdown` (plus `save.stem=field:filename` when a later
+`.save` wants a name) and sets the `keys::save_kind = "skill"` fact. A nameless
+`.save` that sees that fact writes `$XDG_DATA_HOME/agents/skills/<stem>/SKILL.md`
+(the `agents` skills layout) instead of the working directory; an explicit
+`FILE`/`DIR` still wins. Flow: `prompt .skill.gen "<task>" .ai.dseek .extract .save`.
 
 ## Output bytes
 

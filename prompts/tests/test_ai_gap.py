@@ -38,6 +38,17 @@ ACK = json.dumps({
     },
 })
 
+NEW_MESSAGE = json.dumps({
+    "event": "new_message",
+    "data": {
+        "message": {
+            "token": "turn-1",
+            "status": "completed",
+            "response": [{"type": "text", "content": "done"}],
+        },
+    },
+})
+
 COMPLETED_CHAT = {
     "messages": [
         {"token": "turn-1", "status": "completed",
@@ -104,6 +115,41 @@ class PollHeadersTest(unittest.TestCase):
         self.assertEqual(snapshot["token"], "turn-1")
         self.assertEqual(captured["headers"].get("Authorization"),
                          "Bearer tok123")
+
+
+class AckChatTokenTest(unittest.TestCase):
+    """The ack's ``chat_token`` is the id ``-c``/``.ai.reply`` resume.
+
+    Reading ``conversation_id`` (a field the ack does not carry) left the id
+    empty, so every turn started a new chat and neither `-c` nor `.ai.reply`
+    could continue one.
+    """
+
+    def test_the_ack_sets_the_conversation_id(self):
+        conversation = make_conversation()
+        conversation.socket = FakeSocket([ACK, NEW_MESSAGE])
+        list(conversation._read_turn(7, []))
+        self.assertEqual(conversation.conversation_id, "chat-1")
+
+
+class OutgoingChatTokenTest(unittest.TestCase):
+    """A resumed turn sends the saved id under ``chat_token``.
+
+    Renaming the wire field to ``conversation_id`` (which the site ignores)
+    made every send a brand-new chat, so neither `-c` nor `.ai.reply` continued
+    one.
+    """
+
+    def test_a_resumed_message_carries_the_chat_token(self):
+        conversation = make_conversation()
+        conversation.conversation_id = "chat-1"
+        conversation.socket = FakeSocket([ACK, NEW_MESSAGE])
+        list(conversation._attempt("go on", []))
+        sent = json.loads(conversation.socket.sent[0])["data"]
+        self.assertEqual(sent["chat_token"], "chat-1")
+        self.assertEqual(sent["action"]["chat_token"], "chat-1")
+        self.assertNotIn("conversation_id", sent)
+        self.assertNotIn("conversation_id", sent["action"])
 
 
 class PollFailureTest(unittest.TestCase):
