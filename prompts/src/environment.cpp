@@ -38,7 +38,9 @@ std::vector<std::filesystem::path> select_files_with_fzf() {
 // result through a command substitution.
 std::optional<std::filesystem::path> resolve_input_file_with_fzf(std::string_view name) {
     std::filesystem::path p(name);
-    if (std::filesystem::is_regular_file(p)) return p;
+    if (std::filesystem::is_regular_file(p) || std::filesystem::is_directory(p)) [[likely]] {
+        return p;
+    }
 
     auto git_root = fs::find_git_root();
     if (git_root) {
