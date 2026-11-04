@@ -161,10 +161,23 @@ static void execute_read(view const& v, result& r) {
     }
 
     for (auto const& path_str : paths) {
-        std::filesystem::path const path(path_str);
-        std::error_code ec;
+        auto const resolved = resolve_input_file(v.env, path_str);
+        if (!resolved) {
+            warn_missing_file(error, path_str);
+            continue;
+        }
 
-        if (std::filesystem::is_directory(path, ec)) {
+        auto const& path = *resolved;
+        std::error_code ec;
+        auto const status = std::filesystem::status(path, ec);
+
+        if (ec) {
+            error += std::format("read: {}: cannot stat \"{}\": {}\n",
+                                 path_str, path.string(), ec.message());
+            continue;
+        }
+
+        if (std::filesystem::is_directory(status)) {
             std::vector<std::string> entries;
             std::filesystem::directory_iterator it(path, ec);
             std::filesystem::directory_iterator const end_it;
@@ -207,7 +220,7 @@ static void execute_read(view const& v, result& r) {
             if (end < entries.size()) {
                 append_truncation(output, end + 1);
             }
-        } else if (std::filesystem::is_regular_file(path, ec)) {
+        } else if (std::filesystem::is_regular_file(status)) {
             if (is_binary(path)) [[unlikely]] {
                 error += std::format("read: {}: binary content, skipped\n", path_str);
                 continue;
@@ -260,11 +273,8 @@ static void execute_read(view const& v, result& r) {
                 }
             }
         } else [[unlikely]] {
-            if (ec) {
-                error += std::format("read: {}: {}\n", path_str, ec.message());
-            } else {
-                warn_missing_file(error, path_str);
-            }
+            error += std::format("read: {}: unsupported file type: \"{}\"\n",
+                                 path_str, path.string());
         }
     }
 
@@ -283,8 +293,21 @@ Options:
 )EOF" << file_options_help("the file or directory content");
 }
 
+// The tool declaration: a descriptor keeps a pointer to it, so it is a static.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+schema::tool const k_read_tool = schema::make_tool(
+    "read", "Read the contents of a file or directory, with each text line prefixed by its 1-based line number.",
+    {
+        schema::int_flag("offset", "Start reading from line or entry N (1-based, default 1)"),
+        schema::int_flag("head", "Keep only the first N lines or entries"),
+        schema::bool_flag("num", "Number the lines"),
+    },
+    {
+        schema::argument("FILE", "File or directory to read", true, true),
+    });
+
 bool const registered = prompt::register_prompt(
     "read", "Read the contents of a file or directory, with each text line prefixed by its 1-based line number.",
-    &execute_read, &render_help_read);
+    &execute_read, &render_help_read, nullptr, chain_role::normal, true, nullptr, nullptr, false, true, &k_read_tool);
 
 } // namespace prompt::prompts
