@@ -195,12 +195,25 @@ static void complete_run(completion_request const& req, std::ostream& os) {
     prompt::completion::write_items(os, req.prefix, kRunArgs);
 }
 
+// The tool declaration: a descriptor keeps a pointer to it, so it is a static.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+schema::tool const k_run_tool = schema::make_tool(
+    "run", "Runs `bin/run` with the provided arguments and builds a debugging prompt from its output.",
+    {
+        schema::int_flag("head", "Keep only the first N lines of the run output"),
+        schema::bool_flag("gtest", "Include Google Test output"),
+    },
+    {
+        schema::argument("TARGET", "Build target or run arguments", false, true),
+    });
+
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered = prompt::register_prompt(
     "run",
     "Runs `bin/run` with the provided arguments and builds a debugging prompt from its output. If "
     "stdin is piped in, it debugs the piped run output instead.",
-    &execute_run, &render_help_run, &complete_run, chain_role::normal, true, nullptr, &declare_run);
+    &execute_run, &render_help_run, &complete_run, chain_role::normal, true, nullptr, &declare_run, false, true,
+    &k_run_tool);
 
 } // namespace prompt::prompts

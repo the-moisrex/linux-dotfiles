@@ -112,6 +112,7 @@ add_library(prompt_lib OBJECT
     src/sdk/project.cpp
     src/sdk/signals.cpp
     src/sdk/schema.cpp
+    src/sdk/tool_call.cpp
     ${EXTRACT_SRCS}
     ${COMPRESS_SRCS}
     ${PROMPT_SRCS}

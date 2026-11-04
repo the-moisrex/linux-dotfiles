@@ -59,10 +59,23 @@ Options:
 
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
+// The tool declaration: a descriptor keeps a pointer to it, so it is a static.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+schema::tool const k_cli_tool =
+    schema::make_tool("cli",
+                      "Executes the given CLI command and appends its output as a Markdown code block. Useful for "
+                      "appending the output of arbitrary commands to your prompt chain.",
+                      {
+                          schema::int_flag("head", "Keep only the first N lines of the command output"),
+                      },
+                      {
+                          schema::argument("COMMAND", "Command and arguments to run", true, true),
+                      });
+
 bool const registered = prompt::register_prompt(
     "cli",
     "Executes the given CLI command and appends its output as a Markdown code block. Useful for "
     "appending the output of arbitrary commands to your prompt chain.",
-    &execute_cli, &render_help_cli);
+    &execute_cli, &render_help_cli, nullptr, chain_role::normal, true, nullptr, nullptr, false, true, &k_cli_tool);
 
 } // namespace prompt::prompts

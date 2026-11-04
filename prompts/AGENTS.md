@@ -722,10 +722,15 @@ Use these instead of re-open-coding the same loops:
 - `policy.hpp`: the permission engine — `engine::require(argv)`,
   `require_chain(tokens)`, `set_yes`, the rule sources and the `/dev/tty` ask.
 - `schema.hpp`: a prompt's optional typed tool declaration — `tool`, `parameter`,
-  `operand`, the `*_flag`/`argument`/`make_tool` factories, `register_tool`/
-  `find_tool`/`all_tools`, `from_help` (the best-effort schema from a prompt's
-  own `Options:` block), `to_json`/`to_markdown`/`render_options` and `complete`
-  (see "Tool schemas").
+  `operand`, the `*_flag`/`multi_flag`/`argument`/`make_tool` factories,
+  `from_help` (the catalog-only schema from a prompt's own `Options:` block),
+  `to_json`/`to_markdown`/`render_options` and `complete` (see "Tool schemas and
+  tool calling"). The declaration rides on `prompt_descriptor::input`; there is
+  no separate registry.
+- `tool_call.hpp`: the JSON face of that declaration — `schema::to_json_value`,
+  `schema::parse` (a model's `input` object → argv), `tool_call::extract`
+  (finding `{"tool": …}` blocks in an answer), `to_argv` and `format_result`.
+  JSON lives here so prompt translation units do not pay for nlohmann.
 - `sink.hpp` / `sink_types.hpp`: `register_sink` support — `parse_sink_args`,
   `render_sink_help`, `trim_context_lines`, `write_stdout`, `write_stderr` and
   `run_sink_tool` (see "Sinks").
@@ -800,53 +805,107 @@ read), so completion never runs a prompt, consumes the pipe or copies anything.
   callback (flags only). Tests: `tests/test_completion.cpp` plus the
   `complete_flags`/`complete_values`/`complete_line_*` ctest smokes.
 
-## Tool schemas (`sdk/schema.*`, `.tools`, `.glob`, `.grep`)
+## Tool schemas and tool calling (`sdk/schema.*`, `sdk/tool_call.*`, `.tools`, `.tools.run`)
 
 A prompt can describe itself as a typed *tool* — the shape an agent reads before
-composing a chain — instead of only as prose. `sdk/schema.hpp`/`.cpp` is a small
-registry (`prompt::schema`), parallel to the prompt/extractor/compressor ones: a
-fixed array (`tool_capacity`, 128) that aborts at startup on overflow.
+composing a chain — and, when it does, it is also **callable**: a model's JSON
+tool call is parsed into that prompt's argv and run. There is one registry, not
+two: the declaration is `prompt_descriptor::input` (`schema::tool const*`), set
+by the trailing defaulted argument of `register_prompt`/`register_sink`.
 
 - **One declaration.** A `tool` is a name, a one-line summary, typed
   `parameter`s (name, description, `type` boolean/string/integer, `takes_value`,
-  a value placeholder, optional `enum_values`, an optional short `alias`) and
-  required/variadic `operand`s. Build it with the factories — `bool_flag`,
-  `str_flag`, `int_flag`, `enum_flag`, `argument` `(name, description, required,
-  variadic)` and `make_tool(name, summary, parameters, operands)` — which set the
-  fields explicitly and so keep aggregate/designated-initialization warnings
-  quiet. Register it with a file-local
-  `bool const registered_<x>_schema = schema::register_tool(make_tool(…));` next
-  to the prompt's own registration; the schema's name matches the prompt's.
-  `register_tool` is `noexcept` and aborts on overflow; the static-init allocation
-  carries a `bugprone-throwing-static-initialization` NOLINT.
-- **A schema is optional.** A prompt with no declaration is described by
-  `from_help(name, summary, help)`, a best-effort parse of the prompt's own
-  `Options:` block: it reads the flag spellings on the left of the two-space
-  column (`-i,` is the short alias, `--ignore-case` the long name, a trailing
-  token such as `N`/`MODE`/`<file>` the value placeholder and the basis for the
-  integer/string kind) and turns unknown placeholders into a `takes_value`
-  string parameter. So `.tools` can describe every prompt without touching them,
-  and a prompt's declared schema simply overrides the guess.
-- **Renderers and completion.** `to_json` emits one JSON-Schema object
-  (`input.properties` keyed by parameter name with an `x-flag` of the primary
-  spelling, `required`, an `enum`, and an `operands` array); `to_markdown` and
+  `repeatable`, a value placeholder, optional `enum_values`, an optional short
+  `alias`) and required/variadic `operand`s. Build it with the factories —
+  `bool_flag`, `str_flag`, `int_flag`, `enum_flag`, `multi_flag`, `argument`
+  `(name, description, required, variadic)` and
+  `make_tool(name, summary, parameters, operands)` — which set the fields
+  explicitly and so keep aggregate/designated-initialization warnings quiet.
+  Declare it as a file-local `schema::tool const k_<name>_tool = …;` (a
+  `bugprone-throwing-static-initialization` NOLINT on the definition) and pass
+  `&k_<name>_tool` as the last argument of the prompt's own `register_prompt`:
+  `register_prompt(..., takes_body, record, &k_<name>_tool)`. The descriptor
+  keeps the pointer, so the declaration must outlive registration (a namespace-
+  or file-local static does).
+- **A schema is optional — but only a declared one is executable.** A prompt
+  with no declaration is described by `from_help(name, summary, help)`, a
+  best-effort parse of its own `Options:` block (the flag spellings left of the
+  two-space column, `-i,` as the short alias, a trailing `N`/`MODE`/`<file>` as
+  the value placeholder and the integer/string basis). That fallback is
+  **catalog-only**: `.tools` uses it so every prompt is described, but
+  `schema::parse` is never run against it, so a guessed flag can never become
+  an execution contract.
+- **The execution contract.** `schema::parse(tool, json)` (`sdk/tool_call.cpp`,
+  declared in `sdk/tool_call.hpp` so `schema.hpp` stays JSON-free) turns an
+  `input` object into argv: flags first (a `true` boolean emits its flag, a
+  `false` one is omitted, a repeatable flag takes an array, an enum value is
+  checked), then operands in declared order (variadic takes an array; operand
+  keys are exposed lower-cased and marked `x-positional`). An unknown key, a
+  missing required parameter/operand, a wrong type or a bad enum throws
+  `usage_error`. A flag `.tools` advertises must parse here, and an
+  unadvertised input is rejected. The parser is deliberately lenient about the
+  *shape* a model sends: a scalar is accepted for a variadic operand or a
+  repeatable flag (treated as a one-element list), and a one-element array is
+  accepted for a scalar operand, so the model is not forced to wrap a single
+  file/command.
+- **Renderers and completion.** `to_json`/`schema::to_json_value` emits one flat
+  JSON-Schema object (`input.properties` keyed by name, each with an `x-flag`,
+  operands with `x-positional`, a `required` array); `to_markdown` and
   `render_options` render the human/AI form (`### name`, the summary, an
   `Options:` block); `complete(tool, request, out)` is the schema-derived
-  completion callback — flags from every parameter plus the value-list of an
-  `enum_flag` (used by `.glob`/`.grep`, whose `complete_fn` is a thin
-  `schema::complete(*schema::find_tool(name), req, os)`).
-- **`.tools [--markdown|--json|--names]`** (`src/prompts/tools.cpp`) is the
-  catalog face: it walks `get_all_prompts()`, keeps each prompt's declared schema
-  or derives one with `from_help`, orders the prompts with
-  `prompt_descriptor_less` and prints markdown (default), a JSON array or the
-  bare names. It is the machine-readable counterpart of `.list`/`.list-prompts`.
+  completion callback — flags from every parameter plus an `enum_flag`'s values
+  (used by `.glob`/`.grep`, whose `complete_fn` is a thin
+  `schema::complete(*find_prompt(name)->input, req, os)`).
+- **`.tools [--category …] [--compact] [--for human|chat] [--format markdown|json|names]`**
+  (`src/prompts/tools.cpp`) is the catalog face: it walks `get_all_prompts()`,
+  keeps each prompt's declared schema or derives one with `from_help`, filters
+  by `prompt_category` (derived from the name by `category_for`; `core`, `ai`,
+  `history`, `catalog`, `code`, `git`, `tse`, `other`), orders the prompts with
+  `prompt_descriptor_less` and prints markdown (default), one
+  `name [category] summary` line per prompt (`--compact`), a JSON array
+  (`--format json`) or the bare names. `--for chat` emits the calling protocol
+  plus the JSON catalog of the **callable** tools only (those with a declared
+  schema), and the protocol tells the model to batch every independent call into
+  one answer (one block per call) so a chat turn does not cost a round trip per
+  call.
+- **`.tools.run`** (`src/prompts/tools_run.cpp`) is the sink that closes the
+  loop. It extracts the calls from the accumulated context with
+  `tool_call::extract` (a fenced ```json block, a bare JSON document, or a
+  top-level array; only objects with a `tool` key count, so ordinary code
+  samples are ignored), resolves each name with `to_argv`
+  (`find_prompt` + `schema::parse`), asks `policy::engine::require_chain` for
+  the whole `prompt <name> …` command (a deny or a cancelled ask always aborts,
+  whatever `--on-call-error` says), runs it in-process with `run_sub_prompt`
+  and appends a `### Tool: <name>` block (`tool_call::format_result`) to the
+  context. Every call in the answer runs, in order, so batching several calls
+  costs one turn. `extract` also accepts the envelope shapes models actually
+  emit: parameters under `input`, `arguments` or `parameters`, a JSON string
+  holding the object, or flat beside `tool` (the transcript's
+  `{"tool": "cli", "command": …}`). `--print` previews the resolved commands,
+  `--list` inventories the
+  calls on stderr and keeps the context, `--json` emits
+  `{tool, input, ok, exit, output}` records, `--yes` turns policy asks into
+  allows, and `--on-call-error abort|continue` (default `continue`) decides
+  whether a failed call stops the chain. No calls in the context is not an
+  error: the sink notes it on stderr and leaves the context unchanged, so a
+  plain answer still flows on. The flow is
+  `prompt .note "…" .tools --for chat .ai.dseek .tools.run .ai.reply`.
+- **The `toolcall` extractor** (`src/extract/toolcall.cpp`) exposes the same
+  calls to `.extract toolcall`/`.each toolcall … .end` (one item per call, its
+  text the `input` object), so the extractor grammar and the sink never
+  disagree about what a call is.
 - **The first opencode ports.** `prompt glob` (`src/prompts/glob.cpp`) lists
   files matching a glob (`rg --files -g PATTERN`, `find` fallback; `--path DIR`,
-  `--head N`) and `prompt grep` (`src/prompts/grep.cpp`) searches file contents
+  `--head N`), `prompt grep` (`src/prompts/grep.cpp`) searches file contents
   (`rg -n` with `--include`/`-i`/`--max`, `grep -rnI` fallback; `PATTERN [PATH]`,
-  `--head N`), both registering a schema and a `schema::complete` callback.
-  Tests: `tests/test_schema.cpp` plus the `schema`/`glob_lists`/`grep_finds`/
-  `tools_names`/`tools_json` ctests.
+  `--head N`), `prompt read` reads a file/directory with numbered lines, and
+  `files`, `cli` and `run` declare their own schemas too. Each derives its
+  `Options:` help and completion from the declaration.
+  Tests: `tests/test_schema.cpp` (factories, renderers, `from_help`, schema
+  completion), `tests/test_tool_call.cpp` (`parse`, `extract`, formatting) plus
+  the `schema`/`tool_call`/`glob_lists`/`grep_finds`/`tools_names`/`tools_json`/
+  `tools_compact`/`tools_category`/`tools_chat`/`tools_run_print`/
+  `tools_run_call` ctests.
 
 **`.skill.gen`** (`src/prompts/skill_gen.cpp`) builds on the same save-hint
 machinery as `.delegate`: it turns a task (an argument or stdin) into a request

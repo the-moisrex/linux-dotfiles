@@ -1,10 +1,7 @@
 #include "schema.hpp"
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
-#include <cstdlib>
 #include <format>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -12,13 +9,6 @@
 namespace prompt::schema {
 
 namespace {
-
-// The registry lives behind a function-local static so its construction order
-// never depends on static-init order: the first `register_tool` builds it.
-std::vector<tool>& registry() {
-    static std::vector<tool> tools;
-    return tools;
-}
 
 std::string_view trimmed(std::string_view text) {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
@@ -120,6 +110,12 @@ parameter enum_flag(std::string name, std::string description, std::vector<std::
     return par;
 }
 
+parameter multi_flag(std::string name, std::string description, std::string placeholder, std::string alias) {
+    parameter par = str_flag(std::move(name), std::move(description), std::move(placeholder), std::move(alias));
+    par.repeatable = true;
+    return par;
+}
+
 operand argument(std::string name, std::string description, bool required, bool variadic) {
     operand op;
     op.name = std::move(name);
@@ -138,26 +134,6 @@ tool make_tool(std::string name, std::string summary, std::vector<parameter> par
     value.operands = std::move(operands);
     return value;
 }
-
-bool register_tool(tool value) noexcept {
-    auto& tools = registry();
-    if (tools.size() >= tool_capacity) {
-        std::fprintf(stderr, "prompt: schema registry is full (%zu); cannot register '%s'\n", tool_capacity,
-                     value.name.c_str());
-        std::abort();
-    }
-    tools.push_back(std::move(value));
-    return true;
-}
-
-tool const* find_tool(std::string_view name) {
-    for (auto const& value : registry()) {
-        if (value.name == name) return &value;
-    }
-    return nullptr;
-}
-
-std::span<tool const> all_tools() { return {registry().data(), registry().size()}; }
 
 tool from_help(std::string_view name, std::string_view summary, std::string_view help) {
     tool value;
@@ -237,38 +213,6 @@ tool from_help(std::string_view name, std::string_view summary, std::string_view
     return value;
 }
 
-std::string to_json(tool const& value) {
-    using nlohmann::ordered_json;
-    ordered_json out;
-    out["name"] = value.name;
-    out["description"] = value.summary;
-
-    ordered_json properties = ordered_json::object();
-    ordered_json required = ordered_json::array();
-    for (auto const& par : value.parameters) {
-        ordered_json property;
-        property["type"] = to_string(par.kind);
-        if (!par.description.empty()) property["description"] = par.description;
-        if (!par.enum_values.empty()) property["enum"] = par.enum_values;
-        property["x-flag"] = "--" + par.name;
-        properties[par.name] = std::move(property);
-        if (par.required) required.push_back(par.name);
-    }
-    out["input"] = ordered_json{{"type", "object"}, {"properties", std::move(properties)}, {"required", required}};
-
-    ordered_json operands = ordered_json::array();
-    for (auto const& op : value.operands) {
-        operands.push_back(ordered_json{
-            {"name", op.name},
-            {"description", op.description},
-            {"required", op.required},
-            {"variadic", op.variadic},
-        });
-    }
-    out["operands"] = std::move(operands);
-    return out.dump(2);
-}
-
 std::string to_markdown(tool const& value) {
     std::string out = std::format("### {}\n\n", value.name);
     out += value.summary;
@@ -284,7 +228,8 @@ std::string to_markdown(tool const& value) {
         out += "\nOptions:\n";
         for (auto const& par : value.parameters) {
             std::string const flag = flag_label(par, true);
-            out += std::format("  {}{}\n", flag, par.description.empty() ? "" : std::format(" — {}", par.description));
+            out += std::format("  {}{}{}\n", flag, par.repeatable ? " (repeatable)" : "",
+                               par.description.empty() ? "" : std::format(" — {}", par.description));
         }
     }
     return out;

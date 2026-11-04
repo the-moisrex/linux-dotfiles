@@ -50,8 +50,15 @@ target_link_libraries(test_schema PRIVATE prompt_lib)
 target_include_directories(test_schema PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME schema COMMAND test_schema)
 
+# The tool-call layer: `schema::parse` (JSON -> argv) and
+# `tool_call::extract` (finding calls in an AI answer).
+add_executable(test_tool_call test_tool_call.cpp)
+target_link_libraries(test_tool_call PRIVATE prompt_lib)
+target_include_directories(test_tool_call PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME tool_call COMMAND test_tool_call)
+
 # The ported opencode tools: `.glob` lists, `.grep` searches, and `.tools`
-# describes the catalog (markdown, JSON Schema, names).
+# describes the catalog (markdown, JSON Schema, names, chat protocol).
 add_test(NAME glob_lists
     COMMAND $<TARGET_FILE:prompt> glob --path ${CMAKE_CURRENT_SOURCE_DIR}/fixtures "*.txt")
 set_tests_properties(glob_lists PROPERTIES PASS_REGULAR_EXPRESSION "numbered\\.txt")
@@ -65,6 +72,35 @@ set_tests_properties(tools_names PROPERTIES PASS_REGULAR_EXPRESSION "glob")
 
 add_test(NAME tools_json COMMAND $<TARGET_FILE:prompt> tools --json)
 set_tests_properties(tools_json PROPERTIES PASS_REGULAR_EXPRESSION "\"input\"")
+
+add_test(NAME tools_compact COMMAND $<TARGET_FILE:prompt> tools --compact --category core)
+set_tests_properties(tools_compact PROPERTIES PASS_REGULAR_EXPRESSION "glob \\[core\\]")
+
+add_test(NAME tools_category COMMAND $<TARGET_FILE:prompt> tools --names --category tse)
+set_tests_properties(tools_category PROPERTIES PASS_REGULAR_EXPRESSION "tse\\.intraday")
+
+add_test(NAME tools_chat COMMAND $<TARGET_FILE:prompt> tools --for chat --category core)
+set_tests_properties(tools_chat PROPERTIES PASS_REGULAR_EXPRESSION "\"x-positional\"")
+
+# `.tools.run` executes a call from the context; `--print` previews it.
+add_test(NAME tools_run_print
+    COMMAND sh -c "printf '```json\\n{\"tool\":\"glob\",\"input\":{\"pattern\":\"*.txt\",\"path\":\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures\"}}\\n```\\n' | $<TARGET_FILE:prompt> .tools.run --print")
+set_tests_properties(tools_run_print PROPERTIES PASS_REGULAR_EXPRESSION "prompt glob")
+
+add_test(NAME tools_run_call
+    COMMAND sh -c "printf '```json\\n{\"tool\":\"glob\",\"input\":{\"pattern\":\"*.txt\",\"path\":\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures\"}}\\n```\\n' | $<TARGET_FILE:prompt> .tools.run --yes")
+set_tests_properties(tools_run_call PROPERTIES PASS_REGULAR_EXPRESSION "### Tool: glob")
+
+# The flat call shape a model actually emits: parameters beside `tool`.
+add_test(NAME tools_run_flat
+    COMMAND sh -c "printf '{\"tool\":\"cli\",\"command\":\"echo flat-ok\"}\\n' | $<TARGET_FILE:prompt> .tools.run --yes")
+set_tests_properties(tools_run_flat PROPERTIES PASS_REGULAR_EXPRESSION "flat-ok")
+
+# Several calls in one answer all run, so a chat turn does not need a round trip
+# per call.
+add_test(NAME tools_run_multi
+    COMMAND sh -c "printf '```json\\n{\"tool\":\"cli\",\"input\":{\"command\":\"echo first-call\"}}\\n```\\n```json\\n{\"tool\":\"cli\",\"input\":{\"command\":\"echo second-call\"}}\\n```\\n' | $<TARGET_FILE:prompt> .tools.run --yes > ${CMAKE_CURRENT_BINARY_DIR}/tools_run_multi.out 2>&1; grep -q first-call ${CMAKE_CURRENT_BINARY_DIR}/tools_run_multi.out && grep -q second-call ${CMAKE_CURRENT_BINARY_DIR}/tools_run_multi.out && cat ${CMAKE_CURRENT_BINARY_DIR}/tools_run_multi.out")
+set_tests_properties(tools_run_multi PROPERTIES PASS_REGULAR_EXPRESSION "### Tool: cli")
 
 # `.skill.gen` teaches the SKILL.md shape and marks the chain as a skill save.
 add_test(NAME skill_gen_help COMMAND $<TARGET_FILE:prompt> .skill.gen)

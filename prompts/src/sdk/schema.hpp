@@ -1,17 +1,18 @@
 #pragma once
 
-// Tool input schemas, generalized for this dispatcher.
+// Tool input declarations, generalized for this dispatcher.
 //
-// opencode describes each tool's input with an annotated `Schema.Struct`. The
-// same idea, ported: a prompt may declare a `schema::tool` — a name, a summary
-// and typed parameters — and the schema then drives the prompt's `Options:`
-// help block, its completion candidates, and an AI-facing JSON Schema. A prompt
-// that has not declared one yet still gets a best-effort schema derived from
-// its own help text (`from_help`), so the catalog is complete from day one and
-// richer as prompts migrate.
+// opencode describes each tool's input with an annotated `Schema.Struct` and
+// hangs it off the tool registration. The same idea, ported: a prompt declares
+// a `schema::tool` (a name, a summary and typed parameters/operands) and the
+// declaration is stored on its `prompt_descriptor` — there is no second
+// registry. The declaration drives the prompt's `Options:` help block, its
+// completion candidates, the AI-facing JSON Schema `.tools` emits, and the
+// `schema::parse` step that turns a model's JSON tool call into argv.
 //
-// One file = one schema: register next to the prompt (or in the prompt's own
-// file), exactly like `register_prompt` / `register_compressor`.
+// `from_help` remains a best-effort fallback for prompts that have not declared
+// one yet. It is catalog-only: it can describe a prompt, but it cannot be the
+// execution contract of a tool call (see `sdk/tool_call.hpp`).
 
 #include "completion.hpp"
 #include <cstddef>
@@ -36,6 +37,7 @@ struct parameter {
     type kind = type::boolean;
     bool required = false;
     bool takes_value = false;             // false: a value-less flag
+    bool repeatable = false;              // true: the flag may appear several times
     std::vector<std::string> enum_values; // non-empty: the allowed values
     std::string value_placeholder;        // "N", "MODE", ... for help rendering
     std::string alias;                    // short flag without dashes ("h"); "" for none
@@ -57,8 +59,6 @@ struct tool {
     std::vector<operand> operands;
 };
 
-inline constexpr std::size_t tool_capacity = 128;
-
 // Factories: keep prompt files free of aggregate-initialization noise (and the
 // `-Wmissing-field-initializers` warnings that come with it).
 [[nodiscard]] parameter bool_flag(std::string name, std::string description, std::string alias = {});
@@ -67,22 +67,20 @@ inline constexpr std::size_t tool_capacity = 128;
 [[nodiscard]] parameter int_flag(std::string name, std::string description, std::string alias = {});
 [[nodiscard]] parameter enum_flag(std::string name, std::string description, std::vector<std::string> values,
                                   std::string alias = {});
+// A value flag that may be repeated (`--include a --include b`).
+[[nodiscard]] parameter multi_flag(std::string name, std::string description, std::string placeholder = "VALUE",
+                                   std::string alias = {});
 [[nodiscard]] operand argument(std::string name, std::string description, bool required = false, bool variadic = false);
 [[nodiscard]] tool make_tool(std::string name, std::string summary, std::vector<parameter> parameters,
                              std::vector<operand> operands = {});
 
-// Register a tool schema. Like the prompt/extractor registries this aborts when
-// the fixed capacity is exceeded, so a schema is never silently dropped.
-bool register_tool(tool value) noexcept;
-[[nodiscard]] tool const* find_tool(std::string_view name);
-[[nodiscard]] std::span<tool const> all_tools();
-
 // Derive a tool from a prompt's help text: the `Options:` block supplies the
 // flags (a `N`/`MODE`-style placeholder means the flag takes a value). Used for
-// prompts that have not declared a schema.
+// prompts that have not declared a schema; catalog-only, never executable.
 [[nodiscard]] tool from_help(std::string_view name, std::string_view summary, std::string_view help);
 
-// Renderers.
+// Renderers. `to_json` is implemented in `sdk/tool_call.cpp` (the JSON-aware
+// translation unit), so this header stays free of nlohmann.
 [[nodiscard]] std::string to_json(tool const& value);     // pretty JSON Schema
 [[nodiscard]] std::string to_markdown(tool const& value); // an AI-facing description
 [[nodiscard]] std::string render_options(tool const& value, std::string_view extra = {});

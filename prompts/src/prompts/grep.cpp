@@ -89,7 +89,8 @@ std::string run_grep(grep_options const& opts) {
 }
 
 void complete_grep(completion_request const& req, std::ostream& os) {
-    if (auto const* tool = schema::find_tool("grep")) schema::complete(*tool, req, os);
+    auto const* desc = find_prompt("grep");
+    if (desc != nullptr && desc->input != nullptr) schema::complete(*desc->input, req, os);
 }
 
 constexpr std::string_view kGrepSummary =
@@ -100,7 +101,7 @@ schema::tool grep_schema() {
         "grep", std::string(kGrepSummary),
         {
             schema::bool_flag("ignore-case", "Case-insensitive search", "i"),
-            schema::str_flag("include", "Only search files matching this glob (repeatable)", "GLOB"),
+            schema::multi_flag("include", "Only search files matching this glob (repeatable)", "GLOB"),
             schema::int_flag("max", "Stop after N matches per file"),
             schema::int_flag("head", "Keep only the first N matching lines"),
         },
@@ -109,6 +110,10 @@ schema::tool grep_schema() {
             schema::argument("PATH", "File or directory to search (default: the current directory)"),
         });
 }
+
+// The declaration is a static because the descriptor keeps a pointer to it.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+schema::tool const k_grep_tool = grep_schema();
 
 } // namespace
 
@@ -146,19 +151,15 @@ Examples:
   prompt grep --head 30 'class ' | prompt .extract code
 
 )EOF";
-    os << schema::render_options(*schema::find_tool("grep"));
+    os << schema::render_options(k_grep_tool);
 }
-
-// The schema builds a few strings at startup; the registry itself never drops a
-// tool (it aborts on overflow), so the allocation is fine here.
-// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
-bool const registered_grep_schema = schema::register_tool(grep_schema());
 
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp). The summary is a
 // static-storage string_view; `register_prompt` keeps the view, so never pass a
 // temporary std::string here.
 bool const registered_grep =
-    prompt::register_prompt("grep", kGrepSummary, &execute_grep, &render_help_grep, &complete_grep);
+    prompt::register_prompt("grep", kGrepSummary, &execute_grep, &render_help_grep, &complete_grep, chain_role::normal,
+                            true, nullptr, nullptr, false, true, &k_grep_tool);
 
 } // namespace prompt::prompts

@@ -92,7 +92,6 @@ Options:
 )";
     schema::tool const tool = schema::from_help("demo", "A demo.", help);
 
-    check(schema::find_tool("demo") == nullptr, "from_help does not register");
     check(tool.parameters.size() >= 5, "from_help reads every flag");
 
     bool head = false;
@@ -116,27 +115,19 @@ Options:
     check(numbered, "from_help reads a second value-less spelling");
 }
 
-// -- registration and completion --------------------------------------------
+// -- completion -------------------------------------------------------------
 
-void test_registry_and_completion() {
-    bool const ok = schema::register_tool(schema::make_tool("test.schema", "A registered test tool.",
-                                                            {
-                                                                schema::int_flag("head", "Keep N lines"),
-                                                                schema::enum_flag("mode", "M", {"fast", "slow"}),
-                                                            }));
-    check(ok, "register_tool succeeds");
-    check(schema::find_tool("test.schema") != nullptr, "find_tool returns the registered tool");
-    check(schema::find_tool("no.such.tool") == nullptr, "find_tool misses an unknown name");
+void test_completion() {
+    schema::tool const tool = schema::make_tool("test.schema", "A test tool.",
+                                                {
+                                                    schema::int_flag("head", "Keep N lines"),
+                                                    schema::enum_flag("mode", "M", {"fast", "slow"}),
+                                                });
 
-    bool present = false;
-    for (auto const& tool : schema::all_tools()) present = present || tool.name == "test.schema";
-    check(present, "all_tools includes the registered tool");
-
-    schema::tool const* tool = schema::find_tool("test.schema");
     auto complete = [&](std::string_view prefix, std::vector<std::string_view> const& prior) {
         std::ostringstream out;
         completion_request const request{.prefix = prefix, .prior_args = prior};
-        schema::complete(*tool, request, out);
+        schema::complete(tool, request, out);
         return out.str();
     };
     check_contains(complete("--", {}), "--head", "completion offers a flag");
@@ -150,7 +141,7 @@ void test_registry_and_completion() {
 int main() {
     test_factories();
     test_from_help();
-    test_registry_and_completion();
+    test_completion();
     if (failures != 0) {
         std::fprintf(stderr, "%d schema check(s) failed\n", failures);
         return 1;

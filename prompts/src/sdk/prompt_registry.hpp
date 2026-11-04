@@ -2,8 +2,10 @@
 
 #include "completion.hpp"
 #include "errors.hpp"
+#include "schema.hpp"
 #include "sink_types.hpp"
 #include "stage.hpp"
+#include <cstdint>
 #include <ostream>
 #include <span>
 #include <string>
@@ -11,6 +13,24 @@
 #include <vector>
 
 namespace prompt {
+
+// The catalog grouping `.tools` filters on. It is metadata on the prompt, so it
+// lives on the descriptor; `category_for` derives it from the name at
+// registration time, and a prompt that wants an explicit grouping is one line
+// in that lookup.
+enum class prompt_category : std::uint8_t {
+    core,    // chaining primitives and context builders
+    ai,      // AI sinks
+    history, // browsing the store
+    catalog, // list, list-prompts, tools, auto
+    code,    // fix, review, refactor, run, ...
+    git,     // commit, repo, verify, git.*
+    tse,     // market data
+    other,   // everything else
+};
+
+[[nodiscard]] std::string_view to_string(prompt_category value);
+[[nodiscard]] prompt_category category_for(std::string_view name);
 
 // One execute signature for every segment, sinks included: a sink is a role in
 // the descriptor, not a different function type. The dispatcher owns the
@@ -50,6 +70,12 @@ struct prompt_descriptor {
     // False for the `.history*` family: browsing the store must not append to
     // it, or `prompt .history` would make itself the newest run.
     bool record = true;
+    // The prompt's optional typed input declaration. A prompt that declares one
+    // is a *callable tool*: `.tools --for chat` advertises it and `.tools.run`
+    // can execute a model's JSON call against it. nullptr means catalog-only
+    // (`from_help` describes it, but it cannot be called).
+    schema::tool const* input = nullptr;
+    prompt_category category = prompt_category::other;
 };
 
 std::span<prompt_descriptor const> get_all_prompts();
@@ -79,7 +105,8 @@ inline constexpr std::size_t prompt_registry_capacity = 128;
 bool register_prompt(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
                      chain_role role = chain_role::normal, bool stream_output = true, preflight_fn preflight = nullptr,
-                     declare_fn declare = nullptr, bool takes_body = false, bool record = true) noexcept;
+                     declare_fn declare = nullptr, bool takes_body = false, bool record = true,
+                     schema::tool const* input = nullptr) noexcept;
 
 // Register a sink: the same registry entry with role=sink. Sink flags
 // (--on-error/--with-context/--show-context/--head) are handled by the
@@ -88,7 +115,7 @@ bool register_prompt(std::string_view name, std::string_view help_summary, exec_
 bool register_sink(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                    void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
                    bool stream_output = true, preflight_fn preflight = nullptr, declare_fn declare = nullptr,
-                   bool takes_body = false, bool record = true) noexcept;
+                   bool takes_body = false, bool record = true, schema::tool const* input = nullptr) noexcept;
 
 // Captures a prompt's own `render_help_*` output into a string, for prompts
 // that append it to a failure message (cli, man, tse.analyze, tse.intraday)

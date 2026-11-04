@@ -70,7 +70,8 @@ std::string run_glob(glob_options const& opts) {
 }
 
 void complete_glob(completion_request const& req, std::ostream& os) {
-    if (auto const* tool = schema::find_tool("glob")) schema::complete(*tool, req, os);
+    auto const* desc = find_prompt("glob");
+    if (desc != nullptr && desc->input != nullptr) schema::complete(*desc->input, req, os);
 }
 
 constexpr std::string_view kGlobSummary =
@@ -88,6 +89,12 @@ schema::tool glob_schema() {
             schema::argument("PATTERN", "Glob pattern to match, e.g. '**/*.cpp' (default: every file)"),
         });
 }
+
+// The declaration is a static because the descriptor keeps a pointer to it; the
+// registry itself never drops a tool (it aborts on overflow), so the allocation
+// is fine here.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+schema::tool const k_glob_tool = glob_schema();
 
 } // namespace
 
@@ -123,19 +130,15 @@ Examples:
   prompt glob --head 50
 
 )EOF";
-    os << schema::render_options(*schema::find_tool("glob"));
+    os << schema::render_options(k_glob_tool);
 }
-
-// The schema builds a few strings at startup; the registry itself never drops a
-// tool (it aborts on overflow), so the allocation is fine here.
-// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
-bool const registered_glob_schema = schema::register_tool(glob_schema());
 
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp). The summary is a
 // static-storage string_view; `register_prompt` keeps the view, so never pass a
 // temporary std::string here.
 bool const registered_glob =
-    prompt::register_prompt("glob", kGlobSummary, &execute_glob, &render_help_glob, &complete_glob);
+    prompt::register_prompt("glob", kGlobSummary, &execute_glob, &render_help_glob, &complete_glob, chain_role::normal,
+                            true, nullptr, nullptr, false, true, &k_glob_tool);
 
 } // namespace prompt::prompts
