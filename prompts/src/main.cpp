@@ -389,9 +389,9 @@ Examples:
 
 Notes:
   - Ships a fixed set of built-in prompts; it never scans for prompt scripts.
-  - Sinks (.ai.chatgpt/.ai.dseek/.ai.gap/.ai.grok/.ai.kimi) wait for the
-    preceding chain, send its text to the site, and continue with the answer.
-    They share --with-context, --show-context, --on-error and --head.
+  - Sinks (.ai.chatgpt/.ai.dseek/.ai.gap/.ai.grok/.ai.kimi/.ai.perplexity) wait
+    for the preceding chain, send its text to the site, and continue with the
+    answer. They share --with-context, --show-context, --on-error and --head.
   - 'prompt <name> --complete <prefix> [args...]' prints shell-completion
     candidates for the prompt (used by shell/completions.fish), one
     value<TAB>description per line, without running it.

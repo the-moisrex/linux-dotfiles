@@ -287,7 +287,7 @@ stem)`), which the dispatcher carries through parallel children to later
   another sink. Its paste counterparts `.clipboard` and `.c.p` are ordinary
   source prompts — a source never receives the chain context, which is exactly
   why copying has to be a sink.
-- `ai.*` (`src/prompts/ai.cpp`) is the reference family: five web provider
+- `ai.*` (`src/prompts/ai.cpp`) is the reference family: six web provider
   registrations plus the `ai.debate` relay, one shared executor,
   `--print-prompt` passed through to `bin/ai`, and `--stdin-only` so positional
   prompt text cannot silently replace the chain. Two more registrations
@@ -346,7 +346,9 @@ the GapGPT turn-recovery path offline (the ack's `chat_token` becomes the
 conversation id and a resumed send carries it back under `chat_token`, the poll
 fallback carries the `accessToken` bearer and reads
 the turn, a transport error or a `StreamError` is non-fatal, and `_read_turn`
-survives a raising poll), and the
+survives a raising poll), `tests/test_ai_perplexity.py` covers the Perplexity
+block stream offline (markdown diffs, workflow items, thinking steps, the
+`COMPLETED` step-blob fallback and stored-thread extraction), and the
 `ai_help`/`ai_lms_help`/`ai_openai_help`/`ai_print_prompt`/`ai_debate_help`/
 `ai_debate_print_prompt`/`ai_reply_help` ctest smokes exercise an offline sink
 chain.

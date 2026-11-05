@@ -56,6 +56,7 @@ PROVIDER_ALIASES = {
     "gapgpt": "gap",
     "gap-gpt": "gap",
     "dseek": "deepseek",
+    "pplx": "perplexity",
 }
 
 
@@ -854,7 +855,7 @@ def build_parser():
                           help="fetch chats from the signed-in providers")
     sync.add_argument("--provider", action="append", metavar="NAME",
                       help="only these providers (repeatable, comma separated; "
-                           "aliases: gapgpt=gap, dseek=deepseek)")
+                           "aliases: gapgpt=gap, dseek=deepseek, pplx=perplexity)")
     sync.add_argument("--full", action="store_true",
                       help="re-fetch chats that look unchanged")
     sync.add_argument("--limit", type=int, default=0,

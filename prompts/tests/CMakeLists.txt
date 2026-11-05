@@ -179,6 +179,10 @@ if(Python3_Interpreter_FOUND)
     # failure that must not abort a quiet (tool-running) turn.
     add_test(NAME ai_gap_unit
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_gap.py)
+    # Perplexity's block stream: markdown diffs, workflow items, the
+    # COMPLETED fallback and the stored-thread extraction.
+    add_test(NAME ai_perplexity_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_perplexity.py)
     # The terminal-scoped conversation mirror `.ai.reply` depends on.
     add_test(NAME ai_reply_state
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_state.py)

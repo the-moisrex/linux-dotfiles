@@ -220,7 +220,8 @@ void test_clipboard_prompts_registered() {
 }
 
 void test_ai_sinks_registered() {
-    for (std::string_view name : {"ai.chatgpt", "ai.dseek", "ai.gap", "ai.grok", "ai.kimi", "ai.lms", "ai.openai"}) {
+    for (std::string_view name :
+         {"ai.chatgpt", "ai.dseek", "ai.gap", "ai.grok", "ai.kimi", "ai.perplexity", "ai.lms", "ai.openai"}) {
         auto const* desc = find_prompt(name);
         std::string msg = "ai sink registered: " + std::string(name);
         check(desc != nullptr, msg.c_str());

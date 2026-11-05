@@ -54,7 +54,8 @@ VERDICT_SUFFIX = (
 )
 
 #: Command spellings that are not the provider registry keys.
-ALIASES = {"dseek": "deepseek", "gapgpt": "gap", "lmstudio": "lms", "oai": "openai"}
+ALIASES = {"dseek": "deepseek", "gapgpt": "gap", "lmstudio": "lms", "oai": "openai",
+           "pplx": "perplexity"}
 
 _VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(AGREE|DISAGREE)\b")
 
@@ -261,7 +262,7 @@ def build_parser(providers):
                     "signed-in web sessions, or calls the local/hosted "
                     "OpenAI-compatible API providers without a browser).",
         epilog=f"providers: {names} (dseek = deepseek, lmstudio = lms, "
-               f"oai = openai)")
+               f"oai = openai, pplx = perplexity)")
     p.add_argument("words", nargs="*", metavar="PROVIDER|QUESTION",
                    help="providers first (two or more), then the question; "
                         "with no question the prompt is read from stdin")

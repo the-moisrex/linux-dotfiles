@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""ai.perplexity — start a new Perplexity chat from a prompt or stdin.
+
+Replays the signed-in www.perplexity.ai session against its internal ask
+stream (``POST /rest/sse/perplexity_ask``) — no API key.
+See ``ai.perplexity --help``.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from ai.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main("perplexity"))
