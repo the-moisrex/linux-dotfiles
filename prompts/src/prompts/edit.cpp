@@ -1174,6 +1174,11 @@ static void execute_edit(view const& v, result& r) {
 
     auto const replacements = matches.size();
 
+    std::string diff;
+    if (show_diff) {
+        diff = unified_diff(path, source, replaced);
+    }
+
     if (!dry_run) {
         write_file_atomically(path, replaced);
     }
@@ -1188,7 +1193,6 @@ static void execute_edit(view const& v, result& r) {
     status += ")\n";
 
     if (show_diff) {
-        auto diff = unified_diff(path, source, replaced);
         if (!diff.empty()) {
             status += '\n';
             status += diff;
