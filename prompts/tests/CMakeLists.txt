@@ -183,6 +183,10 @@ if(Python3_Interpreter_FOUND)
     # COMPLETED fallback and the stored-thread extraction.
     add_test(NAME ai_perplexity_unit
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_perplexity.py)
+    # Gemini's length-prefixed frames: UTF-16 lengths, text/thinking deltas,
+    # error frames and the batchexecute history bodies.
+    add_test(NAME ai_gemini_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_gemini.py)
     # The terminal-scoped conversation mirror `.ai.reply` depends on.
     add_test(NAME ai_reply_state
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_state.py)

@@ -122,9 +122,9 @@ void render_help_ai_debate(std::ostream& out) {
         << "combined text to the panel as the question, and (by default) replaces the\n"
         << "running context with the last answer. Sinks may appear anywhere in a chain.\n"
         << "\n"
-        << "Providers: chatgpt, grok, deepseek (dseek), gap, kimi, perplexity (pplx) — plus\n"
-        << "the API providers lms (lmstudio, a local LM Studio server) and openai (oai,\n"
-        << "OPENAI_API_KEY) — in the order they should speak.\n"
+        << "Providers: chatgpt, grok, deepseek (dseek), gap, kimi, perplexity (pplx),\n"
+        << "gemini — plus the API providers lms (lmstudio, a local LM Studio server)\n"
+        << "and openai (oai, OPENAI_API_KEY) — in the order they should speak.\n"
         << "\n";
     render_sink_help(out);
     out << "\n"
@@ -172,13 +172,14 @@ void render_help_ai_debate(std::ostream& out) {
 
 void complete_ai_debate(prompt::completion_request const& request, std::ostream& out) {
     using prompt::completion::item;
-    static constexpr std::array<item, 12> kProviders = {
+    static constexpr std::array<item, 13> kProviders = {
         {
             {.value = "chatgpt", .description = "ChatGPT"},
             {.value = "grok", .description = "Grok"},
             {.value = "deepseek", .description = "DeepSeek"},
             {.value = "dseek", .description = "DeepSeek (alias)"},
             {.value = "gap", .description = "GapGPT"},
+            {.value = "gemini", .description = "Gemini"},
             {.value = "kimi", .description = "Kimi"},
             {.value = "perplexity", .description = "Perplexity"},
             {.value = "pplx", .description = "Perplexity (alias)"},
@@ -229,8 +230,8 @@ std::optional<std::string> last_ai_provider(bool global) {
     return text;
 }
 
-constexpr std::array<std::string_view, 8> kReplyProviders{
-    "chatgpt", "dseek", "gap", "grok", "kimi", "perplexity", "lms", "openai",
+constexpr std::array<std::string_view, 9> kReplyProviders{
+    "chatgpt", "dseek", "gap", "gemini", "grok", "kimi", "perplexity", "lms", "openai",
 };
 
 std::optional<std::string> canonical_provider(std::string_view name) {
@@ -481,7 +482,8 @@ void render_help_ai_reply(std::ostream& out) {
     render_sink_help(out);
     out << "\n"
         << "Reply options:\n"
-        << "  PROVIDER, --provider NAME  Use this provider: chatgpt, dseek, gap, grok, kimi, perplexity, lms, openai\n"
+        << "  PROVIDER, --provider NAME  Use this provider: chatgpt, dseek, gap, gemini, grok, kimi,\n"
+        << "                             perplexity, lms, openai\n"
         << "  --any, --global            Use the globally newest chat instead of this terminal's\n"
         << "  --here                     Require this terminal (the default)\n"
         << "  -h, --help                 Show this help message\n"
@@ -503,12 +505,13 @@ void render_help_ai_reply(std::ostream& out) {
 
 void complete_ai_reply(prompt::completion_request const& request, std::ostream& out) {
     using prompt::completion::item;
-    static constexpr std::array<item, 12> kProviders = {
+    static constexpr std::array<item, 13> kProviders = {
         {
             {.value = "chatgpt", .description = "ChatGPT"},
             {.value = "dseek", .description = "DeepSeek"},
             {.value = "deepseek", .description = "DeepSeek (alias)"},
             {.value = "gap", .description = "GapGPT"},
+            {.value = "gemini", .description = "Gemini"},
             {.value = "grok", .description = "Grok"},
             {.value = "kimi", .description = "Kimi"},
             {.value = "perplexity", .description = "Perplexity"},
@@ -572,6 +575,7 @@ void render_help_ai(std::ostream& out, ai_provider const& provider) {
 constexpr ai_provider kChatgpt{.name = "chatgpt", .label = "ChatGPT"};
 constexpr ai_provider kDseek{.name = "dseek", .label = "DeepSeek"};
 constexpr ai_provider kGap{.name = "gap", .label = "GapGPT"};
+constexpr ai_provider kGemini{.name = "gemini", .label = "Gemini"};
 constexpr ai_provider kGrok{.name = "grok", .label = "Grok"};
 constexpr ai_provider kKimi{.name = "kimi", .label = "Kimi"};
 constexpr ai_provider kPerplexity{.name = "perplexity", .label = "Perplexity"};
@@ -598,6 +602,7 @@ constexpr ai_provider kDebate{.name = "debate", .label = "a panel of AIs"};
 void execute_ai_chatgpt(view const& v, result& r) { execute_ai(v, r, kChatgpt.name); }
 void execute_ai_dseek(view const& v, result& r) { execute_ai(v, r, kDseek.name); }
 void execute_ai_gap(view const& v, result& r) { execute_ai(v, r, kGap.name); }
+void execute_ai_gemini(view const& v, result& r) { execute_ai(v, r, kGemini.name); }
 void execute_ai_grok(view const& v, result& r) { execute_ai(v, r, kGrok.name); }
 void execute_ai_kimi(view const& v, result& r) { execute_ai(v, r, kKimi.name); }
 void execute_ai_perplexity(view const& v, result& r) { execute_ai(v, r, kPerplexity.name); }
@@ -608,6 +613,7 @@ void execute_ai_debate(view const& v, result& r) { execute_ai(v, r, kDebate.name
 void render_help_ai_chatgpt(std::ostream& out) { render_help_ai(out, kChatgpt); }
 void render_help_ai_dseek(std::ostream& out) { render_help_ai(out, kDseek); }
 void render_help_ai_gap(std::ostream& out) { render_help_ai(out, kGap); }
+void render_help_ai_gemini(std::ostream& out) { render_help_ai(out, kGemini); }
 void render_help_ai_grok(std::ostream& out) { render_help_ai(out, kGrok); }
 void render_help_ai_kimi(std::ostream& out) { render_help_ai(out, kKimi); }
 void render_help_ai_perplexity(std::ostream& out) { render_help_ai(out, kPerplexity); }
@@ -629,6 +635,10 @@ bool const registered_ai_dseek = prompt::register_sink(
 bool const registered_ai_gap = prompt::register_sink(
     "ai.gap", "Send the accumulated chain context to GapGPT and use its answer as the next context.", &execute_ai_gap,
     &render_help_ai_gap);
+
+bool const registered_ai_gemini = prompt::register_sink(
+    "ai.gemini", "Send the accumulated chain context to Gemini and use its answer as the next context.",
+    &execute_ai_gemini, &render_help_ai_gemini);
 
 bool const registered_ai_grok = prompt::register_sink(
     "ai.grok", "Send the accumulated chain context to Grok and use its answer as the next context.", &execute_ai_grok,

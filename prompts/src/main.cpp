@@ -389,7 +389,7 @@ Examples:
 
 Notes:
   - Ships a fixed set of built-in prompts; it never scans for prompt scripts.
-  - Sinks (.ai.chatgpt/.ai.dseek/.ai.gap/.ai.grok/.ai.kimi/.ai.perplexity) wait
+  - Sinks (.ai.chatgpt/.ai.dseek/.ai.gap/.ai.gemini/.ai.grok/.ai.kimi/.ai.perplexity) wait
     for the preceding chain, send its text to the site, and continue with the
     answer. They share --with-context, --show-context, --on-error and --head.
   - 'prompt <name> --complete <prefix> [args...]' prints shell-completion

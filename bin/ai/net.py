@@ -184,12 +184,15 @@ def request_json(url, method="GET", headers=None, json_body=None, data=None,
         raise StreamError(f"expected JSON, got: {body[:200]!r}")
 
 
-def request_text(url, method="GET", headers=None, timeout=60):
-    """Perform a request and return the decoded body as text."""
+def request_text(url, method="GET", headers=None, data=None, timeout=60):
+    """Perform a request and return the decoded body as text.
+
+    ``data`` sends a raw body (the form-encoded ``f.req`` calls do).
+    """
     kind, module = _clients()
     if kind is None:
         raise StreamError("no HTTP client available (need curl_cffi or httpx)")
-    kwargs = _request_kwargs(kind, dict(headers or {}), None, None,
+    kwargs = _request_kwargs(kind, dict(headers or {}), None, data,
                              DEFAULT_IMPERSONATE, timeout, stream=False)
     response = module.request(method, url, **kwargs)
     if response.status_code >= 400:

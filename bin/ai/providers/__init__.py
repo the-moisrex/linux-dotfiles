@@ -107,9 +107,10 @@ def all_providers():
     from .grok import Grok
     from .deepseek import DeepSeek
     from .gap import Gap
+    from .gemini import Gemini
     from .kimi import Kimi
     from .perplexity import Perplexity
     from .lms import Lms
     from .openai import OpenAI
-    return {p.name: p for p in (ChatGPT, Grok, DeepSeek, Gap, Kimi,
+    return {p.name: p for p in (ChatGPT, Grok, DeepSeek, Gap, Gemini, Kimi,
                                  Perplexity, Lms, OpenAI)}

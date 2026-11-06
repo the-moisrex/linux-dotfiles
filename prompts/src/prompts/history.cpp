@@ -252,8 +252,8 @@ bool provider_matches(std::string_view name, std::string_view provider) {
     return name.starts_with("ai.") && name.substr(3) == provider;
 }
 
-constexpr std::array<std::string_view, 9> kAiProviders{
-    "chatgpt", "dseek", "gap", "grok", "kimi", "perplexity", "lms", "openai", "debate",
+constexpr std::array<std::string_view, 10> kAiProviders{
+    "chatgpt", "dseek", "gap", "gemini", "grok", "kimi", "perplexity", "lms", "openai", "debate",
 };
 
 // The terminal of a run as JSON, for `--json` (an empty object when the run
@@ -695,8 +695,8 @@ segment — so it can be chained, e.g. `prompt .last.ai .note "compare with the
 above" .ai.chatgpt`. This returns the answer, not the run's whole output, and
 skips segments that produced nothing.
 
-A bare PROVIDER (`dseek`, `grok`, `chatgpt`, `gap`, `kimi`, `perplexity`,
-`lms`, `openai`, `debate`) picks that provider's last answer; `--provider` is
+A bare PROVIDER (`dseek`, `grok`, `chatgpt`, `gap`, `gemini`, `kimi`,
+`perplexity`, `lms`, `openai`, `debate`) picks that provider's last answer; `--provider` is
 the explicit spelling. A bare integer is the Nth newest run from this terminal (1 = the last
 one here), unless it matches the start of a run id. When this terminal has no
 recorded run, the globally newest one is used and a note is printed on stderr;
