@@ -90,7 +90,7 @@ std::vector<std::string_view> list_prompt_names();
 
 // The fixed registry capacity. A build that registers more prompts than this
 // fails loudly (see register_prompt) instead of silently dropping one.
-inline constexpr std::size_t prompt_registry_capacity = 128;
+inline constexpr std::size_t prompt_registry_capacity = 250;
 
 // Every prompt registers itself: each src/prompts/<name>.cpp ends with one
 // call like
