@@ -35,8 +35,8 @@ Follow these principles when reviewing C++ code:
 - Verify code is efficient, readable, maintainable, and follows best practices
 
 Provide constructive feedback highlighting issues, suggesting improvements, and commending good practices.
+
 )PROMPT";
-    output += '\n';
 
     r.out = std::move(output);
 }
@@ -55,7 +55,7 @@ Options:
 // This file is the prompt: it implements it and registers it at static-init time
 // (no central list — see sdk/prompt_registry.hpp).
 bool const registered =
-    prompt::register_prompt("cpp-reviewer", "Builds a prompt for reviewing C++ code from stdin or embedded files.",
+    prompt::register_prompt("cpp.review", "Builds a prompt for reviewing C++ code from stdin or embedded files.",
                             &execute_cpp_reviewer, &render_help_cpp_reviewer);
 
 } // namespace prompt::prompts

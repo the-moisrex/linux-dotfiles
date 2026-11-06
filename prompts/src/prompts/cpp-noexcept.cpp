@@ -16,7 +16,7 @@ constexpr std::string_view kSummary = "Rewrite this C++ code to be truly noexcep
 static void execute_cpp_noexcept(view const& v, result& r) {
     auto opts = file_options_or_throw(v);
 
-    std::string output = R"PROMPT(Make the following C++ code truly noexcept wherever it reasonably can be.
+    r.out = R"PROMPT(Make the following C++ code truly noexcept wherever it reasonably can be.
 
 For each function, judge whether it can honestly promise not to throw. When it
 can, rewrite it so it no longer has any throw site:
@@ -53,25 +53,6 @@ reporting — a failure must still be visible to the caller (return value, statu
 enum, assert, or a documented precondition).
 
 )PROMPT";
-
-    std::string error;
-    auto sources = collect_file_args(v);
-    for (auto const& file : sources.files) {
-        output += std::format("File: {}\n\n```{}\n", file.filename().string(), infer_lang(file));
-        output += number_lines(trim_context_nl(read_file(file), opts.head_lines), opts.numbered);
-        output += "\n```\n";
-    }
-    for (auto arg : sources.missing) {
-        warn_missing_file(error, arg);
-    }
-
-    if (v.in.piped()) {
-        output += embed_stdin(v.in.text(), opts.head_lines);
-        v.in.spend();
-    }
-
-    r.out = std::move(output);
-    r.err = std::move(error);
 }
 
 static void render_help_cpp_noexcept(std::ostream& os) {
