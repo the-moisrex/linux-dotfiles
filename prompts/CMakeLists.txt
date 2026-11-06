@@ -92,6 +92,7 @@ add_library(prompt_lib OBJECT
     src/core/clipboard.cpp
     src/core/sanitize.cpp
     src/core/strings.cpp
+    src/core/git.cpp
     src/sdk/facts.cpp
     src/sdk/stage.cpp
     src/sdk/wire.cpp

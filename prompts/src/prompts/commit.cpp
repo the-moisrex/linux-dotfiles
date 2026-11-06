@@ -1,3 +1,4 @@
+#include "../core/git.hpp"
 #include "../core/process.hpp"
 #include "../sdk/args.hpp"
 #include "../sdk/embed.hpp"
@@ -5,6 +6,7 @@
 #include <cstddef>
 #include <format>
 #include <initializer_list>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -15,84 +17,69 @@ namespace prompt::prompts {
 
 namespace {
 
-std::string git_output(std::initializer_list<char const*> args) {
-    std::vector<char const*> argv;
-    argv.reserve(args.size() + 1);
-    for (char const* arg : args) argv.push_back(arg);
-    argv.push_back(nullptr);
-    auto result = prompt::process::run_command(argv);
-    std::string out = std::move(result.stdout_data);
-    while (!out.empty() && out.back() == '\n') out.pop_back();
-    return out;
+struct commit_options {
+    std::vector<std::string> exclude;
+    std::vector<std::string> only;
+    bool prompt_only = false;
+};
+
+commit_options parse_commit_options(std::vector<std::string> const& args) {
+    commit_options opts;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        std::string_view a = args[i];
+        auto take_value = [&](std::string_view flag) -> std::optional<std::string_view> {
+            if (a == flag) {
+                if (i + 1 >= args.size())
+                    throw soft_error{std::format("prompt commit: option '{}' requires a value.\n", flag)};
+                return args[++i];
+            }
+            if (a.size() > flag.size() && a.starts_with(flag) && a[flag.size()] == '=')
+                return a.substr(flag.size() + 1);
+            return std::nullopt;
+        };
+        if (auto x = take_value("--exclude")) {
+            opts.exclude.emplace_back(*x);
+            continue;
+        }
+        if (auto x = take_value("--only")) {
+            opts.only.emplace_back(*x);
+            continue;
+        }
+        if (a == "--prompt-only") {
+            opts.prompt_only = true;
+            continue;
+        }
+        // Unknown args are ignored for backward compatibility.
+    }
+    return opts;
 }
 
-// Annotate ordinary unified diffs using destination-file line numbers.
-// Leave combined diffs unchanged because they have multiple prefix columns.
-std::string add_line_numbers_to_diff(std::string_view diff) {
-    std::istringstream stream{std::string(diff)};
-    std::string line;
-    std::string result;
+std::string_view commit_instructions() {
+    return R"PROMPT(Follow the Conventional Commits specification (e.g., feat:, fix:, docs:, refactor:, chore:).
+Keep the subject line concise (under 50 characters) and include a more detailed body if the changes are complex.
+Provide the commit message directly, without extra conversational text.
 
-    unsigned long long new_line_num = 0;
-    bool in_hunk = false;
-
-    while (std::getline(stream, line)) {
-        if (line.starts_with("diff ")) {
-            in_hunk = false;
-            result += line;
-            result.push_back('\n');
-            continue;
-        }
-
-        if (line.starts_with("@@")) {
-            in_hunk = false;
-            if (line.starts_with("@@ -")) {
-                auto pos = line.find(" +");
-                if (pos != std::string::npos) {
-                    try {
-                        new_line_num = std::stoull(line.substr(pos + 2));
-                        in_hunk = true;
-                    } catch (...) {
-                        // Preserve malformed headers without annotation.
-                    }
-                }
-            }
-            result += line;
-            result.push_back('\n');
-            continue;
-        }
-
-        if (!in_hunk) {
-            result += line;
-            result.push_back('\n');
-            continue;
-        }
-        if (line.empty()) {
-            result += std::format("{:5d}   \n", new_line_num++);
-            continue;
-        }
-
-        char prefix = line[0];
-        if (prefix == '+') {
-            result += std::format("{:5d} + {}", new_line_num++, line.substr(1));
-        } else if (prefix == '-') {
-            result += std::format("      - {}", line.substr(1));
-        } else if (prefix == ' ') {
-            result += std::format("{:5d}   {}", new_line_num++, line.substr(1));
-        } else {
-            // Diff metadata, such as "\ No newline at end of file".
-            result += line;
-        }
-        result.push_back('\n');
-    }
-
-    return result;
+Provide:
+1. A concise subject line.
+2. A short body explaining what changed and why.
+Keep it specific and practical, not generic. Only return copyable commit message.
+)PROMPT";
 }
 
 } // namespace
 
 static void execute_commit(view const& v, result& r) {
     auto head_lines = head_lines_or_throw(v);
+    auto opts = parse_commit_options(positional_args(v));
+
+    // Prompt-only: emit just the instructions, skip git/context entirely.
+    if (opts.prompt_only) {
+        std::string output;
+        output += "Write a clear, descriptive Git commit message for the current changes.\n";
+        output += commit_instructions();
+        r.out = std::move(output);
+        return;
+    }
 
     if (prompt::process::run_command(std::vector<std::string>{"git", "rev-parse", "--is-inside-work-tree"}).exit_code !=
         0) {
@@ -100,11 +87,11 @@ static void execute_commit(view const& v, result& r) {
     }
 
     std::string diff_type = "staged changes";
-    std::string diff = git_output({"git", "diff", "--cached"});
+    std::string diff = prompt::git::run({"git", "diff", "--cached"});
 
     if (diff.empty()) {
         diff_type = "unstaged and untracked changes";
-        diff = git_output({"git", "diff"});
+        diff = prompt::git::run({"git", "diff"});
 
         // Run both operations from the root so subdirectory invocations
         // include all untracked files and resolve their paths consistently.
@@ -154,25 +141,21 @@ static void execute_commit(view const& v, result& r) {
         }
     }
 
+    if (!opts.exclude.empty() || !opts.only.empty()) {
+        diff = prompt::git::filter_diff_by_path(diff, opts.only, opts.exclude);
+    }
+
     if (diff.empty()) {
         throw soft_error{"prompt commit: No changes found in the repository.\n"};
     }
 
     std::string trimmed_diff = trim_context_nl(diff, head_lines);
-    std::string numbered_diff = add_line_numbers_to_diff(trimmed_diff);
+    std::string numbered_diff = prompt::git::add_line_numbers_to_diff(trimmed_diff);
 
     std::string output;
     output += std::format("Write a clear, descriptive Git commit message for the following {}.\n", diff_type);
-    output += R"PROMPT(Follow the Conventional Commits specification (e.g., feat:, fix:, docs:, refactor:, chore:).
-Keep the subject line concise (under 50 characters) and include a more detailed body if the changes are complex.
-Provide the commit message directly, without extra conversational text.
-
-Provide:
-1. A concise subject line.
-2. A short body explaining what changed and why.
-Keep it specific and practical, not generic. Only return copyable commit message.
-```diff
-)PROMPT";
+    output += commit_instructions();
+    output += "```diff\n";
     output += numbered_diff;
     if (output.back() != '\n') output.push_back('\n');
     output += "```\n ";
@@ -181,14 +164,17 @@ Keep it specific and practical, not generic. Only return copyable commit message
 }
 
 static void render_help_commit(std::ostream& os) {
-    os << R"EOF(Usage: prompt commit [--head N]
+    os << R"EOF(Usage: prompt commit [--head N] [--exclude GLOB]... [--only GLOB]... [--prompt-only]
 
 Asks the AI to write a Git commit message based on current changes.
 It prioritizes staged changes (git diff --cached). If no changes are staged,
 it evaluates all unstaged and untracked changes.
 
 Options:
-  --head N   Keep only the first N lines of the embedded context
+  --head N       Keep only the first N lines of the embedded context
+  --exclude GLOB Skip files matching GLOB (repeatable; matched against path and basename)
+  --only GLOB    Show only files matching GLOB (repeatable; alias: --file)
+  --prompt-only  Emit only the prompt text, without any diff context
 )EOF";
 }
 

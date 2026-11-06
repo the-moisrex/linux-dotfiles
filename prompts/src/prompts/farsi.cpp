@@ -1,23 +1,10 @@
-#include "../sdk/args.hpp"
-#include "../sdk/embed.hpp"
 #include "../sdk/prompt_registry.hpp"
 #include <string>
 
 namespace prompt::prompts {
 
-static void execute_farsi(view const& v, result& r) {
-    auto head_lines = head_lines_or_throw(v);
-
-    std::string output;
-    output += "Translate to Farsi; no explanations, no comments, no extra text, just the translation.\n\n";
-
-    // bash's embed_stdin fails on a tty stdin, and since it is the script's
-    // last command its status becomes the prompt's exit code (1).
-    if (!v.in.piped()) throw soft_error{std::string{}, std::move(output)};
-
-    output += embed_stdin(v.in.text(), head_lines);
-    r.out = std::move(output);
-    v.in.spend();
+static void execute_farsi([[maybe_unused]] view const& v, result& r) {
+    r.out = "Translate to Farsi; no explanations, no comments, no extra text, just the translation.\n\n";
 }
 
 static void render_help_farsi(std::ostream& os) {
