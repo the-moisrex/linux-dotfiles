@@ -775,10 +775,55 @@ std::string miss_hint(std::string_view source, std::string_view old_string, std:
 
 [[nodiscard]]
 std::string unified_diff(std::string_view path, std::string_view before, std::string_view after) {
-    auto result = prompt::process::run_script(
-        R"(diff -u --label "a/$3" --label "b/$3" <(printf '%s' "$1") <(printf '%s' "$2"))",
-        {std::string{before}, std::string{after}, std::string{path}}, {}, std::chrono::seconds{10});
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto const base = fs::temp_directory_path(ec);
+    if (ec) throw soft_error{"Cannot locate temporary directory: " + ec.message() + "\n"};
+    static std::atomic_uint64_t sequence{};
+    auto const stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    fs::path directory;
+    bool created = false;
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        directory = base / ("prompt-diff-" + std::to_string(stamp) + "-" +
+                            std::to_string(sequence.fetch_add(1, std::memory_order_relaxed)));
+        ec.clear();
+        if (fs::create_directory(directory, ec)) {
+            created = true;
+            break;
+        }
+        if (ec && ec != std::errc::file_exists)
+            throw soft_error{"Cannot create temporary diff directory: " + ec.message() + "\n"};
+    }
+    if (!created) throw soft_error{"Cannot create temporary diff directory.\n"};
 
+    struct cleanup_guard {
+        fs::path const& path;
+        ~cleanup_guard() noexcept {
+            std::error_code ignored;
+            fs::remove_all(path, ignored);
+        }
+    } cleanup{directory};
+
+    fs::permissions(directory, fs::perms::owner_all, fs::perm_options::replace, ec);
+    if (ec) throw soft_error{"Cannot secure temporary diff directory: " + ec.message() + "\n"};
+
+    auto write_temp = [](fs::path const& file, std::string_view content) {
+        if (content.size() > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max()))
+            throw soft_error{"Diff input is too large.\n"};
+        std::ofstream out(file, std::ios::binary);
+        if (!out) throw soft_error{"Cannot open diff input.\n"};
+        out.write(content.data(), static_cast<std::streamsize>(content.size()));
+        out.close();
+        if (!out) throw soft_error{"Cannot write diff input.\n"};
+    };
+
+    auto const old_file = directory / "old";
+    auto const new_file = directory / "new";
+    write_temp(old_file, before);
+    write_temp(new_file, after);
+    auto result = prompt::process::run_script(R"(diff -u --label "a/$3" --label "b/$3" -- "$1" "$2")",
+                                              {old_file.string(), new_file.string(), std::string{path}}, {},
+                                              std::chrono::seconds{10});
     return result.stdout_data;
 }
 
