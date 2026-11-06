@@ -56,6 +56,7 @@ static void execute_list(view const& v, result& r) {
         }
     }
 
+    output += std::format("\n{} prompts\n", sorted.size());
     r.out = std::move(output);
     r.no_clipboard = true;
 }
