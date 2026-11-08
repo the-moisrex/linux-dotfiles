@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""ai.keys — show where each API provider's key would come from.
+
+Prints the *source* of every API provider's key (environment variable, `.env`
+file, the installed opencode's credentials, or `--api-key`) and a masked
+preview.  The key itself is never printed, so this is safe to paste into a bug
+report.
+
+    ai.keys                # every API provider
+    ai.keys openrouter     # just one
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from ai import keys  # noqa: E402
+from ai.providers import all_providers  # noqa: E402
+
+
+def main(argv):
+    wanted = [name for name in argv if not name.startswith("-")]
+    providers = all_providers()
+    names = wanted or [name for name, cls in providers.items()
+                       if getattr(cls, "api", False)]
+    width = max((len(name) for name in names), default=12)
+    for name in names:
+        cls = providers.get(name)
+        if cls is None:
+            print(f"{name}: unknown provider", file=sys.stderr)
+            continue
+        env = getattr(cls, "key_env", "")
+        source, masked = keys.describe(name, env)
+        print(f"{name:<{width}}  {source:<32}  {masked}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

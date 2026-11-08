@@ -104,6 +104,7 @@ class Provider:
 
 def all_providers():
     from .chatgpt import ChatGPT
+    from .claude import Claude
     from .grok import Grok
     from .deepseek import DeepSeek
     from .gap import Gap
@@ -112,5 +113,6 @@ def all_providers():
     from .perplexity import Perplexity
     from .lms import Lms
     from .openai import OpenAI
-    return {p.name: p for p in (ChatGPT, Grok, DeepSeek, Gap, Gemini, Kimi,
-                                 Perplexity, Lms, OpenAI)}
+    from .openrouter import OpenRouter
+    return {p.name: p for p in (ChatGPT, Claude, Grok, DeepSeek, Gap, Gemini, Kimi,
+                                 Perplexity, Lms, OpenAI, OpenRouter)}

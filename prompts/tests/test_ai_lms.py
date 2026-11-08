@@ -145,6 +145,7 @@ class ApiProviderTest(unittest.TestCase):
             "OPENAI_MODEL": "",
             "OPENAI_API_KEY": "",
             "XDG_STATE_HOME": os.path.join(self.tmp.name, "state"),
+            "AI_KEYS_NO_OPENCODE": "1",
         })
         values.update(extra)
         return values

@@ -1,6 +1,6 @@
 ---
 name: ai-providers
-description: Use when adding a new ai.* chat provider or fixing an existing one in this repo — the standalone bin/ai.<name> CLI, the native .ai.<name> prompt sink, stream parsing, resume/state, file uploads, ai.save history sync, debate/reply aliases, and the tests/docs that must move together. Trigger on: ai.perplexity, ai.chatgpt, ai.grok, ai.dseek, ai.gap, ai.kimi, providers/, ai.cpp, kAiProviders, ai.save sync.
+description: Use when adding a new ai.* chat provider or fixing an existing one in this repo — the standalone bin/ai.<name> CLI, the native .ai.<name> prompt sink, stream parsing, resume/state, file uploads, ai.save history sync, debate/reply aliases, and the tests/docs that must move together. Trigger on: ai.perplexity, ai.chatgpt, ai.claude, ai.grok, ai.dseek, ai.gap, ai.kimi, providers/, ai.cpp, kAiProviders, ai.save sync.
 ---
 
 # Adding or fixing an `ai.*` provider

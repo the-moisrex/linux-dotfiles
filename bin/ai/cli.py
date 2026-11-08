@@ -84,6 +84,9 @@ def build_parser(provider):
         if discovers:
             model_help = (f"model id (default: ${provider.model_env}, else the model "
                           f"the server has loaded; `--list` shows them)")
+        elif getattr(provider, "default_model", ""):
+            model_help = (f"model id (default: ${provider.model_env}, else "
+                          f"{provider.default_model})")
         else:
             model_help = (f"model id (default: ${provider.model_env}; required when "
                           f"that is unset, since there is no default)")
@@ -168,6 +171,10 @@ def build_parser(provider):
                    help=argparse.SUPPRESS)
     p.add_argument("--list", action="store_true",
                    help="list the available providers and exit")
+    p.add_argument("--models", dest="list", action="store_true",
+                   help="list this provider's models (alias for --list)")
+    p.add_argument("--all", action="store_true",
+                   help="with --list, show every provider instead of just this one")
     return p
 
 
@@ -397,7 +404,7 @@ def run_once(conversation, prompt, args, provider_name, model, provider, scope=N
             pass
     if status == 0:
         try:
-            save_conversation(provider_name, conversation, model, scope)
+            save_conversation(provider_name, conversation, conversation.model or model, scope)
         except Exception as exc:
             print(f"ai.{provider_name}: could not save conversation: {exc}",
                   file=sys.stderr)
@@ -474,11 +481,74 @@ def run_repl(conversation, instance, match, model, args, provider_name, provider
         if args.copy:
             copy_answer(answer)
         if turn_status == 0:
-            save_conversation(provider_name, conversation, model, scope)
+            save_conversation(provider_name, conversation, conversation.model or model, scope)
         else:
             status = status or turn_status
     conversation.close()
     return status
+
+
+def _format_price(value):
+    """A per-million-token price from OpenRouter's per-token string."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if number <= 0:
+        return "free"
+    return f"${number * 1_000_000:.2f}/M"
+
+
+def _print_models(provider_cls, args):
+    """List one provider's models (rich for API endpoints), or every provider."""
+    if args.all:
+        catalogue = {}
+        for name, prov_cls in all_providers().items():
+            prov = prov_cls()
+            if getattr(prov, "api", False):
+                models = prov.available_models()
+            else:
+                models = list(prov.models)
+            catalogue[name] = models
+            if not args.json:
+                print(f"{name:<10} {prov.label:<10} {', '.join(models)}")
+        if args.json:
+            print(json.dumps(catalogue, ensure_ascii=False, indent=2))
+        return 0
+
+    provider = provider_cls()
+    if not getattr(provider, "api", False):
+        for model in provider.models:
+            print(model)
+        return 0
+
+    try:
+        records = provider.chat_models()
+    except ApiError as exc:
+        print(f"ai.{provider.name}: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - a listing never crashes the tool
+        print(f"ai.{provider.name}: could not list models: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(records, ensure_ascii=False, indent=2))
+        return 0
+    for record in records:
+        line = record["id"]
+        details = []
+        if record.get("name") and record["name"] != record["id"]:
+            details.append(record["name"])
+        if record.get("context"):
+            details.append(f"ctx {record['context']}")
+        pricing = record.get("pricing") or {}
+        prompt = _format_price(pricing.get("prompt"))
+        completion = _format_price(pricing.get("completion"))
+        if prompt or completion:
+            details.append(f"{prompt or '?'}/{completion or '?'}")
+        if details:
+            line += "  " + "  ".join(details)
+        print(line)
+    return 0
 
 
 def main(provider_name, argv=None):
@@ -496,14 +566,7 @@ def main(provider_name, argv=None):
     args = build_parser(provider).parse_args(argv)
 
     if args.list:
-        for name, prov_cls in providers.items():
-            prov = prov_cls()
-            if getattr(prov, "api", False):
-                models = ", ".join(prov.available_models())
-            else:
-                models = ", ".join(prov.models)
-            print(f"{name:<10} {prov.label:<10} {models}")
-        return 0
+        return _print_models(provider, args)
 
     if args.prompt_file and not getattr(provider, "prompt_file_upload", True):
         print(f"ai.{provider_name}: --prompt-file is not supported: "

@@ -32,6 +32,7 @@ import re
 from .. import diagnostics
 from .. import events as ev
 from .. import files as files_mod
+from .. import keys as keys_mod
 from .. import net
 from . import Conversation, Provider
 
@@ -297,7 +298,10 @@ class OpenAICompat(Provider):
         return normalise_base(url)
 
     def api_key(self, requested=None):
-        return (requested or os.environ.get(self.key_env) or "").strip()
+        # `--api-key` wins, then the provider's env vars, `.env` files and the
+        # credentials the installed opencode knows about (see ai.keys).
+        key, _source = keys_mod.resolve(self.name, self.key_env, requested)
+        return key
 
     def headers(self, key=None):
         headers = {
@@ -316,7 +320,13 @@ class OpenAICompat(Provider):
     # -- models ------------------------------------------------------------
 
     def list_models(self, base=None, timeout=5):
-        """The endpoint's models as ``{id, type, state, context}`` records."""
+        """The endpoint's models as ``{id, name, type, state, context, pricing}``.
+
+        LM Studio adds ``type``/``state``/``max_context_length``; OpenRouter
+        adds ``name``/``context_length``/``pricing``; a bare OpenAI-compatible
+        server may only return ``id``.  Missing fields stay empty so callers can
+        render whatever the endpoint actually offers.
+        """
         payload = net.request_json((base or self.base_url()) + MODELS_PATH,
                                    headers=self.headers(), impersonate=None,
                                    timeout=timeout)
@@ -324,11 +334,18 @@ class OpenAICompat(Provider):
         for item in (payload or {}).get("data") or ():
             if not isinstance(item, dict) or not item.get("id"):
                 continue
+            pricing = item.get("pricing") if isinstance(item.get("pricing"), dict) else {}
             records.append({
                 "id": str(item["id"]),
+                "name": str(item.get("name") or ""),
                 "type": str(item.get("type") or ""),
                 "state": str(item.get("state") or ""),
-                "context": _as_int(item.get("max_context_length")),
+                "context": _as_int(item.get("context_length")
+                                   or item.get("max_context_length")),
+                "pricing": {
+                    "prompt": str(pricing.get("prompt") or ""),
+                    "completion": str(pricing.get("completion") or ""),
+                },
             })
         return records
 

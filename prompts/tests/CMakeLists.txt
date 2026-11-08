@@ -142,6 +142,12 @@ set_tests_properties(ai_lms_help PROPERTIES PASS_REGULAR_EXPRESSION "--base-url"
 add_test(NAME ai_openai_help COMMAND $<TARGET_FILE:prompt> .ai.openai --help)
 set_tests_properties(ai_openai_help PROPERTIES PASS_REGULAR_EXPRESSION "--api-key")
 
+add_test(NAME ai_openrouter_help COMMAND $<TARGET_FILE:prompt> .ai.openrouter --help)
+set_tests_properties(ai_openrouter_help PROPERTIES PASS_REGULAR_EXPRESSION "--api-key")
+
+add_test(NAME ai_claude_help COMMAND $<TARGET_FILE:prompt> .ai.claude --help)
+set_tests_properties(ai_claude_help PROPERTIES PASS_REGULAR_EXPRESSION "--prompt-file")
+
 add_test(NAME ai_debate_help COMMAND $<TARGET_FILE:prompt> .ai.debate --help)
 set_tests_properties(ai_debate_help PROPERTIES PASS_REGULAR_EXPRESSION "--rounds")
 
@@ -175,6 +181,14 @@ if(Python3_Interpreter_FOUND)
     # model defaulting, --param, inline attachments, -c replay, refusals.
     add_test(NAME ai_lms_unit
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_lms.py)
+    # OpenRouter: model listing with context/pricing, key resolution order
+    # (env/.env/flag/opencode) and the OPENROUTER_MODEL default.
+    add_test(NAME ai_openrouter_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_openrouter.py)
+    # Claude's web chat: the Messages SSE stream, chat creation/resume and the
+    # wiggle upload attachment shape.
+    add_test(NAME ai_claude_unit
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_claude.py)
     # The GapGPT poll fallback: bearer-token headers and a transport
     # failure that must not abort a quiet (tool-running) turn.
     add_test(NAME ai_gap_unit
