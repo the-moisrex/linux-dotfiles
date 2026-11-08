@@ -1,59 +1,315 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Requires Bash 4+. Git is optional, for repository-root path resolution.
 
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    cat <<'EOF'
-Usage: paths [input_string]
-       command | paths
+usage() {
+    printf '%s\n' 'Usage: paths [-0] [-s] [-n] [-C directory] [--] [input_string ...]
+       command | paths [options]
 
-Extracts paths of existing files (with optional :line:column) from input.
-
-Only paths that exist on the filesystem are printed. Paths with ~ are expanded.
+Extract existing files, optionally followed by :line or :line:column.
+Understands Markdown, compiler output, unified patches, Git renames,
+quoted filenames, and Git C-style quoted paths. Ignores /dev/null and
+patch hunk contents. Relative paths are checked in the current directory,
+then the Git worktree root (when Git is available). Root-fallback matches
+are printed as absolute paths so they work from the current directory.
+Results are deduplicated by file spelling and location; ./, absolute,
+and ~/ spellings of the same path share a deduplication key.
+Symlink aliases are not resolved. Direct arguments take precedence over stdin.
+Input is streamed line by line; output preserves first-seen order.
 
 Options:
-  -h, --help    Show this help message
+  -0, --null       Terminate results with NUL instead of newline
+  -s, --strip-location  Remove :line and :line:column; deduplicate by path
+  -n, --no-check    Do not check file existence or resolve via Git
+  -C directory     Resolve relative paths from directory
+  -h, --help       Show this help
+  --               End options (for input beginning with a dash)
 
 Examples:
-  # Pipe compiler/build output to extract source files
-  make 2>&1 | paths
+  git diff | paths
+  paths -C /project < review.md
+  paths "src/main.cpp:42:8"
+  paths -- "-unusual-name.txt"
+  git diff | paths -0 | xargs -0 -r editor
 
-  # Extract file:line:col from grep results
-  grep -rn 'TODO' src/ | paths
+Unquoted filenames with spaces are supported in patch headers and when
+occupying a whole input line. In prose, quote them or use backticks.
+Location suffixes are preserved unless --strip-location is used.
+With --no-check, bare tokens must contain a slash, a filename extension,
+or a numeric location suffix. Quote ambiguous names such as "Makefile"
+and names containing spaces, or supply them in patch headers. URLs and
+/dev/null are ignored. Numeric suffixes are treated as locations even if
+an actual filename contains them. Patch a/ and b/ prefixes are removed
+only in diff headers; other paths retain their spelling.'
+}
 
-  # Pass a path string directly
-  paths src/main.cpp:42:8
-
-  # Extract paths from error messages
-  g++ main.cpp 2>&1 | paths
-
-  # Use in a pipeline with other tools
-  clang-tidy file.cpp 2>&1 | paths | head -5
-EOF
-    exit 0
+if (( BASH_VERSINFO[0] < 4 )); then
+    printf 'paths: Bash 4 or newer is required\n' >&2
+    exit 2
 fi
-
-if [ ! -t 0 ]; then
-    input=$(cat)
-else
-    input="$*"
-fi
-
-# Match paths with optional :line or :line:column
-# [a-zA-Z0-9_./~-]+ matches the file path characters
-# (:[0-9]+){0,2} matches up to two colon-number pairs (line and col)
-echo "$input" | grep -oE '[a-zA-Z0-9_./~-]+(:[0-9]+){0,2}' | while read -r match; do
-    
-    # Extract just the file path part (everything before the first colon)
-    filepath="${match%%:*}"
-    
-    # Strip trailing colons just in case
-    filepath="${filepath%:}"
-    
-    # Expand a leading ~ to $HOME
-    filepath="${filepath/#\~/$HOME}"
-    
-    # Only print if the file actually exists on the filesystem
-    # (Note: For this to print anything, the files must exist relative to where you run this script)
-    if [[ -f "$filepath" ]]; then
-        echo "$match"
-    fi
+separator=$'\n'
+strip_location=false
+check_exists=true
+while (( $# )); do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        -0|--null) separator=''; shift ;;
+        -s|--strip-location) strip_location=true; shift ;;
+        -n|--no-check) check_exists=false; shift ;;
+        -C)
+            if (( $# < 2 )); then
+                printf 'paths: -C requires a directory\n' >&2
+                exit 2
+            fi
+            cd -- "$2" || exit 2
+            shift 2 ;;
+        --) shift; break ;;
+        -*) printf 'paths: unknown option: %s (use -- before literal input)\n' "$1" >&2; exit 2 ;;
+        *) break ;;
+    esac
 done
+
+base=$PWD
+repo_root=''
+if [[ "$check_exists" == true ]] && command -v git >/dev/null 2>&1; then
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=''
+fi
+declare -A seen=()
+
+# Check the literal path first, then a repository-root-relative spelling.
+# Keep fallback output usable from the caller's working directory.
+lookup_file() {
+    local path=$1 expanded=$1
+    [[ -n "$path" && "$path" != /dev/null ]] || return 1
+    if [[ "$path" == '~/'* ]]; then
+        expanded=$HOME/${path:2}
+    fi
+    if [[ -f "$expanded" ]]; then
+        resolved=$path
+        identity=$expanded
+    elif [[ -n "$repo_root" && "$path" != /* && "$path" != '~/'* &&
+            -f "$repo_root/$path" ]]; then
+        resolved=$repo_root/$path
+        identity=$resolved
+    else
+        return 1
+    fi
+}
+
+# Patch prefixes take priority in headers. Elsewhere they are only a fallback,
+# so genuine a/ and b/ directories still work. Each spelling is checked both
+# in the working directory and at the repository root.
+resolve_file() {
+    local path=$1 mode=$2 short
+    if [[ "$path" == a/* || "$path" == b/* ]]; then
+        short=${path:2}
+        if [[ "$mode" == strip ]]; then
+            lookup_file "$short" && return 0
+        fi
+        lookup_file "$path" && return 0
+        if [[ "$mode" == auto ]]; then
+            lookup_file "$short" && return 0
+        fi
+        return 1
+    fi
+    lookup_file "$path"
+}
+
+# Without filesystem evidence, reject ordinary prose and URL-like tokens.
+# Explicit quoted names and patch headers bypass this heuristic.
+looks_like_path() {
+    local path=$1 location=$2
+    local bare="^[^][[:space:]\"'\`<>|(){},;=]+$"
+    [[ "$path" =~ $bare ]] || return 1
+    [[ "$path" != . && "$path" != .. && "$path" != */ ]] || return 1
+    [[ "$path" == */* || "$path" == *.* || -n "$location" ]]
+}
+
+emit() {
+    local candidate=$1 mode=${2:-auto} explicit=${3:-false}
+    local location='' resolved identity key
+    local two='^(.*)(:[0-9]+:[0-9]+)$' one='^(.*)(:[0-9]+)$'
+    if [[ "$check_exists" == false ]]; then
+        if [[ "$candidate" =~ $two || "$candidate" =~ $one ]]; then
+            location=${BASH_REMATCH[2]}
+            candidate=${BASH_REMATCH[1]}
+        fi
+        [[ -n "$candidate" && "$candidate" != /dev/null &&
+           "$candidate" != *://* ]] || return 1
+        if [[ "$explicit" != true ]]; then
+            looks_like_path "$candidate" "$location" || return 1
+        fi
+        if [[ "$mode" == strip && ( "$candidate" == a/* || "$candidate" == b/* ) ]]; then
+            candidate=${candidate:2}
+        fi
+        [[ -n "$candidate" && "$candidate" != /dev/null ]] || return 1
+        resolved=$candidate
+        identity=$candidate
+        if [[ "$identity" == '~/'* ]]; then identity=$HOME/${identity:2}; fi
+    # Prefer an actual filename, which may itself contain colons and digits.
+    elif resolve_file "$candidate" "$mode"; then
+        :
+    elif [[ "$candidate" =~ $two ]] && resolve_file "${BASH_REMATCH[1]}" "$mode"; then
+        location=${BASH_REMATCH[2]}
+    elif [[ "$candidate" =~ $one ]] && resolve_file "${BASH_REMATCH[1]}" "$mode"; then
+        location=${BASH_REMATCH[2]}
+    else
+        return 1
+    fi
+    [[ "$strip_location" == true ]] && location=''
+    [[ "$identity" == /* ]] || identity=$base/$identity
+    while [[ "$identity" == *'/./'* ]]; do identity=${identity//\/\.\//\/}; done
+    while [[ "$identity" == *'//'* ]]; do identity=${identity//\/\//\/}; done
+    key=${#identity}:$identity$location
+    if [[ -z "${seen[$key]+present}" ]]; then
+        seen[$key]=1
+        if [[ -n "$separator" ]]; then
+            printf '%s\n' "$resolved$location"
+        else
+            printf '%s\0' "$resolved$location"
+        fi
+    fi
+    return 0
+}
+
+emit_token() {
+    local token=$1 mode=$2 explicit=${3:-false}
+    # No filesystem check can distinguish punctuation from a literal filename.
+    # Preserve explicit names; strip prose punctuation from bare tokens first.
+    if [[ "$check_exists" == false && "$explicit" != true ]]; then
+        while [[ "$token" == *[.,:\;] ]]; do token=${token%?}; done
+    fi
+    emit "$token" "$mode" "$explicit" && return
+    # Punctuation in diagnostics/prose is not usually part of the filename.
+    # Always try the literal spelling first so real punctuated names work.
+    while [[ "$token" == *[.,:\;] ]]; do
+        token=${token%?}
+        emit "$token" "$mode" "$explicit" && return
+    done
+    return 0
+}
+
+scan() {
+    local text=$1 mode=${2:-auto} git_quotes=${3:-false} token consumed
+    local double='^"(([^"\\]|\\.)*)"(:[0-9]+(:[0-9]+)?)?'
+    local single="^'([^']*)'(:[0-9]+(:[0-9]+)?)?"
+    local backtick='^`([^`]+)`(:[0-9]+(:[0-9]+)?)?'
+    local bare="^[^][[:space:]\"'\`<>|(){},;=]+"
+    while [[ -n "$text" ]]; do
+        if [[ "$text" =~ $double ]]; then
+            consumed=${BASH_REMATCH[0]}
+            token=${BASH_REMATCH[1]}
+            local suffix=${BASH_REMATCH[3]}
+            if [[ "$git_quotes" == true ]]; then
+                # Git quotes tabs, backslashes and UTF-8 octets using C escapes.
+                printf -v token '%b' "$token"
+                token=${token//\\\"/\"}
+            fi
+            emit_token "$token$suffix" "$mode" true
+        elif [[ "$text" =~ $single || "$text" =~ $backtick ]]; then
+            consumed=${BASH_REMATCH[0]}
+            emit_token "${BASH_REMATCH[1]}${BASH_REMATCH[2]}" "$mode" true
+        elif [[ "$text" =~ $bare ]]; then
+            consumed=${BASH_REMATCH[0]}
+            emit_token "$consumed" "$mode"
+        else
+            consumed=${text:0:1}
+        fi
+        text=${text:${#consumed}}
+    done
+}
+
+header_path() {
+    local path=$1 mode=$2
+    if [[ "$path" == \"* ]]; then
+        scan "$path" "$mode" true
+    else
+        # Traditional unified patches append a tab-separated timestamp.
+        path=${path%%$'\t'*}
+        local timestamp='^(.*)[[:space:]]+[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]].*$'
+        if [[ "$path" =~ $timestamp ]]; then path=${BASH_REMATCH[1]}; fi
+        emit_token "$path" "$mode" true
+    fi
+}
+
+# CSI ranges describe ASCII bytes, not locale-dependent collation order.
+# Limit the C locale to this helper so Unicode filename parsing is unchanged.
+# Return the stripped text in REPLY without spawning a subshell.
+strip_ansi() {
+    local LC_ALL=C
+    local ansi=$'\033''[[][0-?]*[ -/]*[@-~]'
+    REPLY=$1
+    while [[ "$REPLY" =~ $ansi ]]; do
+        REPLY=${REPLY/"${BASH_REMATCH[0]}"/}
+    done
+}
+
+old_left=0 new_left=0 hunk_indent=''
+process_line() {
+    local line=${1%$'\r'} payload indent REPLY
+    strip_ansi "$line"
+    line=$REPLY
+
+    # Count hunk lines, rather than scanning source code as if it were metadata.
+    if (( old_left > 0 || new_left > 0 )); then
+        if [[ -n "$hunk_indent" && "$line" == "$hunk_indent"* ]]; then
+            line=${line:${#hunk_indent}}
+        fi
+        case "$line" in
+            ' '*) ((old_left > 0)) && ((old_left--)); ((new_left > 0)) && ((new_left--)); return 0 ;;
+            -*) ((old_left > 0)) && ((old_left--)); return 0 ;;
+            +*) ((new_left > 0)) && ((new_left--)); return 0 ;;
+            '\ No newline at end of file') return 0 ;;
+            *) old_left=0; new_left=0 ;; # Recover from a truncated pasted patch.
+        esac
+    fi
+    # Indented Markdown fences and patch headers are common in review text.
+    indent=${line%%[![:space:]]*}
+    line=${line#"$indent"}
+    local hunk='^@@ -[0-9]+(,([0-9]+))? \+[0-9]+(,([0-9]+))? @@'
+    if [[ "$line" =~ $hunk ]]; then
+        old_left=${BASH_REMATCH[2]:-1}
+        new_left=${BASH_REMATCH[4]:-1}
+        hunk_indent=$indent
+        return
+    fi
+    case "$line" in
+        '```'*|'~~~'*) return ;;
+        'diff --git '*)
+            payload=${line#diff --git }
+            # Git leaves spaces unquoted in many diff --git headers.
+            if [[ "$payload" == a/*' b/'* ]]; then
+                emit_token "${payload% b/*}" strip true
+                emit_token "b/${payload##* b/}" strip true
+            else
+                scan "$payload" strip true
+            fi
+            return ;;
+        '--- '*|'+++ '*) header_path "${line:4}" strip; return ;;
+        'rename from '*|'rename to '*|'copy from '*|'copy to '*)
+            payload=${line#* }; payload=${payload#* }
+            header_path "$payload" keep; return ;;
+        'index '*|'similarity index '*|'dissimilarity index '*|'new file mode '*|'deleted file mode '*|'old mode '*|'new mode '*|'\ No newline at end of file') return ;;
+    esac
+    # Whole lines may be filenames with spaces only when filesystem evidence
+    # confirms it. Otherwise tokenize, rather than emitting entire sentences.
+    if [[ "$check_exists" == false ]]; then
+        scan "$line" auto
+    else
+        emit "$line" auto || scan "$line" auto
+    fi
+}
+
+process_input() {
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        process_line "$line"
+    done
+}
+
+if (( $# )); then
+    # Separate arguments retain their boundaries, including filenames with spaces.
+    for input in "$@"; do process_input <<< "$input"; done
+elif [[ ! -t 0 ]]; then
+    process_input
+fi
+exit 0
