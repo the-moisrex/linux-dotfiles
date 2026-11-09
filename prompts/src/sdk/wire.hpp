@@ -1,5 +1,6 @@
 #pragma once
 
+#include "chain_state.hpp"
 #include "facts.hpp"
 #include <cstddef>
 #include <optional>
@@ -24,6 +25,12 @@ struct segment_outcome {
     bool stdin_consumed = false;
     bool stdout_streamed = false;
     bool stderr_streamed = false;
+    // Sink-only: a whole chain snapshot (`.stashed`), the history merge kind it
+    // asks for, and whether its output stays silent. Sinks run in the parent,
+    // so `restore` never crosses the fork wire; the two flags do.
+    std::optional<chain_state> restore;
+    bool restore_append = false;
+    bool silent = false;
     int exit_code = 0;
 };
 

@@ -109,6 +109,7 @@ add_library(prompt_lib OBJECT
     src/sdk/extract.cpp
     src/sdk/policy.cpp
     src/sdk/history.cpp
+    src/sdk/stash.cpp
     src/sdk/terminal.cpp
     src/sdk/project.cpp
     src/sdk/signals.cpp

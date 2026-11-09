@@ -49,31 +49,10 @@ prompt_category category_for(std::string_view name) {
     if (name == "list" || name == "list-prompts" || name == "tools" || name == "auto") return prompt_category::catalog;
 
     static constexpr auto kCore = std::to_array<std::string_view>({
-        "note",
-        "files",
-        "stdin",
-        "clipboard",
-        "c.p",
-        "c.c",
-        "length",
-        "save",
-        "flush",
-        "clear",
-        "expect",
-        "extract",
-        "exec",
-        "each",
-        "delegate",
-        "skill.gen",
-        "compress",
-        "compress.list",
-        "compress.delegate",
-        "project",
-        "glob",
-        "grep",
-        "read",
-        "paths",
-        "cli",
+        "note",    "files", "stdin",   "clipboard",  "c.p",        "c.c",        "length",        "save",
+        "flush",   "stash", "stashed", "stash.list", "stash.show", "stash.drop", "clear",         "expect",
+        "extract", "exec",  "each",    "delegate",   "skill.gen",  "compress",   "compress.list", "compress.delegate",
+        "project", "glob",  "grep",    "read",       "paths",      "cli",
     });
     for (auto const entry : kCore) {
         if (name == entry) return prompt_category::core;
@@ -167,7 +146,7 @@ std::vector<std::string_view> list_prompt_names() {
 bool register_prompt(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn, chain_role role,
                      bool stream_output, preflight_fn preflight, declare_fn declare, bool takes_body, bool record,
-                     schema::tool const* input) noexcept {
+                     schema::tool const* input, bool keeps_stdin) noexcept {
     if (prompts_count >= prompts_storage.size()) {
         // Static-init registration cannot report an error to anyone: aborts with
         // a message a developer can act on.
@@ -182,6 +161,7 @@ bool register_prompt(std::string_view name, std::string_view help_summary, exec_
         .complete_fn = complete_fn,
         .role = role,
         .stream_output = stream_output,
+        .keeps_stdin = keeps_stdin,
         .preflight = preflight,
         .declare = declare,
         .takes_body = takes_body,
@@ -194,10 +174,10 @@ bool register_prompt(std::string_view name, std::string_view help_summary, exec_
 
 bool register_sink(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                    void (*render_help_fn)(std::ostream&), completion_fn complete_fn, bool stream_output,
-                   preflight_fn preflight, declare_fn declare, bool takes_body, bool record,
-                   schema::tool const* input) noexcept {
+                   preflight_fn preflight, declare_fn declare, bool takes_body, bool record, schema::tool const* input,
+                   bool keeps_stdin) noexcept {
     return register_prompt(name, help_summary, execute_fn, render_help_fn, complete_fn, chain_role::sink, stream_output,
-                           preflight, declare, takes_body, record, input);
+                           preflight, declare, takes_body, record, input, keeps_stdin);
 }
 
 } // namespace prompt

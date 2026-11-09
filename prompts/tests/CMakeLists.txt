@@ -243,6 +243,18 @@ add_test(NAME save_roundtrip
 add_test(NAME clear_roundtrip
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_clear.sh $<TARGET_FILE:prompt>)
 
+# The stash store: names, scopes, the JSON round-trip, append merging,
+# sanitization, malformed files and the cross-process append lock.
+add_executable(test_stash test_stash.cpp)
+target_link_libraries(test_stash PRIVATE prompt_lib)
+target_include_directories(test_stash PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME stash COMMAND test_stash)
+
+# End-to-end `.stash`/`.stashed`: append/replace, scope shadowing, fact and flag
+# restoration, the management subcommands and completion.
+add_test(NAME stash_roundtrip
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_stash.sh $<TARGET_FILE:prompt>)
+
 # The history store: the marker format, the byte framing (a body that contains
 # a fake marker), the chain replay, truncation and the retention pass.
 add_executable(test_history test_history.cpp)

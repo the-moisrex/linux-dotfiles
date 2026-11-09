@@ -54,6 +54,10 @@ struct prompt_descriptor {
     // spend the stdin pipe: the dispatcher must not open a streamed-output
     // separator for it and must keep piped stdin in the accumulated context.
     bool stream_output = true;
+    // A sink that ignores the incoming context (`.stashed`) must not spend a
+    // pending stdin pipe: the dispatcher leaves it for a later sink instead of
+    // folding it into the context this sink is about to replace.
+    bool keeps_stdin = false;
     // Optional validation/early-setup hook. The dispatcher runs it after chain
     // and sink parsing but before any prompt executes, so a sink such as
     // `.save` can create and check its destination directory without doing the
@@ -106,7 +110,7 @@ bool register_prompt(std::string_view name, std::string_view help_summary, exec_
                      void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
                      chain_role role = chain_role::normal, bool stream_output = true, preflight_fn preflight = nullptr,
                      declare_fn declare = nullptr, bool takes_body = false, bool record = true,
-                     schema::tool const* input = nullptr) noexcept;
+                     schema::tool const* input = nullptr, bool keeps_stdin = false) noexcept;
 
 // Register a sink: the same registry entry with role=sink. Sink flags
 // (--on-error/--with-context/--show-context/--head) are handled by the
@@ -115,7 +119,8 @@ bool register_prompt(std::string_view name, std::string_view help_summary, exec_
 bool register_sink(std::string_view name, std::string_view help_summary, exec_fn execute_fn,
                    void (*render_help_fn)(std::ostream&), completion_fn complete_fn = nullptr,
                    bool stream_output = true, preflight_fn preflight = nullptr, declare_fn declare = nullptr,
-                   bool takes_body = false, bool record = true, schema::tool const* input = nullptr) noexcept;
+                   bool takes_body = false, bool record = true, schema::tool const* input = nullptr,
+                   bool keeps_stdin = false) noexcept;
 
 // Captures a prompt's own `render_help_*` output into a string, for prompts
 // that append it to a failure message (cli, man, tse.analyze, tse.intraday)

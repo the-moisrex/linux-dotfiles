@@ -1,6 +1,8 @@
 #pragma once
 
+#include "chain_state.hpp"
 #include "facts.hpp"
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -67,6 +69,15 @@ struct view {
     // Default-constructed unless the dispatcher is streaming this segment, so a
     // segment only reads it and an in-process child inherits the defaults.
     stream_config stream{};
+    // The live chain state (sinks only; null for ordinary prompts and in the
+    // no-sink path). Read-only: a prompt never mutates it. `.stash` reads the
+    // raw text and artifacts from here, without the redaction legend the sink
+    // input carries.
+    chain_state const* chain = nullptr;
+    // The shared sink `--head` value, when one was given (sinks only). The
+    // dispatcher has already applied it to `text`; a sink that reads `chain`
+    // applies it itself.
+    std::optional<std::size_t> head = std::nullopt;
 };
 
 // Everything a segment may produce. The dispatcher sanitizes `out`, merges
@@ -80,6 +91,15 @@ struct result {
     // Sink-only: drop the accumulated context after this sink succeeds
     // (`.clear`, and `.flush` once its file is written).
     bool clear = false;
+    // Sink-only: replace the whole chain state (text, facts, redaction flag and
+    // failure taint) with this snapshot. `.stashed` uses it to continue a saved
+    // context. When `restore_append` is set the history merge is recorded as an
+    // append (the snapshot already contains the appended text).
+    std::optional<chain_state> restore;
+    bool restore_append = false;
+    // Sink-only: keep `out` for the chain context and the history record but do
+    // not print or copy it (`.stashed --quiet`).
+    bool silent = false;
     bool stdout_streamed = false;
     bool stderr_streamed = false;
 };

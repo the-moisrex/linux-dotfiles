@@ -17,6 +17,8 @@ constexpr std::uint32_t wire_failed = 1U << 3U;
 constexpr std::uint32_t wire_stdin_consumed = 1U << 4U;
 constexpr std::uint32_t wire_stdout_streamed = 1U << 5U;
 constexpr std::uint32_t wire_stderr_streamed = 1U << 6U;
+constexpr std::uint32_t wire_restore_append = 1U << 7U;
+constexpr std::uint32_t wire_silent = 1U << 8U;
 
 } // namespace
 
@@ -30,6 +32,8 @@ std::string encode_outcome(segment_outcome const& outcome) {
     if (outcome.stdin_consumed) flags |= wire_stdin_consumed;
     if (outcome.stdout_streamed) flags |= wire_stdout_streamed;
     if (outcome.stderr_streamed) flags |= wire_stderr_streamed;
+    if (outcome.restore_append) flags |= wire_restore_append;
+    if (outcome.silent) flags |= wire_silent;
 
     std::string blob;
     blob.reserve(outcome.out.size() + outcome.err.size() + outcome.stderr_buffer.size() + facts_blob.size() + 32);
@@ -81,6 +85,8 @@ std::optional<segment_outcome> decode_outcome(std::string_view blob) {
     outcome.stdin_consumed = (flags & wire_stdin_consumed) != 0;
     outcome.stdout_streamed = (flags & wire_stdout_streamed) != 0;
     outcome.stderr_streamed = (flags & wire_stderr_streamed) != 0;
+    outcome.restore_append = (flags & wire_restore_append) != 0;
+    outcome.silent = (flags & wire_silent) != 0;
     outcome.exit_code = static_cast<int>(exit_code);
     return outcome;
 }

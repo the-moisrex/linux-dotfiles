@@ -287,6 +287,18 @@ stem)`), which the dispatcher carries through parallel children to later
   another sink. Its paste counterparts `.clipboard` and `.c.p` are ordinary
   source prompts — a source never receives the chain context, which is exactly
   why copying has to be a sink.
+- **Stash snapshots:** `.stash` (`src/prompts/stash.cpp`) is a silent sink that
+  reads `view.chain` (the raw `chain_state`, not the legend-prefixed
+  `view.text`) and `view.prior`, and writes one JSON file per name through
+  `sdk/stash.{hpp,cpp}`. `.stashed` (`src/prompts/stashed.cpp`) is the restore
+  sink: it sets `result::restore` (a whole `chain_state`) and
+  `result::restore_append`; the dispatcher assigns it in `update_from_sink`
+  without deriving anything from the sink's output. It registers
+  `keeps_stdin=true` (`prompt_descriptor::keeps_stdin`), so a pending pipe is
+  left for a later sink instead of being folded into the context it replaces;
+  `result::silent` keeps `--quiet` out of stdout/clipboard while the context is
+  still restored. `.stash.list`/`.stash.show`/`.stash.drop` are ordinary
+  `record=false` prompts.
 - `ai.*` (`src/prompts/ai.cpp`) is the reference family: eight web provider
   registrations plus the `ai.debate` relay, one shared executor,
   `--print-prompt` passed through to `bin/ai`, and `--stdin-only` so positional
@@ -332,9 +344,13 @@ merge rules, the wire codec, `segment_outcome` round-trip), `tests/test_clipboar
 `--context-file` plumbing through stub providers), `tests/test_ai_debate_sink.sh`
 (the same plumbing for `.ai.debate`, plus provider/flag forwarding),
 `tests/test_save.sh` (end-to-end save targets, passthrough, `--head`,
-no-clobber and sanitized names), and `tests/test_clear.sh` (context reset between
+no-clobber and sanitized names), `tests/test_clear.sh` (context reset between
 sections, piped stdin, hint and failure-taint reset, `.flush` == `.save` +
-`.clear`, preflight); `tests/test_ai_reply.sh` (end-to-end `.ai.reply` through
+`.clear`, preflight), `tests/test_stash.cpp` (name validation, scope paths, the
+JSON round-trip, append merging, shadowing, sanitization, malformed files and
+the cross-process append lock) and `tests/test_stash.sh` (end-to-end
+`.stash`/`.stashed`, scope shadowing, fact/flag restoration, the management
+subcommands and completion); `tests/test_ai_reply.sh` (end-to-end `.ai.reply` through
 stub providers: terminal-scoped provider selection, exact `--reply` resumption,
 `--any`, explicit providers and the only-new-text rule), `tests/test_ai_state.py`
 (the `ai.state` terminal scope, mirroring, `last` markers, expiry, clear and

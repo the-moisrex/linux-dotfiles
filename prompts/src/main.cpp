@@ -142,6 +142,9 @@ prompt::segment_outcome run_prompt(prompt::view const& in, prompt::prompt_descri
         outcome.err = std::move(out.err);
         outcome.stderr_buffer = std::move(out.stderr_buffer);
         outcome.published = std::move(out.published);
+        outcome.restore = std::move(out.restore);
+        outcome.restore_append = out.restore_append;
+        outcome.silent = out.silent;
         outcome.stdout_streamed = out.stdout_streamed;
         outcome.stderr_streamed = out.stderr_streamed;
     } catch (prompt::prompt_error const& err) {
@@ -392,6 +395,9 @@ Notes:
   - Sinks (.ai.chatgpt/.ai.claude/.ai.dseek/.ai.gap/.ai.gemini/.ai.grok/.ai.kimi/.ai.perplexity) wait
     for the preceding chain, send its text to the site, and continue with the
     answer. They share --with-context, --show-context, --on-error and --head.
+  - .stash [NAME] saves the whole chain state (context, facts and flags) and
+    .stashed [NAME...] restores it in a later invocation; .stash.list,
+    .stash.show and .stash.drop manage the store.
   - 'prompt <name> --complete <prefix> [args...]' prints shell-completion
     candidates for the prompt (used by shell/completions.fish), one
     value<TAB>description per line, without running it.
@@ -828,7 +834,9 @@ Notes:
 
     auto current_input = [&](std::size_t i) {
         std::string input = state.text;
-        if (stdin_pending) {
+        // A sink that ignores its input (`.stashed`) leaves a pending pipe for
+        // a later sink instead of folding it into the context it replaces.
+        if (stdin_pending && !segments[i].desc->keeps_stdin) {
             std::string with_stdin = prepend_block(stdin.text(), input);
             // A silent sink is a passthrough tap: it must not spend the pipe.
             // Keep the stdin in the accumulated context so a later sink still
@@ -866,10 +874,13 @@ Notes:
                                  .stream_stdout = stream,
                                  .stream_stderr = stream,
                              });
+        in.chain = &state;
+        in.head = sink_args[i]->options.head_lines;
         return run_prompt(in, *segments[i].desc);
     };
 
     auto emit_sink = [&](prompt::segment_outcome const& outcome) {
+        if (outcome.silent) return;
         if (outcome.stdout_streamed) {
             emitter.streamed(outcome.out, outcome.no_clipboard, outcome.redacted);
         } else {
@@ -899,6 +910,15 @@ Notes:
                 merge = "skip";
             }
             state.incomplete = true;
+            return false;
+        }
+        // `.stashed` restores a whole chain snapshot: text, facts, redaction
+        // flag and failure taint. It replaces the context (or appends to it,
+        // when the prompt already built the merged snapshot) without deriving
+        // anything from the sink's own output.
+        if (outcome.restore) {
+            state = *outcome.restore;
+            merge = outcome.restore_append ? "append" : "replace";
             return false;
         }
         // A sink can ask for a fresh context (`.clear`, and `.flush` once its
@@ -980,7 +1000,7 @@ Notes:
             std::string_view merge = "replace";
             bool const abort = update_from_sink(i, outcome, merge);
             record_segment(i, outcome, merge, outcome.failed ? "failed" : "ok",
-                           !prompt::text::strip_newlines(outcome.out).empty(), input);
+                           !outcome.silent && !prompt::text::strip_newlines(outcome.out).empty(), input);
             if (abort) {
                 chain_aborted = true;
                 break;
